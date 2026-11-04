@@ -246,9 +246,10 @@ std::wstring BrowserWindowController::Init() {
         return Filter(message, wParam, lParam, result);
     };
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE): what the pages
-    // reported runs first (titles, addresses), then the session is saved at once. Closing
-    // doesn't wait for the write (main.cpp does, once the window is gone); logoff and shutdown
-    // can end the process as soon as WM_ENDSESSION returns, so that waits, for a bounded time.
+    // reported runs first (titles, addresses), then the session and history are saved at once.
+    // Closing doesn't wait for the writes (main.cpp does, once the window is gone); logoff and
+    // shutdown can end the process as soon as WM_ENDSESSION returns, so that waits for both,
+    // kEndSessionFlush at most between them.
     window_.onClose = [this](bool endingSession) {
         clock_->Stop();
         memoryWatch_.reset();
@@ -260,9 +261,13 @@ std::wstring BrowserWindowController::Init() {
             KillTimer(window_.Handle(), kHistoryTimer);
             history_->SaveNow();
         }
-        if (endingSession && writer_) {
-            if (std::string problem = writer_->Flush(kEndSessionFlush); !problem.empty()) {
-                OutputDebugStringW((L"Kite: " + Widen(problem) + L"\n").c_str());
+        if (endingSession) {
+            const Deadline deadline = DeadlineAfter(kEndSessionFlush);
+            std::string problems[2];
+            if (writer_) problems[0] = writer_->Flush(deadline);
+            if (history_) problems[1] = history_->Flush(deadline);
+            for (const std::string& problem : problems) {
+                if (!problem.empty()) OutputDebugStringW((L"Kite: " + Widen(problem) + L"\n").c_str());
             }
         }
     };
@@ -406,6 +411,7 @@ std::wstring BrowserWindowController::SaveSaveLog(const std::filesystem::path& f
                                             {"visitMicros", json::Object{{"max", historyCost_.maxMicros}, {"mean", visitMean}}},
                                             {"entries", store.Get().Count()},
                                             {"loaded", store.IsLoaded()},
+                                            {"loadError", store.LoadError()},
                                             {"loads", stats.loads},
                                             {"writes", stats.writes},
                                             {"failedWrites", stats.failedWrites},
@@ -485,12 +491,12 @@ void BrowserWindowController::RecordAddress(const std::string& tabID, const std:
     auto [it, inserted] = recordedURLs_.try_emplace(tabID, url);
     if (!inserted && it->second == url) return;
     it->second = url;
-    if (HistoryStore* store = HistoryForTab(tabID)) {
-        const auto start = std::chrono::steady_clock::now();
-        store->RecordVisit(url, "", Now());
-        historyCost_.Add(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count());
-    }
-    ArmHistorySave();
+    HistoryStore* store = HistoryForTab(tabID);
+    if (!store) return;
+    const auto start = std::chrono::steady_clock::now();
+    const bool changed = store->RecordVisit(url, "", Now());
+    historyCost_.Add(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count());
+    if (changed) ArmHistorySave();
 }
 
 void BrowserWindowController::RecordTitle(const std::string& tabID, const std::string& title) {
@@ -499,8 +505,7 @@ void BrowserWindowController::RecordTitle(const std::string& tabID, const std::s
     if (const Tab* tab = state_.FindTabByID(tabID); tab && tab->url && tab->url->starts_with("kite:")) return;
     auto it = recordedURLs_.find(tabID);
     if (it == recordedURLs_.end()) return;
-    if (HistoryStore* store = HistoryForTab(tabID)) store->UpdateTitle(it->second, title);
-    ArmHistorySave();
+    if (HistoryStore* store = HistoryForTab(tabID); store && store->UpdateTitle(it->second, title)) ArmHistorySave();
 }
 
 void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save) {
@@ -891,9 +896,15 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     if (message == kHistoryMessage) {
         // A profile's history.json has been read: it takes the place of what this run had (its
         // visits replayed over it), and an open bar shows its rows.
-        if (history_ && history_->Adopt()) {
+        std::vector<std::string> problems;
+        if (history_ && history_->Adopt(&problems)) {
             if (commandBar_ && commandBar_->IsOpen()) commandBar_->Refresh();
             ArmHistorySave();
+        }
+        // A file that didn't read was moved aside (or, if it couldn't be, is left alone and not
+        // saved over); the Mac logs it too. The save log's history block has the default's.
+        for (const std::string& problem : problems) {
+            OutputDebugStringW((L"Kite: history couldn't be read, starting without it: " + Widen(problem) + L"\n").c_str());
         }
         return true;
     }

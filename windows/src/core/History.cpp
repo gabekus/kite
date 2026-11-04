@@ -6,8 +6,6 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <ctime>
-#include <fstream>
 
 #include "core/Json.h"
 #include "core/StoreFile.h"
@@ -26,83 +24,51 @@ using text_match::TrimmedLowercase;
 
 namespace {
 
-constexpr double kReferenceDateUnix = 978307200.0;  // 2001-01-01 in Unix seconds
 constexpr double kDay = 86'400;
 
 // The host as the Mac's History.score and the row's subtitle use it: lowercased, every "www."
 // removed (replacingOccurrences, so not only a leading one).
 std::string HostKey(std::string_view url) { return ReplaceAll(unicode::Lowercased(url::Host(url).value_or("")), "www.", ""); }
 
-// 1970-01-01 + `days` as a civil date (Howard Hinnant's days_from_civil, inverted).
-HistoryCalendar::Date CivilDate(int64_t days) {
-    const int64_t z = days + 719468;
-    const int64_t era = (z >= 0 ? z : z - 146096) / 146097;
-    const int64_t doe = z - era * 146097;
-    const int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    const int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    const int64_t mp = (5 * doy + 2) / 153;
-    const int64_t d = doy - (153 * mp + 2) / 5 + 1;
-    const int64_t m = mp < 10 ? mp + 3 : mp - 9;
-    const int64_t y = yoe + era * 400 + (m <= 2 ? 1 : 0);
-    const int64_t weekday = ((days % 7) + 7 + 4) % 7;  // 1970-01-01 was a Thursday
-    return {static_cast<int>(y), static_cast<int>(m), static_cast<int>(d), static_cast<int>(weekday)};
+bool IsHex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
+
+// What RFC 3986 lets a path, query or fragment hold as it is: unreserved, sub-delims, ":@/?",
+// and a % that starts an escape. Everything else NSURL (macOS 14) percent-encodes.
+bool Allowed(std::string_view text, size_t at) {
+    const unsigned char c = static_cast<unsigned char>(text[at]);
+    if (c >= 0x80 || c <= 0x20 || c == 0x7F) return false;
+    switch (c) {
+    case '"': case '<': case '>': case '\\': case '^': case '`': case '{': case '|': case '}': case '[': case ']': return false;
+    case '%': return at + 2 < text.size() && IsHex(text[at + 1]) && IsHex(text[at + 2]);
+    default: return true;
+    }
 }
 
-bool LocalTime(std::time_t time, std::tm& out) {
-#ifdef _WIN32
-    return localtime_s(&out, &time) == 0;
+// Where the authority ends: the path, query and fragment follow.
+size_t AfterAuthority(std::string_view url) {
+    const size_t colon = url.find(':');
+    if (colon == std::string_view::npos) return 0;
+    size_t at = colon + 1;
+    if (url.substr(at, 2) != "//") return at;
+    const size_t end = url.find_first_of("/?#", at + 2);
+    return end == std::string_view::npos ? url.size() : end;
+}
+
+// A shard's entry by key, with no std::string made where the library can look up by string_view.
+template <class Map>
+auto Lookup(Map& map, std::string_view key) {
+#if defined(__cpp_lib_generic_unordered_lookup)
+    return map.find(key);
 #else
-    return localtime_r(&time, &out) != nullptr;
+    return map.find(std::string(key));
 #endif
 }
 
 }  // namespace
 
-// MARK: HistoryEntry, HistoryCalendar, HistoryDay
-
 std::string HistoryEntry::DisplayTitle() const {
     if (!title.empty()) return title;
     return url::Host(url).value_or(url);
-}
-
-HistoryCalendar HistoryCalendar::Utc() {
-    HistoryCalendar calendar;
-    calendar.startOfDay = [](Timestamp t) { return std::floor((t + kReferenceDateUnix) / kDay) * kDay - kReferenceDateUnix; };
-    calendar.date = [](Timestamp t) { return CivilDate(static_cast<int64_t>(std::floor((t + kReferenceDateUnix) / kDay))); };
-    return calendar;
-}
-
-HistoryCalendar HistoryCalendar::Local() {
-    HistoryCalendar calendar;
-    calendar.startOfDay = [](Timestamp t) {
-        std::tm local{};
-        if (!LocalTime(static_cast<std::time_t>(std::floor(t + kReferenceDateUnix)), local)) return HistoryCalendar::Utc().startOfDay(t);
-        local.tm_hour = local.tm_min = local.tm_sec = 0;
-        local.tm_isdst = -1;
-        const std::time_t start = std::mktime(&local);
-        return start == static_cast<std::time_t>(-1) ? HistoryCalendar::Utc().startOfDay(t) : FromUnixTime(static_cast<double>(start));
-    };
-    calendar.date = [](Timestamp t) {
-        std::tm local{};
-        if (!LocalTime(static_cast<std::time_t>(std::floor(t + kReferenceDateUnix)), local)) return HistoryCalendar::Utc().date(t);
-        return HistoryCalendar::Date{local.tm_year + 1900, local.tm_mon + 1, local.tm_mday, local.tm_wday};
-    };
-    return calendar;
-}
-
-std::string HistoryDay::Heading(Timestamp now, const HistoryCalendar& calendar) const {
-    static constexpr const char* kWeekdays[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-    static constexpr const char* kMonths[] = {"January", "February", "March",     "April",   "May",      "June",
-                                              "July",    "August",   "September", "October", "November", "December"};
-    const HistoryCalendar::Date d = calendar.date(start);
-    // DateFormatter's .full date style in en_US.
-    const std::string date = std::string(kWeekdays[d.weekday]) + ", " + kMonths[d.month - 1] + " " + std::to_string(d.day) + ", " +
-                             std::to_string(d.year);
-    const Timestamp today = calendar.startOfDay(now);
-    if (start == today) return "Today - " + date;
-    // The day before today's start, whatever its length (a DST change).
-    if (start == calendar.startOfDay(today - 1)) return "Yesterday - " + date;
-    return date;
 }
 
 // MARK: History
@@ -111,6 +77,42 @@ bool History::Records(std::string_view url) {
     // URL.scheme as written: "HTTPS://" isn't recorded on the Mac either.
     const bool web = url.starts_with("https:") || url.starts_with("http:");
     return web && url::HasValidAuthority(url);
+}
+
+std::string History::Normalized(std::string_view url) {
+    std::string scratch;
+    return std::string(Key(url, scratch));
+}
+
+std::string_view History::Key(std::string_view url, std::string& out) {
+    static constexpr char kHexDigits[] = "0123456789ABCDEF";
+    const size_t from = AfterAuthority(url);
+    bool changed = false;  // `out` holds the URL up to i only once something was encoded
+    bool fragment = false;
+    for (size_t i = from; i < url.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(url[i]);
+        bool encode = false;
+        if (c == '#') {
+            encode = fragment;  // the first # starts the fragment; another is part of it
+            fragment = true;
+        } else {
+            encode = !Allowed(url, i);
+        }
+        if (encode && !changed) {
+            out.assign(url.substr(0, i));
+            changed = true;
+        }
+        if (!changed) continue;
+        if (encode) {
+            out += '%';
+            out += kHexDigits[c >> 4];
+            out += kHexDigits[c & 0xF];
+        } else {
+            out += static_cast<char>(c);
+        }
+    }
+    if (!changed) return url;
+    return out;
 }
 
 size_t History::ShardOf(std::string_view url) {
@@ -164,7 +166,7 @@ HistoryEntry History::EntryOf(const std::string& url, const Item& item) { return
 const History::Item* History::FindItem(std::string_view url) const {
     const auto& shard = shards_[ShardOf(url)];
     if (!shard) return nullptr;
-    auto it = shard->find(std::string(url));
+    auto it = Lookup(*shard, url);
     return it == shard->end() ? nullptr : &it->second;
 }
 
@@ -175,8 +177,9 @@ History::Shard& History::Writable(size_t shard) {
     } else if (slot.use_count() > 1) {
         slot = std::make_shared<Shard>(*slot);  // a snapshot holds it: copy this shard only
     } else {
-        // The writer's thread may have just let its snapshot go: its reads of the shard happen
-        // before the writes here (use_count's load is relaxed; the release was the decrement).
+        // The writer's thread may have just let its snapshot go. use_count isn't an acquire load
+        // (relaxed on libstdc++, a plain read of the count on MSVC), so this fence orders the
+        // thread's reads of the shard, released by its decrement, before the writes here.
         std::atomic_thread_fence(std::memory_order_acquire);
     }
     return *slot;
@@ -186,9 +189,9 @@ History::Item* History::FindWritable(std::string_view url) {
     const size_t shard = ShardOf(url);
     if (!shards_[shard]) return nullptr;
     // Looked up first, so a lookup that misses never copies a shard a snapshot holds.
-    if (shards_[shard]->find(std::string(url)) == shards_[shard]->end()) return nullptr;
+    if (Lookup(*shards_[shard], url) == shards_[shard]->end()) return nullptr;
     Shard& writable = Writable(shard);
-    return &writable.find(std::string(url))->second;
+    return &Lookup(writable, url)->second;
 }
 
 void History::Insert(const HistoryEntry& entry) {
@@ -203,8 +206,14 @@ void History::Insert(const HistoryEntry& entry) {
     if (inserted) ++count_;
 }
 
-void History::RecordVisit(std::string_view url, std::string_view title, Timestamp at) {
-    if (!Records(url)) return;
+bool History::SharesShards() const {
+    return std::any_of(shards_.begin(), shards_.end(), [](const auto& shard) { return shard && shard.use_count() > 1; });
+}
+
+bool History::RecordVisit(std::string_view raw, std::string_view title, Timestamp at) {
+    if (!Records(raw)) return false;
+    std::string scratch;
+    const std::string_view url = Key(raw, scratch);
     if (Item* item = FindWritable(url)) {
         ++item->visitCount;
         item->lastVisit = at;
@@ -212,20 +221,29 @@ void History::RecordVisit(std::string_view url, std::string_view title, Timestam
             item->title = std::string(title);
             Index(url, *item);
         }
-        return;
+    } else {
+        Insert({std::string(url), std::string(title), at, 1});
     }
-    Insert({std::string(url), std::string(title), at, 1});
-    if (count_ > kMaxEntries) Prune(kMaxEntries * 9 / 10);
+    // Past the cap the oldest tenth goes, as the Mac's prune(to: maxEntries * 9 / 10). Not while
+    // the writer holds a snapshot: erasing then would copy every shard on the UI thread. The
+    // next visit after the writer has let it go (milliseconds later) prunes instead.
+    if (count_ > kMaxEntries && !SharesShards()) Prune(kMaxEntries * 9 / 10);
+    return true;
 }
 
 bool History::UpdatesTitle(std::string_view url, std::string_view title) const {
     if (title.empty()) return false;
-    const Item* item = FindItem(url);
+    std::string scratch;
+    const Item* item = FindItem(Key(url, scratch));
     return item && item->title != title;
 }
 
-bool History::UpdateTitle(std::string_view url, std::string_view title) {
-    if (!UpdatesTitle(url, title)) return false;
+bool History::UpdateTitle(std::string_view raw, std::string_view title) {
+    if (title.empty()) return false;
+    std::string scratch;
+    const std::string_view url = Key(raw, scratch);
+    const Item* found = FindItem(url);
+    if (!found || found->title == title) return false;
     Item* item = FindWritable(url);
     item->title = std::string(title);
     Index(url, *item);
@@ -239,8 +257,10 @@ void History::RemoveAll() {
 
 size_t History::Merge(const std::vector<HistoryEntry>& imported) {
     size_t added = 0;
-    for (const HistoryEntry& entry : imported) {
-        if (!Records(entry.url)) continue;
+    for (const HistoryEntry& raw : imported) {
+        if (!Records(raw.url)) continue;
+        HistoryEntry entry = raw;
+        entry.url = Normalized(raw.url);
         Item* existing = FindWritable(entry.url);
         if (!existing) {
             Insert(entry);
@@ -270,15 +290,20 @@ Timestamp History::ChromiumDate(int64_t microseconds) {
     return FromUnixTime(static_cast<double>(microseconds) / 1'000'000 - 11'644'473'600);
 }
 
-Timestamp History::FirefoxDate(int64_t microseconds) { return FromUnixTime(static_cast<double>(microseconds) / 1'000'000); }
-
 void History::Remove(const std::vector<std::string>& urls) {
-    for (const std::string& url : urls) {
+    for (const std::string& raw : urls) {
+        std::string scratch;
+        const std::string_view url = Key(raw, scratch);
         const size_t shard = ShardOf(url);
-        if (!shards_[shard] || !shards_[shard]->contains(url)) continue;
-        Writable(shard).erase(url);
+        if (!shards_[shard] || Lookup(*shards_[shard], url) == shards_[shard]->end()) continue;
+        Shard& writable = Writable(shard);
+        writable.erase(Lookup(writable, url));
         --count_;
     }
+}
+
+void History::TrimToCap() {
+    if (count_ > kMaxEntries) Prune(kMaxEntries);
 }
 
 void History::RemoveVisits(std::optional<Timestamp> since) {
@@ -316,7 +341,9 @@ void History::Prune(size_t count) {
     Remove(dropped);
 }
 
-std::optional<HistoryEntry> History::Find(std::string_view url) const {
+std::optional<HistoryEntry> History::Find(std::string_view raw) const {
+    std::string scratch;
+    const std::string_view url = Key(raw, scratch);
     const Item* item = FindItem(url);
     if (!item) return std::nullopt;
     return EntryOf(std::string(url), *item);
@@ -486,7 +513,15 @@ std::vector<HistoryEntry> History::Search(std::string_view query, size_t limit, 
         const std::string* url;
         const Item* item;
     };
-    std::vector<Scored> scored;
+    // Better first: score, then the later visit, then the lower URL.
+    const auto better = [](const Scored& a, const Scored& b) {
+        if (a.score != b.score) return a.score > b.score;
+        if (a.lastVisit != b.lastVisit) return a.lastVisit > b.lastVisit;
+        return *a.url < *b.url;
+    };
+    // The best `limit` so far, as a heap whose top is the worst of them.
+    std::vector<Scored> best;
+    best.reserve(limit);
     for (const auto& shard : shards_) {
         if (!shard) continue;
         for (const auto& [url, item] : *shard) {
@@ -494,42 +529,26 @@ std::vector<HistoryEntry> History::Search(std::string_view query, size_t limit, 
             auto match = ScoreItem(typed, url, item);
             if (!match) continue;
             const double days = std::max(0.0, now - item.lastVisit) / kDay;
-            const double frecency = std::log2(static_cast<double>(item.visitCount) + 1) * 8 - std::min(days, 90.0) / 3;
-            scored.push_back({static_cast<double>(*match) + frecency, item.lastVisit, &url, &item});
+            const double visits = static_cast<double>(std::max<int64_t>(0, item.visitCount));
+            const double frecency = std::log2(visits + 1) * 8 - std::min(days, 90.0) / 3;
+            const Scored candidate{static_cast<double>(*match) + frecency, item.lastVisit, &url, &item};
+            if (best.size() < limit) {
+                best.push_back(candidate);
+                std::push_heap(best.begin(), best.end(), better);
+            } else if (better(candidate, best.front())) {
+                std::pop_heap(best.begin(), best.end(), better);
+                best.back() = candidate;
+                std::push_heap(best.begin(), best.end(), better);
+            }
         }
     }
-    const size_t kept = std::min(limit, scored.size());
-    std::partial_sort(scored.begin(), scored.begin() + static_cast<std::ptrdiff_t>(kept), scored.end(), [](const Scored& a, const Scored& b) {
-        if (a.score != b.score) return a.score > b.score;
-        if (a.lastVisit != b.lastVisit) return a.lastVisit > b.lastVisit;
-        return *a.url < *b.url;
-    });
+    std::sort_heap(best.begin(), best.end(), better);
+    const size_t kept = best.size();
+    const std::vector<Scored>& scored = best;
     std::vector<HistoryEntry> out;
     out.reserve(kept);
     for (size_t i = 0; i < kept; ++i) out.push_back(EntryOf(*scored[i].url, *scored[i].item));
     return out;
-}
-
-std::vector<HistoryDay> History::Days(std::string_view query, const HistoryCalendar& calendar) const {
-    const std::string q = TrimmedLowercase(query);
-    const Query typed(q);
-    std::vector<HistoryEntry> matching;
-    ForEach([&](const HistoryEntry& entry) {
-        if (q.empty() || Field(entry.title).Contains(typed) || Field(entry.url).Contains(typed)) matching.push_back(entry);
-    });
-    std::sort(matching.begin(), matching.end(), [](const HistoryEntry& a, const HistoryEntry& b) {
-        return a.lastVisit != b.lastVisit ? a.lastVisit > b.lastVisit : a.url < b.url;
-    });
-    std::vector<HistoryDay> days;
-    for (HistoryEntry& entry : matching) {
-        const Timestamp start = calendar.startOfDay(entry.lastVisit);
-        if (!days.empty() && days.back().start == start) {
-            days.back().entries.push_back(std::move(entry));
-        } else {
-            days.push_back({start, {std::move(entry)}});
-        }
-    }
-    return days;
 }
 
 // MARK: The file
@@ -599,7 +618,10 @@ HistoryFile::LoadResult HistoryFile::Load(Unreadable unreadable) const {
     if (error) return Error{"couldn't check " + store_file::PathText(file_) + ": " + error.message(), std::nullopt};
     if (!exists) return Missing{};
     if (!fs::is_regular_file(file_, error)) return Error{store_file::PathText(file_) + " isn't a file", std::nullopt};
-    auto text = store_file::Read(file_);
+    bool tooLarge = false;
+    auto text = store_file::Read(file_, store_file::kMaxHistoryReadBytes, &tooLarge);
+    // Left where it is: it may be history, just more than Kite reads.
+    if (tooLarge) return Error{store_file::PathText(file_) + " is over 64 MB", std::nullopt};
     if (!text) return Error{"couldn't read " + store_file::PathText(file_), std::nullopt};
     auto decoded = History::DecodeFile(*text);
     if (auto* history = std::get_if<History>(&decoded)) return std::move(*history);

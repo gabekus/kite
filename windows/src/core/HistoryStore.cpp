@@ -3,10 +3,7 @@
 #include "core/HistoryStore.h"
 
 #include <algorithm>
-#include <condition_variable>
 #include <deque>
-#include <exception>
-#include <mutex>
 #include <utility>
 
 #include "core/StoreFile.h"
@@ -19,23 +16,33 @@ double MicrosSince(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
 }
 
-double SteadySeconds() {
-    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-}
+double SteadySeconds() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
 }  // namespace
 
-// The worker's queue. Everything in it, and in every Slot, is behind `mutex`.
-struct HistoryStores::Worker {
-    std::mutex mutex;
-    std::condition_variable wake;  // the worker: a job, or stop
-    std::condition_variable done;  // Flush and the destructor: the queue ran dry, or the worker ended
+// The worker's queue: reads and writes in the order they were asked for. Everything in it, and
+// in every Slot, is behind WorkerState::mutex.
+struct HistoryStores::Worker : WorkerState {
+    Worker() {
+        // Room for Failed's message, so it's set without allocating (out of memory, mostly).
+        stats.lastError.reserve(128);
+    }
+
     std::deque<std::function<void()>> jobs;
-    bool busy = false;
-    bool stop = false;
-    bool ended = false;
     std::function<void()> loaded;  // the shell's wake
     Statistics stats;
+
+    bool HasWork() const override { return !jobs.empty(); }
+
+    void RunOne(std::unique_lock<std::mutex>& lock) override {
+        std::function<void()> job = std::move(jobs.front());
+        jobs.pop_front();
+        lock.unlock();
+        job();
+        lock.lock();
+    }
+
+    void Failed(const char*) noexcept override { stats.lastError.assign("history: a read or write failed"); }
 
     void Post(std::function<void()> job) {
         {
@@ -44,45 +51,9 @@ struct HistoryStores::Worker {
         }
         wake.notify_one();
     }
-
-    // Nothing may throw out of the thread (std::terminate): a job's failure is its own to report.
-    void Run() {
-        std::unique_lock lock(mutex);
-        for (;;) {
-            wake.wait(lock, [this] { return stop || !jobs.empty(); });
-            if (jobs.empty()) break;  // stopping, with nothing left to do
-            std::function<void()> job = std::move(jobs.front());
-            jobs.pop_front();
-            busy = true;
-            lock.unlock();
-            try {
-                job();
-            } catch (...) {  // out of memory, mostly
-                std::lock_guard relock(mutex);
-                stats.lastError = "history: a read or write failed";
-            }
-            lock.lock();
-            busy = false;
-            if (jobs.empty()) done.notify_all();
-        }
-        ended = true;
-        done.notify_all();
-    }
-
-    bool Idle() const { return jobs.empty() && !busy; }
-
-    // Until the queue is empty and nothing runs; false when `deadline` came first.
-    bool WaitIdle(std::unique_lock<std::mutex>& lock, std::chrono::steady_clock::time_point deadline) {
-        const auto idle = [this] { return Idle() || ended; };
-        if (deadline == std::chrono::steady_clock::time_point::max()) {
-            done.wait(lock, idle);
-            return true;
-        }
-        return done.wait_until(lock, deadline, idle);
-    }
 };
 
-// One store's, shared with the worker (behind Worker::mutex).
+// One store's, shared with the worker (behind its mutex).
 struct HistoryStore::Slot {
     explicit Slot(std::filesystem::path file) : file(std::move(file)) {}
     const HistoryFile file;
@@ -97,7 +68,6 @@ struct HistoryStore::Slot {
     bool writeQueued = false;
     bool lastWriteFailed = false;
     std::string lastError;  // the last write's, empty when it went through
-    bool forgotten = false;
 };
 
 // MARK: HistoryStore
@@ -107,24 +77,19 @@ HistoryStore::HistoryStore(HistoryStores& owner, std::shared_ptr<Slot> slot)
 
 const std::filesystem::path& HistoryStore::File() const { return slot_->file.File(); }
 
-template <class Op>
-void HistoryStore::Apply(Op op) {
-    op(history_);
-    if (!adopted_) pending_.emplace_back(std::move(op));
+bool HistoryStore::RecordVisit(std::string_view url, std::string_view title, Timestamp at) {
+    if (!history_.RecordVisit(url, title, at)) return false;
+    // Kept for the replay only before the file is in: afterwards a visit makes nothing more.
+    if (!adopted_) pending_.emplace_back([url = std::string(url), title = std::string(title), at](History& h) { h.RecordVisit(url, title, at); });
+    Changed();
+    return true;
 }
 
-void HistoryStore::RecordVisit(std::string_view url, std::string_view title, Timestamp at) {
-    // A page Kite doesn't keep changes nothing, so it saves nothing (the Mac's store saves anyway).
-    if (!History::Records(url)) return;
-    Apply([url = std::string(url), title = std::string(title), at](History& h) { h.RecordVisit(url, title, at); });
+bool HistoryStore::UpdateTitle(std::string_view url, std::string_view title) {
+    if (!history_.UpdateTitle(url, title)) return false;
+    if (!adopted_) pending_.emplace_back([url = std::string(url), title = std::string(title)](History& h) { h.UpdateTitle(url, title); });
     Changed();
-}
-
-void HistoryStore::UpdateTitle(std::string_view url, std::string_view title) {
-    // Checked first, so a repeat costs one lookup.
-    if (!history_.UpdatesTitle(url, title)) return;
-    Apply([url = std::string(url), title = std::string(title)](History& h) { h.UpdateTitle(url, title); });
-    Changed();
+    return true;
 }
 
 size_t HistoryStore::Merge(const std::vector<HistoryEntry>& entries) {
@@ -132,21 +97,6 @@ size_t HistoryStore::Merge(const std::vector<HistoryEntry>& entries) {
     if (!adopted_) pending_.emplace_back([entries](History& h) { h.Merge(entries); });
     ChangedNow();
     return added;
-}
-
-void HistoryStore::RemoveAll() {
-    Apply([](History& h) { h.RemoveAll(); });
-    ChangedNow();
-}
-
-void HistoryStore::Remove(const std::vector<std::string>& urls) {
-    Apply([urls](History& h) { h.Remove(urls); });
-    ChangedNow();
-}
-
-void HistoryStore::RemoveVisits(std::optional<Timestamp> since) {
-    Apply([since](History& h) { h.RemoveVisits(since); });
-    ChangedNow();
 }
 
 void HistoryStore::Changed() {
@@ -177,6 +127,7 @@ void HistoryStore::Adopt(History loaded, std::string error) {
     history_ = std::move(loaded);
     for (auto& op : pending_) op(history_);
     pending_.clear();
+    pending_.shrink_to_fit();
     loadError_ = std::move(error);
     adopted_ = true;
     if (!dirty_) return;
@@ -194,50 +145,16 @@ HistoryStores::HistoryStores(std::filesystem::path supportDirectory, std::functi
     : support_(std::move(supportDirectory)),
       steadyNow_(steadyNow ? std::move(steadyNow) : std::function<double()>(SteadySeconds)),
       worker_(std::make_shared<Worker>()) {
-    thread_ = std::thread([worker = worker_] { worker->Run(); });
-    // The default profile's history is read as Kite starts, while the window and Chromium start.
+    thread_.Start(worker_);
     ForProfile(BrowserState::kDefaultProfile);
 }
 
 HistoryStores::~HistoryStores() {
-    std::unique_lock lock(worker_->mutex);
-    worker_->stop = true;
-    worker_->loaded = nullptr;
-    worker_->wake.notify_one();
-    // The worker does what's queued before it ends. After a Flush that timed out it isn't waited
-    // for again (the caller has waited its bound). One with nothing left counts as done: told to
-    // stop, it ends at once, so the join can't hang.
-    const auto wait = flushTimedOut_ ? std::chrono::milliseconds(0) : kStopWait;
-    const bool ended = worker_->done.wait_for(lock, wait, [this] { return worker_->ended || worker_->Idle(); });
-    lock.unlock();
-    if (ended) {
-        thread_.join();
-        return;
-    }
-    // Still busy: the thread holds its own reference to the queue and the slots, so it may go
-    // on, but the process mustn't tear down its library under it.
-    if (onStuck_) onStuck_();
-    thread_.detach();
-}
-
-bool HistoryStores::Writing() const {
-    std::lock_guard lock(worker_->mutex);
-    return !worker_->Idle() && !worker_->ended;
-}
-
-bool HistoryStores::WaitForLoads(std::chrono::milliseconds timeout) {
     {
-        std::unique_lock lock(worker_->mutex);
-        const auto loaded = [this] {
-            for (const auto& [directory, store] : stores_) {
-                if (!store->adopted_ && !store->slot_->loadDone) return false;
-            }
-            return true;
-        };
-        if (!worker_->done.wait_for(lock, timeout, [&] { return loaded() || worker_->ended; })) return false;
+        std::lock_guard lock(worker_->mutex);
+        worker_->loaded = nullptr;
     }
-    Adopt();
-    return true;
+    thread_.Stop();
 }
 
 std::filesystem::path HistoryStores::FileFor(const std::filesystem::path& supportDirectory, const std::string& directory) {
@@ -245,41 +162,56 @@ std::filesystem::path HistoryStores::FileFor(const std::filesystem::path& suppor
     return supportDirectory / "Chromium" / std::filesystem::path(std::u8string(directory.begin(), directory.end())) / "Kite History.json";
 }
 
+void HistoryStores::Start() {
+    if (std::exchange(started_, true)) return;
+    for (auto& [directory, store] : stores_) PostLoad(*store);
+}
+
 HistoryStore& HistoryStores::ForProfile(const std::string& directory) {
     if (auto it = stores_.find(directory); it != stores_.end()) return *it->second;
     auto slot = std::make_shared<HistoryStore::Slot>(FileFor(support_, directory));
     auto& store = *stores_.emplace(directory, std::unique_ptr<HistoryStore>(new HistoryStore(*this, slot))).first->second;
-    worker_->Post([worker = worker_.get(), slot] {
+    if (started_) PostLoad(store);
+    return store;
+}
+
+void HistoryStores::PostLoad(HistoryStore& store) {
+    if (std::exchange(store.loadPosted_, true)) return;
+    worker_->Post([worker = worker_.get(), slot = store.slot_] {
         const auto start = std::chrono::steady_clock::now();
-        HistoryFile::LoadResult result = slot->file.Load(HistoryFile::Unreadable::MoveAside);
+        std::optional<History> history;
+        std::string error;
+        bool maySave = true;
+        try {
+            HistoryFile::LoadResult result = slot->file.Load(HistoryFile::Unreadable::MoveAside);
+            maySave = HistoryFile::MaySave(result);
+            if (auto* found = std::get_if<History>(&result)) {
+                // A file over the cap (written by hand, or by an older Kite) is trimmed here, on
+                // the worker, not by the UI thread's first visit.
+                found->TrimToCap();
+                history = std::move(*found);
+            }
+            if (auto* failed = std::get_if<HistoryFile::Error>(&result)) error = std::move(failed->message);
+        } catch (...) {
+            // Out of memory, mostly: the file is still there, unread, so it's never written over.
+            history.reset();
+            maySave = false;
+            error = "history couldn't be read";
+        }
         const double micros = MicrosSince(start);
         std::function<void()> wake;
         {
             std::lock_guard lock(worker->mutex);
             slot->loadDone = true;
-            slot->maySave = HistoryFile::MaySave(result);
-            if (auto* history = std::get_if<History>(&result)) slot->loaded = std::move(*history);
-            if (auto* error = std::get_if<HistoryFile::Error>(&result)) slot->loadError = error->message;
+            slot->maySave = maySave;
+            slot->loaded = std::move(history);
+            slot->loadError = std::move(error);
             ++worker->stats.loads;
             worker->stats.lastLoadMicros = micros;
             wake = worker->loaded;
         }
         if (wake) wake();
     });
-    return store;
-}
-
-void HistoryStores::ForgetProfile(const std::string& directory) {
-    if (directory == BrowserState::kDefaultProfile) return;
-    auto it = stores_.find(directory);
-    if (it == stores_.end()) return;
-    {
-        std::lock_guard lock(worker_->mutex);
-        HistoryStore::Slot& slot = *it->second->slot_;
-        slot.forgotten = true;
-        if (slot.next) slot.discard.push_back(std::move(*std::exchange(slot.next, std::nullopt)));
-    }
-    stores_.erase(it);
 }
 
 void HistoryStores::SetWake(std::function<void()> wake) {
@@ -287,7 +219,7 @@ void HistoryStores::SetWake(std::function<void()> wake) {
     worker_->loaded = std::move(wake);
 }
 
-bool HistoryStores::Adopt() {
+bool HistoryStores::Adopt(std::vector<std::string>* problems) {
     bool changed = false;
     for (auto& [directory, store] : stores_) {
         if (store->adopted_) continue;
@@ -299,6 +231,7 @@ bool HistoryStores::Adopt() {
             loaded = std::exchange(store->slot_->loaded, std::nullopt);
             error = store->slot_->loadError;
         }
+        if (problems && !error.empty()) problems->push_back(store_file::PathText(store->File()) + ": " + error);
         store->Adopt(loaded ? std::move(*loaded) : History(), std::move(error));
         changed = true;
     }
@@ -358,9 +291,9 @@ void HistoryStores::Write(HistoryStore& store) {
             discard = std::move(slot->discard);
             slot->discard.clear();
             slot->writeQueued = false;
-            if (slot->forgotten) return;
             history = std::exchange(slot->next, std::nullopt);
         }
+        discard.clear();
         if (!history) return;
         const auto encodeStart = std::chrono::steady_clock::now();
         const std::string bytes = history->EncodeFile();
@@ -384,26 +317,28 @@ void HistoryStores::Write(HistoryStore& store) {
     });
 }
 
-std::string HistoryStores::Flush(std::chrono::milliseconds timeout) {
-    const auto deadline = timeout == std::chrono::milliseconds::max() ? std::chrono::steady_clock::time_point::max()
-                                                                       : std::chrono::steady_clock::now() + timeout;
-    const auto timedOut = [&] {
-        flushTimedOut_ = true;
-        return "history's writes didn't finish within " + std::to_string(timeout.count()) + " ms";
-    };
+std::string HistoryStores::Flush(Deadline deadline) {
+    const auto timedOut = [] { return std::string("history's writes didn't finish in time"); };
     // The reads and writes under way first, as the Mac's flush waits for its queue.
-    {
-        std::unique_lock lock(worker_->mutex);
-        if (!worker_->WaitIdle(lock, deadline)) return timedOut();
-    }
+    if (!thread_.WaitIdle(deadline)) return timedOut();
     Adopt();
     SaveNow();  // a write that failed is tried again
-    std::unique_lock lock(worker_->mutex);
-    if (!worker_->WaitIdle(lock, deadline)) return timedOut();
+    if (!thread_.WaitIdle(deadline)) return timedOut();
+    std::lock_guard lock(worker_->mutex);
     for (const auto& [directory, store] : stores_) {
         if (!store->slot_->lastError.empty()) return store->slot_->lastError;
     }
     return {};
+}
+
+bool HistoryStores::WaitForLoads(std::chrono::milliseconds timeout) {
+    const bool loaded = thread_.WaitUntil(DeadlineAfter(timeout), [this] {
+        return std::all_of(stores_.begin(), stores_.end(), [](const auto& entry) {
+            return entry.second->adopted_ || (entry.second->loadPosted_ && entry.second->slot_->loadDone);
+        });
+    });
+    if (loaded) Adopt();
+    return loaded;
 }
 
 HistoryStores::Statistics HistoryStores::Stats() const {

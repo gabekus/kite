@@ -398,20 +398,54 @@ same-document change to a new URL, such as pushState or a fragment) is a visit
 when it isn't the address that tab's page last recorded, so a reload isn't one
 and a page closed for the live-page limit records again when it loads; the
 page's title goes to the address last recorded, and a repeat changes nothing.
+A URL is kept as the Mac's NSURL keeps it (`History::Normalized`): what a path,
+query or fragment may not hold, which Chromium sometimes leaves as typed (`|`,
+`^`, `` ` ``, `{`, `}`, `[`, `]`, `\`, a stray `%`), is percent-encoded.
+
 History saves 3 s after the last change and at least every 30 s while changes
-keep coming (`CappedDebounce`), at once for clearing and importing, and when
-the window closes. `core/HistoryStore` reads each profile's file and writes it
-on a worker of its own, from a snapshot that costs the UI thread a few μs: the
-entries are kept in 256 shards that copies share and copy on write, a shard at
-a time. Until a file has been read, its store keeps this run's visits and
-replays them over it. The command bar shows up to three pages from the current
-space's profile's history after the tabs, never one already shown as a tab,
-the page you're on or the Open row's URL; each entry keeps its title, URL and
-host lowercased and decomposed, so a keystroke's search is a byte search with
-Swift's Character rules checked only where it hits. `kitecore history`
-lists, searches, adds and clears; `kitecore history-bench` measures it. Not
-yet: the history page (`kite://history`), Delete browsing data, Import from
-Arc (W25b), and the bar's favicons.
+keep coming (`CappedDebounce`), at once for an import, and when the window
+closes; logoff and shutdown wait for it within the same 3 s as the session,
+and quitting within the same 10 s. `core/HistoryStore` reads each profile's
+file and writes it on a worker of its own (`core/BackgroundWorker`, the
+session writer's thread too), from a snapshot that costs the UI thread a few
+μs: the entries are kept in 256 shards that copies share and copy on write, a
+shard at a time. The files are read only once the launch is Kite's (after
+Chromium starts, or for a capture), so a second launch never opens the running
+Kite's history. Until a file has been read, its store keeps this run's visits
+and replays them over it. A file over 64 MB isn't read (and isn't written
+over); one over the cap is trimmed as it's read, on the worker. The command
+bar shows up to three pages from the current space's profile's history after
+the tabs, never one already shown as a tab, the page you're on or the Open
+row's URL; each entry keeps its title, URL and host lowercased and decomposed,
+so a keystroke's search is a byte search with Swift's Character rules checked
+only where it hits. `kitecore history` lists, searches, adds, merges, removes
+and clears; the `history-bench` executable measures it.
+
+Known differences from the Mac:
+
+- A file that's there but couldn't be read or moved aside (or is over 64 MB) is
+  never written over; the Mac's `try?` reads it as no file and overwrites it.
+- Only URLs Foundation reads back are recorded (`url::HasValidAuthority`), so
+  one entry can't make the Mac drop the whole file.
+- A page history doesn't keep (about:blank) saves nothing; the Mac's store
+  marks itself changed and saves anyway.
+- Ties in the ranking and the prune go to the later visit, then the lower URL;
+  the Mac leaves them in no set order.
+- A visit that takes the history past the cap while the writer holds a
+  snapshot doesn't prune; the next visit after the writer has let go does (the
+  Mac prunes at once, on a copy-on-write dictionary that copies everything).
+- Before a profile's file has been read, a search sees only this run's
+  visits; the Mac reads the file on its main thread, so it never waits.
+- One shell timer serves every profile's saves, armed for the store due first;
+  each store keeps its own debounce, so the timing is the Mac's.
+- The bar's history rows show the no-favicon globe, as its tab rows do; the
+  Mac fetches `host/favicon.ico`.
+- The tab rows above the history rows are still W7a's; the Mac's Arc order is
+  W7c.
+
+Not yet: the history page (`kite://history`, with the Mac's days and
+headings), Delete browsing data, Import from Arc (W33a), and the bar's
+favicons.
 
 ## Refresh rate
 

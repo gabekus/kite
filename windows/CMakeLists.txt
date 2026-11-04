@@ -32,6 +32,7 @@ endif()
 
 # The model (the Windows counterpart of KiteCore): standard C++ only, unit-tested headless.
 add_library(KiteCoreWin STATIC
+  src/core/BackgroundWorker.cpp
   src/core/CommandBar.cpp
   src/core/History.cpp
   src/core/HistoryStore.cpp
@@ -179,6 +180,7 @@ endif()
 enable_testing()
 add_executable(KiteCoreTests
   tests/main.cpp
+  tests/BackgroundWorkerTests.cpp
   tests/CommandBarTests.cpp
   tests/HistoryTests.cpp
   tests/JsonTests.cpp
@@ -201,6 +203,13 @@ add_executable(KiteCoreTests
   tests/URLInputTests.cpp
 )
 target_link_libraries(KiteCoreTests PRIVATE KiteCoreWin)
+# What history costs (tests/HistoryBench.cpp): its own executable, since it counts every
+# allocation with its own operator new. CTest runs a small one so it keeps building and running.
+add_executable(history-bench tests/HistoryBench.cpp)
+target_link_libraries(history-bench PRIVATE KiteCoreWin)
+if(WIN32)
+  target_link_libraries(history-bench PRIVATE psapi)
+endif()
 # Writes Tests/Fixtures/theme-backdrop.json (see the file); not run by the tests.
 add_executable(gen-theme-golden EXCLUDE_FROM_ALL tests/GenThemeGolden.cpp)
 target_link_libraries(gen-theme-golden PRIVATE KiteCoreWin)
@@ -208,6 +217,7 @@ target_link_libraries(gen-theme-golden PRIVATE KiteCoreWin)
 target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../Tests/Fixtures"
                                                KITE_STATES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/helix/states")
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)
+add_test(NAME history-bench COMMAND history-bench 300)
 add_test(NAME kitecore-cli
   COMMAND ${CMAKE_COMMAND} -DKITECORE=$<TARGET_FILE:kitecore> -DWORK=${CMAKE_CURRENT_BINARY_DIR}/kitecore-cli-test
           -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/KitecoreCliTest.cmake)
