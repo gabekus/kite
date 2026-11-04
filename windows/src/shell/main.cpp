@@ -29,8 +29,9 @@
 //                            FILE gets JSON lines of QPC marks, present/commit/surface-draw
 //                            counters, long dispatches, input→present and frame timings
 //                            (shell/PerfLog.h); --perf-control takes requests by WM_COPYDATA
-//                            (BrowserWindowController::PerfControl); --chromium-switches go on
-//                            Chromium's command line. Opens behind other windows, without focus.
+//                            (BrowserWindowController::QueuePerfRequest); --chromium-switches go
+//                            on Chromium's command line, from an allow-list (shell/PerfProtocol.h).
+//                            Never on the default profile. Opens behind other windows.
 //   Kite.exe --backdrop-test draws the theme backdrop on the GPU and checks every pixel against
 //                            core's CPU reference of the Mac's shader (shell/BackdropTest.h).
 //                            Prints a report; exits 0 when it matches, 5 when it differs, 3
@@ -245,10 +246,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             }
             const size_t end = std::min(text.find(L' ', start), text.size());
             const std::wstring_view token(text.data() + start, end - start);
-            if (token.size() < 3 || !token.starts_with(L"--") || token[2] == L'=') {
-                return Fail(quiet, L"--chromium-switches takes switches like --name or --name=value, not " + std::wstring(token), kUsage);
+            const std::string entry = token.starts_with(L"--") ? Narrow(std::wstring(token.substr(2))) : std::string();
+            const size_t equals = entry.find('=');
+            const std::string_view name = std::string_view(entry).substr(0, equals);
+            const std::string_view value = equals == std::string::npos ? std::string_view() : std::string_view(entry).substr(equals + 1);
+            // An allow-list (shell/PerfProtocol.h): nothing that weakens the sandbox or web
+            // security, opens a debugging port, or changes a path or a launched process.
+            if (name.empty() || !kite::perf::AllowedChromiumSwitch(name, value)) {
+                return Fail(quiet, L"--chromium-switches doesn't allow " + std::wstring(token), kUsage);
             }
-            chromiumSwitches.push_back(Narrow(std::wstring(token.substr(2))));
+            chromiumSwitches.push_back(entry);
             start = end;
         }
     }
@@ -264,21 +271,36 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
                     L"--chromium-switches need KITE_SUPPORT_PATH set to a test profile",
                     kUsage);
     }
-    // The perf log is open for the rest of the run, whichever way it ends (its last line, "exit").
-    struct PerfLogClose {
-        ~PerfLogClose() { kite::perf::Close(); }
-    } perfLogClose;
-    if (perfLogOption.value) {
-        if (std::wstring problem = kite::perf::Open(*perfLogOption.value); !problem.empty()) {
-            return Fail(quiet, L"--perf-log: " + problem, kUsage);
-        }
-        kite::perf::Mark("started");
-    }
     auto resolved = kite::ResolveSupportDirectory(supportOverride, kite::EnvironmentPath("LOCALAPPDATA"));
     if (auto* error = std::get_if<kite::SupportDirectoryError>(&resolved)) {
         return Fail(quiet, Widen(error->message), kBadSupportDirectory);
     }
     const std::filesystem::path supportDirectory = std::get<std::filesystem::path>(resolved);
+    const bool perfHooks = perfLogOption.present || perfControl || switchesOption.present;
+    if (perfHooks) {
+        // KITE_SUPPORT_PATH set to the real profile is still the real profile.
+        const auto normal = [](const std::filesystem::path& p) {
+            std::error_code ec;
+            std::wstring text = std::filesystem::weakly_canonical(std::filesystem::absolute(p, ec), ec).wstring();
+            while (text.size() > 3 && (text.back() == L'\\' || text.back() == L'/')) text.pop_back();
+            CharLowerBuffW(text.data(), static_cast<DWORD>(text.size()));
+            return text;
+        };
+        auto defaultProfile = kite::ResolveSupportDirectory(std::nullopt, kite::EnvironmentPath("LOCALAPPDATA"));
+        if (const auto* real = std::get_if<std::filesystem::path>(&defaultProfile); real && normal(*real) == normal(supportDirectory)) {
+            return Fail(quiet, L"--perf-log, --perf-control and --chromium-switches never run on the default profile", kUsage);
+        }
+    }
+    // The perf log is open for the rest of the run, whichever way it ends (its last line, "exit").
+    struct PerfLogClose {
+        ~PerfLogClose() { kite::perf::Close(); }
+    } perfLogClose;
+    if (perfLogOption.value) {
+        if (std::wstring problem = kite::perf::Open(*perfLogOption.value, chromiumSwitches); !problem.empty()) {
+            return Fail(quiet, L"--perf-log: " + problem, kUsage);
+        }
+        kite::perf::Mark("started");
+    }
     std::error_code ignored;
     std::filesystem::create_directories(supportDirectory, ignored);
 

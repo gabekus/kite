@@ -380,31 +380,40 @@ Windows that means:
 
 ## Measuring performance
 
-Kite.exe has three hooks for measuring it. Like `--frame-log` they're refused without
-`KITE_SUPPORT_PATH`, and off they cost at most one predictable bool check on a hot path and
-allocate nothing. A run with any of them opens behind other windows, without the focus, and
-never shows a dialog, as `--smoke-test` does.
+Kite.exe has three hooks for measuring it. Like `--frame-log` they need `KITE_SUPPORT_PATH`,
+and they're refused when it names the default profile (`%LOCALAPPDATA%\Kite`). Off, each costs
+one predictable bool check (`perf::On()`) and allocates nothing. A run with any of them opens
+behind other windows, without asking for the focus, and never shows a dialog, as
+`--smoke-test` does.
 
-- `--perf-log FILE`: JSON lines (`shell/PerfLog.h`) with raw QueryPerformanceCounter values;
-  the header has `qpcFrequency`. Marks: `started`, `window-created`, `first-commit`,
-  `cef-init-begin` and `cef-init-end`, `shown`, `browser-created`, `load-begin` and `load-end`
-  per tab (from CEF's thread), `command-begin` and `command-end` with the command's id,
-  `loop-end`, `exit`, and any the control asks for. Each mark carries the counters so far:
-  presents (the backdrop's and the command bar's), commits (every `IDCompositionDevice::Commit`,
-  which all go through `Compositor::Commit`) and surface draws per view. A message whose
-  dispatch takes over 8 ms is logged with how long it took. An input (a control's pointer move
-  or command) is logged with its first commit and the composition frame that commit showed in,
-  from `DCompositionGetFrameId` and `DCompositionGetStatistics` (Windows 11): the vblank it was
-  presented at, or else the one the compositor made the frame for. The frame clock's frames are
-  logged with `--frame-log`'s content, the compositor's rate and the same frame times.
+- `--perf-log FILE`: JSON lines (`shell/PerfLog.h` lists them) with raw QueryPerformanceCounter
+  values; the header has `qpcFrequency` and the Chromium switches. A writer thread writes them
+  within 50 ms, so the UI thread never waits on the file. Marks: `started`, `window-created`,
+  `first-commit`, `cef-init-begin` and `cef-init-end`, `shown`, `browser-created`, `load-begin`
+  and `load-end` per tab (from CEF's thread), `command-begin` and `command-end` with the
+  command's id, `loop-end`, `exit`, and any the control asks for. Each mark carries the counters
+  so far: presents (the backdrop's and the command bar's), commits (every
+  `IDCompositionDevice::Commit`, which all go through `Compositor::Commit`) and surface draws per
+  view. A dispatched message that takes over 8 ms is logged with how long it took. A control
+  input (a pointer move or a command) is logged with its first commit within 250 ms, or with
+  none, and the first composition frame the compositor made after that commit (a lower bound:
+  it can take a commit up later), from `DCompositionGetFrameId` and `DCompositionGetStatistics`
+  (Windows 11): the vblank the compositor made it for, and when it was presented on the monitor
+  Kite's window is on, where the statistics can say. The frame clock's frames are logged with
+  `--frame-log`'s content, the compositor's rate and the same frame times.
 - `--perf-control`: requests by `WM_COPYDATA` (`dwData` 'KPRF', a UTF-8 JSON object):
   `{"command":ID}` runs a shortcut's command by its id (`kitecore shortcuts`), `{"mark":NAME}`
-  logs a mark, `{"open":URL}` opens a tab, `{"input":"move","x":X,"y":Y,"qpc":Q}` posts a pointer
-  move at client pixels, and `{"input":"leave"}` takes it away. The answer is 1, or 0 for a
-  request that did nothing. While a posted pointer is over the window the system's
-  `WM_MOUSELEAVE` is ignored, since the real pointer is somewhere else.
+  logs a mark, `{"open":URL}` opens an http or https page in a tab, `{"input":"move","x":X,
+  "y":Y,"qpc":Q}` posts a pointer move at client pixels, and `{"input":"leave"}` takes it away.
+  A request is checked and queued, and the answer is 1, or 0 for one Kite can't run; it then
+  runs from the message loop, so the sender isn't held and its dispatch is timed like any
+  other. While a posted pointer is over the window the system's `WM_MOUSELEAVE` is ignored,
+  since the real pointer is somewhere else.
 - `--chromium-switches "--a --b=c"`: switches for Chromium's browser process
-  (`OnBeforeCommandLineProcessing`), to measure Kite with one and without.
+  (`OnBeforeCommandLineProcessing`), from an allow-list (`shell/PerfProtocol.h`): process and
+  GPU model, rasterization, backgrounding and feature switches, to measure Kite with one and
+  without. Nothing that weakens the sandbox or web security, opens a debugging port, or changes
+  a path or a launched process.
 
 `kiteperf` (`windows/tools/perf`, built with the app by MSVC, never shipped) drives them. Each
 run launches Kite.exe on a fresh `%TEMP%` profile holding `sessions/perf-10tabs-2spaces.json`

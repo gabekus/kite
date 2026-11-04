@@ -49,8 +49,8 @@ public:
         // --frame-log: each frame the clock delivered (when it was handled, the time it was
         // drawn for, the pages' offset and the theme's crossfade) is kept for SaveFrameLog.
         bool frameLog = false;
-        // --perf-control: WM_COPYDATA tagged kPerfControlTag runs a shortcut's command, logs a
-        // mark, opens a tab or posts a pointer move (PerfControl). Test profiles only.
+        // --perf-control: WM_COPYDATA tagged perf::kControlTag runs a shortcut's command, logs a
+        // mark, opens a tab or posts a pointer move (QueuePerfRequest). Test profiles only.
         bool perfControl = false;
         // --chromium-switches: added to Chromium's command line (test profiles only).
         std::vector<std::string> chromiumSwitches;
@@ -106,9 +106,6 @@ public:
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
 
-    // WM_COPYDATA's dwData for --perf-control ('KPRF').
-    static constexpr ULONG_PTR kPerfControlTag = 0x4B505246;
-
 private:
     // The content card, in points: right of the sidebar, inset on the other three sides
     // (BrowserWindowController's Layout.defaultSidebarWidth and ArcMetrics.Content.inset).
@@ -135,7 +132,7 @@ private:
     bool CommandEnabled(const std::string& command) const;
     // One frame of the clock's: the theme's crossfade drawn for the composition frame at
     // `time` (the pages' slide runs on the compositor).
-    void Frame(double time);
+    void Frame(double time, double rateHz);
     std::wstring DrawAt(double time, Pixels* readBack);
     // The smoke test's space switch, there and back, run to rest.
     std::wstring SmokeTestSpaces();
@@ -170,11 +167,18 @@ private:
     bool Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result);
     // One --perf-control request, a UTF-8 JSON object: {"command":ID[,"qpc":Q]} runs a shortcut's
     // command (the input→present clock starting at Q, the harness's send), {"mark":NAME} logs a
-    // mark, {"open":URL} opens a tab and shows it (the command bar's Open), {"input":"move",
-    // "x":X,"y":Y,"qpc":Q} posts a pointer move to the window at client px (X, Y), and
-    // {"input":"leave"} the pointer's leaving. False when it isn't one, or the command does
-    // nothing now.
-    bool PerfControl(const COPYDATASTRUCT& data);
+    // mark, {"open":URL} opens an http or https URL in a tab and shows it (the command bar's
+    // Open), {"input":"move","x":X,"y":Y,"qpc":Q} posts a pointer move to the window at client
+    // px (X, Y), and {"input":"leave"} the pointer's leaving. Checked here and queued, then run
+    // from the message loop (RunPerfRequests), so the sender isn't held while it runs and its
+    // dispatch is timed like any other. False when it isn't one, or the command does nothing now.
+    struct PerfRequest {
+        enum class Kind { Command, Mark, Open, Move, Leave } kind;
+        std::string text;
+        int64_t x = 0, y = 0, qpc = 0;
+    };
+    bool QueuePerfRequest(const COPYDATASTRUCT* data);
+    void RunPerfRequests();
 #ifdef KITE_HAS_CEF
     RECT ContentBounds() const;
     void ShowSelectedTab();
@@ -228,6 +232,7 @@ private:
     // --perf-control's pointer is over the window: the system's WM_MOUSELEAVE (the real pointer
     // is elsewhere) doesn't take its hover away.
     bool perfPointer_ = false;
+    std::vector<PerfRequest> perfRequests_;
     size_t frameCount_ = 0;  // frames delivered, logged or not (the smoke test checks them)
 
     // What each shortcut's command does, by id (MainMenu.swift's items).
