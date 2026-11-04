@@ -12,8 +12,13 @@ final class HistoryStore {
     /// Other profiles' histories, made from the default profile's store.
     @ObservationIgnored private var profileStores: [String: HistoryStore] = [:]
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    /// Changed since the last save. Saving one store saves every profile's, and most of them haven't changed.
+    @ObservationIgnored private var isDirty = false
+    /// Debounced saves encode and write here, off the main thread: a full history is 20,000 entries.
+    /// Serial, so writes land in order, and `saveNow` waits behind any that are queued.
+    private static let writeQueue = DispatchQueue(label: "dev.gabek.Kite.history-save", qos: .utility)
 
-    private struct File: Codable {
+    private struct File: Codable, Sendable {
         var version: Int
         var history: History
     }
@@ -51,7 +56,10 @@ final class HistoryStore {
         scheduleSave()
     }
 
+    /// Pages send their title again on every load and on every title change (chat apps flash theirs),
+    /// so an unchanged title neither touches `history`, which observers watch, nor saves.
     func updateTitle(_ url: URL, _ title: String) {
+        guard let entry = history.entries[url.absoluteString], entry.title != title, !title.isEmpty else { return }
         history.updateTitle(url, title)
         scheduleSave()
     }
@@ -64,33 +72,38 @@ final class HistoryStore {
     @discardableResult
     func merge(_ entries: [HistoryEntry]) -> Int {
         let added = history.merge(entries)
+        isDirty = true
         saveNow()
         return added
     }
 
     func removeAll() {
         history.removeAll()
+        isDirty = true
         saveNow()
     }
 
     func remove(_ urls: [URL]) {
         history.remove(urls)
+        isDirty = true
         saveNow()
     }
 
     /// Delete browsing data's history: pages visited at or after `since` (nil: all).
     func removeVisits(since: Date?) {
         history.removeVisits(since: since)
+        isDirty = true
         saveNow()
     }
 
     /// Debounced: a page load sends its URL and title in quick succession.
     private func scheduleSave() {
+        isDirty = true
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
-            self?.saveNow()
+            self?.save(waiting: false)
         }
     }
 
@@ -99,15 +112,25 @@ final class HistoryStore {
         profileStores.removeValue(forKey: directory)?.saveTask?.cancel()
     }
 
+    /// Writes this store and every profile's that changed, and returns once they're on disk.
     func saveNow() {
+        save(waiting: true)
+    }
+
+    private func save(waiting: Bool) {
+        profileStores.values.forEach { $0.save(waiting: waiting) }
         saveTask?.cancel()
-        profileStores.values.forEach { $0.saveNow() }
-        do {
-            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(File(version: History.currentVersion, history: history))
-            try data.write(to: fileURL, options: .atomic)
-        } catch {
-            NSLog("Kite: couldn't save history: \(error)")
+        guard isDirty else { return }
+        isDirty = false
+        let file = File(version: History.currentVersion, history: history), url = fileURL
+        let write = {
+            do {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try JSONEncoder().encode(file).write(to: url, options: .atomic)
+            } catch {
+                NSLog("Kite: couldn't save history: \(error)")
+            }
         }
+        if waiting { Self.writeQueue.sync(execute: write) } else { Self.writeQueue.async(execute: write) }
     }
 }
