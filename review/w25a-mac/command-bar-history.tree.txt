@@ -1,0 +1,21 @@
+## at launch
+Window 17896, 1280×820 pt at 2×. Points from the window's top-left.
+Nothing matches "SuggestionRowView".
+
+## before the capture
+Window 17896, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.9.0.8 SuggestionRowView [265,371.5 750×50]
+0.9.0.9 SuggestionRowView [265,421.5 750×50]
+0.9.0.10 SuggestionRowView [265,471.5 750×50]
+0.9.0.11 SuggestionRowView [265,521.5 750×50]
+</untrusted-page-content>
+
+## after the capture
+Window 17896, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.9.0.8 SuggestionRowView [265,371.5 750×50]
+0.9.0.9 SuggestionRowView [265,421.5 750×50]
+0.9.0.10 SuggestionRowView [265,471.5 750×50]
+0.9.0.11 SuggestionRowView [265,521.5 750×50]
+</untrusted-page-content>

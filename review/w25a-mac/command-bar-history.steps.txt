@@ -1,0 +1,4 @@
+$ kite ui input '{"keys":"cmd+t"}'
+cmd+t: run by Kite before the page saw it (its shortcut priority) (Kite in background); menu File > New Tab… (newTab:)
+$ kite ui input '{"text":"recipe"}'
+Inserted 6 characters into the command bar of window 17896 (test-safe: no key events, no input method).
