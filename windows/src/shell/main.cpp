@@ -170,16 +170,24 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 #endif
     const std::vector<std::wstring> args = Arguments();
     // An unknown flag (a typo like --smoketest or --capture-scale=2) is an error, never a
-    // normal launch on the real profile.
+    // normal launch on the real profile. Windows' switch prefix "/" counts as a flag too, and an
+    // option's value never looks like one: it would be a flag swallowed as the value.
+    // Chromium never reads this line (Chromium::Start: command_line_args_disabled).
+    const auto looksLikeFlag = [](const std::wstring& a) { return a.starts_with(L"-") || a.starts_with(L"/"); };
     for (size_t i = 0; i < args.size(); ++i) {
         const std::wstring& a = args[i];
         if (a == L"--smoke-test" || a == L"--backdrop-test" || a == L"--perf-control") continue;
         if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar" || a == L"--frame-log" ||
             a == L"--space-tip" || a == L"--perf-log" || a == L"--chromium-switches") {
+            // --chromium-switches' value is switches ("--a --b"), each checked against its
+            // allow-list below.
+            if (i + 1 < args.size() && looksLikeFlag(args[i + 1]) && a != L"--chromium-switches") {
+                return Fail(true, a + L" takes a value, not " + args[i + 1], kUsage);
+            }
             ++i;
             continue;
         }
-        if (a.starts_with(L"-")) return Fail(true, L"unknown option " + a, kUsage);
+        if (looksLikeFlag(a)) return Fail(true, L"unknown option " + a, kUsage);
     }
     if (HasFlag(args, L"--backdrop-test")) {
         // Touches no profile, so it needs no KITE_SUPPORT_PATH.
