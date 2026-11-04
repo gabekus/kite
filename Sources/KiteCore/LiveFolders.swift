@@ -331,17 +331,32 @@ extension BrowserState {
 }
 
 extension LiveFolder {
-    /// Automatic refreshes (launch, Kite coming to the front, switching spaces, opening or leaving a
-    /// folder's tab) start at most this often per folder. Arc's floor is 10 seconds
-    /// (`automatic-live-folders-min-refresh-interval-in-seconds`); each refresh loads github.com in a
-    /// hidden page, so Kite waits longer between them. Refresh, a filter change and a pull request
-    /// just made or reviewed still refresh straight away.
-    public static let automaticRefreshInterval: TimeInterval = 5 * 60
+    /// Why a refresh starts (Arc's `LiveFolderFetchReason`, grouped by how often each may run).
+    public enum RefreshReason: Sendable {
+        /// Launch, Kite coming to the front, switching to the folder's space.
+        case background
+        /// Opening or leaving one of the folder's tabs (a pull request just looked at or reviewed).
+        case tabSelection
+        /// Refresh, a filter or repository change, a pull request just made or reviewed.
+        case forced
 
-    /// Whether a refresh may start: a forced one always, an automatic one once the last one started
-    /// `automaticRefreshInterval` ago.
-    public static func mayRefresh(lastStarted: Date?, now: Date = Date(), force: Bool) -> Bool {
-        guard !force, let lastStarted else { return true }
-        return now.timeIntervalSince(lastStarted) >= automaticRefreshInterval
+        /// The least time since the last successful refresh. Arc throttles every automatic reason to
+        /// 10 seconds (`automatic-live-folders-min-refresh-interval-in-seconds`); Kite keeps that for
+        /// tab selection, and waits 5 minutes for the background reasons, since each refresh loads
+        /// github.com in a hidden page.
+        public var minimumInterval: TimeInterval {
+            switch self {
+            case .background: 5 * 60
+            case .tabSelection: 10
+            case .forced: 0
+            }
+        }
+    }
+
+    /// Whether a refresh may start, given when the last one that succeeded started. A failed one
+    /// doesn't count, so the next event tries again.
+    public static func mayRefresh(lastSucceeded: Date?, now: Date = Date(), reason: RefreshReason) -> Bool {
+        guard let lastSucceeded else { return true }
+        return now.timeIntervalSince(lastSucceeded) >= reason.minimumInterval
     }
 }

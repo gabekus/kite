@@ -138,13 +138,22 @@ import Testing
         #expect(state.liveFoldersTurnedOff.isEmpty)
     }
 
-    @Test func automaticRefreshesWaitMinutesForcedOnesDont() {
+    @Test func refreshFloorsFollowTheReason() {
         let start = Date(timeIntervalSince1970: 1_000_000)
-        #expect(LiveFolder.mayRefresh(lastStarted: nil, now: start, force: false))
-        #expect(!LiveFolder.mayRefresh(lastStarted: start, now: start.addingTimeInterval(10), force: false))
-        #expect(!LiveFolder.mayRefresh(lastStarted: start, now: start.addingTimeInterval(LiveFolder.automaticRefreshInterval - 1), force: false))
-        #expect(LiveFolder.mayRefresh(lastStarted: start, now: start.addingTimeInterval(LiveFolder.automaticRefreshInterval), force: false))
-        #expect(LiveFolder.mayRefresh(lastStarted: start, now: start.addingTimeInterval(1), force: true))
-        #expect(LiveFolder.automaticRefreshInterval >= 3 * 60)
+        func may(_ reason: LiveFolder.RefreshReason, after seconds: TimeInterval) -> Bool {
+            LiveFolder.mayRefresh(lastSucceeded: start, now: start.addingTimeInterval(seconds), reason: reason)
+        }
+        // Never refreshed (or every attempt failed): anything goes.
+        #expect(LiveFolder.mayRefresh(lastSucceeded: nil, now: start, reason: .background))
+        // Launch, activation and space switches wait 5 minutes.
+        #expect(!may(.background, after: 10))
+        #expect(!may(.background, after: 5 * 60 - 1))
+        #expect(may(.background, after: 5 * 60))
+        // Opening or leaving a folder's tab keeps Arc's 10 seconds: leaving a pull request you just
+        // reviewed refreshes even though opening it did too.
+        #expect(!may(.tabSelection, after: 9))
+        #expect(may(.tabSelection, after: 10))
+        // Refresh, filters and a pull request just made or reviewed: always.
+        #expect(may(.forced, after: 0))
     }
 }

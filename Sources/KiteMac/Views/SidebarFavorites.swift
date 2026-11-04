@@ -91,7 +91,8 @@ final class FavoritesTrayView: SidebarFlippedView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let trayTracking { removeTrackingArea(trayTracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self)
+        // assumeInside: an area remade under a resting pointer (a relayout) isn't a new arrival.
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .assumeInside], owner: self)
         addTrackingArea(area)
         trayTracking = area
     }

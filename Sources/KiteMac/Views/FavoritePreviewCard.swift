@@ -113,9 +113,10 @@ final class FavoritePreviewController {
     /// Arc keeps its previews fetched (`PreviewsDataClient.setPeriodicUpdatesEnabled`, a refresh
     /// timer), so its Gmail card opened with the mail already in it. Kite reads Gmail favorites' mail
     /// only when a card may be wanted soon rather than every minute in the background: when Kite comes
-    /// to the front, and when the pointer comes onto the favorites tray (`prefetch`), at least the
-    /// card's 0.38s hover delay before it opens. Either reads only mail older than `staleAfter`, and
-    /// the hidden page that reads it closes once it's idle (`GmailFeedReader.idleTimeout`).
+    /// to the front, and when the pointer comes onto the sidebar and then the favorites tray
+    /// (`prefetch`), well ahead of the card's 0.38s hover delay. Each reads only mail older than
+    /// `staleAfter`, and the hidden page that reads it closes once it's idle
+    /// (`FavoritePreviews.readerIdleTimeout`).
     func startPrefetching(_ favorites: @escaping () -> [BrowserTab]) {
         guard activeObserver == nil else { return }
         self.favorites = favorites
@@ -233,8 +234,11 @@ final class FavoritePreviewFetcher {
         return "\(profile)|\(kind)"
     }
 
+    /// What a card opens with: the last read unless it's more than a few minutes old.
     func cached(_ kind: FavoritePreviews.Kind, profile: String) -> FavoritePreviews.Content {
-        cache[key(kind, profile)]?.content ?? .loading
+        guard let entry = cache[key(kind, profile)],
+              FavoritePreviews.showsCached(age: Date().timeIntervalSince(entry.fetched)) else { return .loading }
+        return entry.content
     }
 
     func isStale(_ kind: FavoritePreviews.Kind, profile: String) -> Bool {
@@ -320,9 +324,10 @@ enum GmailFeedReader {
         """
     }
 
-    /// A reader page with no read for this long closes, and its renderer with it; the next read opens
-    /// another. Reads come in bursts (Kite coming to the front, the pointer on the tray, a card).
-    static let idleTimeout: TimeInterval = 120
+    /// How often an idle reader page checks whether it has been idle long enough to close
+    /// (`FavoritePreviews.readerIdleTimeout`: 10 minutes with Kite in front, 2 behind). Closing takes
+    /// its renderer with it; the next read opens another.
+    static let idleCheck: TimeInterval = 60
 
     #if canImport(CEFBridge)
     /// One hidden page per profile, kept for the next read until it's idle.
@@ -332,6 +337,7 @@ enum GmailFeedReader {
         var waiting: [() -> Void] = []
         /// Reads started and not yet answered.
         var reading = 0
+        var lastRead = Date()
         var idleClose: DispatchWorkItem?
         init(page: ChromiumPage) { self.page = page }
     }
@@ -341,6 +347,7 @@ enum GmailFeedReader {
     static func read(account: Int, engine: WebEngine, completion: @escaping ([VerificationCodes.Message]?) -> Void) {
         guard let reader = reader(for: engine) else { return completion(nil) }
         let key = ObjectIdentifier(engine)
+        let cold = !reader.ready, started = Date()
         reader.idleClose?.cancel()
         reader.reading += 1
         var done = false
@@ -348,7 +355,12 @@ enum GmailFeedReader {
             guard !done else { return }
             done = true
             reader.reading -= 1
+            reader.lastRead = Date()
             if reader.reading == 0 { closeWhenIdle(reader, key: key) }
+            if UIDiagnostics.enabledByEnvironment {
+                let ms = Int(Date().timeIntervalSince(started) * 1000)
+                NSLog("Kite: Gmail preview read in \(ms) ms (\(cold ? "new page" : "open page"))")
+            }
             completion(messages)
         }
         let run = {
@@ -364,12 +376,15 @@ enum GmailFeedReader {
         reader.idleClose?.cancel()
         let work = DispatchWorkItem { [weak reader] in
             guard let reader, reader.reading == 0, readers[key] === reader else { return }
+            let timeout = FavoritePreviews.readerIdleTimeout(appActive: NSApp.isActive)
+            guard Date().timeIntervalSince(reader.lastRead) >= timeout else { return closeWhenIdle(reader, key: key) }
             readers[key] = nil
             reader.page.onEvent = nil
             reader.page.close()
+            if UIDiagnostics.enabledByEnvironment { NSLog("Kite: Gmail preview reader closed") }
         }
         reader.idleClose = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + idleTimeout, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + idleCheck, execute: work)
     }
 
     private static func reader(for engine: WebEngine) -> Reader? {

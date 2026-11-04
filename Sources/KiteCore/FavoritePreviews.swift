@@ -12,6 +12,17 @@ public enum FavoritePreviews {
         defaults.object(forKey: enabledKey) as? Bool ?? true
     }
 
+    /// A card shows what was last read only if it's younger than this; older, it shows loading until
+    /// the read under way comes back, rather than mail that may be long gone.
+    public static let maxShownAge: TimeInterval = 3 * 60
+
+    /// Whether a card may show content read `age` seconds ago.
+    public static func showsCached(age: TimeInterval) -> Bool { age <= maxShownAge }
+
+    /// How long the hidden page that reads Gmail stays open without a read: longer while Kite is in
+    /// front (a card may open any moment, and a fresh page costs a load), short in the background.
+    public static func readerIdleTimeout(appActive: Bool) -> TimeInterval { appActive ? 10 * 60 : 2 * 60 }
+
     /// Arc's `PreviewType`s: `gmail`, `googleCalendar` and `recentPages` (by domain). Arc also has
     /// Outlook mail and calendar through a Microsoft sign-in, which Kite doesn't.
     public enum Kind: Hashable, Sendable {

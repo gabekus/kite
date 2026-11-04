@@ -487,7 +487,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         libraryContainer.layer?.zPosition = 13
         peekCard.isHidden = true
         peekEdge.onHover = { [weak self] inside in self?.edgeHovered(inside) }
-        sidebarHoverZone.onHover = { [weak self] inside in self?.sidebarHover.isHovered = inside }
+        sidebarHoverZone.onHover = { [weak self] inside in
+            self?.sidebarHover.isHovered = inside
+            // The pointer heading for the favorites: their previews get a head start.
+            if inside { self?.prefetchFavoritePreviews() }
+        }
         // Unclipped (macOS 14's default), its visible rect, and so its tracking area, would be the whole window.
         sidebarHoverZone.clipsToBounds = true
         sidebarHoverZone.isActive = true

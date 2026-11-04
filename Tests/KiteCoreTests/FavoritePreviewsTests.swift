@@ -82,4 +82,12 @@ import Testing
         #expect(items[0].joinURL?.host() == "acme.zoom.us")
         #expect(items[1].joinURL?.absoluteString == "https://meet.google.com/abc-defg-hij")
     }
+
+    @Test func oldMailShowsLoadingAndTheReaderWaitsLongerInFront() {
+        #expect(FavoritePreviews.showsCached(age: 0))
+        #expect(FavoritePreviews.showsCached(age: FavoritePreviews.maxShownAge))
+        #expect(!FavoritePreviews.showsCached(age: FavoritePreviews.maxShownAge + 1))
+        #expect(FavoritePreviews.readerIdleTimeout(appActive: true) == 600)
+        #expect(FavoritePreviews.readerIdleTimeout(appActive: false) == 120)
+    }
 }

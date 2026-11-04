@@ -1,35 +1,58 @@
 import CoreServices
 import Foundation
 
-/// Calls `onChange` on the main thread when anything under `paths` changes (files inside
+/// Calls `onChange` on the main thread with the paths that changed under `paths` (files inside
 /// subfolders included), from one FSEvents stream: nothing is polled, and changes that come close
 /// together arrive as one call `latency` seconds after the first. Paths that don't exist yet are
-/// watched for when they appear.
+/// watched for when they appear. Reported paths have symlinks resolved (/tmp is /private/tmp).
 @MainActor
 final class DirectoryWatcher {
     private final class Handler: Sendable {
-        let onChange: @MainActor @Sendable () -> Void
-        init(_ onChange: @escaping @MainActor @Sendable () -> Void) { self.onChange = onChange }
+        let onChange: @MainActor @Sendable ([String]) -> Void
+        init(_ onChange: @escaping @MainActor @Sendable ([String]) -> Void) { self.onChange = onChange }
     }
 
     private var stream: FSEventStreamRef?
     private let handler: Handler
 
-    init?(paths: [URL], latency: TimeInterval, onChange: @escaping @MainActor @Sendable () -> Void) {
+    init?(paths: [URL], latency: TimeInterval, onChange: @escaping @MainActor @Sendable ([String]) -> Void) {
         handler = Handler(onChange)
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(handler).toOpaque(),
                                            retain: nil, release: nil, copyDescription: nil)
-        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+        let callback: FSEventStreamCallback = { _, info, _, eventPaths, _, _ in
             guard let info else { return }
             let handler = Unmanaged<Handler>.fromOpaque(info).takeUnretainedValue()
-            MainActor.assumeIsolated { handler.onChange() }
+            // With kFSEventStreamCreateFlagUseCFTypes the paths come as a CFArray of CFStrings.
+            let array = Unmanaged<CFArray>.fromOpaque(eventPaths).takeUnretainedValue() as NSArray
+            let changed = (array as? [String]) ?? []
+            MainActor.assumeIsolated { handler.onChange(changed) }
         }
-        guard let stream = FSEventStreamCreate(nil, callback, &context, paths.map(\.path) as CFArray,
+        let flags = kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes
+        guard let stream = FSEventStreamCreate(nil, callback, &context, paths.map(Self.resolved) as CFArray,
                                                FSEventStreamEventId(kFSEventStreamEventIdSinceNow), latency,
-                                               FSEventStreamCreateFlags(kFSEventStreamCreateFlagNone)) else { return nil }
+                                               FSEventStreamCreateFlags(flags)) else { return nil }
         self.stream = stream
         FSEventStreamSetDispatchQueue(stream, .main)
         FSEventStreamStart(stream)
+    }
+
+    /// The path with symlinks resolved on its nearest existing ancestor: FSEvents reports real
+    /// paths, and a not-yet-existing path under /tmp would otherwise never match /private/tmp.
+    nonisolated static func resolved(_ url: URL) -> String {
+        var existing = url.standardizedFileURL
+        var rest: [String] = []
+        while !FileManager.default.fileExists(atPath: existing.path), existing.pathComponents.count > 1 {
+            rest.insert(existing.lastPathComponent, at: 0)
+            existing.deleteLastPathComponent()
+        }
+        // realpath, not resolvingSymlinksInPath, which maps /private/tmp back to /tmp.
+        var result = existing
+        if let real = realpath(existing.path, nil) {
+            result = URL(fileURLWithPath: String(cString: real))
+            free(real)
+        }
+        for component in rest { result.appendPathComponent(component) }
+        return result.path
     }
 
     /// Stops the stream; no calls come after this.

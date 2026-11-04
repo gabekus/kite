@@ -50,12 +50,14 @@ final class ClaudeCodeSessionsController {
     @ObservationIgnored private var runs: [String: Run] = [:]
     @ObservationIgnored private var watcher: DirectoryWatcher?
     @ObservationIgnored private var refreshing = false
-    /// A change came in while a listing ran: list again once it's done.
+    /// A change came in while a listing ran: list again once it's done (no sooner than 2 seconds on).
     @ObservationIgnored private var refreshAgain = false
+    @ObservationIgnored private var lastListing: Date?
+    @ObservationIgnored private var trailingListing: DispatchWorkItem?
     /// The bar is open, in `barWindow`.
     @ObservationIgnored private var barOpen = false
     @ObservationIgnored private weak var barWindow: NSWindow?
-    @ObservationIgnored private var watchObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var watchObserver: NSObjectProtocol?
     /// Each loaded conversation's transcript date, so a poll reloads only what changed.
     @ObservationIgnored private var loadedDates: [String: Date] = [:]
     /// Each shown conversation's place in its transcript, so a reload reads only what was added.
@@ -102,52 +104,89 @@ final class ClaudeCodeSessionsController {
     /// Changes under the watched folders come in this long after the first one, together.
     static let watchLatency: TimeInterval = 0.5
 
-    /// While the bar is open in `window`, the list and the shown conversation follow the transcripts:
-    /// an FSEvents stream on them, not a poll, and none while Kite is in the background or the window
-    /// is covered. Opening the bar or coming back lists them again.
+    /// While the bar is open and its window can be seen, the list and the shown conversation follow
+    /// the transcripts: an FSEvents stream on them, not a poll, listing again at most every 2 seconds
+    /// and only for changes to sessions' transcripts. Kite needn't be in front (Claude Code in a
+    /// terminal beside it), but a covered or minimized window stops watching. Opening the bar or the
+    /// window showing again lists them again.
     func setVisible(_ visible: Bool, in window: NSWindow?) {
         let opened = visible && !barOpen
         barOpen = visible
         barWindow = window
-        watchObservers.forEach(NotificationCenter.default.removeObserver)
-        watchObservers = []
-        if visible {
-            let names: [(Notification.Name, AnyObject?)] = [
-                (NSApplication.didBecomeActiveNotification, nil), (NSApplication.didResignActiveNotification, nil),
-                (NSWindow.didChangeOcclusionStateNotification, window),
-            ]
-            watchObservers = names.map { name, object in
-                NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.updateWatching() }
-                }
+        removeWatchObservers()
+        if visible, let window {
+            watchObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateWatching() }
             }
         }
         updateWatching()
-        // Watching lists them as it starts; opened in the background, the bar still gets one listing.
+        // Watching lists them as it starts; opened in a covered window, the bar still gets one listing.
         if opened, watcher == nil { refresh() }
     }
 
+    private func removeWatchObservers() {
+        if let watchObserver { NotificationCenter.default.removeObserver(watchObserver) }
+        watchObserver = nil
+    }
+
+    isolated deinit {
+        removeWatchObservers()
+        watcher?.stop()
+    }
+
+    /// KITE_TEST_ASSUME_VISIBLE=1 (test profiles only): watch as if the window could be seen, since a
+    /// background test window is always covered.
+    private static let assumeVisible = UIDiagnostics.enabledByEnvironment
+        && ProcessInfo.processInfo.environment["KITE_TEST_ASSUME_VISIBLE"] == "1"
+
     private var shouldWatch: Bool {
-        barOpen && NSApp.isActive && (barWindow?.occlusionState.contains(.visible) ?? true)
+        guard barOpen, let barWindow else { return false }
+        return Self.assumeVisible || barWindow.occlusionState.contains(.visible)
     }
 
     private func updateWatching() {
         guard shouldWatch else {
             watcher?.stop()
             watcher = nil
+            trailingListing?.cancel()
+            trailingListing = nil
             return
         }
         guard watcher == nil else { return }
-        watcher = DirectoryWatcher(paths: ClaudeCodeSessions.watchedDirectories(home: home), latency: Self.watchLatency) { [weak self] in
-            self?.refresh()
+        let projects = DirectoryWatcher.resolved(ClaudeCodeSessions.projectsDirectory(home: home))
+        let desktop = DirectoryWatcher.resolved(ClaudeDesktopSessions.directory(home: home))
+        let excluding = kiteDirectories.map { DirectoryWatcher.resolved(URL(fileURLWithPath: $0)) } + kiteDirectories
+        watcher = DirectoryWatcher(paths: ClaudeCodeSessions.watchedDirectories(home: home), latency: Self.watchLatency) { [weak self] paths in
+            guard paths.contains(where: { ClaudeCodeSessions.isListingChange($0, projects: projects, desktop: desktop, excluding: excluding) })
+            else { return }
+            self?.listSoon()
         }
         refresh()
+    }
+
+    /// A transcript changed: lists again now, or 2 seconds after the last listing started (one call
+    /// for everything that changed in between).
+    private func listSoon() {
+        guard trailingListing == nil else { return }
+        let delay = ClaudeCodeSessions.listingDelay(lastStarted: lastListing)
+        if delay == 0, !refreshing { return refresh() }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.trailingListing = nil
+            if self.refreshing { self.refreshAgain = true } else { self.refresh() }
+        }
+        trailingListing = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(delay, 0.05), execute: work)
     }
 
     /// Lists the sessions again (off the main thread), and reloads the shown one if it changed.
     func refresh() {
         guard !refreshing else { refreshAgain = true; return }
         refreshing = true
+        lastListing = Date()
+        if UIDiagnostics.enabledByEnvironment { NSLog("Kite: Claude Code sessions listing") }
         let home = home, pinnedIDs = pins.pinned, excluding = kiteDirectories, previous = desktop
         let known = Dictionary((pinned + recent + [shown].compactMap { $0 }).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let shownID = selectedID
@@ -162,9 +201,10 @@ final class ClaudeCodeSessionsController {
     private func listed(_ list: (pinned: [ClaudeCodeSession], recent: [ClaudeCodeSession], shown: ClaudeCodeSession?),
                         desktop: ClaudeDesktopSessions.Index) {
         refreshing = false
+        // A change during the listing waits out the 2 seconds too, rather than listing straight again.
         if refreshAgain {
             refreshAgain = false
-            DispatchQueue.main.async { [weak self] in self?.refresh() }
+            listSoon()
         }
         self.desktop = desktop
         if pinned != list.pinned { pinned = list.pinned }
@@ -296,9 +336,11 @@ final class ClaudeCodeSessionsController {
         let placeholder = Run(process: Process())
         runs[id] = placeholder
         updateRunning()
+        let home = home
         Task.detached { [weak self] in
             let claude = ClaudeConnect.findClaude()
-            let environment = ClaudeTasksController.environment()
+            let environment = ClaudeCodeSessions.processEnvironment(ClaudeTasksController.environment(),
+                                                                    environment: ProcessInfo.processInfo.environment, home: home)
             await self?.spawn(id, claude: claude, arguments: arguments, environment: environment,
                               directory: folder, prompt: prompt, placeholder: placeholder)
         }
