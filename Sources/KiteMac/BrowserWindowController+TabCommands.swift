@@ -11,8 +11,7 @@ extension BrowserWindowController {
 
     /// Tabs › New Folder… (Arc's `newList:`, id newFolder): the sidebar's New Folder, in the selected space.
     @objc func newFolder(_ sender: Any?) {
-        let index = store.state.selectedSpaceIndex
-        store.mutate { _ = $0.createFolder(name: "New Folder", inSpace: index) }
+        store.mutate { $0.createNewFolder() }
     }
 
     @objc func clearToday(_ sender: Any?) {

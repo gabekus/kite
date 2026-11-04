@@ -122,6 +122,12 @@ extension BrowserState {
         return folder.id
     }
 
+    /// The user's New Folder (Tabs › New Folder…, the + menu, a space's right-click menu): an empty
+    /// "New Folder" at the end of the pinned section of `index`, else of the selected space.
+    public mutating func createNewFolder(inSpace index: Int? = nil) {
+        _ = createFolder(name: "New Folder", inSpace: index ?? selectedSpaceIndex)
+    }
+
     /// Moves a space tab (pinned or not) into a folder, which pins it there. Favorites stay put.
     /// Returns false when the tab or folder doesn't exist, or the tab is a favorite.
     @discardableResult

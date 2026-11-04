@@ -12,7 +12,11 @@ enum MenuKeyDispatch {
         let flags = event.modifierFlags.intersection(modifiers)
         let key = event.charactersIgnoringModifiers?.lowercased()
         for item in menu.items {
-            if let submenu = item.submenu, let found = Self.item(matching: event, in: submenu) { return found }
+            // Services are AppKit's (each service's own shortcut): never matched as a Kite command.
+            if let submenu = item.submenu {
+                if submenu !== NSApp.servicesMenu, let found = Self.item(matching: event, in: submenu) { return found }
+                continue
+            }
             guard !item.keyEquivalent.isEmpty, item.keyEquivalent.lowercased() == key else { continue }
             var mask = item.keyEquivalentModifierMask.intersection(modifiers)
             if item.keyEquivalent != item.keyEquivalent.lowercased() { mask.insert(.shift) }

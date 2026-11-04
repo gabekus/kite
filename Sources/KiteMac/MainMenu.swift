@@ -142,8 +142,13 @@ enum MainMenu {
             // Arc's Arc menu: "Check for Updates…", no shortcut, last item before Services (read from its menu bar).
             item("Check for Updates…", #selector(AppDelegate.checkForUpdates(_:)), toTarget: false, id: "checkForUpdates"),
             .separator(),
-            // Arc 1.171: Services between Check for Updates… and Hide (AppDelegate makes it NSApp.servicesMenu).
-            submenuItem("Services", []),
+            // Arc 1.171: Services between Check for Updates… and Hide. AppKit fills it; Kite's own key matching,
+            // shortcut overrides and `ui menu` skip it (NSApp.servicesMenu).
+            {
+                let services = submenuItem("Services", [])
+                NSApp.servicesMenu = services.submenu
+                return services
+            }(),
             .separator(),
             item("Hide Kite", #selector(NSApplication.hide(_:)), "h", toTarget: false, id: "hideKite"),
             // Arc 1.171: "Hide Other Windows" (MainMenu.nib title; "Hide Others" is its type-travel trigger).
@@ -445,11 +450,9 @@ enum MainMenu {
             commandBarOnly(item(MuteAllTabs.title(mute: true), #selector(BrowserWindowController.muteAllTabs(_:)), id: "muteAllTabs")),
             commandBarOnly(item(MuteAllTabs.title(mute: false), #selector(BrowserWindowController.unmuteAllTabs(_:)), id: "unmuteAllTabs")),
         ] + (1...9).map { n in
-            // Not in Arc 1.171's Tabs menu (its menu ends at Reset all tabs in this Space): hidden, ⌘1–9 still work.
-            let tab = item(n == 9 ? "Last Tab" : "Tab \(n)", #selector(BrowserWindowController.selectTabNumber(_:)), "\(n)", tag: n, id: n == 9 ? "lastTab" : "tab\(n)")
-            tab.isHidden = true
-            tab.allowsKeyEquivalentWhenHidden = true
-            return tab
+            // Not in Arc 1.171's Tabs menu (its menu ends at Reset all tabs in this Space): hidden, but ⌘1–9 and
+            // the command bar still find them.
+            commandBarOnly(item(n == 9 ? "Last Tab" : "Tab \(n)", #selector(BrowserWindowController.selectTabNumber(_:)), "\(n)", tag: n, id: n == 9 ? "lastTab" : "tab\(n)"))
         })
 
         // Arc's "Archive" menu (history), after Spaces and Tabs.
