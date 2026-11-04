@@ -365,18 +365,36 @@ import Testing
         #expect(throws: ArcImport.Failure.noSpaces) { try ArcImport.parse(empty) }
     }
 
-    /// One space whose pinned section is item 10 and unpinned section item 11; `items` are the rest.
-    private static func sidebar(_ items: [[String: Any]]) throws -> ArcImport.Result {
-        let space: [String: Any] = ["id": id(1), "title": "Space", "containerIDs": ["pinned", id(10), "unpinned", id(11)]]
+    /// Spaces whose pinned section is item n·10 and unpinned section item n·10 + 1, in Arc
+    /// profile folder `profiles[n]` (Default if none); `items` are the rest.
+    private static func sidebar(_ items: [[String: Any]], spaces: [Int] = [1], profiles: [Int: String] = [:],
+                                favorites: [Any] = []) throws -> ArcImport.Result {
+        var spaceList: [Any] = []
+        for n in spaces {
+            var profile: [String: Any] = ["default": true]
+            if let folder = profiles[n] { profile = ["custom": ["_0": ["directoryBasename": folder, "machineID": "m"]]] }
+            let space: [String: Any] = [
+                "id": id(n), "title": "Space \(n)", "profile": profile,
+                "containerIDs": ["pinned", id(n * 10), "unpinned", id(n * 10 + 1)],
+            ]
+            spaceList += [id(n), space]
+        }
         let root: [String: Any] = ["sidebar": ["containers": [[
-            "spaces": [id(1), space],
+            "spaces": spaceList,
             "items": items.flatMap { [$0["id"]!, $0] },
+            "topAppsContainerIDs": favorites,
         ]]]]
         return try ArcImport.parse(JSONSerialization.data(withJSONObject: root))
     }
 
-    private static func folder(_ n: Int, children: [Int]) -> [String: Any] {
-        node(n, kind: ["list": [:]], title: "Folder \(n)", children: children)
+    private static func folder(_ n: Int, parent: Int? = nil, children: [Int]) -> [String: Any] {
+        var folder = node(n, kind: ["list": [:]], title: "Folder \(n)", children: children)
+        if let parent { folder["parentID"] = id(parent) }
+        return folder
+    }
+
+    private static func split(_ n: Int, children: [Int]) -> [String: Any] {
+        node(n, kind: ["splitView": ["layoutOrientation": "horizontal"]], children: children)
     }
 
     private static func container(_ n: Int, children: [Int]) -> [String: Any] {
@@ -387,7 +405,7 @@ import Testing
         let result = try Self.sidebar([
             Self.container(10, children: [100, 101]),
             Self.tab(100, parent: 10),
-            Self.folder(101, children: [101, 102]),
+            Self.folder(101, parent: 101, children: [101, 102]),
             Self.tab(102, parent: 101),
             Self.container(11, children: []),
         ])
@@ -400,13 +418,15 @@ import Testing
         #expect(folder.items.count == 1)
         #expect(result.folderCount == 1)
         #expect(result.tabCount == 2)
+        #expect(result.notes == ["Skipped 1 repeated or circular sidebar entry."])
     }
 
     @Test func aTwoCycleImportsEachFolderOnce() throws {
         let result = try Self.sidebar([
+            // Each folder's parentID names the other, so neither may claim the other first.
             Self.container(10, children: [101]),
-            Self.folder(101, children: [102, 103]),
-            Self.folder(102, children: [101, 104]),
+            Self.folder(101, parent: 102, children: [102, 103]),
+            Self.folder(102, parent: 101, children: [101, 104]),
             Self.tab(103, parent: 101),
             Self.tab(104, parent: 102),
             // The same cycle outside the pinned section, where folders flatten.
@@ -430,6 +450,24 @@ import Testing
         #expect(space.tabs.map(\.title) == ["Site 114", "Site 113"])
         #expect(result.folderCount == 2)
         #expect(result.tabCount == 4)
+        #expect(result.notes == ["Skipped 2 repeated or circular sidebar entries."])
+    }
+
+    @Test func aCycleThroughASplitImportsEachTabOnce() throws {
+        // Split 400 holds tab 401 and folder 402, which lists the split again.
+        let result = try Self.sidebar([
+            Self.container(10, children: [400]),
+            Self.split(400, children: [401, 402]),
+            Self.tab(401, parent: 400),
+            Self.folder(402, children: [400, 403]),
+            Self.tab(403, parent: 402),
+            Self.container(11, children: []),
+        ])
+        let space = result.spaces[0]
+        #expect(space.pinnedItems.tabs.map(\.title) == ["Site 401", "Site 403"])
+        #expect(space.splits.map(\.tabIDs) == [space.pinnedItems.tabs.map(\.id)])
+        #expect(result.tabCount == 2)
+        #expect(result.notes == ["Skipped 1 repeated or circular sidebar entry."])
     }
 
     @Test func aChildListedTwiceImportsOnce() throws {
@@ -451,6 +489,50 @@ import Testing
         #expect(space.tabs.map(\.title) == ["Site 110", "Site 240"])
         #expect(Set(space.allTabs.map(\.id)).count == space.allTabs.count)
         #expect(result.tabCount == 4)
+        #expect(result.notes == ["Skipped 44 repeated or circular sidebar entries."])
+    }
+
+    @Test func aChildListedUnderTwoParentsGoesToItsParentID() throws {
+        // Tab 100 was moved from space 1's folder to space 2's, and the old listing stayed.
+        let result = try Self.sidebar([
+            Self.container(10, children: [101]),
+            Self.folder(101, children: [100]),
+            Self.container(11, children: []),
+            Self.container(20, children: [201]),
+            Self.folder(201, children: [100]),
+            Self.tab(100, parent: 201),
+            Self.container(21, children: []),
+        ], spaces: [1, 2])
+        guard result.spaces.count == 2,
+              case .folder(let old)? = result.spaces[0].pinnedItems.first,
+              case .folder(let current)? = result.spaces[1].pinnedItems.first
+        else {
+            Issue.record("unexpected spaces: \(result.spaces)")
+            return
+        }
+        #expect(old.items.isEmpty)
+        #expect(current.items.tabs.map(\.title) == ["Site 100"])
+        #expect(result.tabCount == 1)
+        #expect(result.notes == ["Skipped 1 repeated or circular sidebar entry."])
+    }
+
+    @Test func profilesSharingAFavoritesGridBothGetIt() throws {
+        let favorites: [Any] = [
+            ["default": true], Self.id(30),
+            ["custom": ["_0": ["directoryBasename": "Profile 3"]]], Self.id(30),
+        ]
+        let result = try Self.sidebar([
+            Self.container(10, children: []),
+            Self.container(11, children: []),
+            Self.container(20, children: []),
+            Self.container(21, children: []),
+            Self.container(30, children: [300]),
+            Self.tab(300, parent: 30),
+        ], spaces: [1, 2], profiles: [2: "Profile 3"], favorites: favorites)
+        #expect(result.profiles == ["Default", "Profile 3"])
+        #expect(result.favoritesByProfile["Default"]?.map(\.title) == ["Site 300"])
+        #expect(result.favoritesByProfile["Profile 3"]?.map(\.title) == ["Site 300"])
+        #expect(result.notes.isEmpty)
     }
 
     @Test func aVeryDeepChainStopsAtTheCap() throws {
@@ -473,6 +555,34 @@ import Testing
         #expect(level.isEmpty)
         #expect(result.folderCount == ArcImport.maxDepth)
         #expect(result.spaces[0].tabs.map(\.title) == ["Site \(1000 + depth + 1)"])
+        // Every folder below the cap, and the tab at the bottom.
+        let cut = depth - ArcImport.maxDepth + 1
+        #expect(result.notes == ["\(cut) items nested more than \(ArcImport.maxDepth) levels deep were left out."])
+    }
+
+    @Test func aSplitInAFolderAtTheCap() throws {
+        // Folders down to level 61. The last holds split 2000 (level 62, its tabs at 63: kept)
+        // and folder 1062 (level 62), whose split 3000 puts its tabs at 64, past the cap.
+        #expect(ArcImport.maxDepth == 64)
+        let chain = (0..<61).map { Self.folder(1000 + $0, children: [1001 + $0]) }
+        let result = try Self.sidebar([
+            Self.container(10, children: [1000]),
+            Self.folder(1061, children: [2000, 1062]),
+            Self.split(2000, children: [2001, 2002]),
+            Self.tab(2001, parent: 2000),
+            Self.tab(2002, parent: 2000),
+            Self.folder(1062, children: [3000]),
+            Self.split(3000, children: [3001, 3002]),
+            Self.tab(3001, parent: 3000),
+            Self.tab(3002, parent: 3000),
+            Self.container(11, children: []),
+        ] + chain)
+        let space = result.spaces[0]
+        #expect(space.pinnedItems.tabs.map(\.title) == ["Site 2001", "Site 2002"])
+        #expect(space.splits.map(\.tabIDs) == [space.pinnedItems.tabs.map(\.id)])
+        #expect(result.splitCount == 1)
+        #expect(result.folderCount == 63)
+        #expect(result.notes == ["2 items nested more than 64 levels deep were left out."])
     }
 
     /// Runs against a real Arc file when KITE_ARC_SIDEBAR points at one. Prints counts only.
