@@ -155,7 +155,9 @@ DirectComposition are untouched; CEF's callbacks reach Kite's thread through
 stay synchronous between the threads, because a child window on another
 thread shares its parent's input (focus and DPI changes, destroying the
 window), until W10 removes the child windows. A second
-launch hands over to the running Kite (Chromium allows one per profile). Profiles sit where the Mac keeps them: `<support>\Chromium`
+launch hands over to the running Kite (Chromium allows one per profile). Kite.exe's command
+line is Kite's alone: CEF never reads it as Chromium switches (`command_line_args_disabled`),
+and an unknown option, `-` or `/`, is an error. Profiles sit where the Mac keeps them: `<support>\Chromium`
 is `root_cache_path`, the default profile is `Chromium\Default`, and a
 space's other profile gets its own request context in `Chromium\<directory>`.
 Popups and `target=_blank` links open as tabs that keep `window.opener`, as
