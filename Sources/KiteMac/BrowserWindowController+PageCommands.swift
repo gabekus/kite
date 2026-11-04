@@ -43,6 +43,15 @@ extension BrowserWindowController {
         }
     }
 
+    /// Edit › Find › Jump to Selection: scrolls the page's selection to the middle of the view. Chromium's view
+    /// takes AppKit's centerSelectionInVisibleArea: but doesn't scroll, so a script does it (PageFocusScript).
+    @objc func jumpToSelection(_ sender: Any?) {
+        guard let page = shownPage else { return NSSound.beep() }
+        page.evaluateJavaScript(PageFocusScript.jumpToSelection) { result in
+            if result as? Bool != true { NSSound.beep() }
+        }
+    }
+
     /// Closes the find bar and clears highlights. Called when the shown tab changes too, where
     /// Arc drops the ask card at once; closing it (Esc, close) slides it up.
     func hideFindBar(animated: Bool = false) {

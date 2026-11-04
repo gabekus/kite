@@ -9,6 +9,11 @@ extension BrowserWindowController {
     /// Tabs › Tab Switcher (backward) ⌃⇧Tab: the same, starting from the least recent tab.
     @objc func cycleToPreviousRecentTab(_ sender: Any?) { tabSwitcher.cycle(forward: false) }
 
+    /// Tabs › New Folder… (Arc's `newList:`, id newFolder): the sidebar's New Folder, in the selected space.
+    @objc func newFolder(_ sender: Any?) {
+        store.mutate { $0.createNewFolder() }
+    }
+
     @objc func clearToday(_ sender: Any?) {
         clearToday(inSpace: store.state.selectedSpace.id)
     }

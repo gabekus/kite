@@ -236,7 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Links from other apps and opened HTML files, each in a new tab.
+    /// Links from other apps and opened HTML and PDF files, each in a new tab.
     func application(_ application: NSApplication, open urls: [URL]) {
         if store == nil {
             pendingURLs += urls

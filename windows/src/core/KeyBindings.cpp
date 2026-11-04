@@ -297,7 +297,7 @@ std::string ShortcutPriorityGate::Prompt(const KeyShortcut& shortcut, std::strin
 // MARK: Windows' commands
 
 const std::vector<ShortcutCommand>& ShortcutCommands() {
-    // The Mac's MainMenu items Kite for Windows has, in its menus' order, ⌘ made Ctrl.
+    // The Mac's MainMenu items Kite for Windows has, grouped by menu (not always in the Mac's current order), ⌘ made Ctrl.
     static const std::vector<ShortcutCommand> commands = [] {
         std::vector<ShortcutCommand> c{
             {"newTab", "New Tab…", Ctrl("t")},

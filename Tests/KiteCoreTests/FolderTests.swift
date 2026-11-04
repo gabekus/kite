@@ -34,6 +34,17 @@ import Testing
         #expect(again.isEmpty)
     }
 
+    @Test func newFolderGoesToTheSelectedSpaceUnlessOneIsGiven() {
+        var state = BrowserState(spaces: [Space(name: "Home", icon: "🏠", theme: Theme.presets[0]),
+                                          Space(name: "Work", icon: "💼", theme: Theme.presets[0])])
+        state.selectSpace(at: 1)
+        state.createNewFolder()
+        state.createNewFolder(inSpace: 0)
+        state.createNewFolder(inSpace: 0)
+        #expect(state.folders(inSpace: 1).map(\.name) == ["New Folder"])
+        #expect(state.folders(inSpace: 0).map(\.name) == ["New Folder", "New Folder"])
+    }
+
     @Test func deletingAnEmptyFolderArchivesNothing() {
         var state = BrowserState(spaces: [Space(name: "Home", icon: "🏠", theme: Theme.presets[0])])
         let folder = state.createFolder(name: "Empty", inSpace: 0)

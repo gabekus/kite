@@ -315,7 +315,7 @@ enum SpaceContextMenus {
         menu.addSeparator()
         menu.add("New Folder") {
             guard let index = store.state.spaceIndex(spaceID) else { return }
-            store.mutate { _ = $0.createFolder(name: "New Folder", inSpace: index) }
+            store.mutate { $0.createNewFolder(inSpace: index) }
         }
         // Arc's binary lists Live Folders right after New Folder.
         if let controller = LiveFoldersController.shared, let index = store.state.spaceIndex(spaceID) {

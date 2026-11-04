@@ -70,7 +70,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Delete | | ✅ | |
 | Find… / Find Next / Find Previous | ⌘F / ⌘G / ⇧⌘G | ✅ find bar (match count on Chromium) as Arc's `FindInPageView` (g129, Arc 1.171 binary and assets): 300×32, 10pt from the content card's top-right corner, corner radius 5, Arc's light/dark `PopoverBackground` and text colours, 18pt divider, blur-5 `PopoverShadow`; "Not Found" in `FindInPageError` red when nothing matches; appears and goes without animation, as in Arc | Arc moves it to 50pt from the top when a top bar panel shows (Kite has none) |
 | Find and Replace | ⌥⌘F | ✅ Edit › Find, after Find…. As in Arc it is off on web pages and in Kite's fields: Arc enables it only in its Notes editor, which Kite doesn't have (g78) | |
-| Use Selection to Find / Jump to Selection | ⌘E / ⌘J | 🟡 ⌘E only | ⌘J later |
+| Use Selection to Find / Jump to Selection | ⌘E / ⌘J | ✅ Edit › Find › Jump to Selection, with no key (⌘J is Ask Claude): a page script centres the selection's first line, or the focused text field, through nested scrolling boxes (Chromium's view ignores AppKit's `centerSelectionInVisibleArea:`) | Selections inside iframes |
 | Spelling, Substitutions, Transformations, Speech, Format, AutoFill, Dictation, Emoji | system | ✅ Arc's items. Substitutions › Data Detectors (g81). Format › Font › Bold ⌘B / Italic ⌘I / Underline ⌘U (g79): a page sees the key first, WebKit pages also take the menu items, Chromium pages only the keys, as in Arc. AutoFill › Contact… / Passwords… (g80) come from AppKit, as in Arc: native fields only | |
 
 ### View
@@ -121,15 +121,15 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
 | New Tab… / Pin Tab (Unpin Tab) | ⌘T / ⌘D | ✅ Tabs menu opens with New Tab… (same command and shortcut as File's); Pin Tab / Unpin Tab by state (g75) | |
-| New Folder… | | 🟡 imported folders only | B3 |
+| New Folder… | | ✅ Tabs › New Folder… after Pin Tab, no key (Arc's `newList:`, id `newFolder`): the sidebar's New Folder in the selected space; also in the command bar | |
 | Next / Previous Tab | ⌥⌘↓ / ⌥⌘↑ | ✅ | |
 | Tab Switcher (forward / backward) | ⌃Tab / ⌃⇧Tab | ✅ hold ⌃ to cycle deeper through the space's recent tabs in Arc's "Recent Items" overlay (0.1 s delay, commit on ⌃ release, Esc, ← →, W closes, click picks) | Split items as one card per pane, exact card width and colours unverified |
-| Tab 1…8, last tab | ⌘1…⌘9 | ✅ | |
+| Tab 1…8, last tab | ⌘1…⌘9 | ✅ hidden from the Tabs menu as in Arc 1.171; the keys and the command bar still work | |
 | Reveal Tab in Sidebar | | ✅ shows the sidebar, opens enclosing folders, scrolls to the row | Arc's highlight on reveal unverified |
 | Clear Today (unpinned tabs) | ⇧⌘K | ✅ archives them, with a toast | |
 | Reset all tabs in this Space (pinned back to their saved URL) | | ✅ | |
 | Pinned tab: "back to pinned URL" / reset | | 🟡 hover button, context menu (with Separate From Pinned Tab), hidden `resetTab` command; Edit Pinned Page › Edit… (Edit Pinned URL dialog) and Replace Pinned URL with Current on pinned tabs and favorites; command bar "Replace Pin with Current Page" (Arc's `replacePinnedTab`, also "Replace Pinned Tab with the Current Site"), offered once the tab has left its pinned page (g106) | Arc's icon and placement unverified; when Arc offers Replace Pin in the command bar is inferred |
-| Duplicate tab, move tab to space | context menu | 🟡 Duplicate Tab in the Tabs menu | Move to space with the sidebar work |
+| Duplicate tab, move tab to space | context menu | 🟡 Duplicate Tab and Rename Current Tab… in the command bar only, out of the menu bar as in Arc 1.171 | Move to space with the sidebar work |
 | Drag tabs between spaces / into folders | gesture | ❌ | Roadmap (other session owns sidebar) |
 
 ### Archive (history)
