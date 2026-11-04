@@ -19,11 +19,17 @@
       "holds": "Ctrl+T's bar with \"recipe\" typed: the DuckDuckGo search highlighted, then three pages from history, Pasta Carbonara Recipe — recipes.example/pasta-carbonara, recipes.example (no subtitle: it has no title), Recipe Index: Weeknight Dinners — blog.example/2026/01/recipe-index; no tab rows (no open tab matches)",
       "steps": [
         {
+          "ui": "tree",
+          "args": {
+            "match": "NewTabRowCell"
+          }
+        },
+        {
           "ui": "input",
           "args": {
             "click": [
               100,
-              258
+              406
             ]
           }
         },
