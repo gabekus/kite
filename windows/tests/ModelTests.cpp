@@ -124,16 +124,18 @@ TEST(makeDefaultHasPersonalAndWork) {
 }
 
 // Ids are the model's identity, so a generator that repeats (Zen 5's RDSEED handing back zeros)
-// breaks everything that looks a tab up. Every id stays a valid v4 UUID and none repeats.
+// breaks everything that looks a tab up. Every id stays a valid v4 UUID and none repeats; this
+// is the regression guard on affected hardware, where sanitizers see nothing wrong.
 TEST(newUuidsAreDistinct) {
     std::set<std::string> ids;
     bool allValid = true;
     for (int i = 0; i < 1000; ++i) {
         std::string id = NewUuid();
-        allValid = allValid && IsUuid(id) && id[14] == '4';
+        allValid = allValid && IsUuid(id) && id[14] == '4' && std::string("89abAB").find(id[19]) != std::string::npos;
         ids.insert(id);
     }
-    CHECK(allValid && ids.size() == 1000);
+    CHECK(allValid);
+    CHECK(ids.size() == 1000);
 }
 
 // KiteCoreTests.swift BrowserStateTests.openTabSelectsAndGoesOnTop

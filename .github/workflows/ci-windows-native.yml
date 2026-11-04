@@ -33,16 +33,19 @@ jobs:
           cmake --build /tmp/kite-core -j
           ctest --test-dir /tmp/kite-core --output-on-failure --timeout 120
       - name: Core tests under ASan and UBSan (GCC, Linux)
-        # Undefined behaviour MSVC hides (a dangling view, a read past an end, signed overflow)
-        # fails here instead of flaking. The runner's 32-bit mmap randomization breaks ASan's
-        # shadow memory, so it's narrowed first.
+        # A general guard against undefined behaviour MSVC hides (a dangling view, a read past an
+        # end, signed overflow): it fails here instead of flaking. It can't catch a bad entropy
+        # source such as Zen 5's RDSEED; newUuidsAreDistinct guards that. The runner's kernel uses
+        # 32 bits of mmap randomization (vm.mmap_rnd_bits), which GCC 13's ASan can't map its
+        # shadow memory around, so it's narrowed first; the sysctl can go once the runner's GCC
+        # is 14 or newer.
         run: |
           sudo sysctl -q vm.mmap_rnd_bits=28
-          cmake -S windows -B /tmp/kite-asan -DCMAKE_BUILD_TYPE=Debug \
+          cmake -S windows -B /tmp/kite-asan -DCMAKE_BUILD_TYPE=Debug -DKITE_WERROR=OFF \
             -DCMAKE_CXX_FLAGS="-O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           cmake --build /tmp/kite-asan --target KiteCoreTests -j
-          /tmp/kite-asan/KiteCoreTests
+          ctest --test-dir /tmp/kite-asan -R KiteCoreTests --output-on-failure --timeout 120
       - name: Golden backdrop fixture is current
         # The CPU reference must write exactly the file the Mac's Kite.metal is tested against;
         # after a deliberate shader change, regenerate it with this target.
