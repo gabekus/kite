@@ -363,6 +363,9 @@ struct Occlusion::Worker {
         if (const HWND front = GetForegroundWindow()) GetWindowThreadProcessId(front, &foreground);
         pass.kiteForeground = foreground == kiteProcess;
         React(tracker.SetCloaked(Cloaked(kite)));
+        // Locked or the display off: the windows can't change the verdict (the end of it asks
+        // for a pass).
+        if (tracker.Suspended()) return;
         visiblePixels = -1;
         occluderCount = 0;
         previewing = false;

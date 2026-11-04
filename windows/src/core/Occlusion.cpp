@@ -144,13 +144,14 @@ Tracker::Reaction Tracker::SetCloaked(bool cloaked) {
     return {!cloaked, true};
 }
 
-Tracker::Reaction Tracker::KiteChanged() { return {true, false}; }
+Tracker::Reaction Tracker::KiteChanged() { return {!Suspended(), false}; }
 
 bool Tracker::NeedsOverKite(Event event) const {
     return !pass_.covered && (event == Event::Show || event == Event::Uncloaked || event == Event::LocationChange);
 }
 
 Tracker::Reaction Tracker::OnEvent(const EventFacts& e) {
+    if (Suspended()) return {};
     const bool covered = pass_.covered;
     switch (e.event) {
     case Event::Foreground:
@@ -224,6 +225,7 @@ Hidden Tracker::Verdict() const {
 
 ProcessHooks Tracker::Hooks(uint32_t kiteProcess, uint32_t foregroundProcess, uint32_t shellProcess) const {
     ProcessHooks hooks;
+    if (Suspended()) return hooks;
     if (pass_.covered) {
         for (uint32_t process : pass_.occluderProcesses) {
             if (process == 0 || process == kiteProcess) continue;

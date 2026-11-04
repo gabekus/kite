@@ -1054,6 +1054,8 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         started != Chromium::StartResult::Started) {
         return started;
     }
+    // A verdict that came before Chromium did.
+    chromium_->SetOccluded(occluded_);
     window_.onWake = [this] { chromium_->RunPending(); };
     window_.onMinimize = [this] {
         sidebar_->HideTip();

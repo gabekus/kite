@@ -258,6 +258,25 @@ TEST(onlyEventsThatCanChangeTheVerdictAskForAPass) {
     CHECK(tracker.Verdict() == Hidden::Covered);
 }
 
+TEST(lockedOrDisplayOffWatchesNothing) {
+    Tracker tracker;
+    Tracker::Pass pass;
+    pass.covered = true;
+    pass.occluders = {0x10};
+    pass.occluderProcesses = {7};
+    tracker.SetPass(pass);
+    tracker.SetDisplayOff(true);
+    CHECK(tracker.Suspended());
+    CHECK(tracker.Hooks(1, 2, 3) == ProcessHooks{});
+    CHECK(!tracker.OnEvent({Event::Hide, false, false, true}).recompute);
+    CHECK(!tracker.OnEvent({Event::Foreground, false}).recompute);
+    CHECK(!tracker.KiteChanged().recompute);
+    const Tracker::Reaction on = tracker.SetDisplayOff(false);
+    CHECK(on.recompute && on.reevaluate);
+    CHECK(!tracker.Suspended());
+    CHECK(tracker.Hooks(1, 2, 3) == (ProcessHooks{{7}, {3, 7}}));
+}
+
 TEST(theHooksFollowWhatCanChangeTheVerdict) {
     Tracker tracker;
     constexpr uint32_t kite = 1, foreground = 2, shell = 3;

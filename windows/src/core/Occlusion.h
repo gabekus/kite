@@ -139,7 +139,7 @@ public:
     Reaction SetCloaked(bool cloaked);
     // Kite's window moved, resized, was minimized or restored.
     Reaction KiteChanged();
-    Reaction OnEvent(const EventFacts& facts);
+    Reaction OnEvent(const EventFacts& facts);  // ignored while Suspended
     // Whether OnEvent needs `overKite` for this event: only for what could newly cover a
     // visible Kite, so the shell asks for a window's rect only then.
     bool NeedsOverKite(Event event) const;
@@ -158,6 +158,10 @@ public:
     void SetPass(Pass pass);
 
     Hidden Verdict() const;
+    // Locked or the display off: nothing on screen can change the verdict, so events are
+    // ignored, no process is hooked and no pass looks at the windows until it ends (which asks
+    // for a pass).
+    bool Suspended() const { return locked_ || displayOff_; }
     ProcessHooks Hooks(uint32_t kiteProcess, uint32_t foregroundProcess, uint32_t shellProcess) const;
     bool IsOccluder(uintptr_t window) const { return pass_.occluders.contains(window); }
     bool covered() const { return pass_.covered; }
