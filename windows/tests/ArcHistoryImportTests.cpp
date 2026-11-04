@@ -145,16 +145,19 @@ TEST(ArcHistoryImport_urlsAreKeptAsTheMacsURLReadsThem) {
     auto read = ReadChromiumHistory(pages);
     CHECK(read);
     if (!read) return;
-    CHECK(read->rows == 3 && read->sameURL == 1 && read->notWebPages == 0 && read->entries.size() == 2);
-    if (read->entries.size() != 2) return;
+    CHECK(read->rows == 4 && read->sameURL == 1 && read->notWebPages == 0 && read->entries.size() == 3);
+    if (read->entries.size() != 3) return;
     const HistoryEntry& pipes = read->entries[0];
     CHECK(pipes.url == "https://pipes.example.test/a%7Cb?q=%7Bx%7D" && pipes.title == "Raw" && pipes.visitCount == 5 &&
           pipes.lastVisit == History::ChromiumDate(At(20)));
     CHECK(read->entries[1].url == History::Normalized("https://braces.example.test/{id}#a|b") &&
           read->entries[1].url.find_first_of("{}|") == std::string::npos);
+    // NSURL's rule is per part: a part that needs any encoding is encoded whole, its % too.
+    CHECK(read->entries[2].url == "https://pct.example.test/a%2520b%7Cc" &&
+          read->entries[2].url == History::Normalized("https://pct.example.test/a%20b|c"));
     // What Merge keys them by is what was read: a second import finds them.
     History history;
-    CHECK(history.Merge(read->entries) == 2 && history.Merge(read->entries) == 0);
+    CHECK(history.Merge(read->entries) == 3 && history.Merge(read->entries) == 0);
     CHECK(history.Find("https://pipes.example.test/a%7Cb?q=%7Bx%7D"));
 }
 

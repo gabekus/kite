@@ -97,6 +97,8 @@ def fixture():
     add(db, "https://pipes.example.test/a|b?q={x}", "Raw", 2, BASE + 20 * 3600 * SECOND)
     add(db, "https://pipes.example.test/a%7Cb?q=%7Bx%7D", "Encoded", 5, BASE + 10 * 3600 * SECOND)
     add(db, "https://braces.example.test/{id}#a|b", "Fragment", 1, BASE + 5 * 3600 * SECOND)
+    # A path with an escape already in it that also needs encoding: NSURL encodes the part whole.
+    add(db, "https://pct.example.test/a%20b|c", "Escaped", 1, BASE + 2 * 3600 * SECOND)
     db.commit()
     db.close()
 
