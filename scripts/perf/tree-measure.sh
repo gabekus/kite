@@ -17,7 +17,7 @@ export KITE_SUPPORT_PATH=$P KITE_TEST_BLOCK_VIEWS_WINDOWS=1 TYPESAFE_API_KEY=x K
 # shellcheck disable=SC2086
 "$APP/Contents/MacOS/Kite" ${ARGS:-} >"$P/kite.log" 2>&1 &
 PID=$!
-trap 'kill $PID 2>/dev/null; wait $PID 2>/dev/null; rm -rf "$P"' EXIT
+trap 'kill $PID 2>/dev/null; wait $PID 2>/dev/null; sleep 1; pkill -9 -f "$P" 2>/dev/null; rm -rf "$P"' EXIT
 CLI="$APP/Contents/Helpers/kite"
 for _ in $(seq 60); do "$CLI" ui windows >/dev/null 2>&1 && break; sleep 0.5; done
 PAGES="${PAGES:-http://127.0.0.1:18765}"
