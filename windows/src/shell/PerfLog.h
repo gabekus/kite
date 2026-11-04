@@ -4,7 +4,7 @@
 // (PerfProtocol.h's Now()), which the harness shares on the same machine. The lines:
 //
 //   {"type":"header","version":1,"qpcFrequency":F,"pid":P,"chromiumSwitches":[..]}
-//   {"type":"mark","name":N,"detail":D,"qpc":Q,"presents":..,"commits":..,
+//   {"type":"mark","name":N,"detail":D,"qpc":Q,"presents":..,"commits":..,"pointerMoves":..,
 //    "surfaceDraws":{"sidebar":..,"spaceBar":..,"spaceTip":..,"captionButtons":..,"commandBar":..}}
 //   {"type":"dispatch","msg":M,"qpc":Q,"ms":X}       a dispatched message that took over 8 ms
 //   {"type":"input","kind":K,"inputQpc":..,"commitQpc":..,"frameId":..,"targetQpc":..,"presentQpc":..}
@@ -48,12 +48,12 @@ void Close();
 
 class State {
 public:
-    static bool On() { return on_; }
+    static bool On() { return on_.load(std::memory_order_relaxed); }
 
 private:
     friend std::wstring Open(const std::filesystem::path&, const std::vector<std::string>&);
     friend void Close();
-    static inline bool on_ = false;  // set by Open before any thread reads it, cleared by Close after
+    static inline std::atomic<bool> on_{false};  // set by Open, cleared by Close; read on every thread
 };
 inline bool On() { return State::On(); }
 
@@ -69,6 +69,9 @@ private:
 struct Counters {
     Counter presents;  // the backdrop's and the command bar's Present
     Counter commits;   // every IDCompositionDevice::Commit (Compositor::Commit)
+    // Pointer moves over the window from the real pointer (WM_MOUSEMOVE and WM_NCMOUSEMOVE),
+    // not --perf-control's: what tells "Kite drew by itself" from "someone hovered it".
+    Counter pointerMoves;
     Counter surfaceDraws[static_cast<int>(View::Count)];
 };
 inline Counters counters;
@@ -81,6 +84,9 @@ inline void CountCommit() {
 inline void CountSurfaceDraw(View view) {
     if (On()) counters.surfaceDraws[static_cast<int>(view)].Add();
 }
+inline void CountPointerMove() {
+    if (On()) counters.pointerMoves.Add();
+}
 
 // A mark with the counters as they are now. Any thread.
 void Mark(std::string_view name, std::string_view detail = {});
@@ -88,6 +94,8 @@ void Mark(std::string_view name, std::string_view detail = {});
 // Kite's UI thread only, and only while On():
 // The window whose monitor's presents count (DirectComposition reports one per display).
 void SetWindow(HWND window);
+// The displays changed (WM_DISPLAYCHANGE): their targets are looked up again.
+void DisplayChanged();
 // A dispatched message that took more than 8 ms (`began` from Now()).
 void Dispatched(UINT message, int64_t began);
 // An input at `qpc`: the next commit within 250 ms is its (an input with none is logged so).

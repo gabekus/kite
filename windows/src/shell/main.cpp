@@ -40,6 +40,7 @@
 #include <windows.h>
 
 #include <shellapi.h>
+#include <shlobj.h>
 
 #include <algorithm>
 #include <charconv>
@@ -278,17 +279,46 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const std::filesystem::path supportDirectory = std::get<std::filesystem::path>(resolved);
     const bool perfHooks = perfLogOption.present || perfControl || switchesOption.present;
     if (perfHooks) {
-        // KITE_SUPPORT_PATH set to the real profile is still the real profile.
-        const auto normal = [](const std::filesystem::path& p) {
+        // Only a profile that says it's a test profile (kiteperf and CI make the marker), and
+        // never the real one, however KITE_SUPPORT_PATH spells it.
+        std::error_code markerError;
+        if (!std::filesystem::is_regular_file(supportDirectory / kite::perf::kTestProfileMarker, markerError)) {
+            return Fail(quiet,
+                        L"--perf-log, --perf-control and --chromium-switches need a test profile: KITE_SUPPORT_PATH has no " +
+                            std::wstring(kite::perf::kTestProfileMarker) + L" file",
+                        kUsage);
+        }
+        const auto normal = [](const std::filesystem::path& p) -> std::optional<std::wstring> {
             std::error_code ec;
-            std::wstring text = std::filesystem::weakly_canonical(std::filesystem::absolute(p, ec), ec).wstring();
+            const std::filesystem::path absolute = std::filesystem::absolute(p, ec);
+            if (ec) return std::nullopt;
+            std::wstring text = std::filesystem::weakly_canonical(absolute, ec).wstring();
+            if (ec || text.empty()) return std::nullopt;
             while (text.size() > 3 && (text.back() == L'\\' || text.back() == L'/')) text.pop_back();
             CharLowerBuffW(text.data(), static_cast<DWORD>(text.size()));
             return text;
         };
-        auto defaultProfile = kite::ResolveSupportDirectory(std::nullopt, kite::EnvironmentPath("LOCALAPPDATA"));
-        if (const auto* real = std::get_if<std::filesystem::path>(&defaultProfile); real && normal(*real) == normal(supportDirectory)) {
-            return Fail(quiet, L"--perf-log, --perf-control and --chromium-switches never run on the default profile", kUsage);
+        const auto test = normal(supportDirectory);
+        if (!test) return Fail(quiet, L"--perf-log, --perf-control and --chromium-switches: KITE_SUPPORT_PATH couldn't be resolved", kUsage);
+        // The default profile, from the environment and from the known folder (LOCALAPPDATA can be
+        // set to anything).
+        std::vector<std::filesystem::path> defaults;
+        if (auto fromEnvironment = kite::ResolveSupportDirectory(std::nullopt, kite::EnvironmentPath("LOCALAPPDATA"));
+            auto* path = std::get_if<std::filesystem::path>(&fromEnvironment)) {
+            defaults.push_back(*path);
+        }
+        PWSTR known = nullptr;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &known)) && known) {
+            if (auto fromShell = kite::ResolveSupportDirectory(std::nullopt, std::filesystem::path(known));
+                auto* path = std::get_if<std::filesystem::path>(&fromShell)) {
+                defaults.push_back(*path);
+            }
+        }
+        CoTaskMemFree(known);
+        for (const auto& real : defaults) {
+            if (normal(real) == test) {
+                return Fail(quiet, L"--perf-log, --perf-control and --chromium-switches never run on the default profile", kUsage);
+            }
         }
     }
     // The perf log is open for the rest of the run, whichever way it ends (its last line, "exit").

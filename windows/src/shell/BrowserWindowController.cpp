@@ -601,6 +601,7 @@ void BrowserWindowController::RunPerfRequests() {
             break;
         case PerfRequest::Kind::Move:
             perfPointer_ = true;
+            ++perfMovesPosted_;
             if (perf::On()) perf::Input("move", r.qpc);
             PostMessageW(window_.Handle(), WM_MOUSEMOVE, 0, MAKELPARAM(r.x, r.y));
             break;
@@ -719,6 +720,10 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
             return true;
         }
     }
+    // The real pointer's moves, not the ones --perf-control posted (they arrive in order).
+    if (message == WM_MOUSEMOVE && perfMovesPosted_) --perfMovesPosted_;
+    else if (message == WM_MOUSEMOVE || message == WM_NCMOUSEMOVE) perf::CountPointerMove();
+    if (message == WM_DISPLAYCHANGE && perf::On()) perf::DisplayChanged();
     // The real pointer isn't over the window while --perf-control moves one: TrackMouseEvent's
     // leave would take the hover straight off again.
     if (message == WM_MOUSELEAVE && perfPointer_) {
@@ -786,7 +791,7 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         // another behind it.
         if (clock_->Running()) {
             double rate = 0;
-            const double time = FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr, &rate);
+            const double time = FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr, perf::On() ? &rate : nullptr);
             Frame(time, rate);
         }
         clock_->Delivered();
