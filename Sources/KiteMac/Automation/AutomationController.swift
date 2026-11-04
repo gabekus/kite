@@ -445,7 +445,7 @@ final class AutomationController {
             let alert = NSAlert()
             alert.messageText = "Kite couldn't start Claude's connection"
             alert.informativeText = "\(error)"
-            alert.runModal()
+            _ = WindowPresenter.runModal(alert)
             return false
         }
         self.server = server
@@ -764,8 +764,7 @@ final class AutomationController {
     private func confirm(_ request: ConfirmationRequest, tab id: UUID) async -> Bool {
         guard let window = host?.window else { return false }
         store.mutateWithoutUndo { $0.select(tab: id) }
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        WindowPresenter.show(window, activate: true)
 
         let alert = NSAlert()
         alert.alertStyle = .warning

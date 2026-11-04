@@ -54,12 +54,8 @@ enum AirTrafficControlWindow {
         let host = NSHostingView(rootView: view)
         host.sizingOptions = []
         window.contentView = host
-        if UIDiagnostics.enabledByEnvironment {
-            // Test runs stay behind the user's windows.
-            window.orderBack(nil)
-        } else {
-            window.makeKeyAndOrderFront(nil)
-        }
+        // A test-safe run keeps it behind the user's windows.
+        WindowPresenter.show(window)
     }
 
     private static func makeWindow() -> NSWindow {

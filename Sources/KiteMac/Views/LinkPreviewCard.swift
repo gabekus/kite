@@ -392,7 +392,7 @@ final class LinkPreviewWindow: NSPanel {
         if !isVisible || alphaValue < 1 {
             cardState.appeared = false
             alphaValue = 0
-            orderFront(nil)
+            WindowPresenter.orderFront(self)
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = LinkPreview.Timing.fade
                 animator().alphaValue = 1

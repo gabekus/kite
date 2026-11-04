@@ -51,7 +51,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate, NSW
         select(pane ?? selected, animate: window.isVisible)
         if !window.isVisible { window.center() }
         // Test runs stay behind the user's windows.
-        if UIDiagnostics.enabledByEnvironment { window.orderBack(nil) } else { window.makeKeyAndOrderFront(nil) }
+        WindowPresenter.show(window)
     }
 
     private func select(_ pane: SettingsPane, animate: Bool) {

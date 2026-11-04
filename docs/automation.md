@@ -129,6 +129,14 @@ What works with Kite in the background (checked on a test build behind other win
 
 - Nothing activates Kite or takes focus, including clicks and keys. A `KITE_DIAGNOSTICS=1` run opens its
   window behind the user's windows; capture, tree, pointer and trace all work on a covered window.
+- Test-safe windows: on a `KITE_DIAGNOSTICS=1` run every Kite window and panel (browser windows, Settings,
+  onboarding, About, Essential Keyboard Shortcuts and its View All list, Little Kite, web apps, Task Manager,
+  hover cards) goes through `WindowPresenter`, which orders it behind the other apps' windows at normal level
+  (floating and modal levels are dropped, child windows go just above their parent), never makes it key and never
+  activates Kite (`WindowPresentation` in KiteCore decides). `ui windows` lists them, panels included, none key or main. Modal alerts, open
+  and save panels and the quit dialogs would come to the front, so a test-safe run skips them, answers as if
+  dismissed (no button's action runs) and writes `KITE_TEST_MODAL: alert: title | text | [buttons]` to stderr.
+  Sheets stay on their parent window and still show.
 - `tree` gets SwiftUI's elements by asking Kite's own accessibility tree once (SwiftUI builds it only for an
   accessibility client). That needs Accessibility permission for Kite; a test build launched from a terminal or
   Claude inherits the launching app's. Without it the tree says SwiftUI's elements are missing.

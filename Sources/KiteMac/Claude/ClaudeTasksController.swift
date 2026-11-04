@@ -307,7 +307,7 @@ final class ClaudeTasksController {
     func showTabs(_ id: UUID) {
         guard let task = task(id), let tab = task.tabIDs.first(where: { store.state.tab($0) != nil }) else { return }
         store.mutateWithoutUndo { $0.select(tab: tab) }
-        automation.host?.window?.makeKeyAndOrderFront(nil)
+        WindowPresenter.show(automation.host?.window)
     }
 
     /// Closes the task's folder and every tab in it, and the space's Claude folder once it's empty.

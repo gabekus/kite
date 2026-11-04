@@ -38,7 +38,7 @@ enum BoostAlerts {
         if let window {
             alert.beginSheetModal(for: window, completionHandler: completion)
         } else {
-            completion(alert.runModal())
+            completion(WindowPresenter.runModal(alert))
         }
     }
 }
@@ -67,7 +67,7 @@ final class BoostEditorWindowController: NSWindowController, NSWindowDelegate {
     /// A test run (KITE_DIAGNOSTICS=1 on a throwaway profile) opens it behind other windows, like
     /// its browser windows.
     private func present() {
-        if UIDiagnostics.enabledByEnvironment { window?.orderBack(nil) } else { showWindow(nil) }
+        WindowPresenter.show(self)
     }
 
     /// Closes the Boost's editor, if open (it was deleted).

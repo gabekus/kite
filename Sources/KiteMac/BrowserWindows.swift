@@ -92,7 +92,7 @@ final class BrowserWindows {
         }
         // Behind the main window: it was the one in front when the app started. A diagnostics
         // run keeps every window behind the user's.
-        if !UIDiagnostics.enabledByEnvironment { mainController.window?.makeKeyAndOrderFront(nil) }
+        WindowPresenter.show(mainController.window)
     }
 
     /// The extra windows' controllers, for code that looks a window up (extension dialogs).
@@ -146,7 +146,7 @@ final class BrowserWindows {
         // Offset from the window in front so the two don't stack exactly. Read it before
         // showWindow, which makes the new window main.
         let front = NSApp.mainWindow ?? mainController.window
-        controller.showWindow(nil)
+        WindowPresenter.show(controller)
         if let frame {
             controller.window?.setFrame(frame, display: false)
         } else if let front, front !== controller.window {

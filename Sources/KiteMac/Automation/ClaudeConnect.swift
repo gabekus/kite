@@ -28,7 +28,7 @@ enum ClaudeConnect {
         alert.addButton(withTitle: "Connect")
         alert.addButton(withTitle: "Copy Desktop Config")
         alert.addButton(withTitle: "Cancel")
-        switch alert.runModal() {
+        switch WindowPresenter.runModal(alert) {
         case .alertFirstButtonReturn:
             connect(automation, desktop: desktop)
         case .alertSecondButtonReturn:
@@ -59,7 +59,7 @@ enum ClaudeConnect {
                 let done = NSAlert()
                 done.messageText = "Claude"
                 done.informativeText = lines.joined(separator: "\n\n")
-                done.runModal()
+                _ = WindowPresenter.runModal(done)
             }
         }
     }

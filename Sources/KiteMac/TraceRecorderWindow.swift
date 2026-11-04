@@ -24,12 +24,8 @@ final class TraceRecorderWindow: NSObject, NSWindowDelegate {
     static func show() {
         let recorder = shared ?? TraceRecorderWindow()
         shared = recorder
-        if UIDiagnostics.enabledByEnvironment {
-            // Test runs stay behind the user's windows.
-            recorder.window.orderBack(nil)
-        } else {
-            recorder.window.makeKeyAndOrderFront(nil)
-        }
+        // A test-safe run keeps it behind the user's windows.
+        WindowPresenter.show(recorder.window)
     }
 
     static var tracesDirectory: URL { AppDelegate.supportDirectory.appendingPathComponent("Traces", isDirectory: true) }

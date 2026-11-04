@@ -21,7 +21,7 @@ enum ClaudeRoutePicker {
         panel.allowsMultipleSelection = false
         panel.prompt = "Use Folder"
         panel.message = message
-        return panel.runModal() == .OK ? panel.url?.path : nil
+        return WindowPresenter.runModal(panel) == .OK ? panel.url?.path : nil
     }
 
     /// Asks for a Claude Project's link and a name for it: "Add a Claude Project", in Arc's dialog sheet (`ArcDialog`) on `window`.

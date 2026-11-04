@@ -487,7 +487,7 @@ final class FavoritePreviewWindow: NSPanel {
     func show() {
         if !isVisible || alphaValue < 1 {
             alphaValue = 0
-            orderFront(nil)
+            WindowPresenter.orderFront(self)
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = FavoritePreviewController.Timing.fade
                 animator().alphaValue = 1

@@ -25,9 +25,9 @@ extension AppDelegate {
             do {
                 try Data(markdown.utf8).write(to: url)
             } catch {
-                if let window { NSAlert(error: error).beginSheetModal(for: window) } else { NSAlert(error: error).runModal() }
+                if let window { NSAlert(error: error).beginSheetModal(for: window) } else { _ = WindowPresenter.runModal(NSAlert(error: error)) }
             }
         }
-        if let window { panel.beginSheetModal(for: window, completionHandler: save) } else { save(panel.runModal()) }
+        if let window { panel.beginSheetModal(for: window, completionHandler: save) } else { save(WindowPresenter.runModal(panel)) }
     }
 }

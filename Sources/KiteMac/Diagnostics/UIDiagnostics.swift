@@ -12,10 +12,7 @@ final class UIDiagnostics {
     static let defaultsKey = "claudeDiagnostics"
 
     /// `KITE_DIAGNOSTICS=1` counts only with `KITE_SUPPORT_PATH`, so it can't switch this on for a real profile.
-    static var enabledByEnvironment: Bool {
-        let environment = ProcessInfo.processInfo.environment
-        return environment["KITE_DIAGNOSTICS"] == "1" && environment["KITE_SUPPORT_PATH"] != nil
-    }
+    static var enabledByEnvironment: Bool { WindowPresentation.isTestSafe(environment: ProcessInfo.processInfo.environment) }
 
     static var isEnabled: Bool { enabledByEnvironment || UserDefaults.standard.bool(forKey: defaultsKey) }
 
@@ -109,10 +106,10 @@ final class UIDiagnostics {
 
     private func windowsReport() -> String {
         var windows = NSApp.orderedWindows.filter { $0.isVisible || $0.isMiniaturized }
-        // Popovers (Site Controls, extensions, downloads) and child panels (Little Kite's Open In menu)
-        // aren't in orderedWindows; list them too so `{"window": N}` can reach them.
+        // Popovers (Site Controls, extensions, downloads), child panels (Little Kite's Open In menu) and other panels
+        // (the Keyboard Shortcuts list, About) aren't in orderedWindows; list them too so `{"window": N}` can reach them.
         windows += NSApp.windows.filter {
-            $0.isVisible && ($0.className.contains("Popover") || $0.parent != nil) && !windows.contains($0)
+            $0.isVisible && ($0.className.contains("Popover") || $0.parent != nil || $0 is NSPanel) && !windows.contains($0)
         }
         guard !windows.isEmpty else { return "Kite has no windows open." }
         return windows.map { window in

@@ -225,10 +225,7 @@ final class WebAppsController: NSObject, NSMenuItemValidation {
         guard let app = state.app(id: id), let host else { return }
         guard app.display.opensInWindow else { return host.openTab(url ?? app.startURL) }
         if let existing = windows.first(where: { $0.app.id == id }) {
-            if UIDiagnostics.enabledByEnvironment { existing.window?.orderBack(nil) } else {
-                existing.window?.makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
-            }
+            WindowPresenter.show(existing.window, activate: true)
             return
         }
         let controller = WebAppWindowController(app: app, url: url, engine: host.engine(), host: .init(
@@ -236,13 +233,8 @@ final class WebAppsController: NSObject, NSMenuItemValidation {
         ))
         controller.didClose = { [weak self] closed in self?.windows.removeAll { $0 === closed } }
         windows.append(controller)
-        if UIDiagnostics.enabledByEnvironment {
-            // Test runs stay behind the user's windows.
-            controller.window?.orderBack(nil)
-        } else {
-            controller.showWindow(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        // A test-safe run keeps it behind the user's windows.
+        WindowPresenter.show(controller, activate: true)
     }
 
     // MARK: Uninstall
