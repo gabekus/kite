@@ -172,3 +172,25 @@ import Testing
         #expect(MCPServer.instructions.contains("When an action opens new tabs"))
     }
 }
+
+@Suite struct AutomaticSessionFolderTests {
+    @Test func aSessionThatNamesNoneGetsTheSiteAndTime() throws {
+        let utc = try #require(TimeZone(identifier: "UTC"))
+        let at = Date(timeIntervalSince1970: 14 * 3600 + 5 * 60)
+        #expect(BrowserState.automaticSessionFolderName(for: URL(string: "https://developer.ups.com/apps"), at: at, timeZone: utc)
+            == "developer.ups.com · 14:05")
+        #expect(BrowserState.automaticSessionFolderName(for: URL(string: "https://www.fedex.com/"), at: at, timeZone: utc) == "fedex.com · 14:05")
+        // A blank tab.
+        #expect(BrowserState.automaticSessionFolderName(for: nil, at: at, timeZone: utc) == "Claude · 14:05")
+        // It's a session folder like any other: Claude › that name, and a popup from it stays in it.
+        var state = BrowserState(spaces: [Space(name: "Komado", icon: "🈳", theme: Theme.presets[0])])
+        let name = BrowserState.automaticSessionFolderName(for: URL(string: "https://developer.ups.com"), at: at, timeZone: utc)
+        let made = state.claudeSessionFolder(named: name, inSpace: state.spaces[0].id)
+        let folder = try #require(made)
+        let tab = state.openTab(url: URL(string: "https://developer.ups.com"), select: false)
+        _ = state.moveTab(tab, toFolder: folder)
+        let popup = state.openTab(url: URL(string: "https://wwwapps.ups.com/doapp/AddExistingAccount"), openedBy: tab)
+        #expect(state.folders(inSpace: 0).map(\.name) == ["Claude", "developer.ups.com · 14:05"])
+        #expect(state.folders(inSpace: 0)[1].items.map(\.id) == [tab, popup])
+    }
+}

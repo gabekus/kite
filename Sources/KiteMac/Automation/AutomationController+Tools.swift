@@ -442,7 +442,12 @@ extension AutomationController {
         var placement = placement
         switch placement {
         case .claudeSessionFolder(_, let session): sessionFolders[connection] = session
-        case .claudeFolder(let space): if let session = sessionFolders[connection] { placement = .claudeSessionFolder(space: space, session: session) }
+        case .claudeFolder(let space) where Self.agentTask == nil:
+            // A session that never names one still gets a folder of its own, so its tabs don't scatter.
+            let session = sessionFolders[connection]
+                ?? BrowserState.automaticSessionFolderName(for: string.flatMap { try? resolveURL($0) })
+            sessionFolders[connection] = session
+            placement = .claudeSessionFolder(space: space, session: session)
         default: break
         }
         let url = try string.map(resolveURL)
@@ -659,6 +664,7 @@ extension AutomationController {
     private func moveToClaudeFolder(_ string: String?, session: String?, connection: Int) throws -> ToolOutput {
         let tab = try resolveTab(string)
         let session = session ?? sessionFolders[connection]
+            ?? (Self.agentTask == nil ? BrowserState.automaticSessionFolderName(for: tab.url) : nil)
         if let session { sessionFolders[connection] = session }
         let moved = store.mutateWithoutUndo { state -> String? in
             guard let space = state.location(of: tab.id)?.space else { return nil }
