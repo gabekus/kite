@@ -16,8 +16,9 @@ their own PR, never as a side effect of a checkpoint.
   Win32 for process plumbing (UTF-16 arguments, the console's UTF-8 output) and
   nothing else.
 - `windows/resources`: the process manifest both executables embed.
-- `windows/tools`: test and measurement executables only (`tools/perf`'s
-  `kiteperf`). They are never linked into Kite.exe and never shipped. They may
+- `windows/tools/perf` (and every other folder of `windows/tools` but
+  `windows/tools/build`): test and measurement executables only, such as
+  `kiteperf`. They are never linked into Kite.exe and never shipped. They may
   use `core`, the header-only protocol they share with Kite.exe
   (`shell/PerfProtocol.h`, `shell/Text.h`), Win32, and these first-party
   measurement APIs: PDH, psapi, job objects, `NtQuerySystemInformation` and
@@ -82,8 +83,8 @@ their own PR, never as a side effect of a checkpoint.
 
 - C++20, MSVC `/W4 /WX /permissive-`, static CRT. It must also build with
   MinGW-w64 GCC (`-Wall -Wextra -Werror`, `windows/cmake/mingw-w64.cmake`),
-  which is how a non-Windows machine checks it. `windows/tools` is exempt
-  (MSVC only).
+  which is how a non-Windows machine checks it. The measurement tools
+  (`windows/tools/perf`) are exempt (MSVC only).
 - Text from people (URL input, names) is classified by Unicode character
   (`core/Unicode.h`), not by byte or ASCII, the way Swift's `Character` does.
 - JSON read and written is valid UTF-8 (Foundation rejects anything else).
