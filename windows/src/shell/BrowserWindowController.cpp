@@ -601,13 +601,15 @@ void BrowserWindowController::RunPerfRequests() {
             break;
         case PerfRequest::Kind::Move:
             perfPointer_ = true;
-            ++perfMovesPosted_;
-            if (perf::On()) perf::Input("move", r.qpc);
-            PostMessageW(window_.Handle(), WM_MOUSEMOVE, 0, MAKELPARAM(r.x, r.y));
+            if (PostMessageW(window_.Handle(), WM_MOUSEMOVE, 0, MAKELPARAM(r.x, r.y))) {
+                ++perfMovesPosted_;
+                if (perf::On()) perf::Input("move", r.qpc);
+            }
             break;
         case PerfRequest::Kind::Leave:
             perfPointer_ = false;
-            PostMessageW(window_.Handle(), WM_MOUSELEAVE, 0, 0);
+            perfMovesPosted_ = 0;
+            if (PostMessageW(window_.Handle(), WM_MOUSELEAVE, 0, 0)) ++perfLeavesPosted_;
             break;
         }
     }
@@ -720,9 +722,15 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
             return true;
         }
     }
-    // The real pointer's moves, not the ones --perf-control posted (they arrive in order).
+    // The real pointer's moves and leaves, not the ones --perf-control posted (they arrive in
+    // order), nor the leave TrackMouseEvent sends at once while a posted pointer is over the
+    // window (the real one is elsewhere).
     if (message == WM_MOUSEMOVE && perfMovesPosted_) --perfMovesPosted_;
-    else if (message == WM_MOUSEMOVE || message == WM_NCMOUSEMOVE) perf::CountPointerMove();
+    else if (message == WM_MOUSELEAVE && perfLeavesPosted_) --perfLeavesPosted_;
+    else if (message == WM_MOUSEMOVE || message == WM_NCMOUSEMOVE || message == WM_NCMOUSELEAVE ||
+             (message == WM_MOUSELEAVE && !perfPointer_)) {
+        perf::CountPointerMove();
+    }
     if (message == WM_DISPLAYCHANGE && perf::On()) perf::DisplayChanged();
     // The real pointer isn't over the window while --perf-control moves one: TrackMouseEvent's
     // leave would take the hover straight off again.

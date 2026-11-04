@@ -304,8 +304,19 @@ public:
         if (!processType.empty()) return;
         for (const std::string& entry : switches_) {
             const size_t equals = entry.find('=');
-            if (equals == std::string::npos) commandLine->AppendSwitch(entry);
-            else commandLine->AppendSwitchWithValue(entry.substr(0, equals), entry.substr(equals + 1));
+            if (equals == std::string::npos) {
+                commandLine->AppendSwitch(entry);
+                continue;
+            }
+            const std::string name = entry.substr(0, equals);
+            std::string value = entry.substr(equals + 1);
+            // A feature list adds to what's already there (CEF's own, or an earlier entry), never
+            // replaces it: appending a switch again replaces its value.
+            if (name == "disable-features" && commandLine->HasSwitch(name)) {
+                const std::string existing = commandLine->GetSwitchValue(name).ToString();
+                if (!existing.empty()) value = existing + "," + value;
+            }
+            commandLine->AppendSwitchWithValue(name, value);
         }
     }
 

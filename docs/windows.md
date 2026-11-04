@@ -383,8 +383,11 @@ Windows that means:
 
 Kite.exe has three hooks for measuring it. They need `KITE_SUPPORT_PATH` to be a test profile,
 one holding a `kite-test-profile` file (kiteperf writes it into each profile it makes), and
-they're refused when it names the default profile (`%LOCALAPPDATA%\Kite`, from the environment
-or the known folder) or can't be resolved. Off, each costs
+they're refused when it is the default profile (`%LOCALAPPDATA%\Kite`, from the environment or
+the known folder, compared by volume and file id, so any spelling of it counts) or can't be
+resolved. The checked directory stays open, undeletable, for the whole run, and the run uses its
+resolved path. The marker guards against mistakes (a script pointed at the real profile), not
+against another program running as the same user. Off, each costs
 one predictable bool check (`perf::On()`) and allocates nothing. A run with any of them opens
 behind other windows, without asking for the focus, and never shows a dialog, as
 `--smoke-test` does.
@@ -395,8 +398,9 @@ behind other windows, without asking for the focus, and never shows a dialog, as
   `first-commit`, `cef-init-begin` and `cef-init-end`, `shown`, `browser-created`, `load-begin`
   and `load-end` per tab (from CEF's thread), `command-begin` and `command-end` with the
   command's id, `loop-end`, `exit`, and any the control asks for. Each mark carries the counters
-  so far: presents (the backdrop's and the command bar's), the real pointer's moves over the
-  window (not the control's), commits (every
+  so far: presents (the backdrop's and the command bar's), the real pointer's moves over and
+  out of the window (not the control's; Kite's chrome only, since a page is CEF's own child
+  window and its moves never reach Kite), commits (every
   `IDCompositionDevice::Commit`, which all go through `Compositor::Commit`) and surface draws per
   view. A dispatched message that takes over 8 ms is logged with how long it took. A control
   input (a pointer move or a command) is logged with its first commit within 250 ms, or with

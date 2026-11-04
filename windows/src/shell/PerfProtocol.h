@@ -8,7 +8,12 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
+
+#include "shell/Text.h"
 
 namespace kite::perf {
 
@@ -84,6 +89,31 @@ inline bool AllowedChromiumSwitch(std::string_view name, std::string_view value)
     if (name == "renderer-process-limit" || name == "num-raster-threads") return digits();
     if (name == "use-angle") return value == "d3d11" || value == "d3d11on12" || value == "d3d9" || value == "vulkan" || value == "warp";
     return false;
+}
+
+// --chromium-switches' value, "--a --b=c" split on spaces, as "a" and "b=c": nullopt when a
+// token isn't --name[=value] or isn't on the allow-list, with that token in `refused`.
+inline std::optional<std::vector<std::string>> ParseChromiumSwitches(std::wstring_view text, std::wstring& refused) {
+    std::vector<std::string> out;
+    for (size_t start = 0; start < text.size();) {
+        if (text[start] == L' ') {
+            ++start;
+            continue;
+        }
+        const size_t end = std::min(text.find(L' ', start), text.size());
+        const std::wstring_view token = text.substr(start, end - start);
+        start = end;
+        const std::string entry = token.starts_with(L"--") ? Narrow(token.substr(2)) : std::string();
+        const size_t equals = entry.find('=');
+        const std::string_view name = std::string_view(entry).substr(0, equals);
+        const std::string_view value = equals == std::string::npos ? std::string_view() : std::string_view(entry).substr(equals + 1);
+        if (name.empty() || !AllowedChromiumSwitch(name, value)) {
+            refused = std::wstring(token);
+            return std::nullopt;
+        }
+        out.push_back(entry);
+    }
+    return out;
 }
 
 }  // namespace kite::perf
