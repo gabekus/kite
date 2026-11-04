@@ -290,7 +290,9 @@ extension AutomationController {
         case let .click(location, button, count, modifiers):
             let (point, element) = try await resolve(location)
             // Right-clicks only open a menu; the rest go through the same checks as click.
-            if button != .right, let element { try await authorize(.click(element.description), tab: tab) }
+            if button != .right {
+                if let element { try await authorize(.click(element.description), tab: tab) } else { try authorizeUndescribed(tab: tab) }
+            }
             try await untilDialog(tab.id) {
                 if case .target = location, let element, !element.isHittable, button == .left, count == 1, modifiers.isEmpty {
                     try await actions.click(element)
@@ -311,6 +313,7 @@ extension AutomationController {
             try? await Task.sleep(for: .milliseconds(150))
             return report("Scrolled \(direction.rawValue) \(amount).", tab.id)
         case let .drag(from, to):
+            try authorizeUndescribed(tab: tab)
             try await actions.drag(from: scale.toPage(from), to: scale.toPage(to))
             return report("Dragged from \(describe(.point(from))) to \(describe(.point(to))).", tab.id)
         case let .key(chords, times):

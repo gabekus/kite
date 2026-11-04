@@ -382,6 +382,52 @@ claude -p --output-format stream-json --verbose --include-partial-messages \
 - **Pieces.** `ClaudeTask`, `ClaudeStream` (stream-json parser) and `ClaudeInvocation` live in `KiteCore/Claude`.
   `ClaudeTasksController` (processes, tabs, notifications) and `ClaudeTasksWindow` live in `KiteMac/Claude`.
 
+### Test This Ticket
+
+A Claude task that tests a Linear ticket in the user's own browser, for PMs as much as engineers. The ticket's
+identifier names everything: Spool's session, the git branch, and the Claude folder (Claude › PRO-1234).
+
+- **Starting it.** With a Linear issue in front (`https://linear.app/<org>/issue/PRO-1234/…`), Kite menu →
+  **Test This Ticket**, or the checklist button in the ⌘J bar. From a terminal or Spool's "Test in Kite":
+
+  ```bash
+  kite test-ticket https://linear.app/acme/issue/PRO-1234/fix-login [--target https://pr-1234.preview.example.com]
+  kite test-ticket PRO-1234
+  ```
+
+  A bare key uses the open tab showing that issue, or the workspace of any open Linear tab; with no Linear tab
+  open, Claude asks the user (handoff) to open the ticket. The CLI sends `kite_test_ticket` on the socket, which
+  isn't an MCP tool: no Claude can start a task through Kite's tools, and Kite refuses it from a task's own
+  connection. Like every CLI command, it needs Allow Claude to Control the Browser on. Kite brings up the ⌘J bar
+  on the new task.
+- **No Linear API key.** Claude reads the ticket from the user's Linear tab (`get_page_text`, `read_page`): title,
+  description, acceptance criteria, the linked pull request, and preview or staging URLs.
+- **Testing.** The target is `--target`, else the ticket's preview or staging URL; when the ticket names several or
+  none, Claude asks with `handoff`. It opens the app in Claude › PRO-1234 of the ticket tab's space (`session` is
+  the ticket identifier, and Kite files the task's tabs there whatever Claude passes, reusing a folder of that name,
+  so Spool's tabs for the ticket sit with them). Sign-in goes through `sign_in`; MFA, an account choice or anything
+  else only the user can do goes through `handoff`. Each criterion ends Pass, Fail, Blocked or Not tested, with a
+  screenshot as evidence, and the task's reply is the report: a table per criterion in the ⌘J bar.
+- **Posting back is the user's click.** Claude types the drafted report into the issue's comment box, then calls
+  `handoff` with one step on the Comment button ("Review and post"), so the ring sits on it and the user posts.
+  Kite enforces it: during a ticket test, on linear.app, it allows only clicks into text fields and on links,
+  reading and typing (`TicketTest.blocksPosting`). Every other click is refused, since status, assignee and label
+  pickers save on click, and so are `form_input`, Return, Space outside a text field, `type` with submit, page
+  scripts, uploads, drags, and coordinate clicks with nothing Kite can identify under them
+  (`authorizeUndescribed`). The app under test keeps Kite's usual rules and confirmations. A ticket test has no
+  "Continue in the Claude App": Desktop's Kite connection carries no task, so the guard wouldn't apply there, and
+  its follow-ups stay in Kite.
+- **What changes for the task.** Its turns get `TicketTest.systemPrompt` after the usual Claude Tasks prompt, Jev
+  doesn't size it (it's never a quick lookup), and **Close Tabs** closes only the tabs it opened, not the shared
+  Claude › PRO-1234 folder.
+- **Pieces.** `LinearTicket` and `TicketTest` (prompt, request, posting rule) in `KiteCore/Claude/TicketTest.swift`;
+  `ClaudeTasksController.testTicket` and `BrowserWindowController+Tickets.swift` in KiteMac.
+
+### Open in Spool
+
+With a Linear issue in front, Kite menu → **Open in Spool** (and a button in the ⌘J bar) opens
+`spool://ticket/PRO-1234`. Both show only while some app handles the `spool` scheme.
+
 ## Not done yet
 
 - Cross-site (out-of-process) iframes can't be read; clicks into them ask first.
@@ -444,3 +490,24 @@ without the user naming it.
   `space`) and `move_to_folder` (folder `"claude"`) names it, Claude › Session name, reused by name
   (`BrowserState.claudeSessionFolder`). Kite remembers each connection's last session name and applies it to that
   connection's later Claude-folder tabs. ⌘J tasks keep their own per-task folders.
+
+## OAuth sign-ins that lose their request
+
+`claude auth login` opens claude.ai's `/oauth/authorize?client_id=…&code_challenge=…&state=…`. A link from another
+app opens in Little Kite or a space (Air Traffic Control), in that space's profile, or for Little Kite the profile
+of the space in front, which may not be signed in to claude.ai. Then claude.ai sends the page to its login (with the
+request in `returnTo`), on to Google or SSO, and back to `/oauth/authorize` without the parameters: "Missing
+code_challenge parameter".
+
+Kite remembers each tab's last authorize request (a path ending in `/authorize` with `code_challenge`, or with
+`client_id`, `redirect_uri` and `state`; also read from a login page's `returnTo` on the same host). If within 10
+minutes the same tab comes back to that origin and path without them, after passing a sign-in page (an identity
+provider, or a login, SSO or verification path), Kite loads the remembered request once. It forgets it after that,
+on timeout, when the request reaches its `redirect_uri`, or when the tab closes. Both engines report their URLs
+through the same page events, so it works on Chromium and WebKit, in tabs and Little Kite. Pieces: `OAuthResume` in
+KiteCore, `OAuthResumeTracker` in KiteMac.
+
+It only remembers requests on Claude's own hosts (claude.ai, claude.com, and their subdomains). Other sites'
+OAuth flows, an identity provider's `/oauth2/…` pages included, are never replayed. A request read from a login
+page's `returnTo` only takes the user where claude.ai's own login would have, to its authorize page, which still
+asks them to approve.

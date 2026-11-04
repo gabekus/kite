@@ -114,6 +114,22 @@ final class ClaudeTasksController {
         tasks = ClaudeTaskList.load(from: fileURL).tasks
         automation.isRunningTask = { [weak self] id in self?.runs[id] != nil }
         automation.taskOpenedTab = { [weak self] task, tab, session in self?.file(tab, under: task, named: session) }
+        automation.isTicketTest = { [weak self] id in self?.task(id)?.ticket != nil }
+        automation.startTicketTest = { [weak self] arguments in
+            guard let self else { return .failure(.disabled) }
+            do {
+                let request = try TicketTest.Request(arguments: arguments)
+                guard let id = testTicket(request) else {
+                    return .failure(AutomationError(.failed, "Kite couldn't start the ticket test."))
+                }
+                showPanel?(id)
+                return .text("Testing \(request.ticket.key) in Kite: task \(id.uuidString). Its report shows in Kite's Claude bar.")
+            } catch let error as AutomationError {
+                return .failure(error)
+            } catch {
+                return .failure(AutomationError(.failed, "\(error)"))
+            }
+        }
         updateBadge()
     }
 
@@ -141,6 +157,38 @@ final class ClaudeTasksController {
         if let tab {
             task.append(ClaudeTask.Entry(.note, "Attached “\(tab.displayTitle)”."))
         }
+        let context = tab.map {
+            ClaudeInvocation.TabContext(id: $0.id, title: $0.displayTitle, url: $0.url?.absoluteString ?? "")
+        }
+        begin(task, prompt: ClaudeInvocation.prompt(goal: goal, tab: context))
+    }
+
+    /// "Test This Ticket": a task that tests a Linear ticket from the user's own Linear tab (the one showing it,
+    /// when one is open), in Claude › <ticket> of that tab's space. Returns the task's id.
+    @discardableResult
+    func testTicket(_ request: TicketTest.Request) -> UUID? {
+        let state = store.state
+        let tabs = state.spaces.flatMap(\.allTabs) + state.favorites
+        let ticketTab = tabs.first { request.ticket.isShown(by: $0.url) }
+        let issueURL = request.ticket.resolvedURL(openTabs: tabs.compactMap(\.url))
+        var task = ClaudeTask(goal: TicketTest.goal(request))
+        task.ticket = request.ticket.key
+        task.spaceID = ticketTab.flatMap { state.location(of: $0.id)?.space }.map { state.spaces[$0].id } ?? state.selectedSpaceID
+        if let ticketTab {
+            task.append(ClaudeTask.Entry(.note, "Reading the ticket in “\(ticketTab.displayTitle)”. Claude drafts its report there; you post it."))
+        }
+        let context = ticketTab.map {
+            ClaudeInvocation.TabContext(id: $0.id, title: $0.displayTitle, url: $0.url?.absoluteString ?? "")
+        }
+        guard begin(task, prompt: TicketTest.prompt(request, ticketTab: context, issueURL: issueURL)) else { return nil }
+        return task.id
+    }
+
+    /// Turns on Claude's control if needed, lists the task and runs its first turn. False when the task
+    /// failed before its first turn.
+    @discardableResult
+    private func begin(_ task: ClaudeTask, prompt: String) -> Bool {
+        var task = task
         if !automation.isEnabled {
             // Starting a task is the user asking Claude to use the browser.
             automation.setEnabled(true)
@@ -151,13 +199,12 @@ final class ClaudeTasksController {
         tasks.insert(task, at: 0)
         selectedID = task.id
         guard automation.isEnabled else {
-            return fail(task.id, "Kite couldn't turn on Claude's connection, so the task can't use the browser.")
+            fail(task.id, "Kite couldn't turn on Claude's connection, so the task can't use the browser.")
+            return false
         }
         requestNotificationPermission()
-        let context = tab.map {
-            ClaudeInvocation.TabContext(id: $0.id, title: $0.displayTitle, url: $0.url?.absoluteString ?? "")
-        }
-        launch(task.id, prompt: ClaudeInvocation.prompt(goal: goal, tab: context), resume: nil)
+        launch(task.id, prompt: prompt, resume: nil)
+        return true
     }
 
     // MARK: Claude desktop app
@@ -183,7 +230,9 @@ final class ClaudeTasksController {
     /// A finished task that ran in Kite can carry on in Desktop's Code tab, as the same session.
     func canOpenInDesktop(_ id: UUID) -> Bool {
         guard ClaudeDesktop.isInstalled, runs[id] == nil, let task = task(id) else { return false }
-        return task.sessionID != nil
+        // Desktop's Kite connection carries no task, so a ticket test continued there would lose the guard
+        // that keeps it from posting on Linear (TicketTest.blocksPosting). Its follow-ups stay in Kite.
+        return task.sessionID != nil && task.ticket == nil
     }
 
     func openInDesktop(_ id: UUID) {
@@ -235,7 +284,9 @@ final class ClaudeTasksController {
         let name = session.flatMap(BrowserState.cleanSessionFolderName) ?? ClaudeTask.folderName(for: tasks[i].title)
         let existing = tasks[i].folderID.flatMap { folder in store.state.folder(matching: folder.uuidString)?.folder.id }
         let space = tasks[i].spaceID.flatMap { store.state.spaceIndex($0) != nil ? $0 : nil } ?? store.state.selectedSpaceID
-        guard let folder = existing ?? store.mutateWithoutUndo({ $0.claudeTaskFolder(named: name, inSpace: space) }) else { return }
+        // A ticket's tabs go in Claude › <ticket>, shared with the ticket's other Claude sessions (Spool's).
+        let ticketFolder = tasks[i].ticket.flatMap { ticket in store.mutateWithoutUndo { $0.claudeSessionFolder(named: ticket, inSpace: space) } }
+        guard let folder = ticketFolder ?? existing ?? store.mutateWithoutUndo({ $0.claudeTaskFolder(named: name, inSpace: space) }) else { return }
         // Claude named its work after the first tab: rename the folder, unless the user already renamed it.
         if let existing, session != nil, store.state.folder(matching: existing.uuidString)?.folder.name == ClaudeTask.folderName(for: tasks[i].title) {
             store.mutateWithoutUndo { $0.renameFolder(existing, to: name) }
@@ -261,7 +312,19 @@ final class ClaudeTasksController {
     /// Closes the task's folder and every tab in it, and the space's Claude folder once it's empty.
     func closeTabs(_ id: UUID) {
         guard let i = index(id) else { return }
-        if let folder = tasks[i].folderID { store.mutateWithoutUndo { _ = $0.removeFolder(folder) } }
+        if tasks[i].ticket != nil {
+            // Claude › <ticket> may hold the ticket's other sessions' tabs: close only this task's, and only
+            // those still in it.
+            let folder = tasks[i].folderID.flatMap { store.state.folder(matching: $0.uuidString)?.folder }
+            let inFolder = Set(folder?.items.tabs.map(\.id) ?? [])
+            store.mutateWithoutUndo { state in
+                for tab in tasks[i].tabIDs where inFolder.contains(tab) {
+                    state.removePinnedTab(tab, droppingEmptyFolder: state.isInEphemeralFolder(tab))
+                }
+            }
+        } else if let folder = tasks[i].folderID {
+            store.mutateWithoutUndo { _ = $0.removeFolder(folder) }
+        }
         // Tabs the user dragged out of the folder stay.
         tasks[i].folderID = nil
         tasks[i].tabIDs = tasks[i].tabIDs.filter { store.state.tab($0) != nil }
@@ -279,8 +342,11 @@ final class ClaudeTasksController {
         }
         let directory = folder ?? workDirectory
         let jev = automation.jev
-        // What the user just asked (the goal, or the follow-up), without the attached tab.
-        let goal = task(id)?.entries.last { $0.kind == .user }?.text
+        // What the user just asked (the goal, or the follow-up), without the attached tab. A ticket test is
+        // never a quick lookup, so Jev doesn't size it.
+        let ticket = task(id)?.ticket
+        let goal = ticket == nil ? task(id)?.entries.last { $0.kind == .user }?.text : nil
+        let systemPrompt = ClaudeInvocation.systemPrompt(ticket: ticket)
         // A placeholder so the task counts as running (and keeps Kite awake) while Claude Code is found.
         let placeholder = Run(process: Process())
         runs[id] = placeholder
@@ -291,7 +357,8 @@ final class ClaudeTasksController {
             let claude = ClaudeConnect.findClaude()
             let environment = Self.environment()
             let chosen = await model
-            let arguments = ClaudeInvocation.arguments(kiteCLI: cli, profile: profile, taskID: id, resume: resume, model: chosen)
+            let arguments = ClaudeInvocation.arguments(kiteCLI: cli, profile: profile, taskID: id, resume: resume, model: chosen,
+                                                       systemPrompt: systemPrompt)
             await self?.noteModel(chosen, for: id)
             await self?.spawn(id, claude: claude, arguments: arguments, environment: environment,
                               directory: directory, prompt: prompt, placeholder: placeholder)

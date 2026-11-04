@@ -61,6 +61,9 @@ public struct ClaudeTask: Identifiable, Hashable, Codable, Sendable {
     /// The folder Claude Code runs in, when the space routes ⌘J to one (see `ClaudeRoute`).
     /// Kept so a follow-up resumes there: Claude Code keeps a session with its folder.
     public var directory: String?
+    /// The Linear ticket a "Test This Ticket" task tests ("PRO-1234"): its tabs go in Claude › PRO-1234, its
+    /// turns get `TicketTest.systemPrompt`, and Kite keeps it from posting on Linear. nil for other tasks.
+    public var ticket: String?
     public var costUSD: Double
     /// Finished since the user last looked at it.
     public var unread: Bool

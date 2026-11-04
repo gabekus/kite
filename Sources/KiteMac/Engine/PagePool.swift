@@ -265,6 +265,7 @@ final class PagePool {
         // A closed page can't be anyone's opener or popup again.
         Self.popupOpeners = Self.popupOpeners.filter { $0.key != id && $0.value != id }
         pageProfiles[id] = nil
+        OAuthResumeTracker.forget(id)
         savedState[id] = keepHistory ? page.hibernationState() : nil
         lastShown[id] = nil
         page.onEvent = nil
@@ -297,6 +298,7 @@ final class PagePool {
             store.pageTitleChanged(id, title)
         case .url(let url):
             store.pageURLChanged(id, url)
+            if let page = pages[id] { OAuthResumeTracker.page(page, movedTo: url, key: id) }
             // A prompt belongs to the site that asked; leaving it drops the prompt (as Chromium does).
             if let request = permissionRequests[id], let url,
                SiteControls.origin(of: url) != SiteControls.origin(of: request.origin) {

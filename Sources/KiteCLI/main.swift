@@ -36,6 +36,9 @@ let usage = """
       kite request ID [--no-body]                    One request in full (headers, timing, bodies)
       kite har [--tab ID] [--bodies] [filters]       Export the network log as a HAR file
       kite spaces                                    List spaces and what each is for
+      kite test-ticket (URL | KEY-123) [--target URL]
+                                                     Have Kite's Claude test a Linear ticket in the user's browser
+                                                     and draft its report as a comment for the user to post
       kite describe-space NAME TEXT                  Say what belongs in a space (Claude routes links by it; no TEXT clears it)
       kite vpn [status | watch HOST | unwatch HOST | reconnect [--profile NAME] | wait] [--timeout S]
                                                      Quiet VPN sign-in: sign-in pages on a watched host load on a
@@ -205,7 +208,8 @@ struct Arguments {
 
     static let valued: Set<String> = ["--tab", "--space", "--session", "--max", "--selector", "--ref", "--socket", "-o", "--output", "--format",
                                       "--window", "--depth", "--match", "--region", "--pixels",
-                                      "--status", "--host", "--type", "--url", "--since", "--limit", "--profile", "--timeout"]
+                                      "--status", "--host", "--type", "--url", "--since", "--limit", "--profile", "--timeout",
+                                      "--target"]
 
     init(_ raw: ArraySlice<String>) throws {
         var iterator = raw.makeIterator()
@@ -425,6 +429,28 @@ func follow(_ connection: KiteConnection, _ arguments: JSONValue) async -> Int32
     }
 }
 
+/// `kite test-ticket`: starts a ticket test in Kite (Spool's "Test in Kite"). It's a socket request, not an
+/// MCP tool, so only the user's own commands can start one.
+func testTicket(_ args: Arguments, _ connection: KiteConnection) async throws -> Int32 {
+    guard let argument = args.positional.first, let ticket = LinearTicket(argument: argument) else {
+        throw CLIError("kite test-ticket needs a Linear issue URL (https://linear.app/<org>/issue/PRO-123/…) or its key (PRO-123).")
+    }
+    var target: URL?
+    if let text = args.options["--target"] {
+        guard let url = URL(string: text), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+            throw CLIError("--target needs an http or https URL.")
+        }
+        target = url
+    }
+    let output = await connection.call(TicketTest.wireTool, TicketTest.Request(ticket: ticket, target: target).arguments)
+    if output.isError {
+        FileHandle.standardError.write(Data("kite: \(output.text)\n".utf8))
+        return 1
+    }
+    print(output.text)
+    return 0
+}
+
 func main() async -> Int32 {
     // Options may come before the command too: `kite --socket PATH mcp`.
     var raw = Array(CommandLine.arguments.dropFirst())
@@ -461,6 +487,9 @@ func main() async -> Int32 {
         if name == "tools" {
             for tool in AutomationCommand.Tool.allCases { print("\(tool.rawValue): \(tool.summary)") }
             return 0
+        }
+        if name == "test-ticket" {
+            return try await testTicket(args, connection)
         }
         let (tool, arguments) = try toolCall(for: name, args)
         if tool == .networkLog && args.flags.contains("--follow") {
