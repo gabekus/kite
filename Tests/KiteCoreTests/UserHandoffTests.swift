@@ -113,6 +113,40 @@ import Testing
         #expect(ended.contains("don't do them yourself"))
     }
 
+    @Test func backReopensTheStepBefore() throws {
+        let (start, a, _) = sample()
+        var handoff = start
+        #expect(handoff.previous(before: "h1.1") == nil)
+        #expect(handoff.previous(before: "h1.3")?.id == "h1.2")
+        #expect(handoff.previous(before: "h9.9") == nil)
+        handoff.finish("h1.1", .done, how: "the user clicked the highlighted control")
+        handoff.finish("h1.2", .skipped, how: "the user skipped it")
+        handoff.steps[1].found = true
+        handoff.steps[1].blocker = .offPage
+        // Back from step 3: step 2 waits again, is the one its tab shows, and the ring looks for it afresh.
+        let reopened = handoff.reopen("h1.2")
+        #expect(reopened)
+        #expect(handoff.steps[1].state == .waiting && handoff.steps[1].found == nil && handoff.steps[1].blocker == nil)
+        #expect(handoff.current(on: a)?.id == "h1.2")
+        #expect(handoff.waiting.map(\.id) == ["h1.2", "h1.3", "h1.4"])
+        // A step still waiting (passed with Next) has nothing to reopen.
+        let again = handoff.reopen("h1.3")
+        #expect(!again)
+        // handoff_status tells Claude it's waiting again, and what it had been.
+        let report = handoff.report { _ in nil }
+        #expect(report.hasPrefix("Handoff h1: 1 of 4 done, 3 waiting for the user."))
+        #expect(report.contains("2. [waiting] Click Save (the user went back to it after it was skipped)"))
+        #expect(report.contains("don't count it as done or skipped"))
+        // Done again, it's done, with what did it.
+        handoff.finish("h1.2", .done, how: "the user pressed Done")
+        #expect(handoff.steps[1].how == "the user pressed Done")
+        #expect(!handoff.report { _ in nil }.contains("went back"))
+        // Saved and loaded across a relaunch, it still waits.
+        handoff.reopen("h1.1")
+        let loaded = try JSONDecoder().decode(Handoff.self, from: JSONEncoder().encode(handoff))
+        #expect(loaded.steps[0].state == .waiting && loaded.steps[0].how == "the user went back to it after it was done")
+    }
+
     @Test func buildsTheRingScript() throws {
         let step = Handoff.Step(id: "h1.2", number: 2, instruction: "Tick “Super Administrator”", tab: UUID(),
                                 locator: .marker("h1.2", label: "Super Administrator"))

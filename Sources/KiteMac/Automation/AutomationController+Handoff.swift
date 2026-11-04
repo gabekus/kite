@@ -203,6 +203,22 @@ extension AutomationController {
         if cardStep(front: front) == nil, !waitingHandoffSteps.isEmpty { showNextHandoffStep(after: stepID) }
     }
 
+    /// Back on the card: the step before this one comes up again, waiting on the user even if it was done or skipped
+    /// (Claude hears so from handoff_status), on its own tab when it has one.
+    func showPreviousHandoffStep(before stepID: String) {
+        let id = handoffID(of: stepID)
+        guard let previous = handoffs.first(where: { $0.id == id })?.previous(before: stepID) else { return }
+        update(id) { $0.reopen(previous.id) }
+        handoffCardCollapsed = false
+        if let tab = previous.tab, store.state.tab(tab) != nil, tab != store.state.selectedTab?.id {
+            store.mutateWithoutUndo { $0.select(tab: tab) }
+        }
+        // Held up over the tab's own step: one left waiting before it (passed with Next) would come up instead.
+        focusedHandoffStep = previous.id
+        focusedHandoffFront = store.state.selectedTab?.id
+        pollHandoffsSoon()
+    }
+
     /// Dismiss on the card's menu: the user won't do the rest.
     func dismissHandoff(_ id: String) {
         update(id) { $0.finishAll(.skipped, how: "the user dismissed the handoff") }

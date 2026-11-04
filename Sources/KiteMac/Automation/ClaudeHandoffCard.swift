@@ -3,7 +3,7 @@ import KiteCore
 import SwiftUI
 
 /// handoff's card, over the bottom of the page: what Claude needs the user to do here and why it stopped, with
-/// Done, Skip and Next. The page itself rings the control to click. While no step is on the tab in front, the card
+/// Back, Skip, Next and Done. The page itself rings the control to click. While no step is on the tab in front, the card
 /// folds to a pill ("Claude needs you · 3 steps") that brings up the next one.
 struct ClaudeHandoffCard: View {
     let automation: AutomationController
@@ -195,6 +195,12 @@ private struct HandoffStepCard: View {
                         .controlSize(.small)
                 }
                 Spacer(minLength: 0)
+                if step.number > 1 {
+                    Button("Back") { automation.showPreviousHandoffStep(before: step.id) }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 12))
+                        .help("Go back to step \(step.number - 1): it waits for you again, and Claude hears so")
+                }
                 Button("Skip") { automation.answerHandoff(step.id, .skipped) }
                     .buttonStyle(.borderless)
                     .font(.system(size: 12))

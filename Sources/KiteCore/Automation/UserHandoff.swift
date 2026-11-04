@@ -8,7 +8,7 @@ import Foundation
 /// - rings the control to click on the page itself, with the step's text beside it;
 /// - marks those tabs, and the Claude folders holding them, in the sidebar;
 /// - shows a card over the page with the reason, the step, a copyable command for steps outside the browser,
-///   and Done, Skip and Next;
+///   and Back, Skip, Next and Done;
 /// - tells Claude which steps the user did when it asks (`handoff_status`), or when its wait ends.
 ///
 /// A step on a page is done when the user clicks (or changes) the ringed control, or presses Done. Only real
@@ -271,6 +271,24 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         return true
     }
 
+    /// The step before this one, for the card's Back.
+    public func previous(before stepID: String) -> Step? {
+        guard let step = steps.first(where: { $0.id == stepID }) else { return nil }
+        return steps.last { $0.number < step.number }
+    }
+
+    /// Back on the card: an ended step waits on the user again, with a word for Claude that it had ended. What the
+    /// last look saw is forgotten, so the ring looks for its control afresh.
+    @discardableResult
+    public mutating func reopen(_ stepID: String) -> Bool {
+        guard let index = steps.firstIndex(where: { $0.id == stepID }), !steps[index].isWaiting else { return false }
+        steps[index].how = "the user went back to it after it was \(steps[index].state.rawValue)"
+        steps[index].state = .waiting
+        steps[index].found = nil
+        steps[index].blocker = nil
+        return true
+    }
+
     /// Ends every waiting step (the user dismissed the handoff, or Claude withdrew it).
     public mutating func finishAll(_ state: Step.State, how: String, where include: (Step) -> Bool = { _ in true }) {
         for index in steps.indices where steps[index].isWaiting && include(steps[index]) {
@@ -298,6 +316,10 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
                 }
             }
             lines.append(line)
+        }
+        if steps.contains(where: { $0.isWaiting && $0.how != nil }) {
+            // A reopened step is the only waiting one with a how.
+            lines.append("The user went back to a step that had ended: it waits again, so don't count it as done or skipped.")
         }
         if left == 0 {
             lines.append(skipped == 0
