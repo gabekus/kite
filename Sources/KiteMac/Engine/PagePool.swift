@@ -117,6 +117,17 @@ final class PagePool {
         savedState = [:]
     }
 
+    /// `owner`'s window is about to close (before `closeForWindow`): this window takes the pages of `ids` that
+    /// aren't on screen there, so Claude's background pages carry on here instead of closing and loading again.
+    /// Pages on screen in the closing window close with it (their history comes here).
+    func takeOver(_ ids: Set<UUID>, from owner: PagePool) {
+        guard let shared, owner.shared === shared, owner !== self else { return }
+        for id in ids {
+            guard let page = owner.pages[id], page.view.window == nil, pages[id] == nil, let tab = store.state.tab(id) else { continue }
+            _ = claim(tab)
+        }
+    }
+
     /// The tab's page wherever it is, made here when no linked window has one (automation, extensions).
     func page(for tab: BrowserTab) -> WebPage {
         if let existing = pages[tab.id] {

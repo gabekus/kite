@@ -15,16 +15,18 @@ struct SignInRequest: Equatable {
 extension AutomationController {
     func signIn(tab string: String?, reason: String?, connection: Int) async throws -> ToolOutput {
         let tab = try resolveTab(string)
-        guard let host, host.window != nil else { throw AutomationError(.failed, "Kite has no window open.") }
+        guard let maker = host, maker.window != nil else { throw AutomationError(.failed, "Kite has no window open.") }
         if Self.inBatch {
             throw NeedsConfirmation(request: ConfirmationRequest(action: "hand the tab over to sign in", detail: ""))
         }
-        let page = host.automationPage(for: tab)
+        let page = maker.automationPage(for: tab)
         guard let actions = page.automation as? PageActions else {
             throw AutomationError(.unsupported, "This tab's engine can't hand a sign-in over.")
         }
         markControlled(tab.id, connection: connection)
         try await track(tab.id, page: page, actions: actions)
+        // Read again after the wait: the window may have closed, and the tools moved on.
+        guard let host, host.window != nil else { throw AutomationError(.failed, "Kite has no window open.") }
         let start = store.state.tab(tab.id)?.url
         signIns[tab.id] = SignInRequest(host: start?.host() ?? "this site", reason: reason)
         defer { signIns[tab.id] = nil }

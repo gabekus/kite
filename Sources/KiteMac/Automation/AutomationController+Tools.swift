@@ -436,7 +436,8 @@ extension AutomationController {
     // MARK: Tabs and windows
 
     private func openTab(_ string: String?, active: Bool, placement: TabPlacement, connection: Int) async throws -> ToolOutput {
-        guard let host else { throw AutomationError(.failed, "Kite has no window open.") }
+        // `host` is read again after each wait: the window may close meanwhile, and the tools move on.
+        guard host != nil else { throw AutomationError(.failed, "Kite has no window open.") }
         // A session's Claude-folder tabs share its Claude › Session folder: remember the name it gave,
         // and use it for its later tabs that don't repeat it.
         var placement = placement
@@ -528,9 +529,10 @@ extension AutomationController {
             do {
                 try await authorize(.navigate(url), tab: tab)
             } catch {
-                host.closeAutomatedTab(id)
+                host?.closeAutomatedTab(id)
                 throw error
             }
+            guard let host else { throw AutomationError(.failed, "Kite has no window open.") }
             _ = host.automationPage(for: tab)
             await settle(id, startDelay: 0.3)
         }

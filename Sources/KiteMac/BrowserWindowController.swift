@@ -209,8 +209,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     var closeConfirmed = false
     /// The window's pages are being asked whether it may close.
     var isConfirmingClose = false
-    /// The window has closed (the app may still hold its controller).
+    /// The window has closed (the app may still hold its controller), and hasn't been shown again since.
     private(set) var hasClosed = false
+    /// The window is closing, before its pages close: what follows this window (Claude's tools) moves on and
+    /// takes the pages it's using along (BrowserWindows).
+    var willClose: ((BrowserWindowController) -> Void)?
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if !isIncognito, hidesInsteadOfClosing?() == true {
@@ -222,6 +225,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     func windowWillClose(_ notification: Notification) {
         hasClosed = true
+        willClose?(self)
         closeLinkPeek(animated: false)
         discardParkedLinkPeeks(keeping: nil)
         if let paneClickMonitor { NSEvent.removeMonitor(paneClickMonitor) }
@@ -773,6 +777,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        // Shown again after closing (nothing should, but a closed window can be ordered back in).
+        hasClosed = false
         reclaimPages()
         // Another window's bar may have taken the field editor all windows share.
         keepCommandBarFocused(after: .becameKey)
