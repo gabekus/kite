@@ -72,6 +72,10 @@ final class AutomationController {
     /// The card is folded down to its pill.
     var handoffCardCollapsed = false
     @ObservationIgnored var handoffPoller: Task<Void, Never>?
+    /// Looks again as soon as a window comes on screen, while the poller runs slowly.
+    @ObservationIgnored var handoffOcclusionObserver: NSObjectProtocol?
+    /// The selected tab when the poller last looked, so switching to a step's tab brings a look at once.
+    @ObservationIgnored var handoffSeenTab: UUID?
     /// Which step's ring each tab's page shows, so Kite takes it off when the step ends.
     @ObservationIgnored var ringShown: [UUID: String] = [:]
     @ObservationIgnored var handoffCount = 0
@@ -187,6 +191,8 @@ final class AutomationController {
         socketWatchdog = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.checkSocket() }
         }
+        // Lets macOS fold the wakeup into others: it runs for as long as Claude's control is on.
+        socketWatchdog?.tolerance = 0.5
     }
 
     /// Something else can take the socket away from a running Kite: another Kite
@@ -367,6 +373,7 @@ final class AutomationController {
         expiryTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.expireIdleTabs() }
         }
+        expiryTimer?.tolerance = 1
         watchDownloads()
         return true
     }
@@ -413,6 +420,9 @@ final class AutomationController {
     }
 
     private func expireIdleTabs(now: Date = Date()) {
+        if !isEnabled { expiryTimer?.invalidate() }
+        // Most ticks: Claude hasn't touched a tab since the last one.
+        guard !controlledTabs.isEmpty || !snapshots.isEmpty || !activities.isEmpty || !recordedPages.isEmpty else { return }
         let live = store.state.allTabIDs
         for (id, entry) in controlledTabs {
             let idle = entry.connections.isEmpty ? Timing.idleAfterDisconnect : Timing.idleWhileConnected
@@ -428,7 +438,6 @@ final class AutomationController {
             recordedPages[id] = nil
             network.forget(tab: id.uuidString)
         }
-        if !isEnabled { expiryTimer?.invalidate() }
     }
 
     // MARK: Events and waiting

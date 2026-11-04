@@ -113,8 +113,21 @@ extension AutomationController {
         }
     }
 
+    /// In a window, shown, and the window not covered or minimized. Diagnostics runs sit behind other
+    /// windows, so there a covered window counts.
     private func isOnScreen(_ page: WebPage) -> Bool {
-        page.view.window != nil && !page.view.isHiddenOrHasHiddenAncestor
+        guard let window = page.view.window, !page.view.isHiddenOrHasHiddenAncestor else { return false }
+        return window.occlusionState.contains(.visible) || UIDiagnostics.enabledByEnvironment
+    }
+
+    /// Whether any waiting step's page is on screen, where Kite looks twice a second.
+    private var watchesAPage: Bool {
+        guard let host else { return false }
+        return handoffs.contains { handoff in
+            !handoff.isFinished && handoff.waiting.contains { step in
+                step.tab.flatMap { host.livePages[$0] }.map(isOnScreen) == true
+            }
+        }
     }
 
     /// What a look at a step's control saw. Where the control is found becomes the step's page (so a step that
@@ -280,13 +293,35 @@ extension AutomationController {
     /// their step, follows it through navigations, and hears a click the binding missed.
     func startHandoffPoller() {
         guard handoffPoller == nil else { return pollHandoffsSoon() }
+        if handoffOcclusionObserver == nil {
+            handoffOcclusionObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main
+            ) { [weak self] note in
+                guard (note.object as? NSWindow)?.occlusionState.contains(.visible) == true else { return }
+                MainActor.assumeIsolated { if self?.handoffPoller != nil { self?.pollHandoffsSoon() } }
+            }
+        }
+        watchSelectedTabForHandoffs()
         handoffPoller = Task { [weak self] in
             while let self, !Task.isCancelled {
                 await self.pollHandoffs()
                 if self.handoffs.allSatisfy(\.isFinished) && self.ringShown.isEmpty { break }
-                try? await Task.sleep(for: .seconds(UserHandoff.pollInterval))
+                let interval = self.watchesAPage ? UserHandoff.pollInterval : UserHandoff.idlePollInterval
+                try? await Task.sleep(for: .seconds(interval))
             }
             self?.handoffPoller = nil
+        }
+    }
+
+    /// While the poller runs, a switch to another tab looks at once rather than on the next (slow) tick.
+    private func watchSelectedTabForHandoffs() {
+        handoffSeenTab = withObservationTracking { store.state.selectedTab?.id } onChange: { [weak self] in
+            DispatchQueue.main.async {
+                guard let self, self.handoffPoller != nil else { return }
+                let before = self.handoffSeenTab
+                self.watchSelectedTabForHandoffs()
+                if self.handoffSeenTab != before { self.pollHandoffsSoon() }
+            }
         }
     }
 

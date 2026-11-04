@@ -23,6 +23,9 @@ public enum UserHandoff {
     public static let maxWait: Double = 600
     /// How often Kite looks at the page in front while a step waits on it.
     public static let pollInterval: TimeInterval = 0.5
+    /// How often it looks while no waiting step's page is on screen (a covered window, another tab in front):
+    /// only for tabs closed or reopened. A window coming on screen brings a look at once.
+    public static let idlePollInterval: TimeInterval = 2
     /// How many looks, half a second apart, Kite takes at a new step's control before telling Claude it's missing.
     public static let probeAttempts = 3
     /// How long a step's control must be missing, on a tab at another address, before the card offers Take Me Back.
