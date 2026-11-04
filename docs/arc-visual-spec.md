@@ -3790,11 +3790,19 @@ weren't all identified, so the order is **partial**.
   the current one disabled), —, Close/Unload Tab, Archive Other Tabs / Below / Above (Today tabs; disabled when there's nothing
   to archive). **Inferred:** Add vs Open by whether the tab is on screen; the archive trio counts a split row as one row and
   covers Today only; a moved pinned tab stays pinned in the other space; the Kite items whose place Arc's builder didn't show
-  (Favorites, Pin, Back to Pinned URL) keep their old place.
+  (Favorites, Pin, Back to Pinned URL) keep their old place. Copy Link and Copy link as Markdown are greyed out without a page,
+  and every Copy … as Markdown uses the row's title (a Rename… name wins). Move to goes through the cross-profile warning (#325)
+  and shares the command bar's Move to Today / Pinned helper; menu moves don't play the drop haptic.
+- **Kite split row menu:** Arc's Archive Other Tabs / Below / Above after Archive Item, from the same builder as the tab menu.
+  Not built: the split row's Duplicate, Change Icon… and Rename….
 - **Kite folder menu:** Duplicate, —, Delete, —, New Nested Folder…, Turn “<name>” into Space, Copy All Links, Copy All Links
-  as Markdown, Rename…. Kite takes the Delete branch: its archive holds tabs, not folders, and Delete archives the tabs inside.
-  **Inferred:** the copy keeps the name and sits right after the original; the nested folder goes at the end, opens its parent and
-  starts a rename; the new space keeps the old one's theme and profile, has no icon, and is switched to; Markdown links one per line.
+  as Markdown, —, Rename…. Kite takes the Delete branch: its archive holds tabs, not folders, and Delete archives the tabs inside.
+  Claude's (ephemeral) folders get neither Duplicate nor Turn into Space, and neither does a folder named Claude or holding a
+  Claude or live folder: Kite never makes a Claude space. Turn into Space is greyed out for a folder with no tabs.
+  **Inferred:** the copy keeps the name and sits right after the original, and live folders inside it are left out (a space has
+  one per source); the nested folder goes at the end, opens its parent and starts a rename; the new space keeps the old one's
+  theme and profile, has no icon (a dot), and is switched to; Markdown links one per line; the separator before Rename… (no
+  marker in the builder, but Arc's live split menu shows grouping separators the markers don't).
 - **Not built:** Share / Share Folder… / Share Space… and Copy as Arc Object link (Arc's servers), Copy PR…, Change Icon… on a tab,
   New Folder with N Items (needs multi-select), Live Calendar and meeting items, Customize Page… (Boost editor from the sidebar),
   Show/Hide Space Header (Kite has no hidden-header state), Manage Spaces… (no page yet), Export into Folder (destination not traced).
