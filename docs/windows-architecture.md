@@ -9,12 +9,24 @@ their own PR, never as a side effect of a checkpoint.
   call behind `#ifdef _WIN32` is fine, `<windows.h>` isn't), and nothing from
   the shell. It builds and its tests run on any OS. Everything here is
   unit-tested and reachable from `kitecore`.
-- `windows/src/shell`: the app (`main.cpp`'s `wWinMain`), Win32,
-  DirectComposition, Direct2D/DirectWrite, D3D11, input, and the CEF host. It
-  may use `core`; `core` never uses it.
+- `windows/src/shell`: the app, Win32, DirectComposition, Direct2D/DirectWrite,
+  D3D11, input, and the CEF host. Its entry point is `main.cpp`'s `RunWinMain`,
+  exported from `Kite.dll`: with Chromium, Kite.exe is CEF's bootstrap, which
+  calls it in every process (the browser, and each helper already in Chromium's
+  sandbox). Without Chromium (MinGW) it's `wWinMain` in Kite.exe. Helpers load
+  Kite.dll under win32k lockdown, where user32 can't load, so Kite.dll
+  delay-loads everything but kernel32 and libcef.dll. It may use `core`; `core`
+  never uses it.
 - `windows/src/cli`: `kitecore`, a thin command layer over `core`. It may use
   Win32 for process plumbing (UTF-16 arguments, the console's UTF-8 output) and
   nothing else.
+- `windows/tools/build`: build-time programs whose output ships, such as
+  `StampBootstrap`, which makes Kite.exe from CEF's `bootstrap.exe` with the
+  manifest below and `windows/resources/Version.rc`'s version. They run on the
+  build machine and are MSVC only. They never ship themselves, and nothing links
+  them into Kite. They use Win32 and the standard library only, and nothing from
+  `core` or `shell`. They build into their own output folder, apart from the
+  shipped files. (Measurement tools under `windows/tools` are a separate layer.)
 - `windows/resources`: the process manifest both executables embed.
 - No third-party code except CEF. No WinUI or Windows App SDK, no .NET, no
   Swift runtime, no Boost, no JSON or test libraries. First-party Windows APIs
