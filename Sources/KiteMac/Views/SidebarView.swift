@@ -58,6 +58,8 @@ struct SidebarActions {
     var drop: ([UUID], SidebarDropTarget) -> Void
     /// The pointer moved onto a favorite's tile (with the tile's view), or off it (nil): its preview card.
     var previewFavorite: (BrowserTab?, NSView?) -> Void = { _, _ in }
+    /// The pointer came onto the favorites tray: previews that may be wanted soon are fetched.
+    var prefetchFavoritePreviews: () -> Void = {}
 }
 
 /// Set from a tracking area over the sidebar's host (`BrowserWindowController`).

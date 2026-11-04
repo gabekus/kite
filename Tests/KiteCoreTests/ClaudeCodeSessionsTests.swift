@@ -196,4 +196,20 @@ import Testing
         #expect(Array(new.suffix(2)) == ["--session-id", "id1"])
         #expect(new.contains("bypassPermissions"))
     }
+
+    @Test func testProfilesNeverReadTheUsersHome() {
+        let user = URL(fileURLWithPath: "/Users/me", isDirectory: true)
+        #expect(ClaudeCodeSessions.home(environment: [:], userHome: user) == user)
+        // KITE_TEST_CLAUDE_HOME counts only on a test profile.
+        #expect(ClaudeCodeSessions.home(environment: ["KITE_TEST_CLAUDE_HOME": "/tmp/fixture"], userHome: user) == user)
+        #expect(ClaudeCodeSessions.home(environment: ["KITE_SUPPORT_PATH": "/tmp/k.1", "KITE_TEST_CLAUDE_HOME": "/tmp/fixture"],
+                                        userHome: user).path == "/tmp/fixture")
+        #expect(ClaudeCodeSessions.home(environment: ["KITE_SUPPORT_PATH": "/tmp/k.1"], userHome: user).path == "/tmp/k.1")
+    }
+
+    @Test func watchesTranscriptsAndTheAppsSessions() {
+        let home = URL(fileURLWithPath: "/Users/me", isDirectory: true)
+        let paths = ClaudeCodeSessions.watchedDirectories(home: home).map(\.path)
+        #expect(paths == ["/Users/me/.claude/projects", "/Users/me/Library/Application Support/Claude/claude-code-sessions"])
+    }
 }

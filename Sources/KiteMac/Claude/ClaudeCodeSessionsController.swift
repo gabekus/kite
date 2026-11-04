@@ -41,13 +41,21 @@ final class ClaudeCodeSessionsController {
         }
     }
 
-    @ObservationIgnored private let home = FileManager.default.homeDirectoryForCurrentUser
+    /// The user's home; a test profile's fixture folder (`ClaudeCodeSessions.home`).
+    @ObservationIgnored private let home = ClaudeCodeSessions.home(environment: ProcessInfo.processInfo.environment,
+                                                                   userHome: FileManager.default.homeDirectoryForCurrentUser)
     @ObservationIgnored private let pinsURL: URL
     /// Kite's own ⌘J tasks run Claude Code in here: they're not the user's sessions.
     @ObservationIgnored private let kiteDirectories: [String]
     @ObservationIgnored private var runs: [String: Run] = [:]
-    @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var watcher: DirectoryWatcher?
     @ObservationIgnored private var refreshing = false
+    /// A change came in while a listing ran: list again once it's done.
+    @ObservationIgnored private var refreshAgain = false
+    /// The bar is open, in `barWindow`.
+    @ObservationIgnored private var barOpen = false
+    @ObservationIgnored private weak var barWindow: NSWindow?
+    @ObservationIgnored private var watchObservers: [NSObjectProtocol] = []
     /// Each loaded conversation's transcript date, so a poll reloads only what changed.
     @ObservationIgnored private var loadedDates: [String: Date] = [:]
     /// Each shown conversation's place in its transcript, so a reload reads only what was added.
@@ -91,22 +99,54 @@ final class ClaudeCodeSessionsController {
 
     // MARK: Watching
 
-    /// While the bar is open, the list and the shown conversation follow the transcripts.
-    func setVisible(_ visible: Bool) {
-        timer?.invalidate()
-        timer = nil
-        guard visible else { return }
-        refresh()
-        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
+    /// Changes under the watched folders come in this long after the first one, together.
+    static let watchLatency: TimeInterval = 0.5
+
+    /// While the bar is open in `window`, the list and the shown conversation follow the transcripts:
+    /// an FSEvents stream on them, not a poll, and none while Kite is in the background or the window
+    /// is covered. Opening the bar or coming back lists them again.
+    func setVisible(_ visible: Bool, in window: NSWindow?) {
+        let opened = visible && !barOpen
+        barOpen = visible
+        barWindow = window
+        watchObservers.forEach(NotificationCenter.default.removeObserver)
+        watchObservers = []
+        if visible {
+            let names: [(Notification.Name, AnyObject?)] = [
+                (NSApplication.didBecomeActiveNotification, nil), (NSApplication.didResignActiveNotification, nil),
+                (NSWindow.didChangeOcclusionStateNotification, window),
+            ]
+            watchObservers = names.map { name, object in
+                NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.updateWatching() }
+                }
+            }
         }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
+        updateWatching()
+        // Watching lists them as it starts; opened in the background, the bar still gets one listing.
+        if opened, watcher == nil { refresh() }
+    }
+
+    private var shouldWatch: Bool {
+        barOpen && NSApp.isActive && (barWindow?.occlusionState.contains(.visible) ?? true)
+    }
+
+    private func updateWatching() {
+        guard shouldWatch else {
+            watcher?.stop()
+            watcher = nil
+            return
+        }
+        guard watcher == nil else { return }
+        watcher = DirectoryWatcher(paths: ClaudeCodeSessions.watchedDirectories(home: home), latency: Self.watchLatency) { [weak self] in
+            self?.refresh()
+        }
+        refresh()
     }
 
     /// Lists the sessions again (off the main thread), and reloads the shown one if it changed.
     func refresh() {
-        guard !refreshing else { return }
+        guard !refreshing else { refreshAgain = true; return }
         refreshing = true
         let home = home, pinnedIDs = pins.pinned, excluding = kiteDirectories, previous = desktop
         let known = Dictionary((pinned + recent + [shown].compactMap { $0 }).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -122,6 +162,10 @@ final class ClaudeCodeSessionsController {
     private func listed(_ list: (pinned: [ClaudeCodeSession], recent: [ClaudeCodeSession], shown: ClaudeCodeSession?),
                         desktop: ClaudeDesktopSessions.Index) {
         refreshing = false
+        if refreshAgain {
+            refreshAgain = false
+            DispatchQueue.main.async { [weak self] in self?.refresh() }
+        }
         self.desktop = desktop
         if pinned != list.pinned { pinned = list.pinned }
         if recent != list.recent { recent = list.recent }

@@ -290,7 +290,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             showsProfiles: !isIncognito,
             dismissInstantLinks: { [weak self] id in self?.instantLinks.dismiss(id) },
             drop: { [weak self] ids, target in self?.dropSidebarItems(ids, on: target) },
-            previewFavorite: { [weak self] tab, anchor in self?.previewFavorite(tab, anchor: anchor) }
+            previewFavorite: { [weak self] tab, anchor in self?.previewFavorite(tab, anchor: anchor) },
+            prefetchFavoritePreviews: { [weak self] in self?.prefetchFavoritePreviews() }
         )
         spaceSwipe = SpaceSwipeController(
             store: store,
@@ -352,6 +353,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         claudeBubbleHost.sizingOptions = []
         claudeBubbleContainer = DetachingContainer(host: claudeBubbleHost)
         claudeBubble.onOpenChange = { [weak self] open in self?.claudeBubbleOpened(open) }
+        claudeBubble.window = window
         claudeBubble.postToProject = { [weak self] page, message in self?.postToClaudeProject(page, message: message) }
         libraryHost = LibraryHostingView(rootView: makeLibraryView())
         libraryHost.onEscape = { [weak self] in self?.library.close() }

@@ -52,6 +52,23 @@ public enum ClaudeCodeSessions {
         home.appendingPathComponent(".claude/projects", isDirectory: true)
     }
 
+    /// The home folder the bar reads Claude Code's and the Claude app's sessions from. A test
+    /// profile (`KITE_SUPPORT_PATH` set) never reads the user's own: it reads `KITE_TEST_CLAUDE_HOME`
+    /// (a fixture folder holding `.claude/projects`), or else the empty profile folder.
+    public static func home(environment: [String: String], userHome: URL) -> URL {
+        guard let support = environment["KITE_SUPPORT_PATH"], !support.isEmpty else { return userHome }
+        if let fixture = environment["KITE_TEST_CLAUDE_HOME"], !fixture.isEmpty {
+            return URL(fileURLWithPath: fixture, isDirectory: true)
+        }
+        return URL(fileURLWithPath: support, isDirectory: true)
+    }
+
+    /// What the bar watches for changes while it's open: Claude Code's transcripts, and the Claude
+    /// app's session files (their titles).
+    public static func watchedDirectories(home: URL) -> [URL] {
+        [projectsDirectory(home: home), ClaudeDesktopSessions.directory(home: home)]
+    }
+
     /// `8c0f…-…`: Claude Code names transcripts by their session's UUID. Subagents' and other
     /// side files (`agent-…jsonl`) aren't sessions.
     public static func isSessionID(_ text: String) -> Bool {

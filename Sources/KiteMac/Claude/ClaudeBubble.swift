@@ -30,6 +30,8 @@ final class ClaudeBubbleModel {
     /// Bumped to move focus into the text field.
     var focusToken = 0
     @ObservationIgnored var onOpenChange: (Bool) -> Void = { _ in }
+    /// The window the bar is in: the Claude Code side stops watching while it's covered.
+    @ObservationIgnored weak var window: NSWindow?
     /// Opens a Claude Project's page in a Peek and posts the message there.
     @ObservationIgnored var postToProject: (_ page: URL, _ message: String) -> Void = { _, _ in }
 
@@ -91,7 +93,7 @@ final class ClaudeBubbleModel {
     }
 
     private func updateWatching() {
-        code?.setVisible(isOpen && mode == .code)
+        code?.setVisible(isOpen && mode == .code, in: window)
     }
 
     func newTask() {

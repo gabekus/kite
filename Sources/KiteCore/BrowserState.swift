@@ -338,6 +338,24 @@ public struct BrowserState: Hashable, Codable, Sendable {
 
     public var selectedSpace: Space { spaces[selectedSpaceIndex] }
 
+    /// The selected space and its selected tab (`selection` has every space's), which can be watched
+    /// apart from the rest of the state.
+    public struct Focus: Equatable, Sendable {
+        public var space: UUID?
+        public var tab: UUID?
+
+        public init(space: UUID? = nil, tab: UUID? = nil) {
+            self.space = space
+            self.tab = tab
+        }
+    }
+
+    public var focus: Focus {
+        guard !spaces.isEmpty else { return Focus() }
+        let space = selectedSpace
+        return Focus(space: space.id, tab: space.selectedTabID)
+    }
+
     public var selectedTab: BrowserTab? {
         guard let id = selectedSpace.selectedTabID else { return nil }
         return sidebarTabs(in: selectedSpaceIndex).first { $0.id == id }

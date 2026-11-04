@@ -3192,7 +3192,8 @@ doing it: a live folder needs a signed-in GitHub session, which an incognito win
 - **Filter.** Option set 1 "Created by Me", 2 "Review Requests", 4 "Team Review Requests"; any other mix reads "Mixed".
 - **Refresh.** Event-driven (`LiveFolderFetchReason`: app foregrounded, space focused, item selected/unselected,
   filter change, manual, sign-in). Automatic ones are throttled by `automatic-live-folders-min-refresh-interval-in-seconds`,
-  10. No periodic timer was found. New items arrive unread (`showNewItemsAsUnread`; items carry `isRead`).
+  10. No periodic timer was found. Kite **[differs]**: automatic refreshes wait 5 minutes (each loads github.com in a
+  hidden 1280×2000 page), while Refresh, a filter change and a filed pull request refresh at once. New items arrive unread (`showNewItemsAsUnread`; items carry `isRead`).
 - **Removed rows.** A row the user deletes goes into `hiddenItems` and later refreshes leave it out.
 - **Folder menu.** "Refresh"; a status line "Initializing...", "Last fetch: …" or "Failed to update"; a "Repositories"
   submenu of per-repo toggles ending "This list is generated based on your currently active pull requests."; the three
@@ -3729,8 +3730,10 @@ accessibility frames and pixel colours only (no screenshot of the mail was looke
   reaches the tile, fully in within about 0.05–0.09s; it stays while the pointer is on the card and goes within
   about 0.1s of leaving both. Kite: 0.38s delay, 0.08s fades.
 - Data ready before the hover (binary: `PreviewsDataClient.setPeriodicUpdatesEnabled`, `refreshTimer`; measured: Arc's
-  card had the mail in its first frame). Kite reads Gmail favorites' mail 3s after a window opens and every minute,
-  from one hidden page per profile, so the card opens with it rather than after a network round trip.
+  card had the mail in its first frame). Kite reads Gmail favorites' mail when it comes to the front and when the
+  pointer comes onto the favorites tray (at least the 0.38s hover delay before a card opens), each time only if the
+  last read is over 50s old, from one hidden page per profile that closes after 2 minutes without a read
+  **[differs]**: no background timer, for battery. A card opened before a read lands shows the last mail it had.
 - Scrolling: the list is as tall as its rows up to the 272 cap and scrolls inside the card (a legacy scroller shows
   with Gabe's scroller setting, as on Arc's).
 - Click (Kite): a row opens the message in the favorite. **[unverified]** what Arc does on click.

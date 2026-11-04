@@ -51,7 +51,11 @@ struct LinkPeekBadge: Equatable {
 @MainActor
 @Observable
 final class BrowserStore {
-    private(set) var state: BrowserState
+    private(set) var state: BrowserState {
+        didSet { syncFocus() }
+    }
+    /// `state.focus`, set only when it changes: watching it doesn't wake on every other change.
+    private(set) var focus = BrowserState.Focus()
     private(set) var pages: [UUID: PageStatus] = [:]
     private(set) var commandBar: CommandBarMode?
     /// The space whose header name is being edited in place.
@@ -172,6 +176,12 @@ final class BrowserStore {
     private init(state: BrowserState) {
         session = nil
         self.state = state
+        focus = state.focus
+    }
+
+    private func syncFocus() {
+        let now = state.focus
+        if now != focus { focus = now }
     }
 
     init(session: SessionStore) {
@@ -192,6 +202,7 @@ final class BrowserStore {
             NSLog("Kite: couldn't read session, starting fresh\(savesBlocked ? " without saving over it" : ""): \(error)")
         }
         state.dropUnnamedEmptySpaces()
+        focus = state.focus
     }
 
     // MARK: Undo

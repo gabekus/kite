@@ -329,3 +329,19 @@ extension BrowserState {
         }
     }
 }
+
+extension LiveFolder {
+    /// Automatic refreshes (launch, Kite coming to the front, switching spaces, opening or leaving a
+    /// folder's tab) start at most this often per folder. Arc's floor is 10 seconds
+    /// (`automatic-live-folders-min-refresh-interval-in-seconds`); each refresh loads github.com in a
+    /// hidden page, so Kite waits longer between them. Refresh, a filter change and a pull request
+    /// just made or reviewed still refresh straight away.
+    public static let automaticRefreshInterval: TimeInterval = 5 * 60
+
+    /// Whether a refresh may start: a forced one always, an automatic one once the last one started
+    /// `automaticRefreshInterval` ago.
+    public static func mayRefresh(lastStarted: Date?, now: Date = Date(), force: Bool) -> Bool {
+        guard !force, let lastStarted else { return true }
+        return now.timeIntervalSince(lastStarted) >= automaticRefreshInterval
+    }
+}

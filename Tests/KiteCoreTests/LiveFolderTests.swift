@@ -137,4 +137,14 @@ import Testing
         state.addLiveFolder(.github, inSpace: 0)
         #expect(state.liveFoldersTurnedOff.isEmpty)
     }
+
+    @Test func automaticRefreshesWaitMinutesForcedOnesDont() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        #expect(LiveFolder.mayRefresh(lastStarted: nil, now: start, force: false))
+        #expect(!LiveFolder.mayRefresh(lastStarted: start, now: start.addingTimeInterval(10), force: false))
+        #expect(!LiveFolder.mayRefresh(lastStarted: start, now: start.addingTimeInterval(LiveFolder.automaticRefreshInterval - 1), force: false))
+        #expect(LiveFolder.mayRefresh(lastStarted: start, now: start.addingTimeInterval(LiveFolder.automaticRefreshInterval), force: false))
+        #expect(LiveFolder.mayRefresh(lastStarted: start, now: start.addingTimeInterval(1), force: true))
+        #expect(LiveFolder.automaticRefreshInterval >= 3 * 60)
+    }
 }
