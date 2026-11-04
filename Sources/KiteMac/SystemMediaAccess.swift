@@ -35,7 +35,7 @@ enum SystemMediaAccess {
     }
 
     static func openSettings(_ device: Device) {
-        if let url = device.settingsURL { NSWorkspace.shared.open(url) }
+        if let url = device.settingsURL { WindowPresenter.open(url) }
     }
 
     /// A site Kite allowed can't have `devices` because macOS has them off: says so in `window`'s
