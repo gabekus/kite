@@ -43,6 +43,9 @@ struct Snapshot {
     uint64_t fileTime = 0;  // the same moment as a FILETIME
     std::vector<ProcessSample> processes;  // Kite's
     std::optional<double> dwmCpuMs, dwmGpuMs;
+    // The job's own CPU total (JobObjectBasicAccountingInformation: every process that was ever
+    // in it, ended ones included), to cross-check the per-process sum.
+    std::optional<double> jobCpuMs;
     // GetSystemTimes, in ms: idle, and kernel + user (kernel includes idle).
     std::optional<double> systemIdleMs, systemTotalMs;
     // What the window manager shows of Kite (filled in by the run): how much of its window no

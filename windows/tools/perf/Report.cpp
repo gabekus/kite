@@ -296,6 +296,7 @@ std::string TablesOf(const Value& after, const Value* before) {
     phaseRow("hover move to present p99, ms", "hover", {"latency", "move", "toPresentP99Ms"});
     phaseRow("hover: sidebar surface draws", "hover", {"kite", "surfaceDraws", "sidebar"}, 0);
     phaseRow("idle: dwm CPU ms/s", "idle", {"context", "dwmCpuMsPerS"});
+    phaseRow("idle: the real pointer's moves over Kite (Kite's count)", "idle", {"kite", "realPointerMoves"}, 0);
     phaseRow("idle: samples with the real pointer over Kite", "idle", {"window", "pointerOverKiteSamples"}, 0);
     row("shutdown: WM_CLOSE to every process gone, ms", at({"shutdown", "allExitedMs"}));
     row("favicon requests to the page server", at({"faviconHits"}), 0);
@@ -350,6 +351,24 @@ std::string Compare(const Value& before, const Value& after) {
     same("runs", "run count");
     same("frameStatistics", "frame statistics (Windows 11's DirectComposition statistics)");
     same("gpuCounters", "GPU counters (PDH)");
+    const auto at = [](const Value& v, std::initializer_list<const char*> keys) -> std::string {
+        const Value* x = Path(v, keys);
+        return x ? kite::json::Write(*x) : "none";
+    };
+    if (at(before, {"build", "assets"}) != at(after, {"build", "assets"})) {
+        warnings += "> **Warning:** the two ran different fixtures or pages (build.assets " + at(before, {"build", "assets"}) + " and " +
+                    at(after, {"build", "assets"}) + ").\n";
+    }
+    const auto primaryHz = [](const Value& v) -> std::string {
+        for (const Value& d : Items(Path(v, {"machine", "displays"}))) {
+            const Value* primary = d.Find("primary");
+            if (primary && primary->AsBool().value_or(false)) return d.Find("hz") ? kite::json::Write(*d.Find("hz")) : "none";
+        }
+        return "none";
+    };
+    if (primaryHz(before) != primaryHz(after)) {
+        warnings += "> **Warning:** the primary display ran at " + primaryHz(before) + " Hz and " + primaryHz(after) + " Hz.\n";
+    }
     return warnings + (warnings.empty() ? "" : "\n") + TablesOf(after, &before);
 }
 

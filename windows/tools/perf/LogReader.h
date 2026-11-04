@@ -15,7 +15,7 @@ namespace kiteperf {
 struct Mark {
     std::string name, detail;
     int64_t qpc = 0;
-    double presents = 0, commits = 0;
+    double presents = 0, commits = 0, pointerMoves = 0;  // pointerMoves: the real pointer's, over Kite's window
     std::map<std::string, double> draws;
 };
 // 0 stands for a null time.

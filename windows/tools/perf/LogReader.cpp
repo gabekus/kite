@@ -59,7 +59,7 @@ void LogReader::Parse(const std::string& line) {
             }
         }
     } else if (type == "mark") {
-        Mark m{text("name"), text("detail"), integer("qpc"), number("presents"), number("commits"), {}};
+        Mark m{text("name"), text("detail"), integer("qpc"), number("presents"), number("commits"), number("pointerMoves"), {}};
         if (const Value* draws = v->Find("surfaceDraws"); draws && draws->AsObject()) {
             for (const auto& [key, count] : *draws->AsObject()) m.draws[key] = count.AsNumber().value_or(0);
         }

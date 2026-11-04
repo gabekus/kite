@@ -29,7 +29,8 @@ std::unique_ptr<PageServer> PageServer::Start(const std::filesystem::path& pages
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator(pages, ec)) {
         if (!entry.is_regular_file()) continue;
-        const std::string name = entry.path().filename().string();
+        const std::u8string utf8 = entry.path().filename().u8string();
+        const std::string name(utf8.begin(), utf8.end());
         if (name == "static.html") server->staticPage_ = ReadFile(entry.path());
         else server->files_["/" + name] = ReadFile(entry.path());
     }

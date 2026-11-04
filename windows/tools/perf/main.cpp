@@ -292,6 +292,12 @@ std::wstring Run::Launch() {
     if (ec) return L"couldn't make the profile " + profile_.wstring();
     std::filesystem::copy_file(options_.assets / L"sessions" / L"perf-10tabs-2spaces.json", profile_ / L"session.json", ec);
     if (ec) return L"couldn't copy the session fixture: " + Widen(ec.message());
+    // The mark of a test profile, without which Kite refuses its measurement hooks.
+    {
+        std::ofstream marker(profile_ / kite::perf::kTestProfileMarker, std::ios::binary);
+        marker << "kiteperf\n";
+        if (!marker) return L"couldn't write the profile's test marker";
+    }
 
     std::wstring error;
     processes_ = Processes::Create(error);
@@ -386,7 +392,16 @@ void Run::RunPhase(const std::string& name, const std::function<void(Phase&)>& b
         Sample();
         body(phase);
         Sample();
-        if (markNow("phase-end:" + name, phase.endMark)) phases_.push_back(std::move(phase));
+        if (markNow("phase-end:" + name, phase.endMark)) {
+            // A command Kite accepted but then couldn't run (its state had moved on).
+            for (const Mark& m : log_->marks) {
+                if (m.name == "control-refused" && m.qpc >= phase.beginMark.qpc && m.qpc <= phase.endMark.qpc) {
+                    Fail("Kite refused the command " + m.detail + " when it came to run it, in " + name);
+                    break;
+                }
+            }
+            phases_.push_back(std::move(phase));
+        }
     }
     current_ = nullptr;
 }
@@ -648,6 +663,7 @@ Object Run::PhaseResult(const Phase& phase) const {
     // Kite's own counters, from the phase's two marks.
     Object kite;
     kite["presents"] = phase.endMark.presents - phase.beginMark.presents;
+    kite["realPointerMoves"] = phase.endMark.pointerMoves - phase.beginMark.pointerMoves;
     kite["commits"] = phase.endMark.commits - phase.beginMark.commits;
     Object draws;
     for (const auto& [view, count] : phase.endMark.draws) {
@@ -738,6 +754,12 @@ Object Run::PhaseResult(const Phase& phase) const {
         return m;
     };
     out["totals"] = metrics([](const ProcessSample&) { return true; });
+    // The job's own CPU over the same samples: within a little of the sum above, unless a
+    // process ran outside the job or was missed.
+    if (window.size() > 1 && window.front()->jobCpuMs && window.back()->jobCpuMs) {
+        const double dt = Ms(window.front()->qpc, window.back()->qpc) / 1000;
+        if (dt > 0) out["totals"].AsObject()->insert_or_assign("jobCpuMsPerS", Round((*window.back()->jobCpuMs - *window.front()->jobCpuMs) / dt));
+    }
     Object byType;
     std::set<std::string> types;
     for (const Snapshot* s : window) {
@@ -880,10 +902,14 @@ Object Run::PhaseResult(const Phase& phase) const {
         check["presents"] = presents;
         check["commits"] = commits;
         check["surfaceDraws"] = draws;
+        // The real pointer's moves over Kite's window, as Kite counted them; the 1 Hz samples
+        // are context.
+        const double moves = phase.endMark.pointerMoves - phase.beginMark.pointerMoves;
+        check["realPointerMoves"] = moves;
         check["pointerOverKiteSamples"] = static_cast<double>(pointerOver);
         check["kiteInFrontSamples"] = static_cast<double>(inFront);
         check["pass"] = pass;
-        check["drewByItself"] = !pass && pointerOver == 0;
+        check["drewByItself"] = !pass && moves == 0;
         out["assert"] = std::move(check);
     }
     for (const auto& [key, value] : phase.extra) out[key] = value;
@@ -1074,6 +1100,25 @@ int wmain(int argc, wchar_t** argv) {
     if (options.kite.empty()) return Usage("--kite is required");
     if (!std::filesystem::exists(options.kite)) return Usage("no Kite.exe at " + Utf8(options.kite));
     if (!options.phases.empty() && options.scenario != "standard") return Usage("--phases picks from the standard scenario's phases");
+    // The same allow-list Kite.exe applies, before anything starts, with the reason.
+    for (size_t start = 0; start < options.switches.size();) {
+        if (options.switches[start] == L' ') {
+            ++start;
+            continue;
+        }
+        const size_t end = std::min(options.switches.find(L' ', start), options.switches.size());
+        const std::string token = Narrow(options.switches.substr(start, end - start));
+        start = end;
+        if (!token.starts_with("--") || token.size() < 3) return Usage("--chromium-switches takes --name or --name=value, not " + token);
+        const std::string entry = token.substr(2);
+        const size_t equals = entry.find('=');
+        const std::string name = entry.substr(0, equals), value = equals == std::string::npos ? "" : entry.substr(equals + 1);
+        if (!kite::perf::AllowedChromiumSwitch(name, value)) {
+            return Usage("--chromium-switches: " + token +
+                         " isn't on Kite's allow-list (shell/PerfProtocol.h): only switches that measure Chromium without weakening "
+                         "the sandbox, site isolation or web security, and only the listed features for --disable-features");
+        }
+    }
     if (options.label.empty()) options.label = options.scenario;
     if (options.out.empty()) options.out = Widen("kiteperf-" + options.label + ".json");
     options.assets = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(KITEPERF_ASSETS)));  // sessions/ and pages/

@@ -229,6 +229,10 @@ void Processes::Add(DWORD pid) {
     if (known_.contains(pid)) return;
     HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!h) return;
+    // A new process with an old one's id: its GPU engine time starts again from 0.
+    engineMs_.erase(pid);
+    const std::wstring prefix = L"pid_" + std::to_wstring(pid) + L"_";
+    std::erase_if(engineLast_, [&](const auto& entry) { return entry.first.starts_with(prefix); });
     Known known;
     known.handle = h;
     if (const auto line = CommandLine(h)) {
@@ -245,6 +249,11 @@ void Processes::Add(DWORD pid) {
 
 Snapshot Processes::Take() {
     Snapshot snap;
+    // Before discovery: a process found in this snapshot that was created after this moment
+    // counts from 0 in the next one, never one that was missed.
+    FILETIME now{};
+    GetSystemTimePreciseAsFileTime(&now);
+    snap.fileTime = Ticks(now);
     // The whole machine's processes: context switches by thread, handles and threads, and each
     // one's parent (children outside the job are still Kite's if their parent is and they're
     // Kite.exe).
@@ -312,10 +321,11 @@ Snapshot Processes::Take() {
             engineLast_[i.name] = i.value;
         }
     }
-    FILETIME now{};
-    GetSystemTimePreciseAsFileTime(&now);
-    snap.fileTime = Ticks(now);
     snap.qpc = kite::perf::Now();
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
+    if (QueryInformationJobObject(job_, JobObjectBasicAccountingInformation, &accounting, sizeof accounting, nullptr)) {
+        snap.jobCpuMs = Ms(accounting.TotalUserTime) + Ms(accounting.TotalKernelTime);
+    }
     for (auto it = known_.begin(); it != known_.end();) {
         const DWORD pid = it->first;
         Known& known = it->second;
