@@ -531,8 +531,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsWindowController.shared.show()
     }
 
-    /// Chromium's Energy Saver (30fps on low battery). Off unless the user turns it on.
+    /// Chromium's Energy Saver (30fps on battery below 20%). On unless the user turns it off, as in Chrome.
     static let energySaverKey = "chromiumEnergySaver"
+    static var energySaverSetting: Bool { UserDefaults.standard.object(forKey: energySaverKey) as? Bool ?? true }
 
     @objc func toggleEnergySaver(_ sender: Any?) {
         #if canImport(CEFBridge)

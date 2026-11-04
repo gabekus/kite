@@ -35,8 +35,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (class, nonatomic, readonly) BOOL isInitialized;
 + (BOOL)initializeWithSettings:(KCRuntimeSettings *)settings;
 /// Chromium's Energy Saver, which drops pages to 30fps on battery below 20%.
-/// Off by default so pages run at the display's full rate. Can be set before
-/// or after initializing.
+/// On by default, as in Chrome. Can be set before or after initializing.
 @property (class, nonatomic) BOOL energySaverEnabled;
 /// Runs the Cocoa event loop with CEF integrated. Returns after quit.
 + (void)runMessageLoop;
