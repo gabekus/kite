@@ -381,11 +381,15 @@ int wmain(int argc, wchar_t** argv) {
                 fwprintf(stderr, L"stamp-bootstrap: can't read %ls\n", icon.c_str() + 1);
                 return 1;
             }
+            // The path without the whitespace or line ends an editor or another generator adds.
+            std::string_view path(*named);
+            const size_t first = path.find_first_not_of(" \t\r\n");
+            path = first == std::string_view::npos ? std::string_view() : path.substr(first, path.find_last_not_of(" \t\r\n") - first + 1);
             icon.clear();
-            if (!named->empty()) {
-                const int length = MultiByteToWideChar(CP_UTF8, 0, named->data(), static_cast<int>(named->size()), nullptr, 0);
+            if (!path.empty()) {
+                const int length = MultiByteToWideChar(CP_UTF8, 0, path.data(), static_cast<int>(path.size()), nullptr, 0);
                 icon.resize(static_cast<size_t>(length > 0 ? length : 0));
-                if (length > 0) MultiByteToWideChar(CP_UTF8, 0, named->data(), static_cast<int>(named->size()), icon.data(), length);
+                if (length > 0) MultiByteToWideChar(CP_UTF8, 0, path.data(), static_cast<int>(path.size()), icon.data(), length);
             }
         }
         problem = Stamp(argv[1], argv[2], argv[3], argv[4], icon);
