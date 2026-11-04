@@ -3,6 +3,13 @@ import Testing
 @testable import KiteCore
 
 @Suite struct StoreFileTests {
+    /// The tests that make a file impossible to move or copy do it with a read-only folder (chmod 0500).
+    #if os(Windows)
+    static let readOnlyFoldersWork = false
+    #else
+    static let readOnlyFoldersWork = true
+    #endif
+
     private func makeFolder() throws -> URL {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("kite-storefile-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -41,7 +48,8 @@ import Testing
         #expect(try backups(in: folder).count == 1)
     }
 
-    @Test func aFileThatCannotBeMovedIsNeverSavedOver() throws {
+    @Test(.enabled(if: Self.readOnlyFoldersWork, "Windows ignores a folder's POSIX permissions"))
+    func aFileThatCannotBeMovedIsNeverSavedOver() throws {
         let folder = try makeFolder()
         let url = folder.appendingPathComponent("tasks.json")
         try Data("garbage".utf8).write(to: url)
@@ -92,7 +100,8 @@ import Testing
         #expect(try backups(in: folder).count == 1)
     }
 
-    @Test func aLenientReadThatCannotBeCopiedIsNeverSavedOver() throws {
+    @Test(.enabled(if: Self.readOnlyFoldersWork, "Windows ignores a folder's POSIX permissions"))
+    func aLenientReadThatCannotBeCopiedIsNeverSavedOver() throws {
         let folder = try makeFolder()
         let url = folder.appendingPathComponent("routes.json")
         let text = "{\"spaces\": {\"\(UUID().uuidString)\": {\"agent\": {}}}, \"projects\": []}"
