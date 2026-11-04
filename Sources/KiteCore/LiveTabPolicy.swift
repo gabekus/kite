@@ -23,4 +23,12 @@ public struct LiveTabPolicy: Sendable {
             .prefix(excess)
             .map(\.key)
     }
+
+    /// A tab picked to hibernate waits on an asynchronous busy check (media, camera or mic). When it answers,
+    /// the hibernation still goes ahead only if the tab has the page it had when picked (`samePage`), isn't on
+    /// screen, and hasn't been shown since (`shownAt` is when it was last shown, then and now).
+    public static func stillHibernates(pickedShownAt: Date?, shownAt: Date?, samePage: Bool, visible: Bool) -> Bool {
+        guard samePage, !visible, let pickedShownAt else { return false }
+        return shownAt == pickedShownAt
+    }
 }

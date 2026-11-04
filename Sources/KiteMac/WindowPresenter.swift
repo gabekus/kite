@@ -40,6 +40,12 @@ enum WindowPresenter {
         if testSafe { panel.makeKey() } else { panel.makeKeyAndOrderFront(nil) }
     }
 
+    /// A window Kite opens for itself (Claude's): in below the key window, never key or main, on any profile.
+    static func showInBackground(_ window: NSWindow?) {
+        guard let window else { return }
+        apply(.background(testSafe: testSafe, level: window.level.rawValue), to: window)
+    }
+
     static func activateApp() {
         if testSafe { return }
         NSApp.activate(ignoringOtherApps: true)
@@ -77,6 +83,8 @@ enum WindowPresenter {
             if let front = kiteFrontWindow(excluding: window) { window.order(.above, relativeTo: front.windowNumber) }
         case .keep: break
         case .behind: window.orderBack(nil)
+        case .belowKey:
+            if let key = NSApp.keyWindow, key !== window { window.order(.below, relativeTo: key.windowNumber) } else { window.orderBack(nil) }
         }
         if presentation.activates { NSApp.activate(ignoringOtherApps: true) }
     }

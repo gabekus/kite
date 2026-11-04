@@ -306,7 +306,9 @@ final class ClaudeTasksController {
     /// Shows the task's first open tab.
     func showTabs(_ id: UUID) {
         guard let task = task(id), let tab = task.tabIDs.first(where: { store.state.tab($0) != nil }) else { return }
-        store.mutateWithoutUndo { $0.select(tab: tab) }
+        // Selected in the window that's shown: the tools' window (a live one; a new one if every normal window closed).
+        automation.ensureWindow?()
+        automation.store.mutateWithoutUndo { $0.select(tab: tab) }
         WindowPresenter.show(automation.host?.window)
     }
 

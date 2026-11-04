@@ -22,6 +22,16 @@ public struct WindowPresentation: Equatable, Sendable {
         case keep
         /// orderBack: behind every other window (Kite shows nothing else yet).
         case behind
+        /// Just below the key window (behind everything when there is none), without making it key or main.
+        case belowKey
+    }
+
+    /// Who a window is shown for. The user's (⌘N, a link from another app, the Dock icon) come forward as
+    /// usual. One Kite opens for itself, for Claude's tools, never comes in front of the window the user is
+    /// in and never becomes key or main, on any profile, so it can't take their typing.
+    public enum Purpose: Equatable, Sendable {
+        case user
+        case automation
     }
 
     /// NSWindow.Level.normal's raw value.
@@ -47,6 +57,16 @@ public struct WindowPresentation: Equatable, Sendable {
         let order: Order = hasParent ? .aboveParent : kiteHasFrontWindow ? .aboveKite : isVisible ? .keep : .behind
         return WindowPresentation(order: order, activates: false, level: level > normalLevel ? normalLevel : nil)
     }
+
+    /// A window Kite opens for itself (Purpose.automation): below the key window on a real profile, behind
+    /// everything on a test-safe run. Never key, never activating.
+    public static func background(testSafe: Bool, level: Int = normalLevel) -> WindowPresentation {
+        WindowPresentation(order: testSafe ? .behind : .belowKey, activates: false,
+                           level: testSafe && level > normalLevel ? normalLevel : nil)
+    }
+
+    /// Whether the order makes the window key.
+    public var makesKey: Bool { order == .keyAndFront }
 
     /// Whether this process is a test-safe run: `KITE_DIAGNOSTICS=1` counts only with `KITE_SUPPORT_PATH`, so it can't
     /// switch on for a real profile.

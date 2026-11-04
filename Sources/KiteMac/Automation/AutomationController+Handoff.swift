@@ -413,14 +413,15 @@ extension AutomationController {
     }
 
     /// The tab in front, and which steps' tabs are open: a switch or a close changes what the ring and card show.
-    private func watchHandoffTabs() {
+    /// `generation` is the store watch's (`handoffTabsWatch`): when the tools move to another window's store
+    /// (`attach`), the old store's observation is dropped and this runs again on the new one.
+    func watchHandoffTabs(generation: Int? = nil) {
+        let generation = generation ?? handoffTabsWatch.generation
+        guard handoffTabsWatch.isCurrent(generation) else { return }
         let key = withObservationTracking { handoffTabsKey } onChange: { [weak self] in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.watchHandoffTabs() } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.watchHandoffTabs(generation: generation) } }
         }
-        if key != lastHandoffTabsKey {
-            lastHandoffTabsKey = key
-            handoffEvent()
-        }
+        if handoffTabsWatch.saw(key, generation: generation) { handoffEvent() }
     }
 
     /// The front tab, and each open step tab with its address (a step's page can change without a load finishing).

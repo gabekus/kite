@@ -16,8 +16,13 @@ final class BrowserWindows {
     private let engine: WebEngine
     private let adblocker: Adblocker
     private let history: HistoryStore
-    /// Each normal window as it's made (the main one excepted).
+    /// Each normal or Blank window as it's made (the main one excepted).
     var didMakeController: ((BrowserWindowController) -> Void)?
+    /// A normal window is closing (the main one too), before its pages close: what followed it moves to
+    /// `currentNormal` and can take the pages it's using along (`PagePool.takeOver`).
+    var normalWindowClosing: ((BrowserWindowController) -> Void)?
+    /// A quit is being asked about or under way: nothing opens a window for itself meanwhile.
+    var quitPending = false
     private let fileURL: URL
     let link = WindowLink()
     /// The normal windows' pages: a tab selected in two of them has one page, shown in the window
@@ -47,6 +52,7 @@ final class BrowserWindows {
         self.fileURL = fileURL
         link.add(main)
         mainController.pool.join(sharedPages)
+        mainController.willClose = { [weak self] controller in self?.normalWindowClosing?(controller) }
     }
 
     /// ⌘N: a normal window on the front window's space, with the command bar open for its first page,
@@ -60,14 +66,45 @@ final class BrowserWindows {
         return controller
     }
 
-    /// A normal window for Claude's tools when none is left open: on the main sidebar's space, with no
-    /// command bar (nobody is typing in it).
-    func openWindowForAutomation() -> BrowserWindowController {
-        makeNormal(main.state.newWindowState(on: main.state.selectedSpaceID), frame: nil)
+    /// The normal window to work in for something that has no window of its own (Claude's tools, links from
+    /// other apps, the Dock icon, pages web apps and Little Kite hand over): `prefer` while it's open, else the
+    /// frontmost open normal window. With none, `opening` makes one for that purpose (never while quitting);
+    /// nil otherwise. `visibleOnly` skips a window hidden while Claude works in it.
+    func currentNormal(prefer: BrowserWindowController? = nil, visibleOnly: Bool = false,
+                       opening: WindowPresentation.Purpose? = nil) -> BrowserWindowController? {
+        let normal = Self.frontToBack(normalControllers)
+        let candidates = normal.map {
+            AutomationWindowChoice.Window(id: ObjectIdentifier($0), isNormal: true, isOpen: !$0.hasClosed,
+                                          isVisible: $0.window?.isVisible == true || $0.window?.isMiniaturized == true)
+        }
+        let preferred = prefer.flatMap { p in normal.contains { $0 === p } ? ObjectIdentifier(p) : nil }
+        switch AutomationWindowChoice.pick(current: preferred, windows: candidates, visibleOnly: visibleOnly) {
+        case .keep:
+            return prefer
+        case .use(let id):
+            return normal.first { ObjectIdentifier($0) == id }
+        case .openNew:
+            guard let opening, !isTerminating, !quitPending else { return nil }
+            return makeNormal(main.state.newWindowState(on: main.state.selectedSpaceID), frame: nil, purpose: opening)
+        }
     }
 
-    /// A Blank window (its own sidebar), which Claude's tools don't work in.
-    func isBlank(_ controller: BrowserWindowController) -> Bool { kinds[ObjectIdentifier(controller)] == .blank }
+    /// The main window and the ⌘N windows (not Blank, incognito or Little Kite), in the order they were made.
+    private var normalControllers: [BrowserWindowController] {
+        [mainController] + controllers.filter { kinds[ObjectIdentifier($0)] == .normal }
+    }
+
+    /// The main window or a ⌘N window: one Claude's tools can work in.
+    func isNormal(_ controller: BrowserWindowController) -> Bool {
+        controller === mainController || (controllers.contains { $0 === controller } && kinds[ObjectIdentifier(controller)] == .normal)
+    }
+
+    /// `controllers` front to back: those on screen by their order there, then the rest (hidden while Claude
+    /// works) in the order given.
+    static func frontToBack(_ controllers: [BrowserWindowController]) -> [BrowserWindowController] {
+        let screen = NSApp.orderedWindows.compactMap { window in controllers.firstIndex { $0.window === window } }
+        return AutomationWindowChoice.frontToBack(Array(controllers.indices), screenOrder: screen).map { controllers[$0] }
+    }
 
     /// ⌃⌘N: a window with its own sidebar, outside the spaces, opening on the command bar.
     func openBlankWindow() {
@@ -114,31 +151,33 @@ final class BrowserWindows {
 
     // MARK: Private
 
+    /// The key (or main) window if it's a normal one, else the frontmost normal window.
     private func frontStore() -> BrowserStore? {
         let front = NSApp.keyWindow?.windowController as? BrowserWindowController
             ?? NSApp.mainWindow?.windowController as? BrowserWindowController
-        guard let front, !front.isIncognito, kinds[ObjectIdentifier(front)] != .blank else { return nil }
-        return front.store
+        return currentNormal(prefer: front)?.store
     }
 
-    private func makeNormal(_ state: BrowserState, frame: NSRect?) -> BrowserWindowController {
+    private func makeNormal(_ state: BrowserState, frame: NSRect?, purpose: WindowPresentation.Purpose = .user) -> BrowserWindowController {
         let store = BrowserStore.linked(state, to: link)
-        return show(store, kind: .normal, frame: frame, sharedPages: sharedPages)
+        return show(store, kind: .normal, frame: frame, sharedPages: sharedPages, purpose: purpose)
     }
 
     private func makeBlank(_ state: BrowserState?, frame: NSRect?) -> BrowserWindowController {
         show(.blank(state), kind: .blank, frame: frame, sharedPages: nil)
     }
 
-    private func show(_ store: BrowserStore, kind: SavedWindow.Kind, frame: NSRect?, sharedPages: SharedPages?) -> BrowserWindowController {
+    private func show(_ store: BrowserStore, kind: SavedWindow.Kind, frame: NSRect?, sharedPages: SharedPages?,
+                      purpose: WindowPresentation.Purpose = .user) -> BrowserWindowController {
         store.historyRoot = history
         store.didChangeState = { [weak self] delay in self?.scheduleSave(delay) }
         let controller = BrowserWindowController(store: store, engine: engine, adblocker: adblocker, autosaveName: nil,
                                                  sharedPages: sharedPages)
         controllers.append(controller)
-        didMakeController?(controller)
         let key = ObjectIdentifier(controller)
         kinds[key] = kind
+        if kind == .normal { controller.willClose = { [weak self] controller in self?.normalWindowClosing?(controller) } }
+        didMakeController?(controller)
         closeObservers[key] = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: controller.window, queue: .main
         ) { [weak self, weak controller] _ in
@@ -155,7 +194,8 @@ final class BrowserWindows {
         // Offset from the window in front so the two don't stack exactly. Read it before
         // showWindow, which makes the new window main.
         let front = NSApp.mainWindow ?? mainController.window
-        WindowPresenter.show(controller)
+        // A window Kite opens for itself (Claude's) goes in behind the key window and never becomes key or main.
+        if purpose == .automation { WindowPresenter.showInBackground(controller.window) } else { WindowPresenter.show(controller) }
         if let frame {
             controller.window?.setFrame(frame, display: false)
         } else if let front, front !== controller.window {
