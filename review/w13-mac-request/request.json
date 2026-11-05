@@ -1,0 +1,245 @@
+{
+  "id": "w13",
+  "title": "W13 Mac references: the favorites grid",
+  "about": "The favorites tray over the pinned tabs (SidebarFavorites.swift) from origin/helix/W13-favorites' windows/helix/states/favorites*.json. Kite for Mac from origin/main: W13 changes no Mac code. Favicons load from the sites themselves on both sides (Windows with --favicons); the selected tab's page loads on the Mac and reports its own icon (WebKitEngine.faviconScript), which can differ from the session's faviconURL.",
+  "base": "origin/main",
+  "window_size": [
+    1280,
+    820
+  ],
+  "session": {
+    "ref": "origin/helix/W13-favorites",
+    "path": "windows/helix/states/favorites.json"
+  },
+  "tree_match": "FavoritePaneView",
+  "expect_frames": [],
+  "states": [
+    {
+      "name": "rest",
+      "holds": "six favorites three a row under the address field (YouTube, Hacker News, GitHub / Wikipedia, Google, Example Domain's globe), YouTube selected: white with its red tint and ring; the page's header under the grid",
+      "unverified": "YouTube is the selected tab, so its page loads and may replace the selected tile's icon with the one its page links (the red play logo either way, at its own size)"
+    },
+    {
+      "name": "one",
+      "holds": "one favorite (Example Domain, no favicon: the globe) across the whole row, not selected",
+      "session": {
+        "ref": "origin/helix/W13-favorites",
+        "path": "windows/helix/states/favorites-1.json"
+      }
+    },
+    {
+      "name": "four",
+      "holds": "four favorites in one row, none selected",
+      "session": {
+        "ref": "origin/helix/W13-favorites",
+        "path": "windows/helix/states/favorites-4.json"
+      }
+    },
+    {
+      "name": "nine",
+      "holds": "nine favorites three by three (YouTube, Hacker News, GitHub / Wikipedia, Google, Example / Python, Mozilla, Apple), none selected",
+      "session": {
+        "ref": "origin/helix/W13-favorites",
+        "path": "windows/helix/states/favorites-9.json"
+      }
+    },
+    {
+      "name": "missing-favicon",
+      "holds": "favorites.json with Example Domain's favorite selected: white at 0.45, its globe, no tint or ring (no colour)",
+      "session": {
+        "inline": {
+          "state": {
+            "adblockAllowedHosts": [
+              "news.example.com"
+            ],
+            "allowsJavaScriptFromAppleEvents": false,
+            "archiveAfter": "never",
+            "archived": [],
+            "blocksAds": true,
+            "darkPageHosts": [],
+            "darkPages": "matchSystem",
+            "devModeReloadState": "reload",
+            "developerModeEnabledForHosts": [],
+            "favorites": [
+              {
+                "faviconURL": "https://www.youtube.com/favicon.ico",
+                "id": "5A0F1E2D-3C4B-4A59-8687-9A8B7C6D5E01",
+                "lastActiveAt": 783000000,
+                "pinnedURL": "https://www.youtube.com/",
+                "title": "YouTube",
+                "url": "https://www.youtube.com/"
+              },
+              {
+                "faviconURL": "https://news.ycombinator.com/favicon.ico",
+                "id": "5A0F1E2D-3C4B-4A59-8687-9A8B7C6D5E02",
+                "lastActiveAt": 783000001,
+                "pinnedURL": "https://news.ycombinator.com/",
+                "title": "Hacker News",
+                "url": "https://news.ycombinator.com/"
+              },
+              {
+                "faviconURL": "https://github.com/favicon.ico",
+                "id": "5A0F1E2D-3C4B-4A59-8687-9A8B7C6D5E03",
+                "lastActiveAt": 783000002,
+                "pinnedURL": "https://github.com/",
+                "title": "GitHub",
+                "url": "https://github.com/"
+              },
+              {
+                "faviconURL": "https://www.wikipedia.org/static/favicon/wikipedia.ico",
+                "id": "5A0F1E2D-3C4B-4A59-8687-9A8B7C6D5E04",
+                "lastActiveAt": 783000003,
+                "pinnedURL": "https://www.wikipedia.org/",
+                "title": "Wikipedia",
+                "url": "https://www.wikipedia.org/"
+              },
+              {
+                "faviconURL": "https://www.google.com/favicon.ico",
+                "id": "5A0F1E2D-3C4B-4A59-8687-9A8B7C6D5E05",
+                "lastActiveAt": 783000004,
+                "pinnedURL": "https://www.google.com/",
+                "title": "Google",
+                "url": "https://www.google.com/"
+              },
+              {
+                "id": "5A0F1E2D-3C4B-4A59-8687-9A8B7C6D5E06",
+                "lastActiveAt": 783000005,
+                "pinnedURL": "https://example.com/",
+                "title": "Example Domain",
+                "url": "https://example.com/"
+              }
+            ],
+            "hasSeenLiveFolderIntro": false,
+            "liveFoldersTurnedOff": [],
+            "pageAppearance": "automatic",
+            "recentlyClosed": [],
+            "searchEngine": "duckDuckGo",
+            "selectedSpaceID": "5F0C9A2B-1D3E-4F6A-9B8C-7D6E5F4A3B21",
+            "showsToolbar": false,
+            "siteSearchDefaultsSeeded": 1,
+            "siteSearches": [],
+            "spaces": [
+              {
+                "icon": "🏠",
+                "id": "5F0C9A2B-1D3E-4F6A-9B8C-7D6E5F4A3B21",
+                "name": "Personal",
+                "pinnedItems": [
+                  {
+                    "tab": {
+                      "_0": {
+                        "id": "9C8B7A6D-5E4F-4A3B-8C2D-1E0F9A8B7C6D",
+                        "lastActiveAt": 782999000,
+                        "pinnedURL": "https://docs.example.com",
+                        "title": "Docs",
+                        "url": "https://docs.example.com/page"
+                      }
+                    }
+                  },
+                  {
+                    "folder": {
+                      "_0": {
+                        "id": "2A3B4C5D-6E7F-4801-9A2B-3C4D5E6F7A8B",
+                        "isExpanded": false,
+                        "items": [
+                          {
+                            "tab": {
+                              "_0": {
+                                "customTitle": "Renamed",
+                                "id": "7F6E5D4C-3B2A-4190-8F7E-6D5C4B3A2918",
+                                "lastActiveAt": 782998000,
+                                "pinnedURL": "https://shop.example.com",
+                                "title": "Shop",
+                                "url": "https://shop.example.com"
+                              }
+                            }
+                          }
+                        ],
+                        "name": "Work stuff"
+                      }
+                    }
+                  }
+                ],
+                "selectedTabID": "5A0F1E2D-3C4B-4A59-8687-9A8B7C6D5E06",
+                "tabs": [
+                  {
+                    "faviconURL": "https://example.com/favicon.ico",
+                    "id": "C1D2E3F4-A5B6-4C7D-8E9F-0A1B2C3D4E5F",
+                    "lastActiveAt": 783000100.25,
+                    "title": "",
+                    "url": "https://example.com/"
+                  }
+                ],
+                "theme": {
+                  "colors": [
+                    {
+                      "b": 0.1,
+                      "g": 0.1,
+                      "r": 0.1
+                    }
+                  ],
+                  "grain": 0,
+                  "tint": 0.44
+                }
+              },
+              {
+                "about": "Komado: orders and suppliers",
+                "icon": "symbol:briefcase",
+                "id": "6A1D2F0C-3E4B-4B8A-8F21-2C9D0E7A5B33",
+                "name": "Work",
+                "pinned": [
+                  {
+                    "id": "3D4E5F60-7182-4A93-B4C5-D6E7F8091A2B",
+                    "lastActiveAt": 782000000,
+                    "title": "Old pinned",
+                    "url": "https://legacy.example.com"
+                  }
+                ],
+                "tabs": [],
+                "theme": {
+                  "colors": [
+                    {
+                      "b": 0.4235294,
+                      "g": 0.6039216,
+                      "r": 1
+                    },
+                    {
+                      "b": 0.60784316,
+                      "g": 0.38431373,
+                      "r": 0.9411765
+                    }
+                  ],
+                  "grain": 0.35
+                }
+              },
+              {
+                "icon": "📚",
+                "id": "8E2F4A6B-5C7D-4E9F-A1B3-C5D7E9F1A3B5",
+                "name": "Reading",
+                "pinnedItems": [],
+                "tabs": [],
+                "theme": {
+                  "colors": [
+                    {
+                      "b": 0.85,
+                      "g": 0.55,
+                      "r": 0.3
+                    }
+                  ],
+                  "grain": 0.35
+                }
+              }
+            ],
+            "spacesWithCollapsedPinnedSections": [],
+            "warnsBeforeQuitting": false
+          },
+          "version": 1
+        }
+      }
+    },
+    {
+      "name": "hover",
+      "holds": "a hovered unselected favorite (white 0.20 for 0.10)",
+      "skip": "a pointer resting on a FavoritePaneView: not a SAFE_TARGETS view and no hover hook; Windows' --favorite-hover only"
+    }
+  ]
+}
