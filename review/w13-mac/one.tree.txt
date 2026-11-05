@@ -1,0 +1,17 @@
+## at launch
+Window 17982, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.3.1.1.0 FavoritePaneView [8,90 224×47]
+</untrusted-page-content>
+
+## before the capture
+Window 17982, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.3.1.1.0 FavoritePaneView [8,90 224×47]
+</untrusted-page-content>
+
+## after the capture
+Window 17982, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.3.1.1.0 FavoritePaneView [8,90 224×47]
+</untrusted-page-content>
