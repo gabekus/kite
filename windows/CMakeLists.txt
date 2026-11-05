@@ -24,7 +24,10 @@ else()
   # No fused multiply-adds: the theme backdrop's grain hash ends in a fract() of values near
   # 1e4, so contracting it (clang's default, and every arm64 build) moves the reference off
   # the golden fixture the Mac shares. MSVC doesn't contract without /fp:contract.
-  add_compile_options(-Wall -Wextra -Werror -ffp-contract=off)
+  # KITE_WERROR=OFF is for the sanitizer build: -Werror from here comes after CMAKE_CXX_FLAGS,
+  # so a -Wno-error there can't undo it, and the plain build already gates warnings.
+  option(KITE_WERROR "Treat warnings as errors" ON)
+  add_compile_options(-Wall -Wextra -ffp-contract=off $<$<BOOL:${KITE_WERROR}>:-Werror>)
 endif()
 if(WIN32)
   add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
