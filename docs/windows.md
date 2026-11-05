@@ -835,7 +835,8 @@ or another app taking the keyboard, the command bar, another space shown, the si
 moves), and the window moving, resizing or minimizing.
 
 It's a window of its own (owned, never activated, so the browser window keeps the keyboard and
-passes Search its keys), drawn by DirectComposition in its own target: the frame and controls in
+passes Search its keys; in W21's model the keyboard is `KeyboardField::IconPicker`'s from the request,
+the menu's 0.15 s included, until it closes, so the window taking the focus never hands it to the page), drawn by DirectComposition in its own target: the frame and controls in
 one surface (the Icon tab's grid too), the emoji grid in a virtual surface as tall as its rows,
 in a clip, scrolled by moving it. Only the rows in view draw, as they come into view, and rows
 more than 10 from view are trimmed away; a held cell draws only itself; moving over the grid
