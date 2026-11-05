@@ -168,6 +168,7 @@ void FindBarView::Hide() {
     field_.SetText(L"", false);
     LabelChanged();
     // Its surface goes until it opens again; the visual stays.
+    pressedOver_ = false;
     field_.ReleaseCaret();
     if (visual_) visual_->SetContent(nullptr);
     surface_.Reset();
@@ -241,8 +242,27 @@ void FindBarView::Focus() {
 void FindBarView::LoseKeyboard() {
     if (!keyboard_) return;
     keyboard_ = false;
+    // The Mac's field editor goes: no selection shown, nothing left to undo.
+    field_.EndEditing();
     FocusChanged();
     if (open_) Draw();
+}
+
+float FindBarView::CornerRadiusPx() const {
+    return static_cast<float>(find_bar_style::CornerRadius(FindBarStyle::Find)) * Scale();
+}
+
+POINT FindBarView::ClientPointOf(Part part) const {
+    const float w = static_cast<float>(frame_.width);
+    float x = 0;
+    switch (part) {
+    case Part::Field: x = (M::kTextX + FieldRight()) / 2; break;
+    case Part::Previous: x = M::kPreviousCenterX - M::kFullWidth + w; break;
+    case Part::Next: x = M::kNextCenterX - M::kFullWidth + w; break;
+    case Part::Close: x = M::kCloseCenterX - M::kFullWidth + w; break;
+    }
+    const float scale = Scale();
+    return POINT{leftPx_ + std::lround(x * scale), topPx_ + std::lround(static_cast<float>(kFindBarHeight) / 2 * scale)};
 }
 
 void FindBarView::FocusChanged() { field_.SetFocused(open_ && keyboard_ && GetFocus() == window_); }
@@ -362,7 +382,10 @@ bool FindBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, LRES
     case WM_KILLFOCUS:
         // The page took it (a click in it): the field lets it go and the bar stays. Another app
         // or a window of Kite's own (the space tip) leaves it the first responder.
-        if (const auto to = reinterpret_cast<HWND>(wParam); to && IsChild(window_, to)) keyboard_ = false;
+        if (const auto to = reinterpret_cast<HWND>(wParam); to && IsChild(window_, to) && keyboard_) {
+            keyboard_ = false;
+            field_.EndEditing();
+        }
         if (GetCapture() == window_) ReleaseCapture();
         FocusChanged();
         Draw();
@@ -393,16 +416,24 @@ bool FindBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, LRES
     case WM_LBUTTONDBLCLK: {
         const D2D1_POINT_2F p = BarPoint(lParam);
         if (!InBar(p)) return false;
-        // A press in the bar makes the field the first responder, as clicking an NSTextField does.
-        keyboard_ = true;
-        if (GetFocus() != window_) SetFocus(window_);
-        FocusChanged();
-        SetCapture(window_);
         if (field_.Contains(p.x, p.y)) {
+            // A press in the field makes it the first responder, as clicking an NSTextField does
+            // (the controller takes the keyboard from the other fields first).
+            if (callbacks_.takeKeyboard) callbacks_.takeKeyboard();
+            keyboard_ = true;
+            if (GetFocus() != window_) SetFocus(window_);
+            FocusChanged();
+            SetCapture(window_);
             Edited(field_.Press(p.x, (wParam & MK_SHIFT) != 0));
             Draw();  // the caret, for a press that left the selection as it was
-        } else {
-            pressed_ = ButtonAt(p);
+            return true;
+        }
+        // The arrows and close are borderless NSButtons, which never become first responder:
+        // the keyboard stays where it was.
+        pressed_ = ButtonAt(p);
+        pressedOver_ = pressed_ != Button::None;
+        if (pressedOver_) {
+            SetCapture(window_);
             Draw();
         }
         return true;
@@ -413,7 +444,15 @@ bool FindBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, LRES
             Edited(field_.Drag(p.x));
             return true;
         }
-        return pressed_ != Button::None || InBar(p);
+        if (pressed_ != Button::None) {
+            // NSButton's highlight follows the pointer in and out while it's held.
+            if (const bool over = ButtonAt(p) == pressed_; over != pressedOver_) {
+                pressedOver_ = over;
+                Draw();
+            }
+            return true;
+        }
+        return InBar(p);
     }
     case WM_LBUTTONUP: {
         const D2D1_POINT_2F p = BarPoint(lParam);
@@ -426,6 +465,8 @@ bool FindBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, LRES
         const Button pressed = pressed_;
         pressed_ = Button::None;
         if (pressed != Button::None) {
+            pressedOver_ = false;
+            Draw();
             if (ButtonAt(p) == pressed) Press(pressed);
             return true;
         }
@@ -433,7 +474,11 @@ bool FindBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, LRES
     }
     case WM_CAPTURECHANGED:
         field_.Release();
-        pressed_ = Button::None;
+        if (pressed_ != Button::None) {
+            pressed_ = Button::None;
+            pressedOver_ = false;
+            Draw();
+        }
         return false;
     case WM_RBUTTONDOWN:
     case WM_RBUTTONUP:
@@ -524,12 +569,18 @@ void FindBarView::DrawContent(ID2D1DeviceContext* context) {
         context->DrawTextLayout(D2D1::Point2F(right - counterWidth_, 0), counter_.Get(), brush_.Get());
     }
     const auto x = [w](float fromFull) { return fromFull - M::kFullWidth + w; };
-    Glyph(context, arrowFormat_.Get(), kUpGlyph, x(M::kPreviousCenterX), CounterColor(dark_));
-    Glyph(context, arrowFormat_.Get(), kDownGlyph, x(M::kNextCenterX), CounterColor(dark_));
+    // A held button dims its glyph while the pointer is over it, as a borderless NSButton's image does.
+    const auto tint = [this](Button button) {
+        D2D1_COLOR_F color = CounterColor(dark_);
+        if (pressedOver_ && pressed_ == button) color.a *= 0.5f;
+        return color;
+    };
+    Glyph(context, arrowFormat_.Get(), kUpGlyph, x(M::kPreviousCenterX), tint(Button::Previous));
+    Glyph(context, arrowFormat_.Get(), kDownGlyph, x(M::kNextCenterX), tint(Button::Next));
     const auto divider = static_cast<float>(find_bar_style::DividerHeight(h));
     brush_->SetColor(kDivider);
     context->FillRectangle(D2D1::RectF(x(M::kDividerX), (h - divider) / 2, x(M::kDividerX) + 1, (h + divider) / 2), brush_.Get());
-    Glyph(context, closeFormat_.Get(), kCloseGlyph, x(M::kCloseCenterX), CounterColor(dark_));
+    Glyph(context, closeFormat_.Get(), kCloseGlyph, x(M::kCloseCenterX), tint(Button::Close));
     context->SetTransform(base);
 }
 

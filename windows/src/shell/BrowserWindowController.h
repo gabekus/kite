@@ -1,8 +1,10 @@
 #pragma once
 // The browser window and what's in it, as the Mac's BrowserWindowController: the backdrop,
-// the sidebar, the caption buttons, the command bar, the find bar, the pages (Chromium) and
-// Kite's shortcuts, wired to the session (core/Models.h). main.cpp parses the command line, loads and
-// saves the session, and runs one of these.
+// the sidebar, the caption buttons, the command bar, the find bar, the pages (Chromium)
+// and Kite's shortcuts, wired to the session (core/Models.h). main.cpp parses the command line, loads and
+// saves the session, and runs one of these. Like the Mac's BrowserWindowController+*.swift, its
+// parts have files of their own: +Spaces.cpp (editing spaces: the space menu, renaming,
+// deleting, reordering), +Chromium.cpp (the pages) and +Tests.cpp (--smoke-test and --capture).
 //
 // Everything here is on Kite's UI thread. The session is the caller's, borrowed for the
 // window's life; the window changes it and the caller saves it as the window closes
@@ -20,8 +22,11 @@
 
 #include "core/KeyBindings.h"
 #include "core/Models.h"
+#include "core/SpaceEditing.h"
 #include "core/SpaceSwipe.h"
+#include "core/SpaceSwipeGesture.h"
 #include "core/ThemeBackdrop.h"
+#include "core/TitleBar.h"
 #include "shell/CaptionButtonsView.h"
 #ifdef KITE_HAS_CEF
 #include "shell/Chromium.h"
@@ -34,6 +39,7 @@
 #include "shell/MainWindow.h"
 #include "shell/Renderer.h"
 #include "shell/SidebarView.h"
+#include "shell/TouchpadInput.h"
 
 namespace kite {
 
@@ -89,7 +95,9 @@ public:
     std::wstring Draw(Pixels* readBack = nullptr);
     // The animation frames of the run (Options::frameLog), one JSON object a line: `t` (when it
     // was handled, s from the first), `target` (the composition frame it was drawn for, s from
-    // the first), `offset` (the pages', pt) and `theme` (the crossfade, 0...1). Empty on success.
+    // the first), `offset` (the pages', pt) and `theme` (the crossfade, 0...1); then
+    // DirectManipulation's reports (`dm`: status or content, `t` on the clock's seconds). Empty
+    // on success.
     std::wstring SaveFrameLog(const std::filesystem::path& file) const;
     // The smoke test's checks of the window: the command bar opens and draws, the sidebar and
     // the caption buttons draw something, and the lost-GPU path rebuilds and draws. Empty on
@@ -106,6 +114,19 @@ public:
     };
     std::wstring Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip = std::nullopt,
                          const std::optional<CaptureFind>& find = std::nullopt);
+    // For a capture: two fingers over the sidebar have dragged its content `dx` points sideways
+    // and are held there (the pages, the bar's light and the theme as they follow).
+    std::wstring HoldSwipe(double dx);
+    // For a capture: space `index`'s cell (from 0) pressed and dragged along the bar to `x` (bar
+    // points), held there; with `drop`, let go there and settled (the space moved).
+    std::wstring HoldSpaceDrag(size_t index, float x, bool drop);
+    // For a capture: space `index`'s name being renamed in its header (Rename Space…), with
+    // `text` typed over it when given; `focused` draws it as the window with the keyboard does
+    // (a quiet capture's window never has it).
+    std::wstring HoldRename(size_t index, const std::optional<std::string>& text, bool focused = false);
+    // For a capture: what Capture composes over the frame next, space `index`'s menu opened
+    // over its cell in the bar (Windows' own menu, read back as it shows).
+    void HoldSpaceMenu(size_t index) { heldMenu_ = index; }
 
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
@@ -113,8 +134,20 @@ public:
 private:
     // The content card, in points: right of the sidebar, inset on the other three sides
     // (BrowserWindowController's Layout.defaultSidebarWidth and ArcMetrics.Content.inset).
-    static constexpr int kSidebarWidth = 240;
-    static constexpr int kContentInset = 10;
+    static constexpr int kSidebarWidth = title_bar::kSidebarWidth;
+    static constexpr int kContentInset = title_bar::kContentInset;
+    // The window's timers and posted messages.
+    static constexpr UINT_PTR kSmokeTimer = 1;
+    // The auto-archive's pass, every 15 minutes as on the Mac (AppDelegate's archiveTimer).
+    static constexpr UINT_PTR kArchiveTimer = 2;
+    static constexpr UINT kArchiveIntervalMs = 15 * 60 * 1000;
+    // When the pages' slide on the compositor has ended (its duration and a frame, rounded up).
+    static constexpr UINT_PTR kSettleTimer = 3;
+    // Posted by the favicon worker when icons arrive (Favicons.h).
+    static constexpr UINT kFaviconsMessage = WM_APP + 4;
+    // Posted by the frame clock once a composition frame while something animates.
+    static constexpr UINT kFrameMessage = WM_APP + 5;
+    static constexpr UINT kSpaceIconsMessage = WM_APP + 6;
 
     BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
                             std::function<void()> save, std::unique_ptr<Renderer> renderer);
@@ -131,15 +164,56 @@ private:
     void SyncSpace();
     void SpaceChanged(size_t old, size_t now);
     void FinishSettling();
+    // Two fingers over the sidebar (the Mac's SpaceSwipeController): each touchpad event goes
+    // through core's SpaceSwipeGesture, with the pointer `at` (client px) as it is then; a
+    // swipe's pages, bar and theme follow it, and its release settles on a space, selected once
+    // the pages are at rest (CommitLanding, which says how many pages the selection moved). A
+    // vertical gesture scrolls the list under the pointer; one off the sidebar before it's the
+    // swipe's goes back to the system, for whatever is under the pointer.
+    SpaceSwipeGesture::Step SwipeInputArrived(const SwipeInput& input, POINT at);
+    // Whether a point (client px) is over the sidebar with nothing over it: where a touchpad's
+    // gesture is the sidebar's (the Mac's isOverSidebar).
+    bool OverSidebar(POINT at) const;
+    SwipeStart BeginSwipe();
+    void ShowSwipe();
+    void FinishSwipe(int landing);
+    // The spaces changed under a swipe: it's dropped and the pages settle back (the Mac's cancel).
+    void CancelSwipe();
+    // The space index the swipe's neighbours point at towards `direction`, while they still hold
+    // (SpaceSwipe::Neighbours::Target); none once the spaces changed under it.
+    std::optional<size_t> SwipeSpace(int direction) const;
+    std::vector<std::string> SpaceIDs() const;
+    int CommitLanding();
     // Whether a shortcut's command would do anything now (the Mac's validateMenuItem): Space n
     // for a space there isn't passes its key on.
     bool CommandEnabled(const std::string& command) const;
-    // One frame of the clock's: the theme's crossfade drawn for the composition frame at
-    // `time` (the pages' slide runs on the compositor).
+    // One frame of the clock's: the touchpad's movement, then the theme's crossfade or a
+    // swipe's step drawn for the composition frame at `time` (the pages' slide runs on the
+    // compositor).
     void Frame(double time);
     std::wstring DrawAt(double time, Pixels* readBack);
     // The smoke test's space switch, there and back, run to rest.
     std::wstring SmokeTestSpaces();
+    // The smoke test's swipes, fed to SwipeInputArrived as a touchpad's events would be.
+    std::wstring SmokeTestSwipe();
+    // Its cases that need three spaces (one is added for them, then removed): a keyboard switch
+    // overtaking a landing, a space selected under the swipe, and the boost of a fade ending
+    // while the touchpad's frames go on. And with one space (the others set aside meanwhile).
+    std::wstring SmokeTestSwipeThreeSpaces();
+    std::wstring SmokeTestSwipeOneSpace();
+    // The smoke test's space edits: drags in the bar that move a space and bring it back and one
+    // let go off the strip, the menu's items, a rename committed, one cancelled and one left,
+    // New Folder and Delete Space, all undone after.
+    std::wstring SmokeTestSpaceEditing();
+    // Runs the timer a drop's landing waits on until the space has moved (2 s at most).
+    std::wstring WaitForDrop();
+    // The clock's frames and the slide's timer, until the theme and the pages are at rest.
+    std::wstring RunToRest(const wchar_t* what);
+    // The clock's frames and the window's timers until `done` (or `seconds` go by): whether it was.
+    bool RunUntil(const std::function<bool()>& done, double seconds);
+    // A slide's first frame now: the pages' drawing and the strip's animation committed, so the
+    // compositor's timeline starts where PageOffset reads it from.
+    void CommitSlide();
     // What the pages reported and Kite hasn't run yet (the window's close, at logoff, comes
     // with no WM_CLOSE first).
     void RunPending();
@@ -168,9 +242,19 @@ private:
     // findBarLeavesTab does without a conversation.
     void FindBarFollowsSelection();
     // The page's hole under the bar, and whether the page may take the keyboard on a navigation.
+    // Whatever moves the content card calls findBar_->SetCard and then this: OnSize does, and the
+    // sidebar's toggle (W12) and split view must too.
     void UpdateFindHole();
     // The app's appearance (the session's pageAppearance, else the system's apps' mode).
     bool FindBarDark() const;
+    // Which of Kite's fields has the keyboard (Windows has one system caret a thread, and the
+    // Mac one first responder a window): the command bar's while it's open, else a rename's, else
+    // the find bar's, else none (the page's). GiveKeyboard takes it from the others before `to`
+    // takes it, so their carets go first: opening the command bar takes it from both, a rename
+    // from the find field, and Ctrl+F or a press in the find field ends a rename.
+    enum class KeyboardField { None, CommandBar, Rename, Find };
+    KeyboardField KeyboardOwner() const;
+    void GiveKeyboard(KeyboardField to);
     // The content card in client px (the page's bounds).
     RECT ContentBounds() const;
     CommandBarView::Look BarLook() const;
@@ -178,6 +262,21 @@ private:
     // A tab's close button and Ctrl+W (the Mac's close(tab:)). The id by value: Ctrl+W's is the
     // tab's own, which closing erases.
     void CloseTab(std::string id);
+    // MARK: Editing spaces (BrowserWindowController+Spaces.cpp)
+    // A right-click on a space's cell or header: its menu at `screen` (px), then what it chose.
+    void ShowSpaceMenu(const std::string& spaceID, POINT screen);
+    // What the menu shows for a space, as it opens (a rename open ends first).
+    std::vector<SpaceMenuItem> OpenSpaceMenu(const std::string& spaceID);
+    void RunSpaceMenuItem(const std::string& spaceID, SpaceMenuItem::Command command);
+    // The Mac's beginRenaming(space:): that space selected, its header's name field open with
+    // the name all selected. Return or Done renames it, Escape leaves it.
+    void BeginRenaming(const std::string& spaceID);
+    void RenameSpace(const std::string& spaceID, const std::string& name);
+    // Delete Space (the Mac's deleteSpace(_:)): a beep for the last space, at once for one with
+    // no tabs, else after asking; its pages close with it.
+    void DeleteSpace(std::string spaceID);
+    // A space dropped in the bar at `index` among the others (the Mac's moveSpace).
+    void MoveSpace(const std::string& spaceID, size_t index);
     void ArchiveTab();
     void ReopenClosedTab();
     void MakeCommands();
@@ -224,6 +323,18 @@ private:
     std::optional<std::string> pagesAnchor_;
     bool sidebarSliding_ = false;
     bool slideStarted_ = false;
+    // The swipe's: the space a release landed on, selected when the pages come to rest, and
+    // that selection under way.
+    SpaceSwipeGesture swipe_;
+    struct Landing {
+        std::string spaceID;
+        int pages;
+    };
+    std::optional<Landing> pendingLanding_;
+    // The spaces the swipe began between, by id.
+    std::optional<SpaceSwipe::Neighbours> swipeNeighbours_;
+    bool selectingBySwipe_ = false;
+    bool swipeMoved_ = false;  // since the clock's last frame drew
     std::unique_ptr<Compositor> compositor_;
     std::unique_ptr<Favicons> favicons_;
     std::unique_ptr<SidebarView> sidebar_;
@@ -234,11 +345,23 @@ private:
     std::string findTabID_;  // the tab the find bar is open on
     // Frames while something animates (before the window in destruction: it posts to it).
     std::unique_ptr<FrameClock> clock_;
+    // A precision touchpad's gestures over the sidebar (null where there's no DirectManipulation,
+    // and once the window closes: it lets the window go while it's still a window).
+    std::unique_ptr<TouchpadInput> touchpad_;
     struct LoggedFrame {
         double handled, target, offset, theme;
     };
     std::vector<LoggedFrame> frames_;
+    std::vector<std::string> touchpadLog_;  // TouchpadInput::log's records, after the frames
+    size_t touchpadLogDropped_ = 0;          // and how many didn't fit (kMaxTouchpadLog)
+    std::wstring touchpadError_;            // why there's no touchpad_, when there isn't one
     size_t frameCount_ = 0;  // frames delivered, logged or not (the smoke test checks them)
+
+    // A capture's space menu, composed over the frame (HoldSpaceMenu).
+    std::optional<size_t> heldMenu_;
+    // Delete Space's question for a space with tabs: the task dialog; never a dialog in a test
+    // run (it answers Cancel, unless the smoke test answers).
+    std::function<bool(const SpaceDeletion&)> askToDelete_;
 
     // What each shortcut's command does, by id (MainMenu.swift's items).
     std::map<std::string, std::function<void()>, std::less<>> commands_;
@@ -250,11 +373,16 @@ private:
     bool firstPageMade_ = false;
     bool pageLoading_ = false, pageLoaded_ = false;
     ULONGLONG closeAskedAt_ = 0;  // when the smoke test asked the window to close
-    // The smoke test's find, once the first page loaded: its query, then one with no match.
+    // The smoke test's find, once the first page loaded: who has the keyboard, then its query,
+    // then one with no match (BrowserWindowController+Tests.cpp).
     enum class SmokeFind { Idle, Matching, Missing, Done };
     SmokeFind smokeFind_ = SmokeFind::Idle;
     std::wstring smokeFindProblem_;
+    RECT smokeFindFrame_{};  // the bar's, for the hole's checks
+    void StartSmokeFind();
+    std::wstring SmokeTestKeyboard();
     void SmokeTestFind(int count, int activeMatch, bool final);
+    void FailSmokeFind(std::wstring problem);
     void CloseAfterSmoke();
 #endif
 };

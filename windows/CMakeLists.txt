@@ -40,10 +40,13 @@ add_library(KiteCoreWin STATIC
   src/core/OKLab.cpp
   src/core/SessionStore.cpp
   src/core/SpaceBar.cpp
+  src/core/SpaceEditing.cpp
   src/core/SpaceIcon.cpp
   src/core/SymbolShape.cpp
   src/core/PictureLoads.cpp
   src/core/SpaceSwipe.cpp
+  src/core/SpaceSwipeGesture.cpp
+  src/core/TouchpadPhases.cpp
   src/core/LiveTabPolicy.cpp
   src/core/Sidebar.cpp
   src/core/TabClosing.cpp
@@ -102,6 +105,9 @@ if(WIN32)
     src/shell/main.cpp
     src/shell/BackdropTest.cpp
     src/shell/BrowserWindowController.cpp
+    src/shell/BrowserWindowController+Chromium.cpp
+    src/shell/BrowserWindowController+Spaces.cpp
+    src/shell/BrowserWindowController+Tests.cpp
     src/shell/CaptionButtonsView.cpp
     src/shell/Capture.cpp
     src/shell/CommandBarView.cpp
@@ -115,14 +121,17 @@ if(WIN32)
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
     src/shell/SpaceIconPainter.cpp
+    src/shell/SpaceMenu.cpp
+    src/shell/SpaceRenameField.cpp
     src/shell/SpaceTipView.cpp
     src/shell/TextEditing.cpp
     src/shell/TextField.cpp
     src/shell/TextLine.cpp
+    src/shell/TouchpadInput.cpp
     ${KITE_SHADER_HEADERS}
   )
   target_include_directories(Kite PRIVATE "${KITE_SHADER_DIR}")
-  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp advapi32)
+  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp comctl32 advapi32)
 
   # Chromium (CEF), from windows/scripts/fetch-cef.ps1. Without it (no download yet, or the
   # MinGW check, which can't link CEF's MSVC wrapper) Kite.exe builds without pages.
@@ -142,7 +151,11 @@ if(WIN32)
     # CEF's own CEF_EXE_LINKER_FLAGS) it gets an 8 MiB main-thread stack, which deep pages
     # need, and loads the window's graphics DLLs only in the process that draws the window.
     target_link_options(Kite PRIVATE /STACK:0x800000
-      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:dwmapi.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll)
+      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:dwmapi.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll
+      # comctl32 for Delete Space's task dialog and gdi32 for --space-menu's read-back: only the
+      # window's process calls them (user32 loads gdi32 for itself, so delaying Kite's import of it
+      # is safe: no call of Kite's to it comes before the window, or from a loader callback).
+      /DELAYLOAD:comctl32.dll /DELAYLOAD:gdi32.dll)
     # libcef.dll and its resources go next to Kite.exe, where Chromium looks for them.
     add_custom_command(TARGET Kite POST_BUILD
       COMMAND ${CMAKE_COMMAND} -DCEF_ROOT=${KITE_CEF_ROOT} -DDEST=$<TARGET_FILE_DIR:Kite>
@@ -159,7 +172,8 @@ if(WIN32)
     target_link_libraries(Kite PRIVATE d3dcompiler)
   endif()
   target_link_libraries(kitecore PRIVATE shell32)
-  # Both get Kite.manifest: per-monitor DPI v2, the UTF-8 code page, long paths.
+  # Both get Kite.manifest: per-monitor DPI v2, the UTF-8 code page, long paths, Common Controls 6
+  # (the task dialog).
   if(MSVC)
     target_sources(Kite PRIVATE resources/Kite.manifest)
     target_sources(kitecore PRIVATE resources/Kite.manifest)
@@ -181,9 +195,12 @@ add_executable(KiteCoreTests
   tests/LiveTabPolicyTests.cpp
   tests/SidebarTests.cpp
   tests/SpaceBarTests.cpp
+  tests/SpaceEditingTests.cpp
   tests/SpaceIconTests.cpp
   tests/PictureLoadsTests.cpp
   tests/SpaceSwipeTests.cpp
+  tests/SpaceSwipeGestureTests.cpp
+  tests/TouchpadPhasesTests.cpp
   tests/SymbolShapeTests.cpp
   tests/TabClosingTests.cpp
   tests/SupportDirectoryTests.cpp

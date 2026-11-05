@@ -52,6 +52,9 @@ public:
     void SetText(std::wstring text, bool selectAll);
     void SelectAll();
     bool HasSelection() const { return line_.Edit().HasSelection(); }
+    // Editing ended (another field or the page took the keyboard): the selection collapses to the
+    // caret and there's nothing to undo, as when the Mac's field editor leaves a field.
+    void EndEditing();
 
     // A key for the field: the editing keys (TextEditing::KeyDown), and Ctrl+Z undo, Ctrl+Y and
     // Ctrl+Shift+Z redo. None for a key that isn't the field's (Return, Escape, the owner's).

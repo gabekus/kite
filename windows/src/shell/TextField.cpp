@@ -48,6 +48,12 @@ void TextField::SelectAll() {
     line_.RestartBlink(focused_);
 }
 
+void TextField::EndEditing() {
+    line_.Edit().Select(line_.Edit().Caret(), false);
+    undo_.Reset();
+    selecting_ = false;
+}
+
 TextField::Snapshot TextField::Current() const {
     const TextEditing& edit = line_.Edit();
     // The anchor is whichever end of the selection the caret isn't at.

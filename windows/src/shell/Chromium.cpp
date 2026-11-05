@@ -7,6 +7,7 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string_view>
 #include <utility>
@@ -100,6 +101,14 @@ struct Chromium::Shared {
     HANDLE allClosed = nullptr;
     std::map<std::pair<int, int>, std::string> popupTabs;  // (opener browser id, popup_id) → tab id
 
+    // The overlay's hole as each page's window has it: the find bar's rounded rectangle, in the
+    // window's own px (its region's), or none.
+    struct Hole {
+        RECT rect{};
+        int radius = 0;
+        bool operator==(const Hole& o) const { return EqualRect(&rect, &o.rect) && radius == o.radius; }
+    };
+
     // Kite's UI thread only.
     struct Placement {
         bool visible = true;  // shown on the card, rather than hidden; SetAsChild windows start shown
@@ -116,7 +125,14 @@ struct Chromium::Shared {
         Timestamp lastShown = Now();  // made, or last on the card (the Mac's lastShown)
         bool mediaInUse = false;      // camera, microphone or screen capture (OnMediaAccessChange)
         std::string profile;          // the profile directory it was made in (a popup: its opener's)
-        RECT hole{};                  // the overlay's hole as last sent, in its window's px
+        Hole hole;                    // the overlay's hole as last sent, in its window's px
+        // Find asked for before the browser existed (Ctrl+F straight after a new tab): run once
+        // it's made, the last one asked for.
+        struct PendingFind {
+            std::string text;
+            bool forward = true, findNext = false;
+        };
+        std::optional<PendingFind> pendingFind;
     };
     // Kite's UI thread only. Browsers Kite closed (Close) whose DoClose hasn't come back yet:
     // out of `pages`, so their tab can have a new page, but the window waits for them.
@@ -128,7 +144,7 @@ struct Chromium::Shared {
     std::map<std::string, CefRefPtr<CefRequestContext>> contexts;  // by profile directory
     std::string shown;
     bool minimized = false;
-    RECT overlayHole{};  // SetOverlayHole's, in client px
+    Hole overlayHole;  // SetOverlayHole's, in client px
     LiveTabPolicy policy;  // at most six live pages, as the Mac's PagePool
     ULONGLONG closingSince = 0;  // when MayCloseWindow started closing
     bool closeForced = false;    // the deadline closed the window before every browser was ready
@@ -172,27 +188,68 @@ struct Chromium::Shared {
     // reflow, on every tab switch. It leans on Chromium's window layout, so a missing widget
     // is reported (widgetMissing, which fails --smoke-test); W10's off-screen pages replace it
     // with WasHidden.
+    // Also the overlay's hole: in the shown page's window, in none of the others. A window's
+    // region clips its hit-testing (and its drawing, where the bar covers it anyway), so a click
+    // there falls through to Kite's window behind it. One task on CEF's thread places and cuts
+    // each window that changed; a region set just before the window moves is set without its own
+    // repaint (bRedraw FALSE), so a resize step repaints once.
     void Layout() {
         const RECT card = Bounds();
-        std::vector<std::pair<HWND, Placement>> changes;
+        struct Change {
+            HWND host;
+            std::optional<Placement> placement;  // when it moved, showed or hid
+            std::optional<Hole> hole;            // when its hole changed
+        };
+        std::vector<Change> changes;
         for (auto& [id, page] : pages) {
             if (!page.hwnd) continue;
+            Change change{page.hwnd, std::nullopt, std::nullopt};
             Placement wanted;
             wanted.visible = id == shown && !minimized;
             wanted.rect = wanted.visible ? card : page.placed.rect;
-            if (wanted == page.placed) continue;
-            page.placed = wanted;
-            changes.emplace_back(page.hwnd, wanted);
+            if (!(wanted == page.placed)) {
+                page.placed = wanted;
+                change.placement = wanted;
+            }
+            Hole hole;
+            if (wanted.visible && !IsRectEmpty(&overlayHole.rect)) {
+                hole = overlayHole;
+                OffsetRect(&hole.rect, -card.left, -card.top);
+            }
+            if (!(hole == page.hole)) {
+                page.hole = hole;
+                change.hole = hole;
+            }
+            if (change.placement || change.hole) changes.push_back(change);
         }
-        ApplyHoles(card);
         if (changes.empty()) return;
         // Shown first, then hidden, so the card is never empty in between.
-        std::stable_partition(changes.begin(), changes.end(), [](const auto& c) { return c.second.visible; });
+        std::stable_partition(changes.begin(), changes.end(), [](const Change& c) { return !c.placement || c.placement->visible; });
         RunOnCefUIThread([changes = std::move(changes)] {
-            for (const auto& [host, placement] : changes) {
+            for (const Change& change : changes) {
+                const HWND host = change.host;
+                if (change.hole) {
+                    // Repainted by the move that follows, when one does.
+                    const BOOL redraw = change.placement && change.placement->visible ? FALSE : TRUE;
+                    const Hole& hole = *change.hole;
+                    if (IsRectEmpty(&hole.rect)) {
+                        SetWindowRgn(host, nullptr, redraw);
+                    } else {
+                        // As big as a window can be, less the hole, so it holds through any resize.
+                        // CreateRoundRectRgn leaves out its right and bottom edges, as RECTs do.
+                        HRGN region = CreateRectRgn(0, 0, 32767, 32767);
+                        HRGN cut = CreateRoundRectRgn(hole.rect.left, hole.rect.top, hole.rect.right + 1, hole.rect.bottom + 1,
+                                                      2 * hole.radius, 2 * hole.radius);
+                        if (region && cut) CombineRgn(region, region, cut, RGN_DIFF);
+                        if (cut) DeleteObject(cut);
+                        // The window owns the region once it's set.
+                        if (region && !SetWindowRgn(host, region, redraw)) DeleteObject(region);
+                    }
+                }
+                if (!change.placement) continue;
                 const HWND widget = FindPageWidget(host);
-                if (placement.visible) {
-                    const RECT& r = placement.rect;
+                if (change.placement->visible) {
+                    const RECT& r = change.placement->rect;
                     SetWindowPos(host, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top,
                                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
                     if (widget) ShowWindow(widget, SW_SHOWNA);
@@ -204,37 +261,13 @@ struct Chromium::Shared {
         });
     }
 
-    // The overlay's hole in the shown page's window, and none in the others, on CEF's thread.
-    // A window's region clips its hit-testing (and its drawing, where the bar covers it anyway),
-    // so a click there falls through to Kite's window behind it.
-    void ApplyHoles(const RECT& card) {
-        std::vector<std::pair<HWND, RECT>> changes;
-        for (auto& [id, page] : pages) {
-            if (!page.hwnd) continue;
-            RECT wanted{};
-            if (id == shown && !minimized && !IsRectEmpty(&overlayHole)) {
-                wanted = overlayHole;
-                OffsetRect(&wanted, -card.left, -card.top);
-            }
-            if (EqualRect(&wanted, &page.hole)) continue;
-            page.hole = wanted;
-            changes.emplace_back(page.hwnd, wanted);
-        }
-        if (changes.empty()) return;
-        RunOnCefUIThread([changes = std::move(changes)] {
-            for (const auto& [host, hole] : changes) {
-                if (IsRectEmpty(&hole)) {
-                    SetWindowRgn(host, nullptr, TRUE);
-                    continue;
-                }
-                // As big as a window can be, less the hole, so it holds through any resize.
-                HRGN region = CreateRectRgn(0, 0, 32767, 32767);
-                HRGN cut = CreateRectRgn(hole.left, hole.top, hole.right, hole.bottom);
-                if (region && cut) CombineRgn(region, region, cut, RGN_DIFF);
-                if (cut) DeleteObject(cut);
-                // The window owns the region once it's set.
-                if (region && !SetWindowRgn(host, region, TRUE)) DeleteObject(region);
-            }
+    // As the Mac's ChromiumEngine.find: a new search only highlights, so it steps once more to
+    // make the first match active (1/N), as Chrome does.
+    static void RunFind(CefRefPtr<CefBrowser> browser, std::string text, bool forward, bool findNext) {
+        RunOnCefUIThread([browser, text = std::move(text), forward, findNext] {
+            CefRefPtr<CefBrowserHost> host = browser->GetHost();
+            host->Find(text, forward, false, findNext);
+            if (!findNext) host->Find(text, forward, false, true);
         });
     }
 
@@ -321,6 +354,10 @@ struct Chromium::Shared {
         if (!page.pendingURL.empty()) {
             browser->GetMainFrame()->LoadURL(page.pendingURL);
             page.pendingURL.clear();
+        }
+        if (page.pendingFind) {
+            RunFind(browser, page.pendingFind->text, page.pendingFind->forward, page.pendingFind->findNext);
+            page.pendingFind.reset();
         }
         // The window got focus before this page existed (at launch, or when a popup tab
         // replaced its opener): hand it over now.
@@ -586,7 +623,11 @@ public:
 
     // Every report, the interim ones too, as the Mac's KCBrowser passes them on: the count grows
     // as Chromium scans the page.
-    void OnFindResult(CefRefPtr<CefBrowser> browser, int, int count, const CefRect&, int activeMatchOrdinal, bool finalUpdate) override {
+    void OnFindResult(CefRefPtr<CefBrowser> browser, int identifier, int count, const CefRect&, int activeMatchOrdinal,
+                      bool finalUpdate) override {
+        // A search replaced since (each Find has a higher identifier) reports nothing more.
+        if (identifier < lastFindIdentifier_) return;
+        lastFindIdentifier_ = identifier;
         shared_->Post([shared = shared_, id = tabID_, browser, count, activeMatchOrdinal, finalUpdate] {
             if (shared->PageFor(id, browser) && shared->events.findResult) shared->events.findResult(id, count, activeMatchOrdinal, finalUpdate);
         });
@@ -724,6 +765,7 @@ private:
     // CEF's UI thread only.
     CefRefPtr<CefRegistration> devTools_;
     std::vector<int> busyChecks_;  // Runtime.evaluate message ids awaiting an answer
+    int lastFindIdentifier_ = 0;   // OnFindResult's highest
     IMPLEMENT_REFCOUNTING(PageClient);
 };
 
@@ -1000,31 +1042,33 @@ bool Chromium::Act(PageAction action) {
     return true;
 }
 
-bool Chromium::HasShownPage() const {
+bool Chromium::CanFind() const {
     auto it = shared_->pages.find(shared_->shown);
-    return it != shared_->pages.end() && it->second.browser && !shared_->closing;
+    return it != shared_->pages.end() && !it->second.closeWhenMade && !shared_->closing;
 }
 
 bool Chromium::Find(const std::string& text, bool forward, bool findNext) {
-    if (!HasShownPage()) return false;
-    RunOnCefUIThread([browser = shared_->pages.at(shared_->shown).browser, text, forward, findNext] {
-        CefRefPtr<CefBrowserHost> host = browser->GetHost();
-        host->Find(text, forward, false, findNext);
-        // A new search only highlights; stepping once makes the first match active (1/N), like Chrome.
-        if (!findNext) host->Find(text, forward, false, true);
-    });
+    if (!CanFind()) return false;
+    Shared::Page& page = shared_->pages.at(shared_->shown);
+    if (!page.browser) {
+        page.pendingFind = Shared::Page::PendingFind{text, forward, findNext};
+        return true;
+    }
+    Shared::RunFind(page.browser, text, forward, findNext);
     return true;
 }
 
 void Chromium::StopFinding() {
-    if (!HasShownPage()) return;
+    if (!CanFind()) return;
+    Shared::Page& page = shared_->pages.at(shared_->shown);
+    page.pendingFind.reset();
     // Keep the active match selected, like Chrome and Arc.
-    RunOnCefUIThread([browser = shared_->pages.at(shared_->shown).browser] { browser->GetHost()->StopFinding(false); });
+    if (page.browser) RunOnCefUIThread([browser = page.browser] { browser->GetHost()->StopFinding(false); });
 }
 
-void Chromium::SetOverlayHole(const RECT& hole) {
-    shared_->overlayHole = hole;
-    shared_->ApplyHoles(shared_->Bounds());
+void Chromium::SetOverlayHole(const RECT& hole, int cornerRadius) {
+    shared_->overlayHole = Shared::Hole{hole, IsRectEmpty(&hole) ? 0 : cornerRadius};
+    shared_->Layout();
 }
 
 void Chromium::KeepKeyboard(bool keep) { shared_->kiteKeepsKeyboard = keep; }

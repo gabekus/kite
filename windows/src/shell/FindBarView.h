@@ -40,6 +40,9 @@ public:
         std::function<void(const FindQuery::Search& search)> search;
         // Esc or the close button: the controller closes the bar (as the Mac's onClose).
         std::function<void()> close;
+        // A press in the field is about to make it the first responder: the controller takes the
+        // keyboard from its other fields (a rename) first, so one caret is left.
+        std::function<void()> takeKeyboard;
         // The DPI the window is laid out at (MainWindow::Dpi).
         std::function<UINT()> dpi;
     };
@@ -71,9 +74,14 @@ public:
     // Whether the field is the window's first responder: it takes the window's keys, and the
     // window's focus doesn't go back to the page.
     bool HasKeyboard() const { return open_ && keyboard_; }
-    // Something else took the keyboard (the page, the command bar): the field lets it go, the
-    // bar staying open.
+    // Something else took the keyboard (the page, the command bar, a rename): the field lets it
+    // go, its selection and undo with it (the Mac's field editor ends), the bar staying open.
     void LoseKeyboard();
+    // The bar's corners, in px (the page's hole is the bar's shape).
+    float CornerRadiusPx() const;
+    // For the tests: the middle of the field or a button, in client px.
+    enum class Part { Field, Previous, Next, Close };
+    POINT ClientPointOf(Part part) const;
     // Return, Shift+Return, Ctrl+G, Ctrl+Shift+G and the arrows.
     void Step(bool forward);
     // Types `text` into the field as the keyboard would, searching (--find, the smoke test).
@@ -94,8 +102,8 @@ public:
     std::wstring Draw(Pixels* readBack = nullptr, POINT* origin = nullptr);
     bool DeviceLost() const { return deviceLost_; }
 
-    // The field's caret blink. View timers 0x4B42 to 0x4B46 are taken (the command bar, Chromium's
-    // close deadline, the space tip, the rename field and the next one along).
+    // The field's caret blink. View timers 0x4B42 to 0x4B46 are taken: the command bar's caret,
+    // Chromium's close deadline, the space tip, the rename field's caret and the sidebar's drop.
     static constexpr UINT_PTR kCaretTimer = 0x4B47;
 
 private:
@@ -153,6 +161,7 @@ private:
     FindBarFrame frame_;     // points
     LONG leftPx_ = 0, topPx_ = 0, marginPx_ = 0;
     Button pressed_ = Button::None;
+    bool pressedOver_ = false;  // the held button is under the pointer (its glyph dims)
     FindQuery query_;
     TextField field_;
 };

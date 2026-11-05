@@ -127,19 +127,23 @@ public:
     // showDevTools…). False when no page is shown yet.
     enum class PageAction { Back, Forward, Reload, ReloadIgnoringCache, Stop, DevTools };
     bool Act(PageAction action);
-    // Whether a page is shown and made (what find needs; the Mac's shownPage).
-    bool HasShownPage() const;
+    // Whether the shown tab has a page, made or being made (what find needs; the Mac's shownPage,
+    // which a new tab has at once).
+    bool CanFind() const;
     // Finds `text` in the shown page, as the Mac's ChromiumEngine.find: `findNext` moves through
     // the matches of the same text; a new search also steps once, so its first match is active
-    // (1/N), as in Chrome. Reports come as PageEvents::findResult. False when no page is shown.
+    // (1/N), as in Chrome. A page still being made searches once it exists (the last search
+    // asked for). Reports come as PageEvents::findResult, a replaced search's dropped. False when
+    // no page is shown.
     bool Find(const std::string& text, bool forward, bool findNext);
     // Ends the shown page's search and its highlights, keeping the active match selected, as
     // Chrome and Arc do.
     void StopFinding();
-    // Where something of Kite's sits over the shown page (the find bar), in client px; empty for
-    // nothing. The page's window has a hole there, so clicks on it come to Kite's window while
-    // the rest of the page keeps taking input. It follows the shown page and the card's size.
-    void SetOverlayHole(const RECT& hole);
+    // Where something of Kite's sits over the shown page (the find bar), in client px, with its
+    // corners' radius in px; empty for nothing. The page's window has a hole there, so clicks on it
+    // come to Kite's window while the rest of the page keeps taking input. It follows the shown
+    // page; whoever moves the card (a resize, later the sidebar's toggle and splits) sets it again.
+    void SetOverlayHole(const RECT& hole, int cornerRadius);
     // While Kite's own field has the keyboard (the find bar's), a page doesn't take it back on a
     // navigation, as the Mac's field stays first responder while the page loads.
     void KeepKeyboard(bool keep);

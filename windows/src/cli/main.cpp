@@ -5,14 +5,21 @@
 //   kitecore [--profile DIR] state
 //   kitecore [--profile DIR] resolve TEXT...
 //   kitecore [--profile DIR] suggest TEXT... [--current]
-//   kitecore [--profile DIR] find TEXT... [--result ACTIVE/TOTAL] [--width W]
+//   kitecore [--profile DIR] find TEXT... [--result ACTIVE/TOTAL] [--width W] [--ask [--conversation]]
 //                                       the find bar with TEXT typed: what it asks the page, its
-//                                       counter for that report and its frame (core/FindBar.h)
+//                                       counter for that report, Ask on Page's mode, and its
+//                                       frame (core/FindBar.h)
+//   kitecore [--profile DIR] undo STEP...
+//                                       a field's undo grouping (core/TextUndo.h): type:TEXT,
+//                                       back, paste:TEXT, move, undo, redo
 //   kitecore [--profile DIR] sidebar [SPACE_ID]
 //   kitecore [--profile DIR] collapse SPACE_ID
 //   kitecore [--profile DIR] open TEXT... [--space ID] [--background]
 //   kitecore [--profile DIR] select TAB_ID
 //   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
+//   kitecore [--profile DIR] space swipe DX [SECONDS]
+//   kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...
+//   kitecore [--profile DIR] space move ID PLACE|drag ID X [Y]
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
@@ -27,6 +34,20 @@
 // its pixels, under 1px from these at a fractional scale). `click` in the bar's 50pt along the
 // bottom selects the space whose cell it hits.
 // `collapse` is View → Collapse / Expand Pinned Tabs for a space.
+// `space swipe` is two fingers sideways over the sidebar: the content dragged DX points (positive
+// towards the previous space) at a steady pace over SECONDS (default 0.25), an event every
+// 1/60 s, then let go. It prints where the pages were at the release (offset, the theme's
+// progress and direction) and where it lands, and selects that space.
+// The space menu and its edits (the bar's cells and the header's): `space menu` prints the menu
+// as the window shows it (each item's title, whether it's enabled, whether it's a submenu) and
+// its `line`, as the Mac's KITE_TEST_CONTEXT_MENU logs one; `rename`, `icon` (an emoji,
+// symbol:NAME, image:FILE, or "" for the dot), `folder` (New Folder) and `delete` are its items.
+// `delete` prints whether the window deletes at once or asks first (and what), then deletes; the
+// last space stays (exit 6; 5 is a space that isn't there). `new` is + › New Space, named
+// NAME. `move` puts a space at PLACE (from 1) among the others, as a drop in the bar; `drag`
+// presses its cell in the 240pt bar, drags to X (and Y, default the bar's middle) in bar points
+// and prints the strip there (the open slot, each cell's left, the ghost's), then lets go,
+// prints the slot it lands in and moves it there.
 
 #include <algorithm>
 #include <charconv>
@@ -42,12 +63,15 @@
 
 #include "core/CommandBar.h"
 #include "core/FindBar.h"
+#include "core/TextUndo.h"
 #include "core/KeyBindings.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
 #include "core/SessionStore.h"
 #include "core/Sidebar.h"
 #include "core/SpaceBar.h"
+#include "core/SpaceEditing.h"
+#include "core/SpaceSwipeGesture.h"
 #include "core/SupportDirectory.h"
 #include "core/ThemeBackdrop.h"
 #include "core/TitleBar.h"
@@ -64,14 +88,15 @@ using namespace kite;
 
 namespace {
 
-enum ExitCode : int { kOk = 0, kUsage = 1, kBadProfile = 2, kLoadFailed = 3, kSaveFailed = 4, kNotFound = 5 };
+enum ExitCode : int { kOk = 0, kUsage = 1, kBadProfile = 2, kLoadFailed = 3, kSaveFailed = 4, kNotFound = 5, kRefused = 6 };
 
 int Usage() {
     std::fputs(
         "usage: kitecore [--profile DIR] state\n"
         "       kitecore [--profile DIR] resolve TEXT...\n"
         "       kitecore [--profile DIR] suggest TEXT... [--current]\n"
-        "       kitecore [--profile DIR] find TEXT... [--result ACTIVE/TOTAL] [--width W]\n"
+        "       kitecore [--profile DIR] find TEXT... [--result ACTIVE/TOTAL] [--width W] [--ask [--conversation]]\n"
+        "       kitecore [--profile DIR] undo type:TEXT|back|paste:TEXT|move|undo|redo...\n"
         "       kitecore [--profile DIR] sidebar [SPACE_ID]\n"
         "       kitecore [--profile DIR] collapse SPACE_ID\n"
         "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]]\n"
@@ -84,6 +109,9 @@ int Usage() {
         "       kitecore [--profile DIR] archive-stale [NOW]\n"
         "       kitecore [--profile DIR] evict MAX [--shown TAB_ID] [--popup POPUP_ID=OPENER_ID]... TAB_ID=LAST_SHOWN...\n"
         "       kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]\n"
+        "       kitecore [--profile DIR] space swipe DX [SECONDS]\n"
+        "       kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...\n"
+        "       kitecore [--profile DIR] space move ID PLACE|drag ID X [Y]\n"
         "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n",
         stderr);
     return kUsage;
@@ -303,38 +331,82 @@ int main(int argc, char** argv) {
         return kOk;
     } else if (command == "find") {
         // The find bar (Ctrl+F) with TEXT typed: its placeholder, the search it asks the page for,
-        // the counter for a page report ACTIVE/TOTAL, and its frame in a window WIDTH points wide.
+        // the counter for a page report ACTIVE/TOTAL (0/0 for none, as Kite.exe's --find-result),
+        // whether Return would ask instead (Ask on Page, --ask, in a conversation with
+        // --conversation; Windows has no Ask on Page yet), and its frame in a window WIDTH points wide.
         std::vector<std::string> words;
         std::optional<FindResult> result;
         double width = 1280;
+        bool ask = false, conversation = false;
+        const auto whole = [](std::string_view text, auto& value) {
+            const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+            return !text.empty() && error == std::errc() && end == text.data() + text.size();
+        };
         for (size_t i = 1; i < args.size(); ++i) {
             if (args[i] == "--result" && i + 1 < args.size()) {
-                const std::string& report = args[++i];
+                const std::string_view report = args[++i];
                 const size_t slash = report.find('/');
                 int active = -1, total = -1;
-                if (slash != std::string::npos) {
-                    std::from_chars(report.data(), report.data() + slash, active);
-                    std::from_chars(report.data() + slash + 1, report.data() + report.size(), total);
+                if (slash == std::string_view::npos || !whole(report.substr(0, slash), active) || !whole(report.substr(slash + 1), total) ||
+                    active < 0 || total < active || (total > 0 && active < 1)) {
+                    return Usage();
                 }
-                if (active < 0 || total < active) return Usage();
                 result = FindResult{total > 0, total, active};
             } else if (args[i] == "--width" && i + 1 < args.size()) {
-                width = std::atof(args[++i].c_str());
+                if (!whole(args[++i], width) || !(width >= 1 && width <= 8192)) return Usage();
+            } else if (args[i] == "--ask") {
+                ask = true;
+            } else if (args[i] == "--conversation") {
+                conversation = true;
             } else {
                 words.push_back(args[i]);
             }
         }
         FindQuery query;
+        query.askEnabled = ask;
         const FindQuery::Search search = query.TextChanged(Join(words, 0));
         if (result) query.Show(*result);
-        // The content card: right of the sidebar's 240, 10 from the window's right, under the 32pt buttons.
-        const FindBarFrame frame = FindBarFrameIn(240, title_bar::kContentTop, width - 10);
-        json::Object o{{"placeholder", ask_on_page::Placeholder(false, false)},
+        const FindBarFrame frame = FindBarFrameIn(title_bar::kSidebarWidth, title_bar::kContentTop, width - title_bar::kContentInset,
+                                                  find_bar_style::ForAskEnabled(ask));
+        json::Object o{{"placeholder", ask_on_page::Placeholder(ask, conversation)},
                        {"search", json::Object{{"text", search.text}, {"forward", search.forward}, {"findNext", search.findNext}}},
                        {"label", query.Label()},
                        {"notFound", query.LabelIsNotFound()},
+                       {"askMode", ask_on_page::IsAskMode(ask, query.Query(), query.Matches(), conversation)},
                        {"frame", json::Object{{"left", frame.left}, {"top", frame.top}, {"width", frame.width}, {"height", frame.height}}}};
         std::puts(json::Write(json::Value(std::move(o))).c_str());
+        return kOk;
+    } else if (command == "undo") {
+        // A text field's undo (core/TextUndo, as Kite's fields group it): STEP is type:TEXT (a
+        // keystroke a character), back (Backspace), paste:TEXT, move (the caret moved), undo or
+        // redo; prints the text after each step.
+        TextUndo<std::string> history;
+        std::string text;
+        json::Array texts;
+        for (size_t i = 1; i < args.size(); ++i) {
+            const std::string_view step = args[i];
+            if (step.starts_with("type:")) {
+                for (const std::u32string& character : unicode::Characters(step.substr(5))) {
+                    history.Record(text, TextUndo<std::string>::Kind::Typing);
+                    text += unicode::Encode(character);
+                }
+            } else if (step == "back") {
+                if (text.empty()) continue;
+                history.Record(text, TextUndo<std::string>::Kind::Typing);
+                text.resize(text.size() - unicode::Encode(unicode::Characters(text).back()).size());
+            } else if (step.starts_with("paste:")) {
+                history.Record(text, TextUndo<std::string>::Kind::Other);
+                text += step.substr(6);
+            } else if (step == "move") {
+                history.BreakTyping();
+            } else if (step == "undo" || step == "redo") {
+                if (auto to = step == "undo" ? history.Undo(text) : history.Redo(text)) text = *to;
+            } else {
+                return Usage();
+            }
+            texts.emplace_back(text);
+        }
+        std::puts(json::Write(json::Value(std::move(texts))).c_str());
         return kOk;
     } else if (command == "suggest") {
         CommandBarMode mode = CommandBarMode::NewTab;
@@ -568,7 +640,35 @@ int main(int argc, char** argv) {
         }
     } else if (command == "space" && args.size() >= 2) {
         const std::string& action = args[1];
-        if (action == "next") state.SelectAdjacentSpace(1);
+        if (action == "swipe" && (args.size() == 3 || args.size() == 4)) {
+            double values[2] = {0, 0.25};
+            for (size_t i = 2; i < args.size(); ++i) {
+                auto [end, error] = std::from_chars(args[i].data(), args[i].data() + args[i].size(), values[i - 2]);
+                if (error != std::errc() || end != args[i].data() + args[i].size()) return Usage();
+            }
+            if (!std::isfinite(values[0]) || !std::isfinite(values[1]) || values[1] < 0) return Usage();
+            // The window's sidebar, the pages at rest.
+            const size_t index = state.SelectedSpaceIndex();
+            const SwipeStart start{240, index > 0, index + 1 < state.spaces.size(), 0};
+            SpaceSwipeGesture gesture;
+            const auto begin = [&] { return start; };
+            const int events = std::max(1, static_cast<int>(std::lround(values[1] * 60)));
+            gesture.Handle(SwipeInput{SwipeInput::Phase::Began, 0, 0, 0}, true, begin);
+            for (int i = 1; i <= events; ++i) {
+                gesture.Handle(SwipeInput{SwipeInput::Phase::Changed, values[0] / events, 0, i / 60.0}, true, begin);
+            }
+            json::Object out;
+            if (const auto& swipe = gesture.Swipe()) {
+                out.emplace("offset", swipe->Offset());
+                out.emplace("progress", swipe->Progress());
+                out.emplace("direction", static_cast<double>(swipe->Direction()));
+            }
+            gesture.Handle(SwipeInput{SwipeInput::Phase::Ended, 0, 0, (events + 1) / 60.0}, true, begin);
+            out.emplace("landing", static_cast<double>(gesture.Landing()));
+            state.SelectSpaceAt(index + static_cast<size_t>(gesture.Landing()));
+            out.emplace("space", state.SelectedSpace().id);
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (action == "next") state.SelectAdjacentSpace(1);
         else if (action == "prev") state.SelectAdjacentSpace(-1);
         else if (args.size() == 2 && action.size() == 1 && action[0] >= '1' && action[0] <= '9') {
             // Space 1–9 (the Mac's selectSpaceNumber): nothing past the last space.
@@ -578,6 +678,93 @@ int main(int argc, char** argv) {
             const std::string id = Id(args[2]);
             if (!state.SpaceIndex(id)) return kNotFound;
             state.SelectSpace(id);
+        } else if (action == "menu" && args.size() == 3) {
+            const std::vector<SpaceMenuItem> menu = SpaceMenu(state, Id(args[2]));
+            if (menu.empty()) return kNotFound;
+            json::Array items;
+            for (const SpaceMenuItem& item : menu) {
+                if (item.command == SpaceMenuItem::Command::Separator) {
+                    items.emplace_back(json::Object{{"separator", true}});
+                    continue;
+                }
+                items.emplace_back(json::Object{{"title", item.title}, {"enabled", item.enabled}, {"submenu", item.submenu}});
+            }
+            std::puts(json::Write(json::Object{{"items", json::Value(std::move(items))}, {"line", SpaceMenuLine(menu)}}).c_str());
+            return kOk;
+        } else if (action == "rename" && args.size() >= 4) {
+            const std::string id = Id(args[2]);
+            if (!state.SpaceIndex(id)) return kNotFound;
+            state.RenameSpace(id, Join(args, 3));
+            std::puts(state.spaces[*state.SpaceIndex(id)].name.c_str());
+        } else if (action == "icon" && args.size() == 4) {
+            const std::string id = Id(args[2]);
+            if (!state.SpaceIndex(id)) return kNotFound;
+            state.SetSpaceIcon(id, args[3]);
+            std::puts(state.spaces[*state.SpaceIndex(id)].icon.c_str());
+        } else if (action == "folder" && args.size() == 3) {
+            const auto space = state.SpaceIndex(Id(args[2]));
+            if (!space) return kNotFound;
+            std::puts(state.CreateNewFolder(*space).c_str());
+        } else if (action == "delete" && args.size() == 3) {
+            const std::string id = Id(args[2]);
+            if (!state.SpaceIndex(id)) return kNotFound;
+            const SpaceDeletion deletion = DeletionOf(state, id);
+            if (deletion.kind == SpaceDeletion::Kind::Refused) return kRefused;
+            json::Object out{{"kind", std::string(deletion.kind == SpaceDeletion::Kind::Now ? "now" : "ask")}};
+            if (deletion.kind == SpaceDeletion::Kind::Ask) {
+                out.emplace("title", deletion.title);
+                out.emplace("message", deletion.message);
+            }
+            state.DeleteSpace(id);
+            out.emplace("selected", state.selectedSpaceID);
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (action == "new" && args.size() >= 3) {
+            const auto id = NewSpace(state, Join(args, 2));
+            if (!id) return Usage();
+            std::puts(id->c_str());
+        } else if (action == "move" && args.size() == 4) {
+            const std::string id = Id(args[2]);
+            size_t place = 0;
+            auto [end, error] = std::from_chars(args[3].data(), args[3].data() + args[3].size(), place);
+            if (error != std::errc() || end != args[3].data() + args[3].size() || place == 0) return Usage();
+            if (!state.SpaceIndex(id)) return kNotFound;
+            state.MoveSpace(id, place - 1);
+            std::puts(std::to_string(*state.SpaceIndex(id) + 1).c_str());
+        } else if (action == "drag" && (args.size() == 4 || args.size() == 5)) {
+            const std::string id = Id(args[2]);
+            float point[2] = {0, space_bar_metrics::kHeight / 2};
+            for (size_t i = 3; i < args.size(); ++i) {
+                auto [end, error] = std::from_chars(args[i].data(), args[i].data() + args[i].size(), point[i - 3]);
+                if (error != std::errc() || end != args[i].data() + args[i].size() || !std::isfinite(point[i - 3])) return Usage();
+            }
+            const auto index = state.SpaceIndex(id);
+            if (!index) return kNotFound;
+            const std::vector<SpaceCell> cells = SpaceCells(state);
+            const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
+            const BarRect& cell = layout.cells[*index];
+            const float x0 = (cell.left + cell.right) / 2, y0 = (cell.top + cell.bottom) / 2;
+            auto press = SpaceBarPressAt(layout, cells, x0, y0);
+            if (!press) return kNotFound;
+            SpaceBarMove(*press, point[0], point[1]);
+            auto drag = BeginSpaceDrag(layout, cells, *press);
+            // One space, or a drag shorter than 4pt: a click, not a drag.
+            if (!drag) return Usage();
+            MoveSpaceDrag(*drag, layout, cells.size(), point[0], point[1]);
+            std::vector<std::string> ids;
+            for (const SpaceCell& c : cells) ids.push_back(c.spaceID);
+            const std::vector<BarRect> placed = SpaceDragCells(layout, ids, *drag);
+            json::Array strip;
+            for (size_t i = 0; i < ids.size(); ++i) {
+                strip.emplace_back(json::Object{{"id", ids[i]}, {"left", static_cast<double>(placed[i].left)}, {"hidden", ids[i] == id}});
+            }
+            const BarRect ghost = SpaceDragGhost(layout, *drag);
+            json::Object out{{"target", drag->target ? json::Value(static_cast<double>(*drag->target)) : json::Value()},
+                             {"cells", json::Value(std::move(strip))},
+                             {"ghost", json::Object{{"left", static_cast<double>(ghost.left)}, {"top", static_cast<double>(ghost.top)}}}};
+            const size_t slot = DropSpaceDrag(*drag, layout, cells.size(), point[0], point[1]);
+            out.emplace("landing", static_cast<double>(slot));
+            state.MoveSpace(id, slot);
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else if (action == "add" && (args.size() == 3 || args.size() == 4) && !unicode::Trim(args[2]).empty()) {
             // Like the Mac's New Space sheet: a name of only spaces isn't one.
             const auto& presets = Theme::Presets();
