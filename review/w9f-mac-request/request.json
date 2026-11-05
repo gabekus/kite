@@ -1,0 +1,36 @@
+{
+  "id": "w9f",
+  "title": "W9f Mac references: the space bar's + menu and Create a Space",
+  "about": "The Windows side is helix/W9f-create-space (#404, merged). Kite for Mac from origin/main once it has the sidebar test hooks (#412, the script's SIDEBAR_FLOOR): KITE_TEST_NEW_SPACE opens Create a Space through beginNewSpace, its _NAME sets the name field through its binding and its _THEME picks a preset and opens the theme editor from Choose a Theme's own row; nothing is clicked, typed or activated, and the in-process capture draws the open popover. The + menu stays skipped: it needs a hook of its own, not added.",
+  "base": "origin/main",
+  "window_size": [1280, 820],
+  "session": {"ref": "origin/main", "path": "windows/helix/states/three-spaces.json"},
+  "tree_match": "SpaceCellView",
+  "expect_frames": [[68, 778, 36, 34], [102, 778, 36, 34], [136, 778, 36, 34]],
+  "states": [
+    {
+      "name": "rest",
+      "holds": "the three spaces at rest, Personal selected, the bar's Library and + buttons at its ends (where the + menu opens from)"
+    },
+    {
+      "name": "plus-menu",
+      "holds": "the + menu's popover over the + button: New Space, New Folder, a line, New Split ⌘L, New Tab ⌘T (222pt wide, 40pt rows)",
+      "skip": "needs a hook: KITE_TEST_NEW_ITEM_MENU=1 (proposed, not added). On a test-safe run only, once the main window is up, it would run NewItemMenu.present from the bar's + button with nothing activated, log \"KITE_TEST_NEW_ITEM_MENU: New Space | New Folder | --- | New Split ⌘L | New Tab ⌘T\" and its popover's frame, and run no item; the capture would also need the popover's window drawn (kite ui capture draws the main window in-process, and NSPopover is a window of its own). Widening SAFE_TARGETS to SymbolButton instead isn't safe: the sidebar header's Developer and More buttons are SymbolButtons whose menus pop up without the hook."
+    },
+    {
+      "name": "create-empty",
+      "holds": "Create a Space in the sidebar of the new draft space right after Personal: the cards, the title and its line, Space name… and What's it for? (for Claude) empty, Profile Default, Choose a Theme, Create Space at half strength and Cancel; the bar with only its four cells (Library and + hidden)",
+      "env": {"KITE_TEST_NEW_SPACE": "1"}
+    },
+    {
+      "name": "create-named",
+      "holds": "the same page with Reading list in the name field (set, not typed: no caret blink or input method), Create Space on, What's it for? empty",
+      "env": {"KITE_TEST_NEW_SPACE": "1", "KITE_TEST_NEW_SPACE_NAME": "Reading list"}
+    },
+    {
+      "name": "create-filled",
+      "holds": "the same page with Reading list in the name field and the theme editor's fourth preset picked (the backdrop in its colours), the theme editor's popover open from Choose a Theme pointing at the row. What's it for? stays empty (the Windows capture has Books and long reads there; compare that field's box only)",
+      "env": {"KITE_TEST_NEW_SPACE": "1", "KITE_TEST_NEW_SPACE_NAME": "Reading list", "KITE_TEST_NEW_SPACE_THEME": "4"}
+    }
+  ]
+}
