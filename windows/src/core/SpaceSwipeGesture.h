@@ -57,6 +57,8 @@ public:
     // gesture isn't Kite's; asked nothing (the rest of a vertical gesture, its momentum), it
     // stays the list's wherever the pointer has gone.
     bool AskedWhere() const { return askedWhere_; }
+    // The gesture was decided vertical (the list's), until the next one begins.
+    bool Vertical() const { return vertical_; }
     // The swipe the fingers are making, until they let go.
     const std::optional<SpaceSwipe>& Swipe() const { return swipe_; }
     bool Swiping() const { return swipe_.has_value(); }

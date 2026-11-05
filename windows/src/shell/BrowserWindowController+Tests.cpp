@@ -30,7 +30,9 @@ bool Inked(const Pixels& pixels, UINT fromRow = 0) {
 bool BrowserWindowController::RunUntil(const std::function<bool()>& done, double seconds) {
     // Only the clock's frames and the window's timers: the rest waits for the message loop, so
     // a page that loads meanwhile can't close the window mid-test. A manual clock's frames are
-    // stepped here at 60 Hz while it runs, as its thread would post them (SmokeTest).
+    // stepped here at 60 Hz while it runs, as its thread would post them (SmokeTest). Timers come
+    // first: a 500 Hz clock nearly always has a frame waiting, and the slide's end (a timer)
+    // would wait behind them.
     const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(seconds * 1000);
     double nextFrame = 0;
     MSG message;
@@ -48,13 +50,19 @@ bool BrowserWindowController::RunUntil(const std::function<bool()>& done, double
     return done();
 }
 
+bool BrowserWindowController::BoostsBalance() const {
+    // Kite's count of boosts held is exactly this window's holders that are on: the clock's, the
+    // pages' slide's and the sidebar toggle's.
+    return FrameClock::ProcessBoosts() == int{clock_->Boosted()} + int{slideBoost_.On()} + int{toggleBoost_.On()};
+}
+
 std::wstring BrowserWindowController::RunToRest(const wchar_t* what) {
     const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
     const bool fades = theme_.Fading();
     if (visible && !sidebarSliding_) return std::wstring(what) + L" didn't slide the pages";
     if (!visible && (sidebarSliding_ || fades)) return std::wstring(what) + L" animated a hidden window";
     // The display at its highest rate while the pages slide, whether or not the theme fades.
-    if (sidebarSliding_ && !(slideBoost_.On() && FrameClock::Boosting())) return std::wstring(what) + L": the pages' slide didn't boost the display";
+    if (sidebarSliding_ && !(slideBoost_.On() && BoostsBalance())) return std::wstring(what) + L": the pages' slide didn't boost the display";
     // The clock's frames until the fade ends and the slide's timer fires (2 s at most): the fade
     // asks for frames and draws on them, the frame after its end stops the clock, and the slide
     // ends on its timer, its boost with it.
@@ -63,7 +71,7 @@ std::wstring BrowserWindowController::RunToRest(const wchar_t* what) {
     if (clock_->Running()) return std::wstring(what) + L": the frame clock never stopped";
     if (sidebarSliding_) return std::wstring(what) + L": the pages' slide never ended";
     if (fades && frameCount_ == framesBefore) return std::wstring(what) + L": the crossfade got no frames";
-    if (slideBoost_.On() || (!toggling_ && FrameClock::Boosting())) return std::wstring(what) + L": the display stayed boosted at rest";
+    if (slideBoost_.On() || !BoostsBalance()) return std::wstring(what) + L": the display stayed boosted at rest";
     if (sidebar_->PageOffset() != 0 || pagesAnchor_ || pendingLanding_) return std::wstring(what) + L": the pages didn't come to rest";
     if (theme_.Fading() || theme_.Interactive() || theme_.from != state_.SelectedSpace().theme) {
         return std::wstring(what) + L": the theme didn't come to rest";
@@ -96,6 +104,8 @@ std::wstring BrowserWindowController::SmokeTestSwipe() {
     // The pointer over the list, and over the page beside the sidebar.
     const POINT list{std::lround(120 * scale), std::lround(200 * scale)};
     const POINT page{std::lround((kSidebarWidth + 200) * scale), std::lround(200 * scale)};
+    // And over the top row, on the sidebar but above the list.
+    const POINT header{std::lround(80 * scale), std::lround(20 * scale)};
     double stamp = FrameClock::Now();
     const auto sendAt = [&](POINT at, Phase phase, double dx, double dy, double after = 1.0 / 60) {
         stamp += after;
@@ -126,32 +136,45 @@ std::wstring BrowserWindowController::SmokeTestSwipe() {
     // With rows enough to scroll (taken away again): a vertical gesture decided over the list is
     // the list's to its end, its momentum included, wherever the pointer goes (the Mac asks where
     // it is only until the gesture is decided); one whose pointer is over the page before it's
-    // decided scrolls nothing, nor does the rest of it.
+    // decided scrolls nothing, nor does the rest of it. Only the undecided one lets the contact go
+    // (counted: the smoke test has no contact to release), and so does one decided vertical over
+    // the top row, where nothing scrolls with it. The rows are taken away by hand, not closed, so
+    // they leave nothing in Recently Closed or the archive.
     {
         std::vector<std::string> rows;
         for (int i = 0; i < 40; ++i) rows.push_back(state_.OpenTab("about:blank", before, false));
         StateChanged();
         const float top = sidebar_->ListScroll();
+        const size_t releases = touchpad_->ReleasesAsked();
         send(Phase::Began, 0, 0);
         send(Phase::Changed, 0, -30);
         const float decided = sidebar_->ListScroll();
         const bool latched = sendAt(page, Phase::Changed, 0, -30) == Step::Pass && sendAt(page, Phase::Ended, 0, 0) == Step::Pass &&
                              sendAt(page, Phase::Momentum, 0, -20) == Step::Pass && decided == top + 30 &&
-                             sidebar_->ListScroll() == decided + 50;
+                             sidebar_->ListScroll() == decided + 50 && touchpad_->ReleasesAsked() == releases;
         sendAt(page, Phase::MomentumEnded, 0, 0);
         const float scrolled = sidebar_->ListScroll();
         send(Phase::Began, 0, 0);
         sendAt(page, Phase::Changed, 0, -30);
+        const bool undecidedReleased = touchpad_->ReleasesAsked() == releases + 1;
         sendAt(page, Phase::Ended, 0, 0);
         sendAt(page, Phase::Momentum, 0, -20);
-        const bool released = sidebar_->ListScroll() == scrolled;
+        const bool released = undecidedReleased && sidebar_->ListScroll() == scrolled && touchpad_->ReleasesAsked() == releases + 1;
         sendAt(page, Phase::MomentumEnded, 0, 0);
-        sidebar_->ScrollListBy(-sidebar_->ListScroll());
+        // Over the top row (the sidebar, but not the list): held while undecided, released as it's
+        // decided vertical.
+        sendAt(header, Phase::Began, 0, 0);
+        const bool headerHeld = touchpad_->ReleasesAsked() == releases + 1;
+        sendAt(header, Phase::Changed, 0, -30);
+        const bool headerReleased = headerHeld && touchpad_->ReleasesAsked() == releases + 2 && sidebar_->ListScroll() == scrolled;
+        sendAt(header, Phase::Ended, 0, 0);
+        sidebar_->ScrollListBy(top - sidebar_->ListScroll());
         Space& space = state_.spaces[index];
         std::erase_if(space.tabs, [&](const Tab& tab) { return std::find(rows.begin(), rows.end(), tab.id) != rows.end(); });
         StateChanged();
         if (!latched) return L"a vertical gesture's rest over the page didn't scroll the list";
-        if (!released) return L"a gesture over the page before it was decided scrolled the list";
+        if (!released) return L"a gesture over the page before it was decided wasn't released, or scrolled the list";
+        if (!headerReleased) return L"a vertical gesture decided over the top row kept its contact";
     }
 
     // Sideways: the pages and the theme follow the fingers, and a frame draws it.
@@ -386,23 +409,41 @@ std::wstring BrowserWindowController::HoldSwipe(double dx) {
 }
 
 std::wstring BrowserWindowController::SmokeTest() {
-    // The clock's own thread gives a frame once started (the compositor clock's, or DwmFlush's
-    // when its wait fails, as with the display off), and a frame with nothing to animate stops
-    // it, unboosted. Its 5 s allow for a stalled DwmFlush; a clock that never ticks fails here.
-    clock_->Start(false);
+    // The clock's own thread gives frame after frame while something wants them (the compositor
+    // clock's, or DwmFlush's when its wait fails, as with the display off: 500 Hz there), here
+    // the touchpad's polling; once nothing does, its next frame stops the clock, unboosted. The
+    // 5 s allow for DwmFlush's stalls of a few hundred ms; a thread that stops ticking fails.
     const size_t framesBefore = frameCount_;
-    if (!RunUntil([&] { return frameCount_ > framesBefore; }, 5)) {
+    if (touchpad_) {
+        touchpad_->PollFor(5);
+        clock_->Start(false);
+        const bool ticked = RunUntil([&] { return frameCount_ >= framesBefore + 3; }, 5);
+        touchpad_->PollFor(0);
+        if (!ticked) {
+            clock_->Stop();
+            return L"the frame clock gave fewer than 3 frames in 5 s";
+        }
+        if (!clock_->Running()) return L"the frame clock stopped while the touchpad wanted frames";
+    } else {
+        clock_->Start(false);
+    }
+    const size_t polled = frameCount_;
+    if (!RunUntil([&] { return frameCount_ > polled; }, 5)) {
         clock_->Stop();
         return L"the frame clock gave no frame in 5 s";
     }
     if (clock_->Running() || clock_->Boosted()) return L"a frame with nothing to animate didn't stop the frame clock";
     // The rest steps the clock's frames in RunUntil, at 60 Hz while it runs: what's checked is
     // when the window starts, boosts and stops it, and what it does with its frames, never
-    // whether the display is ticking.
-    clock_->SetManual(true);
-    std::wstring problem = SmokeTestWindow();
-    clock_->SetManual(false);
-    return problem;
+    // whether the display is ticking. Back to the thread's frames however the checks end.
+    struct ManualClock {
+        FrameClock& clock;
+        explicit ManualClock(FrameClock& c) : clock(c) { clock.SetManual(true); }
+        ~ManualClock() { clock.SetManual(false); }
+        ManualClock(const ManualClock&) = delete;
+        ManualClock& operator=(const ManualClock&) = delete;
+    } manual(*clock_);
+    return SmokeTestWindow();
 }
 
 std::wstring BrowserWindowController::SmokeTestWindow() {

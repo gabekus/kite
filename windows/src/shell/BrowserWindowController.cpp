@@ -233,6 +233,9 @@ std::wstring BrowserWindowController::Init() {
     // reported runs first (titles, addresses), then the caller saves.
     window_.onClose = [this] {
         clock_->Stop();
+        // A slide still running lets the display's rate go now, not when the controller goes.
+        slideBoost_.Set(false);
+        toggleBoost_.Set(false);
         // DirectManipulation lets the window go while it's still a window.
         touchpad_.reset();
         RunPending();
@@ -340,6 +343,10 @@ SpaceSwipeGesture::Step BrowserWindowController::SwipeInputArrived(const SwipeIn
             // A vertical gesture is the list's scroll under the pointer: content dragged down goes
             // back up the list.
             listScrolling_ = sidebar_->ScrollList(at, static_cast<float>(-input.dy));
+            // Decided vertical anywhere else on the sidebar (the header, the top row, the space
+            // bar): nothing of Kite's scrolls with it, so the contact goes back to the system and
+            // the clock stops polling for it.
+            if (swipe_.Vertical() && !listScrolling_ && touchpad_) touchpad_->ReleaseContact();
         } else {
             // Off the sidebar before it's decided: not the sidebar's. The rest of it is the
             // system's wheel messages, for whatever is under the pointer (the Mac passes the
@@ -666,11 +673,10 @@ void BrowserWindowController::SetSidebarShown(bool shown) {
     // Like Arc: the final frames set once, the compositor drawing the frames between (no slide
     // on a window that isn't on screen).
     const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
-    const bool wasToggling = toggling_;
     const double duration = sidebar_->SetShown(shown, visible);
     toggling_ = duration > 0;
     // The display at its highest rate while it slides (docs/windows.md, Refresh rate).
-    if (toggling_ != wasToggling) toggleBoost_.Set(toggling_);
+    toggleBoost_.Set(toggling_);
     // The system menu's item says what it will do next (validateMenuItem's retitling).
     if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
         ModifyMenuW(menu, kToggleSidebarMenuID, MF_BYCOMMAND | MF_STRING, kToggleSidebarMenuID, ToggleSidebarMenuText().c_str());

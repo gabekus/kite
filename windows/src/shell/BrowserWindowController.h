@@ -222,6 +222,8 @@ private:
     std::wstring WaitForDrop();
     // The clock's frames and the slide's timer, until the theme and the pages are at rest.
     std::wstring RunToRest(const wchar_t* what);
+    // Kite's count of compositor boosts held matches this window's holders that are on.
+    bool BoostsBalance() const;
     // The clock's frames and the window's timers until `done` (or `seconds` go by): whether it was.
     bool RunUntil(const std::function<bool()>& done, double seconds);
     // A slide's first frame now: the pages' drawing and the strip's animation committed, so the

@@ -426,8 +426,9 @@ swallowed (`core/SpaceSwipeGesture.h`, `kitecore space swipe DX [SECONDS]`). Unt
 the gesture is decided (its began, and its movement until the first that has some),
 each event asks where the pointer is then, as the Mac's `isOverSidebar`; a vertical
 gesture decided over the list scrolls it to its end, momentum included, wherever the
-pointer goes after (as the Mac's scroll view keeps the gesture it began under). A
-swipe can catch the pages mid-settle and carries on from where they are. Windows'
+pointer goes after: the gesture stays with the list it was decided under. One decided
+vertical elsewhere on the sidebar (the top row, the header, the space bar) has nothing
+of Kite's to scroll, so its contact is released at once. A swipe can catch the pages mid-settle and carries on from where they are. Windows'
 wheel messages carry no gesture phases, so the touchpad's contact is taken on
 `DM_POINTERHITTEST` by a DirectManipulation viewport on manual updates
 (`shell/TouchpadInput.h`, Chromium's way). The frame clock steps it once a frame
@@ -440,17 +441,17 @@ same theme) is at the display's highest rate too, as the Mac's settle on its clo
 is. A gesture whose pointer is off the sidebar before it's decided (over the page,
 or the command bar opened), and a contact that rests past 10 s, are released
 (`ReleaseContact`), so the rest is the system's wheel messages for whatever is under
-the pointer. Core's `TouchpadPhases` turns the viewport's
-statuses and content reports into the Mac's phases and sends the viewport back over
+the pointer. Core's `TouchpadPhases` turns the viewport's statuses and content reports into the Mac's phases and sends the viewport back over
 its content's middle after a gesture that moved it, the next gesture counting from
 there however late DirectManipulation applies it (its tests replay the sequences:
 momentum, fingers down mid-momentum, the system taking the viewport, the reset's own
 pass). `--capture FILE --swipe DX` holds a swipe DX points in, and the smoke test
 feeds the same handler a vertical gesture, one whose pointer has moved over the page
 before it's decided, a vertical one that carries on over the page (still the list's,
-its momentum too), a swipe that lands, one caught mid-settle, a short one that
-stays and a flick back; then, with a third space added for it, a keyboard switch overtaking a landing, a
-space selected under the swipe, a release in a hidden window (it lands at once), the
+its momentum too, and its contact kept), one decided vertical over the top row
+(released), a swipe that lands, one caught mid-settle, a short one that stays and a
+flick back; then, with a third space added for it, a keyboard switch overtaking a
+landing, a space selected under the swipe, a release in a hidden window (it lands at once), the
 rubber band before the first space and a crossfade's boost ending while the
 touchpad's frames go on; and with the other spaces set aside, both ways on one
 space. `--frame-log` also records every status, content report, release and poll,
@@ -463,7 +464,8 @@ for a run on a real touchpad. Known differences:
 - Fingers that rest on the touchpad over the sidebar for 10 s without moving lose
   their contact (`TouchpadInput`'s `kLongestRest`), so the frame clock doesn't poll
   DirectManipulation for as long as a hand lies there; moving after that, they're
-  the system's wheel messages, which scroll the list but never page. The Mac has no
+  the system's wheel messages, which scroll the list (or, sideways over the space
+  bar, its strip) but never page. The Mac has no
   such cap: fingers can rest as long as they like and still swipe.
 - Only a contact that comes down over the sidebar can page: one that comes down over
   the page is Chromium's (the hit test goes to its window), and its wheel messages
@@ -578,14 +580,14 @@ Windows that means:
   instead, with no frames of Kite's, the compositor clock boosted while it runs
   (`FrameClock::BoostWithoutFrames`, one per animation: the pages' slide, the
   sidebar's hide and show), as the Mac's clock asks for the screen's top rate
-  while it runs the settle. With the display off, the compositor clock's wait fails at once
-  (`STATUS_GRAPHICS_PRESENT_OCCLUDED`) and the thread falls back on `DwmFlush`,
-  which paces it at DWM's displayless 500 Hz with stalls of a few hundred ms. So
-  the smoke test checks the thread once (a frame within 5 s, and a frame with
-  nothing to animate stops the clock) and then steps the clock's frames itself
-  at 60 Hz (`FrameClock::SetManual`): its frame-clock checks are of when Kite
-  starts, boosts and stops the clock and what each frame does, never of whether
-  the display is ticking.
+  while it runs the settle. With the display off, the compositor clock's wait
+  fails at once (`STATUS_GRAPHICS_PRESENT_OCCLUDED`) and the thread falls back on
+  `DwmFlush`, which paces it at DWM's displayless 500 Hz with stalls of a few
+  hundred ms. So the smoke test checks the thread first (3 frames within 5 s
+  while the touchpad polls, and once it's done the next frame stops the clock),
+  then steps the clock's frames itself at 60 Hz (`FrameClock::SetManual`): its
+  frame-clock checks are of when Kite starts, boosts and stops the clock and what
+  each frame does, never of whether the display is ticking.
 - **Swap chains** are flip-model (`DXGI_SWAP_EFFECT_FLIP_DISCARD`) composition
   swap chains with a frame-latency waitable object, so frames present on the
   next vblank of a high-refresh or variable-refresh (G-Sync/FreeSync) display

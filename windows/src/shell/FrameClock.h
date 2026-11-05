@@ -44,9 +44,9 @@ public:
     void SetBoost(bool boost);
     // The boost alone, with no frames (the window's thread): for an animation that runs on the
     // compositor (the sidebar's hide and show, the pages' slide), on as it starts and off as it
-    // ends, as the Mac's clock asks for the top rate while the pages' settle runs on it. Each holds its
-    // own, counted with the clocks' boosts and the others', so one ending leaves the rest on; it
-    // lets go when it goes.
+    // ends, as the Mac's clock asks for the top rate while the pages' settle runs on it. Each
+    // animation holds its own, counted with the clocks' boosts and the others', so one ending
+    // leaves the rest on; it lets go when it goes.
     class BoostWithoutFrames {
     public:
         BoostWithoutFrames() = default;
@@ -59,9 +59,11 @@ public:
     private:
         bool on_ = false;
     };
-    // Whether anything in the process holds the compositor clock's boost (a clock or a
-    // BoostWithoutFrames): what DCompositionBoostCompositorClock was last told.
-    static bool Boosting();
+    // How many boosts Kite counts as held in the process (boosted clocks and BoostWithoutFrames
+    // that are on): Kite's own count, not what Windows did with them (the boost function may be
+    // missing, and its HRESULT isn't checked). For the smoke test, on the UI thread only: with
+    // several windows on their own threads (W29a) the count needs to be atomic.
+    static int ProcessBoosts();
     bool Running() const { return running_; }
     bool Boosted() const { return boosted_; }
     // The window took the message: the next frame may post another.

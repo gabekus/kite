@@ -84,9 +84,10 @@ TEST(wherePointerIsIsAskedOnlyUntilTheGestureIsDecided) {
     // No movement yet: still undecided, still asked.
     gesture.Handle(At(Phase::Changed, 0, 0, 0.008), true, spaces.Begin());
     CHECK(gesture.AskedWhere());
+    CHECK(!gesture.Vertical());
     // Decided vertical on this one, asked first.
     CHECK(gesture.Handle(At(Phase::Changed, 1, -6, 0.016), true, spaces.Begin()) == Step::Pass);
-    CHECK(gesture.AskedWhere());
+    CHECK(gesture.AskedWhere() && gesture.Vertical());
     // The rest of it isn't asked, wherever the pointer is: off the sidebar it's still the list's.
     CHECK(gesture.Handle(At(Phase::Changed, 0, -6, 0.032), false, spaces.Begin()) == Step::Pass);
     CHECK(!gesture.AskedWhere());
@@ -96,8 +97,9 @@ TEST(wherePointerIsIsAskedOnlyUntilTheGestureIsDecided) {
     CHECK(!gesture.AskedWhere());
     CHECK(gesture.Handle(At(Phase::MomentumEnded, 0, 0, 0.08), false, spaces.Begin()) == Step::Pass);
     CHECK(!gesture.AskedWhere());
-    // Off the sidebar before it's decided: asked, and passed.
+    // Off the sidebar before it's decided: asked, and passed. The next gesture is undecided again.
     gesture.Handle(At(Phase::Began, 0, 0, 1), true, spaces.Begin());
+    CHECK(!gesture.Vertical());
     CHECK(gesture.Handle(At(Phase::Changed, -20, 0, 1.016), false, spaces.Begin()) == Step::Pass);
     CHECK(gesture.AskedWhere() && !gesture.Swiping());
     // A swipe's own events aren't asked: it's the swipe's wherever the pointer goes.

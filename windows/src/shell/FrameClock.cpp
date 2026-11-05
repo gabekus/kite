@@ -84,7 +84,7 @@ void FrameClock::BoostWithoutFrames::Set(bool boost) {
     Boost(boost);
 }
 
-bool FrameClock::Boosting() { return boosts > 0; }
+int FrameClock::ProcessBoosts() { return boosts; }
 
 void FrameClock::SetManual(bool manual) {
     {
