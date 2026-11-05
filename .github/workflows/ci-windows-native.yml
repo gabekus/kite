@@ -24,7 +24,7 @@ jobs:
   # build and pass on any OS, and the app builds with MinGW-w64 GCC -Wall -Wextra -Werror.
   portable:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20  # core + ASan + the MinGW cross-compile: 5-8 min when warm, more on a slow runner
     steps:
       - uses: actions/checkout@v4
       - name: Core and tests (GCC, Linux)
