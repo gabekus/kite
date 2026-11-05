@@ -5,7 +5,8 @@ import Foundation
 /// (nothing in the window opens it).
 ///
 /// Only on a test-safe run (`WindowPresentation.isTestSafe`); a real profile ignores both. Once the main window's
-/// shown page has finished loading, the window opens its find bar as ⌘F does (`showFind`), and with `KITE_TEST_FIND`
+/// shown page has finished loading, the window opens its find bar as ⌘F does (`showFind`, Ask on Page always off: the
+/// plain find bar, with no Ask button), and with `KITE_TEST_FIND`
 /// sets the bar's query the way the field takes a keystroke: the field's string value, then the search its
 /// text-change delegate runs (`FindBar.setQuery`). No key events, so no input method; nothing is activated, made key,
 /// fronted or typed anywhere else, and Return is never pressed (so Ask on Page never asks). When the bar is ready it
@@ -50,16 +51,20 @@ public enum FindTestHook: Equatable, Sendable {
     /// What the window does, in order.
     public enum Step: Equatable, Sendable {
         /// ⌘F's own action: the bar shown and its field focused (the window's first responder; the window isn't
-        /// made key).
-        case showFind
+        /// made key), with Ask on Page on or off whatever the profile's `askOnPageEnabled` says.
+        case showFind(askOnPage: Bool)
         /// The field's string value set, then the search its text-change delegate runs on a keystroke.
         case setQuery(String)
     }
 
+    /// Ask on Page for the hooked bar: always off. The plain find bar is what the captures show whatever the test
+    /// app's saved defaults hold, and its Ask button (which runs Claude) is never there to be reached.
+    public static let asksOnPage = false
+
     public var steps: [Step] {
         switch self {
-        case .open: return [.showFind]
-        case .query(let text): return [.showFind, .setQuery(text)]
+        case .open: return [.showFind(askOnPage: Self.asksOnPage)]
+        case .query(let text): return [.showFind(askOnPage: Self.asksOnPage), .setQuery(text)]
         }
     }
 

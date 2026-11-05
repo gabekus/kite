@@ -22,11 +22,25 @@ struct FindTestHookTests {
         #expect(safe)
         let open = FindTestHook.from(environment: testSafe.merging(["KITE_TEST_FIND_OPEN": "1"]) { $1 }, testSafe: safe)
         #expect(open == .open)
-        #expect(open?.steps == [.showFind])
+        #expect(open?.steps == [.showFind(askOnPage: false)])
         let query = FindTestHook.from(environment: testSafe.merging(["KITE_TEST_FIND": "domain"]) { $1 }, testSafe: safe)
         #expect(query == .query("domain"))
         // The bar opens as ⌘F opens it, then the query goes through the field's own path (setQuery), never keys.
-        #expect(query?.steps == [.showFind, .setQuery("domain")])
+        #expect(query?.steps == [.showFind(askOnPage: false), .setQuery("domain")])
+    }
+
+    @Test func theHookedBarNeverHasAskOnPage() {
+        // Whatever the test app's saved askOnPageEnabled says: the plain find bar, no Ask button (which runs Claude).
+        #expect(!FindTestHook.asksOnPage)
+        for hook in [FindTestHook.open, .query("domain"), .query("zqxj")] {
+            for step in hook.steps {
+                if case .showFind(let askOnPage) = step { #expect(!askOnPage, "\(hook)") }
+            }
+            #expect(hook.steps.first == .showFind(askOnPage: false))
+        }
+    }
+
+    @Test func aQueryWinsAndAnEmptyOneIsOff() {
         // A query wins over the empty bar; an empty query is off, which leaves KITE_TEST_FIND_OPEN.
         #expect(FindTestHook.from(environment: ["KITE_TEST_FIND": "zqxj", "KITE_TEST_FIND_OPEN": "1"], testSafe: true) == .query("zqxj"))
         #expect(FindTestHook.from(environment: ["KITE_TEST_FIND": "", "KITE_TEST_FIND_OPEN": "1"], testSafe: true) == .open)
@@ -99,7 +113,53 @@ struct FindTestHookSourceTests {
         #expect(setQuery.contains("search()"))
         let apply = try body(of: "func applyFindTestHook(_ hook: FindTestHook) {", in: try source("BrowserWindowController+PageCommands.swift"))
         #expect(apply.contains("bar.setQuery(text)"))
-        #expect(apply.contains("showFind(nil)"))
+        // ⌘F's own path (showFind is openFind with the saved Ask on Page setting), with the step's Ask on Page.
+        #expect(apply.contains("openFind(askEnabled: askOnPage)"))
+    }
+
+    @Test func theHookedBarIgnoresTheSavedAskOnPageSetting() throws {
+        let commands = try source("BrowserWindowController+PageCommands.swift")
+        let apply = try body(of: "func applyFindTestHook(_ hook: FindTestHook) {", in: commands)
+        let openFind = try body(of: "private func openFind(askEnabled: Bool) {", in: commands)
+        #expect(!apply.contains("AskOnPage.isEnabled"))
+        #expect(!apply.contains("showFind("))
+        #expect(!openFind.contains("AskOnPage.isEnabled"))
+        #expect(openFind.contains("bar.askEnabled = askEnabled"))
+        #expect(try body(of: "@objc func showFind(_ sender: Any?) {", in: commands)
+            .contains("openFind(askEnabled: AskOnPage.isEnabled(in: .standard))"))
+    }
+
+    @Test func nothingFromTheQueryReachesAsk() throws {
+        let bar = try source("Views/FindBar.swift")
+        let path = try ["func setQuery(_ text: String) {", "private func search() {", "func step(forward: Bool) {"]
+            .map { try body(of: $0, in: bar) }
+        // setQuery → search → step → onSearch (the page's find): never submit or onAsk (which asks Claude).
+        for code in path {
+            for banned in ["submit", "onAsk", "isAskMode"] {
+                #expect(!code.contains(banned), "\(banned) in \(code.prefix(40))")
+            }
+        }
+        // submit() has two callers: Return in the field (insertNewline), which the hook never sends, and the ask
+        // card's Ask button, hidden unless the bar is the ask card in ask mode.
+        #expect(bar.components(separatedBy: "submit()").count - 1 == 3)   // its declaration and those two calls
+        let command = try body(of: "func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {", in: bar)
+        let newline = try #require(command.range(of: "case #selector(NSResponder.insertNewline(_:)):"))
+        let cancel = try #require(command.range(of: "case #selector(NSResponder.cancelOperation(_:)):"))
+        #expect(command[newline.upperBound..<cancel.lowerBound].contains("submit()"))
+        #expect(bar.contains("askButton = AskPillButton { [weak self] in self?.submit() }"))
+        #expect(try body(of: "private func updateAskButton() {", in: bar).contains("askButton.isHidden = !(style == .ask && isAskMode)"))
+        // onAsk runs only from submit(), and only in ask mode, which needs Ask on Page on: the hooked bar never is.
+        #expect(bar.components(separatedBy: "onAsk?(").count - 1 == 1)
+        #expect(try body(of: "private func submit() {", in: bar).contains("if isAskMode, !question.isEmpty { onAsk?(question) }"))
+        #expect(bar.contains("AskOnPage.isAskMode(enabled: askEnabled,"))
+        for query in ["", "zqxj", "domain"] {
+            for matches in [nil, 0, 2] as [Int?] {
+                for inConversation in [false, true] {
+                    #expect(!AskOnPage.isAskMode(enabled: FindTestHook.asksOnPage, query: query, matches: matches,
+                                                 inConversation: inConversation))
+                }
+            }
+        }
     }
 
     @Test func theHookIsTestSafeOnlyAndSendsNoKeys() throws {
@@ -109,8 +169,16 @@ struct FindTestHookSourceTests {
         let start = try body(of: "static func start(", in: runner)
         #expect(start.contains("guard WindowPresenter.testSafe else { return }"))
         #expect(start.contains("FindTestHook.from(environment: environment, testSafe: WindowPresenter.testSafe)"))
+        // Everything the hook runs: its own code, ⌘F's open and the bar's focus, setQuery, search and step.
+        let commands = try source("BrowserWindowController+PageCommands.swift")
+        let bar = try source("Views/FindBar.swift")
+        let reached = try [body(of: "private func openFind(askEnabled: Bool) {", in: commands),
+                           body(of: "@objc func showFind(_ sender: Any?) {", in: commands),
+                           body(of: "func focus() {", in: bar), body(of: "func setQuery(_ text: String) {", in: bar),
+                           body(of: "private func search() {", in: bar), body(of: "func step(forward: Bool) {", in: bar),
+                           body(of: "func reveal() {", in: bar)]
         // No key events (they go through the input method), no typing into a field editor, nothing fronted.
-        for code in [apply, runner] {
+        for code in [apply, runner] + reached {
             for banned in ["insertText", "keyEvent", "CGEvent", "sendEvent", "postEvent", "keyDown", "makeKey",
                            "orderFront", "activate", "insertNewline", "performKeyEquivalent", "runModal"] {
                 #expect(!code.contains(banned), "\(banned)")
