@@ -48,7 +48,8 @@ void BrowserWindowController::RunSpaceMenuItem(const std::string& spaceID, Space
 void BrowserWindowController::BeginRenaming(const std::string& spaceID) {
     const auto index = state_.SpaceIndex(spaceID);
     if (!index) return;
-    // beginRenaming(space:): its space selected, then its header's field.
+    // beginRenaming(space:): the sidebar shown, its space selected, then its header's field.
+    SetSidebarShown(true);
     if (state_.selectedSpaceID != spaceID) {
         state_.SelectSpace(spaceID);
         SelectionMoved();
