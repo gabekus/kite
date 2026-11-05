@@ -355,6 +355,25 @@ std::optional<std::string> SidebarRenameOnPress(const SidebarPress& press) {
     return press.id;
 }
 
+std::optional<SidebarPress> SidebarMiddlePressAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x,
+                                                 float y, float listTop) {
+    using Target = SidebarHit::Target;
+    const SidebarHit hit = SidebarHitTest(rows, width, height, scroll, x, y, listTop);
+    if (hit.target != Target::Row && hit.target != Target::CloseButton && hit.target != Target::ResetButton) return std::nullopt;
+    const SidebarRow& row = rows[hit.row];
+    if (row.kind != SidebarRow::Kind::Tab || !row.showsClose) return std::nullopt;
+    return SidebarPress{Target::Row, SidebarRow::Kind::Tab, row.id, 1};
+}
+
+SidebarTap SidebarMiddleRelease(const SidebarPress& press, const std::vector<SidebarRow>& rows, float width, float height, float scroll,
+                                float x, float y, float listTop) {
+    const auto at = SidebarRowAt(rows, width, height, scroll, x, y, listTop);
+    if (press.kind != SidebarRow::Kind::Tab || !at) return {};
+    const SidebarRow& row = rows[*at];
+    if (row.kind != SidebarRow::Kind::Tab || row.id != press.id || !row.showsClose) return {};
+    return {SidebarTap::Action::CloseTab, row.id, false};
+}
+
 TabRowTrailing TabRowTrailingOf(const SidebarRow& row, float width, bool hovered) {
     // place(_:width:height:shown:): each button that shows takes its width from the end, then a gap.
     TabRowTrailing out;

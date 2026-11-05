@@ -644,6 +644,23 @@ Rename… and Delete: W17, whose model is here and in kitecore), Undo (W16: `Edi
 it records), the command bar's command rows (the commands are there to bind, not to search),
 Back to Pinned URL's tooltip, and the "Pin Tab"/"Unpin Tab" retitling (no menu shows it).
 
+## Middle-click to close (a Windows addition)
+
+A middle click on a tab's row in the sidebar closes that tab, as Chrome, Edge and Arc for Windows
+do: Today's tabs, pinned tabs and tabs in folders. It's the row's close button (Ctrl+W for the
+selected tab): Today's tab is archived and its page closes; a pinned tab, in a folder or not,
+unloads (its row stays and its page closes, the close button's "Unload"), and one that closes
+for good (a split's pane, or one with no page) goes. A tab in one of Claude's folders, which has no close
+button, takes no middle click. It acts on release inside the row it went down on, so a press
+moved off the row closes nothing. The press itself draws nothing. A middle click on a favorite,
+a folder, the header, New Tab, the space bar, the top row or empty sidebar does nothing: a
+favorite is a tile, not a tab row, and has no close button to stand in for. A page's
+own middle clicks (a link opening in a background tab, autoscroll) are Chromium's, in the page's
+window, and unchanged. Known difference: the Mac has none (no sidebar middle click, and its
+`ui input` refuses middle clicks). `core/Sidebar`'s `SidebarMiddlePressAt` and
+`SidebarMiddleRelease` decide it, and `kitecore click X Y --button middle` does it headless,
+printing the close's `outcome` (`removed` or `unloaded`, as a close button's click now does too).
+
 ## Refresh rate
 
 Kite renders at whatever the display supports (60Hz, 120/144Hz laptops, 240 to

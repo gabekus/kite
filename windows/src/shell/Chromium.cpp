@@ -862,6 +862,11 @@ void Chromium::Close(const std::string& tabID) {
     shared_->Layout();
 }
 
+bool Chromium::HasPage(const std::string& tabID) const {
+    const auto it = shared_->pages.find(tabID);
+    return it != shared_->pages.end() && !it->second.closeWhenMade;
+}
+
 void Chromium::SetBounds(const RECT& bounds) {
     {
         std::lock_guard lock(shared_->mutex);

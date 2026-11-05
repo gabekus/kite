@@ -498,3 +498,60 @@ TEST(aTabsCloseButtonClosesIt) {
     rows = SidebarRows(f.state, 0);  // header, Task, divider, ...
     CHECK(rows[1].id == task && !rows[1].showsClose);
 }
+
+// A middle click on a tab's row closes it, as its close button does (a Windows addition): pressed
+// on the pill, its buttons too, and let go inside the same row; nothing elsewhere.
+TEST(aMiddleClickOnATabsRowClosesIt) {
+    using T = SidebarHit::Target;
+    using A = SidebarTap::Action;
+    Fixture f = CollapseState();
+    auto rows = SidebarRows(f.state, 0);  // header, A, F, B (in F), divider, New Tab, C (310 to 351)
+    auto press = [&](float x, float y) { return SidebarMiddlePressAt(rows, 240, 800, 0, x, y); };
+    auto release = [&](const SidebarPress& p, float x, float y) { return SidebarMiddleRelease(p, rows, 240, 800, 0, x, y); };
+
+    // Today's C: on its pill, and on its close button.
+    const auto c = press(100, 330);
+    CHECK(c == (SidebarPress{T::Row, K::Tab, f.c, 1}));
+    CHECK(press(214, 330) == c);
+    CHECK(release(*c, 100, 330) == (SidebarTap{A::CloseTab, f.c, false}));
+    CHECK(release(*c, 20, 350.5f) == (SidebarTap{A::CloseTab, f.c, false}));  // anywhere in its row
+    // Moved off its row (up onto New Tab, below it, out of the list): nothing.
+    CHECK(release(*c, 100, 300) == SidebarTap{});
+    CHECK(release(*c, 100, 352) == SidebarTap{});
+    CHECK(release(*c, 5, 330) == SidebarTap{});
+    // The pinned A, and B in its folder: the same close as their close buttons.
+    const auto a = press(100, 140);
+    CHECK(a == (SidebarPress{T::Row, K::Tab, f.a, 1}));
+    CHECK(release(*a, 100, 140) == (SidebarTap{A::CloseTab, f.a, false}));
+    const auto b = press(100, 224);
+    CHECK(b == (SidebarPress{T::Row, K::Tab, f.b, 1}));
+    CHECK(release(*b, 100, 224) == (SidebarTap{A::CloseTab, f.b, false}));
+    // A press on one tab let go on another closes neither.
+    CHECK(release(*a, 100, 224) == SidebarTap{});
+    // Not the folder, the header, its chevron, New Tab, the divider, the address field or a pill's gap.
+    CHECK(!press(100, 182));
+    CHECK(!press(40, 100));
+    CHECK(!press(218, 95));
+    CHECK(!press(100, 289));
+    CHECK(!press(100, 256));
+    CHECK(!press(100, 60));
+    CHECK(!press(100, 311));
+
+    // What the close button does: today's tab goes, a pinned one unloads and keeps its row.
+    CHECK(f.state.Close(release(*a, 100, 140).id) == CloseOutcome::Unloaded);
+    CHECK(f.state.Close(release(*c, 100, 330).id) == CloseOutcome::Removed);
+    rows = SidebarRows(f.state, 0);
+    CHECK(rows.size() == 6 && rows[1].id == f.a);
+    // The row went while the press was held: nothing.
+    CHECK(release(*c, 100, 330) == SidebarTap{});
+
+    // A tab in one of Claude's folders has no close button, so no middle click either.
+    Space& space = f.state.spaces[0];
+    Folder claude = MakeFolder("Claude", {PinnedItem{MakeTab("https://claude.example", "Task")}});
+    claude.ephemeral = true;
+    space.pinnedItems.insert(space.pinnedItems.begin(), PinnedItem{claude});
+    rows = SidebarRows(f.state, 0);  // header, Claude, Task, A, ...
+    CHECK(rows[2].kind == K::Tab && !rows[2].showsClose);
+    CHECK(!press(100, 82 + rows[2].top + 20));
+    CHECK(press(100, 82 + rows[3].top + 20) == a);
+}
