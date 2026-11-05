@@ -339,6 +339,9 @@ cl /nologo /O2 /EHsc /std:c++20 /W4 /DUNICODE /D_UNICODE /DNOMINMAX occlusion-ab
 - It runs Kite with `--perf-control`, so Kite's own occlusion is off for idle (the page draws
   wherever Kite is) and turned on after it, from a page that has been shown (see the gap
   under "P12b"). With `--occlusion-log`, each run's line has Kite's verdicts.
+  `--p2-from-launch` runs it without `--perf-control`, as a user's Kite runs: its occlusion
+  is on from the start, idle included, so a Kite that opened covered makes its page while it
+  can't be seen.
 - Per phase it also gives the share of the phase the page was `hidden` and its rAF rate, from
   the page's own log in its title.
 

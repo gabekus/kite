@@ -12,7 +12,7 @@
 //
 //   occlusion-ab display    prints the session display's state: 0 off, 1 on, 2 dimmed
 //   occlusion-ab --kite PATH\Kite.exe [--runs 3] [--idle 60] [--phase 20] [--page static|anim]
-//                [--out runs.jsonl] [--any-display]
+//                [--out runs.jsonl] [--any-display] [--p2-from-launch]
 //
 // Each run launches Kite.exe (kitecore.exe beside it makes the session) on a fresh %TEMP% test
 // profile holding one local page, in a job object, with --perf-log and --perf-control so it's a
@@ -22,7 +22,10 @@
 //   idle       nothing happens (--idle seconds); Kite's own occlusion is off, so the page draws
 //              wherever Kite is (a quiet run opens behind other windows, usually covered)
 // Then Kite's occlusion is turned on (--perf-control's {"occlusion":"on"}, as kiteperf's covered
-// phase does), so it starts from a page that has been shown, and stays on for:
+// phase does), so it starts from a page that has been shown, and stays on for the rest.
+// --p2-from-launch runs Kite without --perf-control instead, as a user's Kite runs: its occlusion
+// is on from its start, idle included, so a Kite that opened covered makes its page while it
+// can't be seen. The phases after idle:
 //   nearMover  our 300x200 window slides back and forth right of Kite, 60 moves a second
 //   covered    our black window sits just above Kite, covering it (--phase seconds)
 //   overMover  the cover goes; our window slides over Kite, 60 moves a second
@@ -462,6 +465,7 @@ struct Options {
     std::string page = "static";
     fs::path out;
     bool anyDisplay = false;
+    bool p2FromLaunch = false;  // no --perf-control: Kite's occlusion on from its start
 };
 
 // One phase's numbers, per second.
@@ -519,7 +523,7 @@ RunResult RunOnce(const Options& o, const std::string& arm, int index, double ts
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof limits);
     SetEnvironmentVariableW(L"KITE_SUPPORT_PATH", profile.c_str());
-    std::wstring cmd = L"\"" + o.kite.wstring() + L"\" --perf-log \"" + (profile / L"perf-log.jsonl").wstring() + L"\" --perf-control --occlusion-log \"" +
+    std::wstring cmd = L"\"" + o.kite.wstring() + L"\" --perf-log \"" + (profile / L"perf-log.jsonl").wstring() + L"\"" + (o.p2FromLaunch ? L"" : L" --perf-control") + L" --occlusion-log \"" +
                        (profile / L"occlusion.jsonl").wstring() + L"\"";
     if (arm == "on") cmd += L" --chromium-switches \"" + std::wstring(kOnSwitch) + L"\"";
     STARTUPINFOW si{sizeof si};
@@ -571,7 +575,7 @@ RunResult RunOnce(const Options& o, const std::string& arm, int index, double ts
             std::fprintf(stderr, "%s %s\n", label.c_str(), name);
         };
         phase("idle", [&] { Pump(o.idleMs); });
-        occlusionOn = Control(kite, R"({"occlusion":"on"})");
+        occlusionOn = o.p2FromLaunch || Control(kite, R"({"occlusion":"on"})");
         phase("nearMover", [&] {
             // Right of Kite, or left of it when the screen ends first; never over it.
             const int screenRight = GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN);
@@ -720,7 +724,7 @@ double Median(std::vector<double> v) {
 int Usage() {
     std::fprintf(stderr,
                  "usage: occlusion-ab display\n"
-                 "       occlusion-ab --kite PATH\\Kite.exe [--runs 3] [--idle 60] [--phase 20] [--page static|anim] [--out FILE] [--any-display]\n");
+                 "       occlusion-ab --kite PATH\\Kite.exe [--runs 3] [--idle 60] [--phase 20] [--page static|anim] [--out FILE] [--any-display] [--p2-from-launch]\n");
     return 1;
 }
 
@@ -737,6 +741,7 @@ int wmain(int argc, wchar_t** argv) {
         const std::wstring a = argv[i];
         const wchar_t* v = i + 1 < argc ? argv[i + 1] : nullptr;
         if (a == L"--any-display") o.anyDisplay = true;
+        else if (a == L"--p2-from-launch") o.p2FromLaunch = true;
         else if (!v) return Usage();
         else if (a == L"--kite") o.kite = v, ++i;
         else if (a == L"--runs") o.runs = _wtoi(v), ++i;
