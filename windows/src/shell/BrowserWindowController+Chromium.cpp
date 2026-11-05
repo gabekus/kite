@@ -214,7 +214,7 @@ void BrowserWindowController::CloseWhenSmokeTestIsDone() {
         energySaverRead_ = true;
         energySaverState_ = state;
     });
-    chromium_->ReadFeatureLists([this](std::string enable, std::string disable) { featureLists_.emplace(std::move(enable), std::move(disable)); });
+    chromium_->ReadFeatureLists([this](Chromium::FeatureLists lists) { featureLists_ = std::move(lists); });
     closeAskedAt_ = GetTickCount64();
     PostMessageW(window_.Handle(), WM_CLOSE, 0, 0);
 }
@@ -244,10 +244,11 @@ std::wstring BrowserWindowController::ShutDownChromium() {
     // Chromium's native occlusion tracker off unless --chromium-switches turned it on, merged
     // into CEF's own feature lists, and no feature both on and off (core/ChromiumSwitches.h).
     if (!featureLists_) return L"Chromium's feature lists were never read back";
-    if (const std::string problem = chromium_switches::FeatureProblem(options_.chromiumSwitches, featureLists_->first, featureLists_->second);
+    const Chromium::FeatureLists& lists = *featureLists_;
+    if (const std::string problem = chromium_switches::FeatureProblem(options_.chromiumSwitches, lists.cefEnable, lists.cefDisable, lists.enable, lists.disable);
         !problem.empty()) {
-        return L"Chromium's features: " + Widen(problem) + L" (enable-features=" + Widen(featureLists_->first) + L", disable-features=" +
-               Widen(featureLists_->second) + L")";
+        return L"Chromium's features: " + Widen(problem) + L" (enable-features=" + Widen(lists.enable) + L", disable-features=" +
+               Widen(lists.disable) + L"; CEF's own: " + Widen(lists.cefEnable) + L", " + Widen(lists.cefDisable) + L")";
     }
     // One WM_CLOSE must close the window (the browsers first); the 30 s timer's second one
     // would otherwise hide a close that hangs.

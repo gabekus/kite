@@ -20,9 +20,9 @@ using Switches = std::vector<std::string>;
 
 TEST(nativeOcclusionIsOffByDefault) {
     CHECK(BrowserSwitches({}, "", "") == Switches{"disable-features=CalculateNativeWinOcclusion"});
-    CHECK(FeatureProblem({}, "", "CalculateNativeWinOcclusion").empty());
-    CHECK(!FeatureProblem({}, "", "").empty());
-    CHECK(!FeatureProblem({}, "", "SomethingElse").empty());
+    CHECK(FeatureProblem({}, "", "", "", "CalculateNativeWinOcclusion").empty());
+    CHECK(!FeatureProblem({}, "", "", "", "").empty());
+    CHECK(!FeatureProblem({}, "", "", "", "SomethingElse").empty());
 }
 
 TEST(theDefaultMergesWithExistingDisabledFeatures) {
@@ -57,16 +57,37 @@ TEST(enableFeaturesTurnsTheTrackerBackOn) {
           (Switches{"enable-features=CalculateNativeWinOcclusion", "disable-features="}));
     CHECK(BrowserSwitches({"enable-features=CalculateNativeWinOcclusion", "disable-features=CalculateNativeWinOcclusion,BackForwardCache"}, "", "") ==
           (Switches{"enable-features=CalculateNativeWinOcclusion", "disable-features=BackForwardCache"}));
-    CHECK(FeatureProblem(on, "CalculateNativeWinOcclusion", "").empty());
-    CHECK(!FeatureProblem(on, "", "").empty());
-    CHECK(!FeatureProblem(on, "", "CalculateNativeWinOcclusion").empty());
+    CHECK(FeatureProblem(on, "", "", "CalculateNativeWinOcclusion", "").empty());
+    CHECK(!FeatureProblem(on, "", "", "", "").empty());
+    CHECK(!FeatureProblem(on, "", "", "", "CalculateNativeWinOcclusion").empty());
 }
 
 TEST(cefTurningTheTrackerOnIsLeftOnAndFlagged) {
     // Adding a disable would make it both; the smoke test's check says so instead.
     CHECK(BrowserSwitches({}, "CalculateNativeWinOcclusion", "").empty());
-    CHECK(!FeatureProblem({}, "CalculateNativeWinOcclusion", "").empty());
-    CHECK(!FeatureProblem({}, "CalculateNativeWinOcclusion", "CalculateNativeWinOcclusion").empty());
+    CHECK(!FeatureProblem({}, "", "", "CalculateNativeWinOcclusion", "").empty());
+    CHECK(!FeatureProblem({}, "", "", "CalculateNativeWinOcclusion", "CalculateNativeWinOcclusion").empty());
+}
+
+TEST(theSmokeCheckNamesTheTrackerAndKeepsCefsOwnFeatures) {
+    // By name: nothing in disable-features fails, whatever DefaultDisabledFeatures() says.
+    CHECK(FeatureProblem({}, "", "", "", "").find("CalculateNativeWinOcclusion") != std::string::npos);
+    // CEF's own features stay: one dropped from either list fails.
+    CHECK(FeatureProblem({}, "X", "A,B", "X", "A,B,CalculateNativeWinOcclusion").empty());
+    CHECK(!FeatureProblem({}, "", "A,B", "", "A,CalculateNativeWinOcclusion").empty());
+    CHECK(!FeatureProblem({}, "X", "", "", "CalculateNativeWinOcclusion").empty());
+    // ...but a CEF-disabled one a request turned on is gone from disable-features, as it should be.
+    const Switches on = {"enable-features=CalculateNativeWinOcclusion"};
+    CHECK(FeatureProblem(on, "", "A,CalculateNativeWinOcclusion", "CalculateNativeWinOcclusion", "A").empty());
+    // What BrowserSwitches makes always passes.
+    for (const Switches& requested : {Switches{}, on, Switches{"disable-features=BackForwardCache"}}) {
+        std::string enable = "X", disable = "A,B<T";
+        for (const std::string& entry : BrowserSwitches(requested, enable, disable)) {
+            if (entry.starts_with("enable-features=")) enable = entry.substr(16);
+            if (entry.starts_with("disable-features=")) disable = entry.substr(17);
+        }
+        CHECK(FeatureProblem(requested, "X", "A,B<T", enable, disable).empty());
+    }
 }
 
 TEST(featureNamesDropTrialsParametersAndStars) {

@@ -102,12 +102,19 @@ std::vector<std::string> BrowserSwitches(const std::vector<std::string>& request
     return out;
 }
 
-std::string FeatureProblem(const std::vector<std::string>& requested, std::string_view enable, std::string_view disable) {
+std::string FeatureProblem(const std::vector<std::string>& requested, std::string_view cefEnable, std::string_view cefDisable,
+                           std::string_view enable, std::string_view disable) {
     const std::vector<std::string> on = FeatureNames(enable), off = FeatureNames(disable);
     for (const std::string& name : on)
         if (Has(off, name)) return name + " is in both enable-features and disable-features";
     const std::vector<std::string> requestedOn = RequestedOn(requested);
-    for (const std::string& feature : DefaultDisabledFeatures()) {
+    std::vector<std::string> defaults = DefaultDisabledFeatures();
+    Merge(defaults, {"CalculateNativeWinOcclusion"});
+    for (const std::string& name : FeatureNames(cefDisable))
+        if (!Has(off, name) && !Has(requestedOn, name)) return name + ", CEF's own, isn't in disable-features any more";
+    for (const std::string& name : FeatureNames(cefEnable))
+        if (!Has(on, name)) return name + ", CEF's own, isn't in enable-features any more";
+    for (const std::string& feature : defaults) {
         if (Has(requestedOn, feature)) {
             if (!Has(on, feature)) return feature + " was asked for but isn't in enable-features";
         } else if (!Has(off, feature)) {

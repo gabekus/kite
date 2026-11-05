@@ -37,9 +37,14 @@ std::vector<std::string> BrowserSwitches(const std::vector<std::string>& request
                                          std::string_view existingDisable);
 
 // What's wrong with a browser process's feature lists as Chromium has them (`enable`,
-// `disable`), for `requested`: "" when every default-off feature is off unless the request
-// turned it on, and on if it did, and none is both. --smoke-test fails on anything else, so a
-// CEF update that turns one of them on itself (BrowserSwitches then leaves it on) is noticed.
-std::string FeatureProblem(const std::vector<std::string>& requested, std::string_view enable, std::string_view disable);
+// `disable`), for `requested`, given CEF's own before Kite's went on (`cefEnable`,
+// `cefDisable`): "" when Chromium's native occlusion tracker, named here rather than taken from
+// DefaultDisabledFeatures() (so emptying that list fails), and every other default-off feature
+// is off unless the request turned it on, and on if it did; no feature is both; and CEF's own
+// features are all still there (a disabled one unless the request turned it on). --smoke-test
+// fails on anything else, so a CEF update that turns one of them on itself (BrowserSwitches
+// then leaves it on) is noticed too.
+std::string FeatureProblem(const std::vector<std::string>& requested, std::string_view cefEnable, std::string_view cefDisable,
+                           std::string_view enable, std::string_view disable);
 
 }  // namespace kite::chromium_switches

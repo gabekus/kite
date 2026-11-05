@@ -185,6 +185,9 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
     std::string shown;
     bool minimized = false;
     bool occluded = false;  // SetOccluded
+    // The feature lists CEF had before Kite's went on (OnBeforeCommandLineProcessing, before any
+    // other thread reads them; ReadFeatureLists).
+    std::string cefEnableFeatures, cefDisableFeatures;
     Hole overlayHole;  // SetOverlayHole's, in client px
     LiveTabPolicy policy;  // at most six live pages, as the Mac's PagePool
     ULONGLONG closingSince = 0;  // when MayCloseWindow started closing
@@ -699,8 +702,11 @@ public:
         const auto existing = [&](const char* name) {
             return commandLine->HasSwitch(name) ? commandLine->GetSwitchValue(name).ToString() : std::string();
         };
+        // CEF's own lists, for --smoke-test's check that they're all still there.
+        shared_->cefEnableFeatures = existing("enable-features");
+        shared_->cefDisableFeatures = existing("disable-features");
         for (const std::string& entry :
-             chromium_switches::BrowserSwitches(switches_, existing("enable-features"), existing("disable-features"))) {
+             chromium_switches::BrowserSwitches(switches_, shared_->cefEnableFeatures, shared_->cefDisableFeatures)) {
             const size_t equals = entry.find('=');
             if (equals == std::string::npos) commandLine->AppendSwitch(entry);
             else commandLine->AppendSwitchWithValue(entry.substr(0, equals), entry.substr(equals + 1));
@@ -1915,16 +1921,14 @@ void Chromium::ReadEnergySaver(std::function<void(std::optional<int> state)> don
     });
 }
 
-void Chromium::ReadFeatureLists(std::function<void(std::string enable, std::string disable)> done) {
+void Chromium::ReadFeatureLists(std::function<void(FeatureLists lists)> done) {
     RunOnCefUIThread([shared = shared_, done = std::move(done)]() mutable {
-        std::string enable, disable;
+        FeatureLists lists{.cefEnable = shared->cefEnableFeatures, .cefDisable = shared->cefDisableFeatures};
         if (CefRefPtr<CefCommandLine> line = CefCommandLine::GetGlobalCommandLine()) {
-            enable = line->GetSwitchValue("enable-features").ToString();
-            disable = line->GetSwitchValue("disable-features").ToString();
+            lists.enable = line->GetSwitchValue("enable-features").ToString();
+            lists.disable = line->GetSwitchValue("disable-features").ToString();
         }
-        shared->Post([done = std::move(done), enable = std::move(enable), disable = std::move(disable)]() mutable {
-            done(std::move(enable), std::move(disable));
-        });
+        shared->Post([done = std::move(done), lists = std::move(lists)]() mutable { done(std::move(lists)); });
     });
 }
 

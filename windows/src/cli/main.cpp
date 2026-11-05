@@ -885,6 +885,7 @@ int main(int argc, char** argv) {
             requested.push_back(args[i].substr(2));
         }
         json::Array switches;
+        const std::string cefEnable = enable, cefDisable = disable;
         for (const std::string& entry : chromium_switches::BrowserSwitches(requested, enable, disable)) {
             // Appended in order, each replacing a switch of its name: the lists as Chromium reads them.
             if (entry.starts_with("enable-features=")) enable = entry.substr(16);
@@ -894,7 +895,7 @@ int main(int argc, char** argv) {
         std::puts(json::Write(json::Object{{"switches", json::Value(std::move(switches))},
                                            {"enableFeatures", json::Value(enable)},
                                            {"disableFeatures", json::Value(disable)},
-                                           {"problem", json::Value(chromium_switches::FeatureProblem(requested, enable, disable))}})
+                                           {"problem", json::Value(chromium_switches::FeatureProblem(requested, cefEnable, cefDisable, enable, disable))}})
                       .c_str());
         return kOk;
     }

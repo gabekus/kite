@@ -12,8 +12,11 @@ does.
   features of its own, and Kite's helpers get all six:
   `--disable-features=AutofillActorMode,CalculateNativeWinOcclusion,EnableHangWatcher,GlicActorUi,KillOnInvalidNavigationHeaders,LensOverlay`.
   `kitecore chromium-switches` prints what Kite gives Chromium.
-- **Checked.** `--smoke-test` reads Chromium's command line back and fails unless the tracker
-  is off and not also on (or on and not off, when a run turned it on). CI runs it both ways.
+- **Checked.** `--smoke-test` reads Chromium's command line back and fails unless
+  `CalculateNativeWinOcclusion`, named in the check itself (so emptying the default list fails
+  it), is off and not also on (or on and not off, when a run turned it on), and unless every
+  feature CEF had in its own lists is still there (`chromium_switches::FeatureProblem`). CI runs
+  it both ways.
 - **The measurement tool** is `windows/tools/perf/native-occlusion/occlusion-ab.cpp`. Its "on"
   arm turns the tracker back on and its "off" arm is Kite's default.
 
