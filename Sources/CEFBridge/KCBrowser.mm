@@ -35,6 +35,7 @@
 - (void)deliverDevToolsResult:(int)messageID success:(bool)success data:(NSData *)data;
 - (void)willNavigateMainFrame:(CefRefPtr<CefRequest>)request;
 - (void)mainFrameDidStartLoading;
+- (void)mainFrameWentToApp;
 - (void)prepareFirstPage:(nullable NSURL *)url;
 - (NSMutableArray<NSString *> *)documentScriptIdentifiers;
 - (void)addDocumentScript:(NSString *)script navigation:(NSUInteger)navigation completion:(nullable void (^)(void))completion;
@@ -405,6 +406,12 @@ static bool IsInPageScheme(NSString* scheme) {
         @"devtools", @"view-source", @"ws", @"wss", @"filesystem"
     ]];
     return [schemes containsObject:scheme.lowercaseString];
+}
+
+/// The tab has no page of its own yet: nothing committed, or only a new pane's about:blank.
+static bool IsBlankPage(const CefString& committed) {
+    std::string url = committed.ToString();
+    return url.empty() || url == "about:blank";
 }
 
 /// t3code:, zoommtg:, etc. go to the app that claims them, as in WebKitEngine (an OAuth callback
@@ -811,7 +818,10 @@ class KCClient : public CefClient,
                         bool user_gesture,
                         bool is_redirect) override {
         if (RouteMailto(owner_, frame, request->GetURL())) return true;
-        if (RouteExternalScheme(request->GetURL())) return true;
+        if (RouteExternalScheme(request->GetURL())) {
+            if (frame->IsMain() && IsBlankPage(frame->GetURL())) [owner_ mainFrameWentToApp];
+            return true;
+        }
         if (frame->IsMain() && user_gesture && !is_redirect &&
             (request->GetTransitionType() & TT_SOURCE_MASK) == TT_LINK &&
             AskLinkPeek(owner_, request->GetURL(), false)) {
@@ -1829,6 +1839,17 @@ static CefRefPtr<CefValue> KCCefValue(id object) {
     if (!_runScriptAtLoadStart) return;
     _runScriptAtLoadStart = NO;
     if (_documentScriptSource) [self evaluateJavaScript:_documentScriptSource completion:^(id) {}];
+}
+
+/// A tab opened only for a link another app took (target=_blank, window.open, a redirect before its
+/// first page, a new split pane) closes, as in Chrome and Arc (its externalProtocolAutoClose): the
+/// delegate hears it as window.close(), so the opener comes back to the front.
+- (void)mainFrameWentToApp {
+    __weak KCBrowser* weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        KCBrowser* browser = weakSelf;
+        if (browser && !browser->_closed && !KCRuntimeIsQuitting()) [browser->_delegate browserDidRequestClose:browser];
+    });
 }
 
 - (void)willNavigateMainFrame:(CefRefPtr<CefRequest>)request {
