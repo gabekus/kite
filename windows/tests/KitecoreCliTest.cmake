@@ -1,4 +1,7 @@
 # Drives kitecore against a fresh profile: ctest runs it with -DKITECORE=<path> -DWORK=<dir>.
+# A script run with -P has no policy version of its own: without this line an older CMake runs it
+# with CMP0054 OLD, and a quoted string in if() ("reload") reads a variable of that name.
+cmake_minimum_required(VERSION 3.24)
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}")
 
@@ -106,11 +109,11 @@ string(JSON top0 GET "${bar}" topRow 0 top)
 string(JSON button3 GET "${bar}" topRow 3 button)
 string(JSON left3 GET "${bar}" topRow 3 left)
 string(JSON back GET "${bar}" topRow 1 enabled)
-string(JSON reload GET "${bar}" topRow 3 enabled)
+string(JSON reloadOn GET "${bar}" topRow 3 enabled)
 string(JSON symbol3 GET "${bar}" topRow 3 symbol)
 string(JSON cardLeft GET "${bar}" cardLeft)
 if(NOT count EQUAL 4 OR NOT button0 STREQUAL "toggleSidebar" OR NOT left0 EQUAL 6 OR NOT top0 EQUAL 7.5 OR NOT button3 STREQUAL "reload"
-   OR NOT left3 EQUAL 202 OR back OR NOT reload OR NOT symbol3 STREQUAL "arrow.clockwise" OR NOT cardLeft EQUAL 240)
+   OR NOT left3 EQUAL 202 OR back OR NOT reloadOn OR NOT symbol3 STREQUAL "arrow.clockwise" OR NOT cardLeft EQUAL 240)
   message(FATAL_ERROR "sidebar's top row gave ${bar}")
 endif()
 kitecore(bar sidebar --page back,loading --hidden)
