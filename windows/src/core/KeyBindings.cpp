@@ -342,7 +342,10 @@ const std::vector<ShortcutCommand>& ShortcutCommands() {
             const std::string digit(1, static_cast<char>('0' + n));
             c.emplace_back(n == 9 ? "lastTab" : "tab" + digit, n == 9 ? "Last Tab" : "Tab " + digit, Ctrl(digit));
         }
-        // The Spaces menu. The Mac's Space n is ⌃n, which is Ctrl+n here (Tab n), so it's Alt+n.
+        // The Spaces menu. New Space… (Create a Space, W9f) has no shortcut, as on the Mac: a
+        // keybindings.json (Arc's own, imported) can give it one. The Mac's Space n is ⌃n, which is
+        // Ctrl+n here (Tab n), so it's Alt+n.
+        c.emplace_back("newSpace", "New Space…", std::nullopt);
         c.emplace_back("nextSpace", "Next Space", CtrlShift("s"), std::vector<KeyShortcut>{CtrlAlt("right")});
         c.emplace_back("previousSpace", "Previous Space", CtrlAlt("left"), std::vector<KeyShortcut>{});
         for (int n = 1; n <= 9; ++n) {

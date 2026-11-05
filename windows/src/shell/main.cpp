@@ -43,6 +43,13 @@
 //   Kite.exe --capture FILE.png --rename-space N
 //                            the same with space N's header renaming it (Rename Space…), its name
 //                            all selected.
+//   Kite.exe --capture FILE.png --icon-picker N,emoji|icon[,CATEGORY]
+//                            the same with Change Space Icon…'s picker open for space N (selected
+//                            first) on that tab, hanging from its header's icon; on the Emoji tab,
+//                            with category CATEGORY's button (from 0) clicked.
+//   Kite.exe --capture FILE.png --pick-icon N,emoji|icon,CELL
+//                            the same after a click on that tab's cell CELL (from 0) set space N's
+//                            icon, and Escape closed the picker.
 //   Kite.exe --capture FILE.png --page-status STATES
 //                            the same with the selected tab's page reporting STATES, a comma list of
 //                            back, forward and loading (or none), as Chromium would: the top row's
@@ -72,6 +79,14 @@
 //                            Mac's KITE_TEST_CONTEXT_MENU logs one.
 //   Kite.exe --capture FILE.png --run-command ID
 //                            the same after the command ID (pinTab, say) ran, as its shortcut runs it.
+//   Kite.exe --capture FILE.png --new-item-menu
+//                            the same with the space bar's + menu open over its button, as a click
+//                            there opens it (Windows' own menu, read back from its window); its line
+//                            goes to stderr.
+//   Kite.exe --capture FILE.png --create-space NAME [--create-space-about TEXT] [--create-space-theme N]
+//                            the same after + › New Space: Arc's Create a Space page with NAME ("" for
+//                            none) and TEXT typed in its fields, and with N, Choose a Theme's swatches
+//                            open and preset N (from 1) clicked, the theme's crossfade run to its end.
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
@@ -139,6 +154,7 @@
 #include "core/KeyBindings.h"
 #include "core/ProfileSettings.h"
 #include "core/SessionStore.h"
+#include "core/SpaceCreation.h"
 #include "core/SessionWriter.h"
 #include "core/SupportDirectory.h"
 #include "shell/BackdropTest.h"
@@ -309,8 +325,8 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // prefixes; so no argument Chromium could read as a switch gets past this, not even as a
     // value (core/CommandLine.h).
     kite::command_line::Spec spec;
-    spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control", "--favicons", "--empty-favorites-hover"};
-    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log", "--rename-row", "--hover-row", "--row-menu", "--favorite-menu", "--run-command", "--find", "--find-result", "--occlusion-log"};
+    spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control", "--favicons", "--empty-favorites-hover", "--new-item-menu"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log", "--rename-row", "--hover-row", "--row-menu", "--favorite-menu", "--run-command", "--find", "--find-result", "--occlusion-log", "--icon-picker", "--pick-icon", "--create-space", "--create-space-about", "--create-space-theme"};
     // Its value is switches ("--a --b"), each checked against the allow-list below; Chromium's
     // raw read sees them too, so only allowed ones get this far.
     spec.switchValueOptions = {"--chromium-switches"};
@@ -442,6 +458,45 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a space's place, from 1", kUsage);
         if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
     }
+    // Change Space Icon…'s picker: a space's place, its tab, and for a pick the cell clicked.
+    struct HeldPicker {
+        size_t index;
+        kite::IconPickerTab tab;
+        std::optional<size_t> cell;
+        std::optional<size_t> category;
+    };
+    std::optional<HeldPicker> heldPicker;
+    for (const wchar_t* flag : {L"--icon-picker", L"--pick-icon"}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        const bool pick = std::wstring(flag) == L"--pick-icon";
+        std::vector<std::wstring> parts;
+        if (option.value) {
+            size_t start = 0;
+            for (size_t comma; (comma = option.value->find(L',', start)) != std::wstring::npos; start = comma + 1) {
+                parts.push_back(option.value->substr(start, comma - start));
+            }
+            parts.push_back(option.value->substr(start));
+        }
+        const std::optional<size_t> index = parts.empty() ? std::nullopt : place(parts[0]);
+        const bool tabOk = parts.size() >= 2 && (parts[1] == L"emoji" || parts[1] == L"icon");
+        // The third part: a pick's cell, or the picker's category (the Emoji tab's).
+        std::optional<size_t> third;
+        if (parts.size() == 3 && !parts[2].empty() && parts[2].size() <= 4 &&
+            std::all_of(parts[2].begin(), parts[2].end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; })) {
+            third = static_cast<size_t>(std::stoi(parts[2]));
+        }
+        const bool emojiTab = tabOk && parts[1] == L"emoji";
+        const bool shapeOk = pick ? parts.size() == 3 && third : parts.size() == 2 || (parts.size() == 3 && third && emojiTab);
+        if (!index || !tabOk || !shapeOk || heldPicker) {
+            return Fail(quiet, std::wstring(flag) + (pick ? L" takes N,emoji|icon,CELL" : L" takes N,emoji|icon or N,emoji,CATEGORY") +
+                                   L" (one of --icon-picker and --pick-icon)",
+                        kUsage);
+        }
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+        heldPicker = HeldPicker{*index, emojiTab ? kite::IconPickerTab::Emoji : kite::IconPickerTab::Icon, pick ? third : std::nullopt,
+                                pick ? std::nullopt : third};
+    }
     // The top row's states, for a capture.
     std::optional<kite::PageStatus> heldPage;
     if (const OptionValue option = Option(args, L"--page-status"); option.present) {
@@ -494,6 +549,27 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         *out = option.value ? place(*option.value) : std::nullopt;
         if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a row's place, from 1", kUsage);
         if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+    }
+    // The + menu and Create a Space, for a capture: the menu open, or the page with a name and what
+    // it's for typed in and a preset picked from Choose a Theme's swatches (from 1).
+    const bool heldNewItemMenu = HasFlag(args, L"--new-item-menu");
+    if (heldNewItemMenu && !captureOption.present) return Fail(quiet, L"--new-item-menu only goes with --capture", kUsage);
+    const OptionValue createSpaceOption = Option(args, L"--create-space");
+    const OptionValue createAboutOption = Option(args, L"--create-space-about");
+    const OptionValue createThemeOption = Option(args, L"--create-space-theme");
+    if (createSpaceOption.present && !createSpaceOption.value) return Fail(quiet, L"--create-space takes the name typed in it (\"\" for none)", kUsage);
+    if (createSpaceOption.present && !captureOption.present) return Fail(quiet, L"--create-space only goes with --capture", kUsage);
+    if (createAboutOption.present && !createAboutOption.value) return Fail(quiet, L"--create-space-about takes what's typed in it", kUsage);
+    if ((createAboutOption.present || createThemeOption.present) && !createSpaceOption.present) {
+        return Fail(quiet, L"--create-space-about and --create-space-theme only go with --create-space", kUsage);
+    }
+    std::optional<size_t> heldPreset;
+    if (createThemeOption.present) {
+        const std::optional<int> n = createThemeOption.value ? ParseInt(*createThemeOption.value) : std::nullopt;
+        if (!n || *n < 1 || static_cast<size_t>(*n) > kite::Theme::Presets().size()) {
+            return Fail(quiet, L"--create-space-theme takes a preset's place, 1 to " + std::to_wstring(kite::Theme::Presets().size()), kUsage);
+        }
+        heldPreset = static_cast<size_t>(*n - 1);
     }
     const OptionValue runCommandOption = Option(args, L"--run-command");
     if (runCommandOption.present && !runCommandOption.value) return Fail(quiet, L"--run-command takes a command's id", kUsage);
@@ -645,6 +721,10 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     const bool maySave = kite::SessionStore::MaySave(loaded);
     if (auto* existing = std::get_if<kite::BrowserState>(&loaded)) {
         state = std::move(*existing);
+        // A Create a Space page left open at quit or by a crash leaves a nameless, empty space: it
+        // goes, as the Mac's BrowserStore drops it after loading (dropUnnamedEmptySpaces). Saved
+        // with the next change, as the Mac's is.
+        kite::DropUnnamedEmptySpaces(state);
     } else {
         if (auto* error = std::get_if<kite::SessionStore::Error>(&loaded)) {
             OutputDebugStringW((L"Kite: session unreadable, starting fresh" + std::wstring(maySave ? L"" : L" without saving") +
@@ -854,6 +934,7 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         if (captureError.empty() && swipe) captureError = controller->HoldSwipe(*swipe);
         if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
         if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
+        if (captureError.empty() && heldPicker) captureError = controller->HoldIconPicker(heldPicker->index, heldPicker->tab, heldPicker->cell, heldPicker->category);
         if (captureError.empty() && runCommandOption.value) captureError = controller->RunCommandForCapture(Narrow(*runCommandOption.value));
         if (captureError.empty() && heldRowRename) captureError = controller->HoldRowRename(*heldRowRename, std::nullopt, true);
         if (captureError.empty() && heldRowHover) captureError = controller->HoldRowHover(*heldRowHover);
@@ -863,6 +944,11 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         if (captureError.empty() && heldEmptyHover) captureError = controller->HoldEmptyFavoritesHover();
         if (captureError.empty() && heldRowMenu) captureError = controller->HoldRowMenu(*heldRowMenu);
         if (captureError.empty() && heldFavoriteMenu) captureError = controller->HoldFavoriteMenu(*heldFavoriteMenu);
+        if (captureError.empty() && createSpaceOption.present) {
+            captureError = controller->HoldCreateSpace(Narrow(*createSpaceOption.value),
+                                                       createAboutOption.value ? Narrow(*createAboutOption.value) : std::string(), heldPreset);
+        }
+        if (heldNewItemMenu) controller->HoldNewItemMenu();
         // Last, so the favicons of whatever the states above show have come. Favorites whose icons
         // didn't load show the globe, as on the Mac; the run says which.
         if (captureError.empty() && captureFavicons) {

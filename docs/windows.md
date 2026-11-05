@@ -608,7 +608,7 @@ space; the pointer over another space's cell shows its rounded backing, a small
 visual of its own that moves with the pointer and the scroll, so hovering and
 scrolling draw nothing. The Library and + symbols are drawn from the Mac's
 measured archivebox and plus (Segoe Fluent's glyphs differ in size and shape),
-and the emoji is set so it draws the Mac's 14.5pt, centred on its ink. Cells sit
+and the emoji is set so it draws the Mac's 14.5pt, centred on its ink; the header's at the same factor, 17.4pt of ink at 15 as the Mac's systemFont(ofSize: 15) draws (W9e: 36px at 2x, where Segoe's own 15pt inked 30). Cells sit
 on whole pixels at every scale (core snaps them), so they draw where they take
 clicks. Known differences: in the 2pt where two cells overlap only the later
 cell's backing shows (the Mac shows both).
@@ -798,17 +798,141 @@ them), on Windows 10 1903 and later only, set as the menu opens and put back to 
 it closes (the mode is the whole process's; docs/windows-architecture.md); without them it's
 light. The question before Delete Space is a task dialog (Common Controls 6, which the
 manifest now asks for), always light, where the Mac has a sheet. Disabled until their
-checkpoints: Change Space Icon… (the icon picker, W9e), What's This Space For?… and Edit Theme
+checkpoints: What's This Space For?… and Edit Theme
 Color… (their dialogs, and the theme editor), Set Profile and Live Folders (Windows can't move
-a space's pages to another profile or keep live folders yet). Not yet: the + button's menu and
-Arc's Create a Space page, which New Space opens (W9f; `kitecore space new` makes the space
-they'd leave), Undo, and the rename's caret in `--capture` (its own visual, as the command
-bar's). `--capture FILE --space-drag N,X` holds space N's cell dragged to X points along the
+a space's pages to another profile or keep live folders yet). Not yet: Undo, and the rename's
+caret in `--capture` (its own visual, as the command bar's). `--capture FILE --space-drag N,X` holds space N's cell dragged to X points along the
 bar, `--space-drop N,X` lets it go there and settle, `--space-menu N` reads back space N's menu
 (PrintWindow of this machine's own Windows menu, so it differs by Windows version, theme and
 monitor scale, without DWM's rounded corners and shadow, resampled from its monitor's scale
 to the capture's) and puts its bottom-left on the cell's centre, and `--rename-space N` opens
 space N's name field drawn as with the keyboard (a quiet capture's window never has it).
+
+Change Space Icon… (W9e) is the Mac's SpaceIconPicker (`core/SpaceIconPicker.h`,
+`shell/SpaceIconPickerView`): from the space's menu (its space selected, then 0.15 s on, as
+openPicker(after: 0.15)) or a click on the header's icon (at once), a popover 272pt wide hangs
+under the header's icon with its arrow on the icon's middle, centred on it and kept 4pt inside
+the screen. Its tabs are Emoji, Icon and Image, with the bin (Remove Icon) beside them once the
+space has an icon; it opens on the tab the icon came from. Emoji: Search, then the Mac's
+EmojiCatalog (1101 emoji in eight categories, 7 to a row 33.5 apart, 33pt rows, 5 rows showing)
+and the category bar, whose buttons clear Search and scroll their first emoji's row to the top.
+The catalog is generated from the Swift file (`windows/scripts/gen-emoji-catalog.py`), split into
+characters as Swift's chars() does, with each code point's Unicode name, so Search matches what
+the Mac's ICU Any-Name transform gives ("\n{grinning face}"; a flag is its two letters, so
+"united" finds none). Icon: the 56 symbols, 8 to a row 31 apart, at 16pt in labelColor, drawn
+by the sidebar's painter as the bar and the header draw them (Segoe glyphs and Kite's nine
+shapes). A pick sets the icon at once (the bar's cell and the header draw it, and it's saved)
+and leaves the popover open; replacing a picture deletes its file once no space shows it
+(SpaceIconImages.discard). While the picker is open an icon-less header keeps the icon's slot,
+a dashed 24pt square, to hang it from, from the request on (a menu's 0.15 s included). A
+right-click on the header's icon opens the space's menu, as one on the rest of the header does
+(`HeaderMenuSpace`); a press on the header's icon, or its placeholder, is the icon button's,
+which opens the picker again. It closes on Escape, a press anywhere else in the window, the page
+or another app taking the keyboard, the command bar, another space shown, the sidebar hidden
+(Change Space Icon… shows a hidden sidebar first), the list scrolled (the header it hangs from
+moves), and the window moving, resizing or minimizing.
+
+It's a window of its own (`shell/PopoverWindow`, which Choose a Theme's swatches share: owned, never activated, so the browser window keeps the keyboard and
+passes Search its keys; in W21's model the keyboard is `KeyboardField::IconPicker`'s from the request,
+the menu's 0.15 s included, until it closes, so the window taking the focus never hands it to the page), drawn by DirectComposition in its own target: the frame and controls in
+one surface (the Icon tab's grid too), the emoji grid in a virtual surface as tall as its rows,
+in a clip, scrolled by moving it. Only the rows in view draw, as they come into view, and rows
+more than 10 from view are trimmed away; a held cell draws only itself; moving over the grid
+draws nothing; nothing runs while it's idle but Search's caret blink, which Windows' caret
+timeout ends; each emoji's text layout is made once, by the emoji, so a search reuses them. Its
+redraws' failures report a lost GPU, which rebuilds everything as the caption buttons' do. It
+lays out at its own monitor's scale (WM_DPICHANGED, and its window's DPI checked as it opens) and stays on the anchor's monitor.
+Replacing a picture deletes its file on the UI thread, as the Mac does: one DeleteFile of a name
+core checked, an exception to the no-file-I/O rule (docs/windows-architecture.md) that only a
+Mac profile's picture icon can reach. Emoji are Segoe UI Emoji's colour glyphs at 22pt scaled as the bar's (Apple's
+14.5pt ink at 12.5) and centred on their ink. `kitecore space icon-picker ID [--tab] [--category
+N] [--query TEXT] [--scroll PT] [--pick N]` prints the grid model and picks a cell headless;
+`--hit X,Y` and `--place` print what a point hits (the later of two overlapping cells) and where
+the popover goes. `--capture FILE --icon-picker N,emoji|icon[,CATEGORY]` holds space N's picker
+open on that tab, with a category's button clicked (kept inside the window, so the capture has
+all of it), and `--pick-icon N,TAB,CELL` clicks a cell and closes
+it with Escape.
+
+Known differences: the Image tab (a picture of your own: choose a file, drop one, paste) is
+there, disabled, and a picture icon opens on Emoji: Windows has the pieces (the file dialog,
+WIC, the clipboard, OLE drops) but writing the picture belongs on a worker and a drop target on
+the window meets Chromium's, which want their own checkpoint. AppKit's segmented control, the
+rounded-border field, the popover's fill, edge, corners and arrow are drawn to estimates (no
+shadow, a straight-sided arrow) until the UI gate measures the Mac's; a held button dims to
+50% (SwiftUI's plain style dims; not measured); the categories' and the bin's tooltips aren't
+shown; there's no scroller (macOS shows an overlay one while scrolling); a press outside goes
+on to what it's over; the popover closes when the window moves, where NSPopover moves with it;
+the category bar's rosette is Segoe's certificate medal (neither font has a rosette); the
+header's icon has no "Change Space Icon" tooltip yet. Segoe UI Emoji has no country flags, so
+52 of the Flags category's 59 cells (and a flag icon from a Mac profile, in the bar and the
+header) draw as the two letters of their regional indicators, each clipped to its 33.5pt cell
+(the pairs fit: `--icon-picker 1,emoji,7`); and Windows 10's Segoe UI Emoji lacks Unicode 13
+and 14's emoji (🫠, 🥲, 🫶, 🪴 and others), which draw as its fallback boxes there.
+
+The bar's + button and Create a Space (W9f) are the Mac's NewItemMenu, SpaceCreationView and
+BrowserStore's beginNewSpace, finishNewSpace and cancelNewSpace (`core/SpaceCreation.h`). A click
+on + (on release over it, the click that brings the window forward too) opens its menu over the
+button: New Space, New Folder, a line, New Split and New Tab with their shortcuts as the profile's
+keys run them (Ctrl+T; New Split's the Mac's ⌘L made Ctrl+L, disabled until split views, W36).
+It's Windows' own menu through `shell/ContextMenu`, where the Mac's is a SwiftUI popover with
+icons. New Space, from the menu or the `newSpace` command (Spaces › New Space… on the Mac, with
+no default key; a keybindings.json can give it one), shows the sidebar and inserts a nameless
+space with no icon right after the current one (W9d's `InsertSpace`), selected, with its theme
+and profile, so the pages slide to it and its theme shows live; it's saved soon, as the Mac's
+draft is. While its space is selected, Arc's Create a Space page (`shell/SpaceCreationView`)
+takes the place of the address field, the favorites and the pages under the top row, and the
+bar keeps only the spaces. The page: three cards fanned out, "Create a Space" and its line, the
+name field ("Space name…") and Kite's "What's it for? (for Claude)", the profile with its pill,
+Choose a Theme, then Create Space (#2C4AFC, at half strength until there's a name) and Cancel,
+laid out from ArcMetrics.SpaceCreation (the name field's top on Arc's y 237 in a 820pt window).
+The name field takes the keyboard as the page appears (`KeyboardField::Creation`, through
+GiveKeyboard: the find field and a rename let it go first, and the command bar closes); Tab moves
+between the fields, Return in either creates when there's a name (the space named and its
+`about` cleaned as Space.cleanAbout does), Escape and Cancel delete the draft and select the space
+it came from. Another space selected hides the page (its fields go with it, as the Mac's @State
+does); New Space again goes back to it. Delete Space on the draft cancels it, and Rename Space… on
+it goes to the page's name field (the Mac renames its hidden header). A draft left at quit or by a
+crash goes when the session loads (Kite.exe and kitecore), as the Mac's dropUnnamedEmptySpaces
+drops every nameless space with no tabs, Delete Space's rules each time. The profile pill lists
+the profiles and sets the draft's. Choose a Theme opens the theme editor's preset row (`shell/ThemeSwatchesView`): a popover of
+its own window (`shell/PopoverWindow`, the icon picker's) off the row's trailing edge, with the
+editor's chevrons and its seven 24pt swatches; a swatch sets the space's colours and grain, its
+intensity kept, and the popover stays open. In W21's keyboard model it holds the keyboard while
+it's open (`KeyboardField::ThemeSwatches`, as the Mac's popover is the key window), the page's
+field letting it go; Choose a Theme pressed again opens it again, keeping it. It closes as a
+transient popover does, by the controller's one rule for both popovers: Escape gives the keyboard
+back to the field that had it; a press anywhere else in the window or in the page, the window
+going to the back, moving, resizing or minimizing hand it to nothing; anything else taking the
+keyboard closes it; and every close, a failed or lost open included, lets the keyboard go.
+Change Space Icon… is disabled on the draft (its header, where the picker hangs, is under the
+page). The page is its own visuals in the sidebar's root: the page's surface (drawn
+as it opens, and again only for a new size, scale, appearance or profile), each field's (a
+keystroke draws only its field) and Create Space's (drawn again only as it turns on or off); the
+carets are TextField's visuals, so nothing runs while it's idle but the focused field's blink.
+`kitecore click` on the + button prints its menu, `space plus-menu` prints it, `space create
+[--about TEXT] [--theme N] [--away] [--cancel|--delete-draft] NAME` runs the page step by step,
+`space new [--about TEXT] [--theme N] NAME` fills it in and creates, and `space create-page
+[HEIGHT] [--hit X,Y] [--swatch X,Y]` prints the page's layout, the bar while it's open, the
+swatches, and what a press lands on. `--capture FILE --new-item-menu` reads back the
++ menu over its button, and `--create-space NAME [--create-space-about TEXT] [--create-space-theme
+N]` holds the page with its fields typed in and, with N, the swatches open and preset N clicked.
+
+Known differences for W9f:
+- The + menu is a Win32 menu without the popover's icons.
+- Choose a Theme's popover holds only the theme editor's presets (its colour grid, intensity and
+  grain come with the theme editor), in Arc's PopoverBackground colours with a thin edge and no
+  shadow, kept inside the monitor's work area. As it opens Kite's window takes the keyboard, so a
+  press in the page (its own window) closes it.
+- The profile pill changes the draft's profile only while the draft has no tabs (a tab opened in it
+  with Ctrl+T); the Mac's moves the pages, which Windows can't yet, as the space menu's Set Profile.
+- Cancel with the draft the only space left (the others deleted meanwhile) beeps and keeps the
+  page: Delete Space refuses the last space, and the Mac's would end the page and leave the
+  nameless space for the next launch to drop.
+- Rename Space… on the draft goes to the page's name field, and Change Space Icon… is disabled on
+  the draft space (its header, where the picker hangs, is under the page; the Mac's opens the
+  picker on a header no one sees).
+- The help tags (the about field's and the profile's info button) and the + button's tooltip
+  aren't shown yet, and Undo New Space waits for undo (W16).
 
 ## Saving the session
 

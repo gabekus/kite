@@ -124,8 +124,8 @@ public enum TicketTest {
             lines.append("The ticket's page is \(issueURL.absoluteString). Open it with tabs_create, session \"\(key)\", and read it there.")
         } else {
             lines.append("""
-                Kite doesn't know the ticket's page: no Linear tab is open. Call handoff with one note step asking the user to \
-                open \(key) in Linear in Kite, then handoff_status with wait, then tabs_context to find its tab.
+                Kite doesn't know the ticket's page: no Linear tab is open. Ask the user in your reply to open \(key) in \
+                Linear in Kite and tell you when it's open, and end your turn; on their answer, tabs_context finds its tab.
                 """)
         }
         if let target = request.target {
@@ -151,9 +151,9 @@ public enum TicketTest {
         fields).
 
         2. Pick the target: the target the request names, else the preview or staging URL from the ticket or its pull \
-        request. When the ticket names several environments and doesn't say which, or none at all, call handoff with a \
-        note step asking the user which environment to test, or to open it in a tab; then handoff_status with wait, \
-        then tabs_context to find it. Don't test production unless the ticket or the user says to.
+        request. When the ticket names several environments and doesn't say which, or none at all, ask the user in your \
+        reply which environment to test (or to open it in a tab), and end your turn; on their answer, tabs_context finds \
+        it. Don't test production unless the ticket or the user says to.
 
         3. Open the app under test with tabs_create, passing session set to the ticket identifier exactly (for example \
         "PRO-1234") and no space, so it opens in Claude › PRO-1234 in this space's Claude folder. Open the linked pull \

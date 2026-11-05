@@ -30,12 +30,18 @@ void BrowserWindowController::EditState(const std::function<void()>& change, boo
     else StateChanged(SessionSaveDelay::Soon);
 }
 
-void BrowserWindowController::TakeKeyboardForRename() {
+void BrowserWindowController::TakeKeyboardForRename(const std::function<void()>& open) {
     // Every rename (a space's, a tab's, a folder's) takes the keyboard from the find field first, so
-    // its caret goes before the rename's (W21's one owner). Then the keyboard, when Kite is the
-    // window in front (a quiet test run never activates).
+    // its caret goes before the rename's (W21's one owner). Then the field opens, and only then
+    // does the window take the focus (when it's in front): its onFocus must see the rename.
     GiveKeyboard(KeyboardField::Rename);
+    open();
+    TakeFocusIfInFront();
+}
+
+void BrowserWindowController::TakeFocusIfInFront() {
     if (GetForegroundWindow() == window_.Handle()) SetFocus(window_.Handle());
+    else if (testFocus_) SendMessageW(window_.Handle(), WM_SETFOCUS, 0, 0);
 }
 
 std::optional<bool> BrowserWindowController::TabCommandEnabled(const std::string& command) const {
@@ -120,8 +126,8 @@ void BrowserWindowController::BeginRenamingTab(const std::string& tabID, bool fr
     if (fromDoubleClick && favoriteOrPane) return;
     const bool hasRow = !favoriteOrPane && SidebarShowsRow(state_, state_.SelectedSpaceIndex(), SidebarRow::Kind::Tab, tabID);
     if (!sidebarShown_ || !hasRow) return static_cast<void>(MessageBeep(MB_OK));
-    TakeKeyboardForRename();
-    sidebar_->BeginRenaming(SidebarView::RenameTarget{SidebarRow::Kind::Tab, tabID}, state_.TabAt(*location)->DisplayTitle());
+    const std::string title = state_.TabAt(*location)->DisplayTitle();
+    TakeKeyboardForRename([&] { sidebar_->BeginRenaming(SidebarView::RenameTarget{SidebarRow::Kind::Tab, tabID}, title); });
 }
 
 void BrowserWindowController::BeginRenamingFolder(const std::string& folderID) {
@@ -132,8 +138,7 @@ void BrowserWindowController::BeginRenamingFolder(const std::string& folderID) {
     // space's page has to show.
     SetSidebarShown(true);
     if (!SidebarShowsRow(state_, state_.SelectedSpaceIndex(), SidebarRow::Kind::Folder, folderID)) return;
-    TakeKeyboardForRename();
-    sidebar_->BeginRenaming(SidebarView::RenameTarget{SidebarRow::Kind::Folder, folderID}, name);
+    TakeKeyboardForRename([&] { sidebar_->BeginRenaming(SidebarView::RenameTarget{SidebarRow::Kind::Folder, folderID}, name); });
 }
 
 void BrowserWindowController::RenameTab(const std::string& tabID, const std::string& name) {
