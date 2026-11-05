@@ -62,6 +62,17 @@ constexpr UINT_PTR kCloseDeadlineTimer = 0x4B43;  // 'KC'; BrowserWindowControll
 // run, as on the Mac, whose Task Manager reads it (Windows' will); today only --smoke-test
 // uses it, and a message per new main-frame context costs nothing that shows.
 constexpr char kRendererPIDMessage[] = "kite.rendererPID";
+// From the renderer (KiteHelperApp), for each tab's main frame: whether the page reads as
+// visible (a bool), as its script context is made and on each (trusted) visibilitychange. Kite
+// acts only on a page it has hidden (Shared::PageVisibility): Chromium can show a page whose
+// windows Kite hid before it drew (a page made while Kite can't be seen), and only Kite hiding
+// them again hides it.
+constexpr char kVisibilityMessage[] = "kite.pageVisibility";
+// Hiding a page again shows its windows for an instant, which the page reports as visible and
+// then hidden: a report this soon after is looked at again once this has passed, not acted on.
+constexpr ULONGLONG kRehideSettleMs = 250;
+// At most this many times per placement, so a page Chromium keeps showing can't keep Kite busy.
+constexpr int kMaxRehides = 5;
 
 CefRect ToCefRect(const RECT& r) { return CefRect(r.left, r.top, r.right - r.left, r.bottom - r.top); }
 
@@ -165,6 +176,12 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
         bool mediaInUse = false;      // camera, microphone or screen capture (OnMediaAccessChange)
         std::string profile;          // the profile directory it was made in (a popup: its opener's)
         Hole hole;                    // the overlay's hole as last sent, in its window's px
+        // PageVisibility: what the page last said, its re-hides since its placement last changed,
+        // when the last one was, and whether a look after it is due.
+        bool saysVisible = false;
+        int rehides = 0;
+        ULONGLONG rehiddenAt = 0;
+        bool recheckDue = false;
         // Find asked for before the browser existed (Ctrl+F straight after a new tab): run once
         // it's made, the last one asked for.
         struct PendingFind {
@@ -472,6 +489,7 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
             wanted.rect = wanted.visible ? card : page.placed.rect;
             if (!(wanted == page.placed)) {
                 page.placed = wanted;
+                page.rehides = 0;
                 change.placement = wanted;
             }
             Hole hole;
@@ -544,6 +562,57 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
         RunOnCefUIThread([shared = shared_from_this(), browser = it->second.browser] {
             if (!shared->inputBlocked && !shared->kiteKeepsKeyboard) browser->GetHost()->SetFocus(true);
         });
+    }
+
+    // The renderer says whether a page reads as visible (kVisibilityMessage). Visible is fine when
+    // Kite shows it; when Kite has it hidden (another tab's, or the shown one while Kite is
+    // minimized or can't be seen) Chromium showed it on its own. Kite hid the page's windows
+    // before Chromium had shown the page, so their hiding never reached it (measured: a page made
+    // while Kite was covered went `hidden`, then `visible` about 0.4 s after its load, and ran
+    // rAF at 350 fps behind hidden windows). Hiding a hidden window again sends Chromium
+    // nothing, so Kite shows the windows and hides them again (HideAgain): Chromium reads that
+    // hide (HWNDMessageHandler's SWP_HIDEWINDOW) as any other.
+    void PageVisibility(const std::string& tabID, const CefRefPtr<CefBrowser>& browser, bool visible) {
+        Page* page = PageFor(tabID, browser);
+        if (!page) return;
+        page->saysVisible = visible;
+        RehideIfShowing(tabID, *page);
+    }
+    void RehideIfShowing(const std::string& tabID, Page& page) {
+        if (!page.saysVisible || !page.hwnd || page.placed.visible || page.rehides >= kMaxRehides) return;
+        const ULONGLONG now = GetTickCount64();
+        if (page.rehiddenAt && now - page.rehiddenAt < kRehideSettleMs) {
+            // Likely the last re-hide's own show: looked at again once it's settled.
+            if (page.recheckDue) return;
+            page.recheckDue = true;
+            const auto delay = static_cast<int64_t>(kRehideSettleMs - (now - page.rehiddenAt));
+            CefPostDelayedTask(TID_UI, new FunctionTask([shared = shared_from_this(), tabID, browser = page.browser] {
+                shared->Post([shared, tabID, browser] {
+                    if (Page* p = shared->PageFor(tabID, browser)) {
+                        p->recheckDue = false;
+                        shared->RehideIfShowing(tabID, *p);
+                    }
+                });
+            }), delay);
+            return;
+        }
+        ++page.rehides;
+        page.rehiddenAt = now;
+        RunOnCefUIThread([host = page.hwnd] { HideAgain(host); });
+    }
+    // On CEF's thread, which owns them: shows the page's host and widget windows without drawing
+    // or activating them, then hides them again, between two calls on this thread. Never one
+    // Layout has shown since. Kite can't be seen or is minimized, or the page is another tab's
+    // under the shown one, so the instant draws nothing anyone sees.
+    static void HideAgain(HWND host) {
+        if (!IsWindow(host) || (GetWindowLongPtrW(host, GWL_STYLE) & WS_VISIBLE)) return;
+        constexpr UINT kShow = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_SHOWWINDOW;
+        SetWindowPos(host, nullptr, 0, 0, 0, 0, kShow);
+        if (const HWND widget = FindPageWidget(host)) {
+            SetWindowPos(widget, nullptr, 0, 0, 0, 0, kShow);
+            ShowWindow(widget, SW_HIDE);
+        }
+        ShowWindow(host, SW_HIDE);
     }
 
     Page* PageFor(const std::string& tabID, const CefRefPtr<CefBrowser>& browser) {
@@ -744,9 +813,39 @@ private:
     IMPLEMENT_REFCOUNTING(SkipPrint);
 };
 
+// A main frame's visibilitychange listener: tells the browser process whether the page reads as
+// visible (kVisibilityMessage). Only events the browser raised (isTrusted), so the page's own
+// dispatchEvent can't make Kite act.
+class VisibilityReporter : public CefV8Handler {
+public:
+    bool Execute(const CefString&, CefRefPtr<CefV8Value>, const CefV8ValueList& arguments, CefRefPtr<CefV8Value>&, CefString&) override {
+        if (arguments.empty() || !arguments[0]->IsObject()) return true;
+        CefRefPtr<CefV8Value> trusted = arguments[0]->GetValue("isTrusted");
+        if (!trusted || !trusted->IsBool() || !trusted->GetBoolValue()) return true;
+        if (CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext()) Report(context);
+        return true;
+    }
+    // Sends kVisibilityMessage with whether the context's document reads as visible.
+    static void Report(const CefRefPtr<CefV8Context>& context) {
+        CefRefPtr<CefV8Value> document = context->GetGlobal()->GetValue("document");
+        if (!document || !document->IsObject()) return;
+        CefRefPtr<CefV8Value> state = document->GetValue("visibilityState");
+        if (!state || !state->IsString()) return;
+        CefRefPtr<CefFrame> frame = context->GetFrame();
+        if (!frame) return;
+        CefRefPtr<CefProcessMessage> message = CefProcessMessage::Create(kVisibilityMessage);
+        message->GetArgumentList()->SetBool(0, state->GetStringValue() == "visible");
+        frame->SendProcessMessage(PID_BROWSER, message);
+    }
+
+private:
+    IMPLEMENT_REFCOUNTING(VisibilityReporter);
+};
+
 // Kite's CefApp in the helpers (the Mac's KiteHelperApp, KiteHelper/main.mm): in a renderer,
-// each tab's main frame reports the process it runs in; a quiet run's renderer (`quietRenderer`,
-// RunChromiumSubprocess) also skips window.print() in every frame (SkipPrint).
+// each tab's main frame reports the process it runs in, and whether its page reads as visible
+// (VisibilityReporter); a quiet run's renderer (`quietRenderer`, RunChromiumSubprocess) also
+// skips window.print() in every frame (SkipPrint).
 class KiteHelperApp : public CefApp, public CefRenderProcessHandler {
 public:
     explicit KiteHelperApp(bool quietRenderer) : quietRenderer_(quietRenderer) {}
@@ -759,6 +858,16 @@ public:
         CefRefPtr<CefProcessMessage> message = CefProcessMessage::Create(kRendererPIDMessage);
         message->GetArgumentList()->SetInt(0, static_cast<int>(GetCurrentProcessId()));
         frame->SendProcessMessage(PID_BROWSER, message);
+        // Visible now (a page made, or a navigation or a renderer's restart that made a new
+        // context, while Kite has it hidden), and on each change after.
+        VisibilityReporter::Report(context);
+        CefRefPtr<CefV8Value> document = context->GetGlobal()->GetValue("document");
+        CefRefPtr<CefV8Value> listen = document && document->IsObject() ? document->GetValue("addEventListener") : nullptr;
+        if (listen && listen->IsFunction()) {
+            listen->ExecuteFunctionWithContext(context, document,
+                                               {CefV8Value::CreateString("visibilitychange"),
+                                                CefV8Value::CreateFunction("kiteVisibility", new VisibilityReporter)});
+        }
     }
 
 private:
@@ -815,12 +924,20 @@ public:
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
 
     // The renderer's messages (KiteHelperApp): kite.rendererPID, the process now hosting this
-    // tab's page; kite.printSkipped, a quiet run's window.print() that didn't open the dialog.
+    // tab's page; kite.pageVisibility, whether its page reads as visible; kite.printSkipped, a quiet run's
+    // window.print() that didn't open the dialog.
     bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefProcessId source,
                                   CefRefPtr<CefProcessMessage> message) override {
         if (source != PID_RENDERER) return false;
         if (message->GetName() == kPrintSkipped) {
             LogSkippedModal(L"print dialog");
+            return true;
+        }
+        if (message->GetName() == kVisibilityMessage) {
+            if (frame && frame->IsMain()) {
+                const bool visible = message->GetArgumentList()->GetBool(0);
+                shared_->Post([shared = shared_, id = tabID_, browser, visible] { shared->PageVisibility(id, browser, visible); });
+            }
             return true;
         }
         if (message->GetName() != kRendererPIDMessage || !frame || !frame->IsMain()) return false;

@@ -1370,6 +1370,19 @@ Windows that means:
     window when they could be stale: the end of a lock or display-off, the
     pointer on a covered Kite, Kite's activation, any cloak event, and the
     heartbeat's whole passes.
+  - **A page Kite hides stays hidden.** Chromium can show a page whose windows Kite hid before
+    it had drawn: a page made while Kite can't be seen (Kite opened behind other windows, a new
+    or woken tab, a navigation to another renderer) went `hidden`, then `visible` about 0.4 s
+    after its load, and ran rAF at 350 fps behind hidden windows, with the verdict unchanged.
+    So each tab's main frame reports whether it reads as visible (`kite.pageVisibility`, as its
+    script context is made and on each trusted `visibilitychange`, `KiteHelperApp`). For a
+    page Kite has hidden, Kite shows its host and widget windows without drawing or activating
+    them and hides them again at once, on CEF's thread: hiding an already hidden window tells
+    Chromium nothing, and this hide it reads like any other. That instant shows its own
+    `visible`, so a report within 0.25 s of a re-hide is looked at again after it, and a page
+    gets at most five per placement. `windows/tests/CoveredLaunchCheck.ps1` checks it (CI
+    runs it under a cover of its own): a Kite opened covered ends with its page `hidden` and
+    rAF stopped.
   - **Off for test runs.** `--smoke-test` and `--frame-log` run without
     occlusion, so their checks of the slide and the crossfade can't pass
     unseen, and so does `--perf-control` until kiteperf asks for it in its
