@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "core/Sidebar.h"
+#include "core/SidebarTopRow.h"
 
 namespace kite {
 
@@ -26,9 +27,13 @@ TitleBarArea TitleBarAreaAt(float width, float sidebarWidth, float x, float y, f
         if (x < CaptionButtonLeft(width, CaptionButton::Close, scale)) return TitleBarArea::Maximize;
         return TitleBarArea::Close;
     }
-    // The sidebar's top row, over its address field (nothing in it takes clicks yet: the Mac's
-    // toggle and back, forward and reload buttons come later and will be cut out of it).
-    if (x < sidebarWidth) return y < sidebar_metrics::kUrlFieldTop ? TitleBarArea::Drag : TitleBarArea::Client;
+    // The sidebar's top row, over its address field, but for its buttons, which take their
+    // presses (the Mac's SymbolButton: mouseDownCanMoveWindow false). Where the buttons sit depends
+    // only on the width (TopRowButtonAt allocates nothing: this runs on every WM_NCHITTEST).
+    if (x < sidebarWidth) {
+        if (y >= sidebar_metrics::kUrlFieldTop) return TitleBarArea::Client;
+        return TopRowButtonAt(sidebarWidth, x, y) ? TitleBarArea::Client : TitleBarArea::Drag;
+    }
     return y < T::kContentTop ? TitleBarArea::Drag : TitleBarArea::Client;
 }
 

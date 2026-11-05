@@ -70,6 +70,7 @@ add_library(KiteCoreWin STATIC
   src/core/LiveTabPolicy.cpp
   src/core/Occlusion.cpp
   src/core/Sidebar.cpp
+  src/core/SidebarTopRow.cpp
   src/core/TabClosing.cpp
   src/core/SupportDirectory.cpp
   src/core/ThemeBackdrop.cpp
@@ -142,6 +143,7 @@ if(WIN32)
     src/shell/Capture.cpp
     src/shell/CommandBarView.cpp
     src/shell/Compositor.cpp
+    src/shell/FadedLayer.cpp
     src/shell/Favicons.cpp
     src/shell/FrameClock.cpp
     src/shell/Keys.cpp
@@ -151,6 +153,7 @@ if(WIN32)
     src/shell/PerfLog.cpp
     src/shell/QuietRun.cpp
     src/shell/Renderer.cpp
+    src/shell/SidebarTopRowView.cpp
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
     src/shell/SpaceIconPainter.cpp
@@ -199,9 +202,10 @@ if(WIN32)
     # loads it) fails the process: everything but kernel32 and libcef.dll is delay-loaded, so only
     # the browser process loads it. Control Flow Guard and CET shadow stacks, as Chromium's own
     # binaries have. tests/KiteBinariesTest.cmake checks all three. comctl32 is for Delete Space's
-    # task dialog, gdi32 for --space-menu's read-back: only the window's process calls them
-    # (user32 loads gdi32 for itself, so delaying Kite's import of it is safe: no call of Kite's
-    # to it comes before the window, or from a loader callback).
+    # task dialog and the top row's tooltips (made on the first hover over a button), gdi32 for
+    # --space-menu's read-back: only the window's process calls them (user32 loads gdi32 for
+    # itself, so delaying Kite's import of it is safe: no call of Kite's to it comes before the
+    # window, or from a loader callback).
     target_compile_options(Kite PRIVATE /guard:cf)
     target_link_options(Kite PRIVATE /guard:cf /CETCOMPAT
       /DELAYLOAD:user32.dll /DELAYLOAD:dwmapi.dll /DELAYLOAD:shell32.dll /DELAYLOAD:ole32.dll /DELAYLOAD:advapi32.dll
@@ -329,6 +333,7 @@ add_executable(KiteCoreTests
   tests/OcclusionTests.cpp
   tests/SessionSaveTests.cpp
   tests/SidebarTests.cpp
+  tests/SidebarTopRowTests.cpp
   tests/SpaceBarTests.cpp
   tests/SpaceEditingTests.cpp
   tests/SpaceIconTests.cpp
@@ -377,9 +382,9 @@ target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURR
                                                KITE_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
                                                KITE_ARC_FIXTURE_DIR="${KITE_ARC_FIXTURE_DIR}")
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)
-add_test(NAME history-bench COMMAND history-bench 300)
 add_test(NAME chromium-ignores-kites-command-line
   COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/shell/Chromium.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ChromiumSettingsCheck.cmake)
+add_test(NAME history-bench COMMAND history-bench 300)
 add_test(NAME kitecore-cli
   COMMAND ${CMAKE_COMMAND} -DKITECORE=$<TARGET_FILE:kitecore> -DWORK=${CMAKE_CURRENT_BINARY_DIR}/kitecore-cli-test
           -DARC_LOCAL_APP_DATA=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/arc-windows

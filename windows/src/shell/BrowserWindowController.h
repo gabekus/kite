@@ -42,6 +42,7 @@
 #include "core/Models.h"
 #include "core/SessionSaveDelay.h"
 #include "core/SessionWriter.h"
+#include "core/SidebarTopRow.h"
 #include "core/SpaceEditing.h"
 #include "core/SpaceSwipe.h"
 #include "core/SpaceSwipeGesture.h"
@@ -76,18 +77,18 @@ public:
         // --frame-log: each frame the clock delivered (when it was handled, the time it was
         // drawn for, the pages' offset and the theme's crossfade) is kept for SaveFrameLog.
         bool frameLog = false;
+        // --save-log: each save handed to the writer (when, and what it cost the UI thread) is
+        // kept for SaveSaveLog.
+        bool saveLog = false;
+        // A quiet run (main.cpp's `quiet`, which alone decides it): the window opens behind
+        // the others and never activates, the pages never take the focus or show a dialog
+        // (Chromium::Start's `quiet`), and every shortcut command must do something.
+        bool quiet = false;
         // --perf-control: WM_COPYDATA tagged perf::kControlTag runs a shortcut's command, logs a
         // mark, opens a tab or posts a pointer move (QueuePerfRequest). Test profiles only.
         bool perfControl = false;
         // --chromium-switches: added to Chromium's command line (test profiles only).
         std::vector<std::string> chromiumSwitches;
-        // A quiet run (main.cpp's `quiet`, which alone decides it): the window opens behind
-        // the others and never activates, the pages never take the focus or show a dialog
-        // (Chromium::Start's `quiet`), and every shortcut command must do something.
-        bool quiet = false;
-        // --save-log: each save handed to the writer (when, and what it cost the UI thread) is
-        // kept for SaveSaveLog.
-        bool saveLog = false;
         // --occlusion-log: shell/Occlusion's verdicts, a JSON line each (empty: none).
         std::filesystem::path occlusionLog;
         // The profile's SpaceIcons folder: the pictures chosen as space icons (a capture
@@ -167,6 +168,14 @@ public:
     // For a capture: what Capture composes over the frame next, space `index`'s menu opened
     // over its cell in the bar (Windows' own menu, read back as it shows).
     void HoldSpaceMenu(size_t index) { heldMenu_ = index; }
+    // For a capture (which has no pages): the selected tab's page reporting `page`, as Chromium
+    // would (back and forward, loading).
+    void HoldPageStatus(const PageStatus& page);
+    // For a capture: Toggle Sidebar run `times` times, each slide run to its end.
+    std::wstring HoldSidebarToggles(int times);
+    // For the smoke test: the pointer resting on a top-row button (a mouse move there, as the
+    // pointer sends it).
+    std::wstring HoldTopRowHover(TopRowButton button);
 
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
@@ -182,14 +191,19 @@ public:
 
 private:
     // The content card, in points: right of the sidebar, inset on the other three sides
-    // (BrowserWindowController's Layout.defaultSidebarWidth and ArcMetrics.Content.inset).
+    // (BrowserWindowController's Layout.defaultSidebarWidth, and ArcMetrics.Content.inset in core's
+    // sidebar_toggle::kContentInset).
     static constexpr int kSidebarWidth = 240;
-    static constexpr int kContentInset = 10;
-    // The window's timers and posted messages. The WM_APP messages, each its own: +1
+    // The window's timers and posted messages. The timers' ids on this window, shared out across
+    // the checkpoints so two never collide (the ones not in this branch yet are reserved):
+    //   1 smoke, 2 archive, 3 settle, 4 session save (W11), 5 history (W25a), 6 Arc merge (W33a),
+    //   7 sidebar toggle (W12), 8 downloads save (W20a).
+    // 0x4B42 and up are the views' (the command bar's caret, Chromium's close deadline, the
+    // sidebar's tip and drop, the rename field's caret). The WM_APP messages, each its own: +1
     // MainWindow::kWakeMessage, +2 the command bar's redraw, +3 the sidebar's redraw, +4 favicons,
     // +5 the frame clock, +6 space icons, +7 memory pressure (W11), +8 history, +9 Import from
-    // Arc's read (kArcReadMessage), +10 arcSaved, +11 downloads, +20 perf. Filter checks that the
-    // ids it sees don't overlap.
+    // Arc's read (kArcReadMessage), +10 arcSaved, +11 downloads, +20 perf. Filter checks that
+    // neither the timers nor the messages it sees overlap.
     static constexpr UINT_PTR kSmokeTimer = 1;
     // The auto-archive's pass, every 15 minutes as on the Mac (AppDelegate's archiveTimer).
     static constexpr UINT_PTR kArchiveTimer = 2;
@@ -200,6 +214,12 @@ private:
     static constexpr UINT_PTR kSaveTimer = 4;
     // History's save (HistoryStores::NextSaveIn), armed by a change and gone once it fires.
     static constexpr UINT_PTR kHistoryTimer = 5;
+    // (6 is Import from Arc's merge, kArcMergeTimer; 8 the downloads' save.)
+    // When the sidebar's hide or show has ended on the compositor (the same allowance).
+    static constexpr UINT_PTR kToggleTimer = 7;
+    // View › Hide Sidebar in the window's system menu (Alt+Space, a right-click on the band above the
+    // card) until Windows has a menu of Kite's own: a WM_SYSCOMMAND id, under 0xF000.
+    static constexpr UINT kToggleSidebarMenuID = 0x0A20;
     // Posted by the favicon worker when icons arrive (Favicons.h).
     static constexpr UINT kFaviconsMessage = WM_APP + 4;
     // Posted by the frame clock once a composition frame while something animates.
@@ -254,7 +274,7 @@ private:
     bool CommandEnabled(const std::string& command) const;
     // One frame of the clock's: the touchpad's movement, then the theme's crossfade or a
     // swipe's step drawn for the composition frame at `time` (the pages' slide runs on the
-    // compositor).
+    // compositor). `rateHz` is the display's, for --perf-log (0 when it isn't on).
     void Frame(double time, double rateHz);
     // Whether anyone can see the window: shown, not minimized, and not hidden by shell/
     // Occlusion (covered, locked, display off, another desktop). What animates on screen
@@ -343,6 +363,26 @@ private:
     void MoveSpace(const std::string& spaceID, size_t index);
     void ArchiveTab();
     void ReopenClosedTab();
+    // View › Hide Sidebar and Show Sidebar (the Mac's toggleSidebar and updateSidebar): the sidebar
+    // slides off the window's left edge (or back) on the compositor and the card's leading edge goes
+    // from the sidebar's edge to the inset (or back). The page is a child window, which no compositor
+    // property moves until W10's off-screen pages, so it moves once: as a show begins, and as a hide
+    // ends (ContentBounds keeps the sidebar's edge until then). Chromium moves it on CEF's thread, so
+    // it lands a little after that. A rename in the header ends first, keeping what was typed. The
+    // slide boosts the compositor clock while it runs, and the system menu's item is retitled.
+    void ToggleSidebar();
+    void SetSidebarShown(bool shown);
+    void FinishToggle();
+    // The width the sidebar takes from the window: none while it's hidden.
+    float SidebarShownWidth() const { return sidebarShown_ ? static_cast<float>(kSidebarWidth) : 0.0f; }
+    void MovePage();
+    // The system menu's item: Hide Sidebar or Show Sidebar, a tab, and its shortcut as bound.
+    std::wstring ToggleSidebarMenuText() const;
+    // The selected tab's page's status, to the top row (none for a tab with no page).
+    void ShowPageStatus();
+    // The smoke test's top row: its buttons, the page's states, a hover that draws nothing, a press
+    // on a disabled button, and hiding and showing the sidebar from the toggle and Ctrl+S's command.
+    std::wstring SmokeTestTopRow();
     void MakeCommands();
     // Import from Arc (BrowserWindowControllerArcImport.cpp, the Mac's ArcImportController):
     // Arc's files are read on a worker, which posts kArcReadMessage when they're in.
@@ -476,6 +516,12 @@ private:
     std::unique_ptr<Compositor> compositor_;
     std::unique_ptr<Favicons> favicons_;
     std::unique_ptr<SidebarView> sidebar_;
+    // View › Hide Sidebar's state (the Mac's BrowserStore.isSidebarVisible, not saved: a launch
+    // shows it), and its slide under way.
+    bool sidebarShown_ = true;
+    bool toggling_ = false;
+    // What each tab's page last reported (the Mac's BrowserStore.pages), gone with its page.
+    std::map<std::string, PageStatus> pageStatus_;
     std::unique_ptr<CaptionButtonsView> caption_;
     std::unique_ptr<CommandBarView> commandBar_;
     std::wstring barError_;
@@ -498,14 +544,14 @@ private:
         double handled, target, offset, theme;
     };
     std::vector<LoggedFrame> frames_;
+    std::vector<std::string> touchpadLog_;  // TouchpadInput::log's records, after the frames
+    size_t touchpadLogDropped_ = 0;          // and how many didn't fit (kMaxTouchpadLog)
+    std::wstring touchpadError_;            // why there's no touchpad_, when there isn't one
     // --perf-control's pointer is over the window: the system's WM_MOUSELEAVE (the real pointer
     // is elsewhere) doesn't take its hover away.
     bool perfPointer_ = false;
     size_t perfMovesPosted_ = 0, perfLeavesPosted_ = 0;  // posted and not yet received
     std::vector<PerfRequest> perfRequests_;
-    std::vector<std::string> touchpadLog_;  // TouchpadInput::log's records, after the frames
-    size_t touchpadLogDropped_ = 0;          // and how many didn't fit (kMaxTouchpadLog)
-    std::wstring touchpadError_;            // why there's no touchpad_, when there isn't one
     size_t frameCount_ = 0;  // frames delivered, logged or not (the smoke test checks them)
 
     // A capture's space menu, composed over the frame (HoldSpaceMenu).

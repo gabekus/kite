@@ -37,6 +37,13 @@
 //   Kite.exe --capture FILE.png --rename-space N
 //                            the same with space N's header renaming it (Rename Space…), its name
 //                            all selected.
+//   Kite.exe --capture FILE.png --page-status STATES
+//                            the same with the selected tab's page reporting STATES, a comma list of
+//                            back, forward and loading (or none), as Chromium would: the top row's
+//                            back and forward enabled, reload the X.
+//   Kite.exe --capture FILE.png --toggle-sidebar N
+//                            the same after Toggle Sidebar (Ctrl+S) ran N times, each slide run to
+//                            its end (1: hidden, 2: shown again).
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
@@ -248,7 +255,7 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // value (core/CommandLine.h).
     kite::command_line::Spec spec;
     spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control"};
-    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--save-log", "--perf-log", "--occlusion-log"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--save-log", "--perf-log", "--occlusion-log"};
     // Its value is switches ("--a --b"), each checked against the allow-list below; Chromium's
     // raw read sees them too, so only allowed ones get this far.
     spec.switchValueOptions = {"--chromium-switches"};
@@ -362,6 +369,31 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         *out = option.value ? place(*option.value) : std::nullopt;
         if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a space's place, from 1", kUsage);
         if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+    }
+    // The top row's states, for a capture.
+    std::optional<kite::PageStatus> heldPage;
+    if (const OptionValue option = Option(args, L"--page-status"); option.present) {
+        if (!captureOption.present) return Fail(quiet, L"--page-status only goes with --capture", kUsage);
+        kite::PageStatus page;
+        bool valid = option.value.has_value();
+        const std::wstring states = option.value.value_or(L"");
+        for (std::wstring_view rest = states; valid && !rest.empty();) {
+            const size_t comma = rest.find(L',');
+            const std::wstring_view word = rest.substr(0, comma);
+            if (word == L"back") page.canGoBack = true;
+            else if (word == L"forward") page.canGoForward = true;
+            else if (word == L"loading") page.isLoading = true;
+            else if (word != L"none") valid = false;
+            rest = comma == std::wstring_view::npos ? std::wstring_view{} : rest.substr(comma + 1);
+        }
+        if (!valid) return Fail(quiet, L"--page-status takes back, forward and loading, comma-separated, or none", kUsage);
+        heldPage = page;
+    }
+    std::optional<int> heldToggles;
+    if (const OptionValue option = Option(args, L"--toggle-sidebar"); option.present) {
+        heldToggles = option.value ? ParseInt(*option.value) : std::nullopt;
+        if (!heldToggles || *heldToggles < 1 || *heldToggles > 9) return Fail(quiet, L"--toggle-sidebar takes how many times, 1 to 9", kUsage);
+        if (!captureOption.present) return Fail(quiet, L"--toggle-sidebar only goes with --capture", kUsage);
     }
     const PathOptionValue frameLogOption = PathOption(args, L"--frame-log", L"a file");
     if (!frameLogOption.problem.empty()) return Fail(quiet, frameLogOption.problem, kUsage);
@@ -578,10 +610,10 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     options.capture = capture.has_value();
     options.smokeTest = smokeTest;
     options.frameLog = frameLogOption.present;
-    options.perfControl = perfControl;
-    options.chromiumSwitches = std::move(chromiumSwitches);
     options.saveLog = saveLogOption.present;
     options.quiet = quiet;
+    options.perfControl = perfControl;
+    options.chromiumSwitches = std::move(chromiumSwitches);
     if (occlusionLogOption.value) options.occlusionLog = *occlusionLogOption.value;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
     options.supportDirectory = supportDirectory;
@@ -671,7 +703,9 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         kite::Pixels pixels;
         const std::optional<std::string> barText =
             commandBarOption.present ? std::optional<std::string>(Narrow(*commandBarOption.value)) : std::nullopt;
-        if (swipe) captureError = controller->HoldSwipe(*swipe);
+        if (heldPage) controller->HoldPageStatus(*heldPage);
+        if (heldToggles) captureError = controller->HoldSidebarToggles(*heldToggles);
+        if (captureError.empty() && swipe) captureError = controller->HoldSwipe(*swipe);
         if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
         if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
         if (heldMenu) controller->HoldSpaceMenu(*heldMenu);

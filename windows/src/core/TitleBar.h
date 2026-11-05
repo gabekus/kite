@@ -23,11 +23,12 @@ enum class CaptionButton { Minimize, Maximize, Close };
 
 // What a point of the client area is, for WM_NCHITTEST: something Kite draws and handles
 // (Client), where dragging moves the window (Drag: the band above the card and the sidebar's top
-// row, the Mac's title bar area), or a caption button.
+// row between its buttons, the Mac's title bar area), or a caption button.
 enum class TitleBarArea { Client, Drag, Minimize, Maximize, Close };
 
 // At (x, y) points from the client area's top-left, in a client area `width` wide whose sidebar
-// is `sidebarWidth` wide, laid out at `scale` (pixels per point).
+// is `sidebarWidth` wide (0 while it's hidden: the whole band drags), laid out at `scale` (pixels
+// per point). The sidebar's top-row buttons are the client's.
 TitleBarArea TitleBarAreaAt(float width, float sidebarWidth, float x, float y, float scale = 1);
 std::optional<CaptionButton> CaptionButtonOf(TitleBarArea area);
 // How far the edge `buttons` buttons in from the right sits from the client area's right edge,

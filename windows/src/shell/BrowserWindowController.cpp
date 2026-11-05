@@ -79,6 +79,8 @@ BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserStat
 
 BrowserWindowController::~BrowserWindowController() {
     StopArcRead();
+    // A slide still running lets go of the compositor clock's boost.
+    if (toggling_) FrameClock::BoostWithoutFrames(false);
     // History's worker outlives the window: it stops posting to it.
     if (history_) history_->SetWake(nullptr);
     // The views and the compositor go before the window: it stops calling into them first.
@@ -169,7 +171,7 @@ std::wstring BrowserWindowController::Init() {
         RECT client{};
         GetClientRect(window_.Handle(), &client);
         const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
-        return TitleBarAreaAt(static_cast<float>(client.right) / scale, static_cast<float>(kSidebarWidth), x, y, scale);
+        return TitleBarAreaAt(static_cast<float>(client.right) / scale, SidebarShownWidth(), x, y, scale);
     };
 
     // The command bar (Ctrl+T), over everything in the window.
@@ -232,15 +234,19 @@ std::wstring BrowserWindowController::Init() {
     actions.spaceMenu = [this](const std::string& spaceID, POINT screen) { ShowSpaceMenu(spaceID, screen); };
     actions.renameSpace = [this](const std::string& spaceID, const std::string& name) { RenameSpace(spaceID, name); };
     actions.beginRenaming = [this](const std::string& spaceID) { BeginRenaming(spaceID); };
+    // The top row's buttons run the commands of the same names (the Mac's SidebarActions).
+    actions.topRow = [this](TopRowButton button) { RunCommand(TopRowCommand(button)); };
     sidebar_->SetActions(std::move(actions));
     if (options_.quiet) askToDelete_ = [](const SpaceDeletion&) { return false; };
     else askToDelete_ = [this](const SpaceDeletion& deletion) { return AskToDeleteSpace(window_.Handle(), deletion); };
 
     MakeCommands();
-    // The Mac's File › Import from Arc…: in the window's system menu (Alt+Space) until Windows
-    // has a menu of Kite's own.
+    // View › Hide Sidebar and the Mac's File › Import from Arc…: in the window's system menu
+    // (Alt+Space) until Windows has a menu of Kite's own, so a pointer can bring a hidden sidebar
+    // back (its toggle leaves with it, and there's no hover reveal yet).
     if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kToggleSidebarMenuID, ToggleSidebarMenuText().c_str());
         AppendMenuW(menu, MF_STRING, kImportFromArcMenuID, L"Import from Arc…");
     }
     // Every command the table can name does something: a test run fails on one that doesn't.
@@ -340,8 +346,8 @@ void BrowserWindowController::SpaceChanged(size_t old, size_t now) {
     KillTimer(window_.Handle(), kSettleTimer);
     pagesAnchor_ = state_.spaces[old].id;
     const float from = (now > old ? 1.0f : -1.0f) * static_cast<float>(kSidebarWidth);
-    // No sidebar anyone sees to slide: just land.
-    const double duration = Seen() ? sidebar_->SlidePages(from, 0) : 0;
+    // No sidebar anyone sees to slide (the window unseen, or the sidebar hidden): just land.
+    const double duration = Seen() && sidebarShown_ ? sidebar_->SlidePages(from, 0) : 0;
     if (duration <= 0) {
         sidebarSliding_ = false;
         return FinishSettling();
@@ -372,7 +378,7 @@ bool BrowserWindowController::OverSidebar(POINT at) const {
     RECT client{};
     GetClientRect(window_.Handle(), &client);
     const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
-    return !(commandBar_ && commandBar_->IsOpen()) && at.x >= 0 && at.y >= 0 && at.y < client.bottom &&
+    return sidebarShown_ && !(commandBar_ && commandBar_->IsOpen()) && at.x >= 0 && at.y >= 0 && at.y < client.bottom &&
            static_cast<float>(at.x) < static_cast<float>(kSidebarWidth) * scale;
 }
 
@@ -761,6 +767,8 @@ void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save)
     }
     if (save) SessionChanged(*save);
     SyncSpace();
+    // The selected tab's page's status first, so the top row's update shows both together.
+    ShowPageStatus();
     sidebar_->Update(state_, pagesAnchor_);
     // A slide begins at once: the new page and the caption buttons' appearance drawn and the
     // strip's animation committed now, not on the next pass (the crossfade's first frame comes
@@ -803,6 +811,8 @@ void BrowserWindowController::LoadInTab(const std::string& tabID, const std::str
 }
 
 void BrowserWindowController::PageGone(const std::string& tabID) {
+    // Its status goes with it (BrowserStore.clearPage): a tab that comes back has no history.
+    pageStatus_.erase(tabID);
 #ifdef KITE_HAS_CEF
     if (!chromium_) return;
     chromium_->Close(tabID);
@@ -887,6 +897,70 @@ void BrowserWindowController::ReopenClosedTab() {
     if (state_.ReopenLastClosed()) SelectionMoved();
 }
 
+void BrowserWindowController::ShowPageStatus() {
+    const Tab* tab = state_.SelectedTab();
+    const auto found = tab ? pageStatus_.find(tab->id) : pageStatus_.end();
+    sidebar_->SetPageStatus(found != pageStatus_.end() ? found->second : PageStatus{});
+}
+
+void BrowserWindowController::ToggleSidebar() { SetSidebarShown(!sidebarShown_); }
+
+void BrowserWindowController::SetSidebarShown(bool shown) {
+    if (shown == sidebarShown_) return;
+    // Hiding ends a rename, keeping what was typed, as the field editor leaving a hidden view does.
+    if (!shown) sidebar_->EndRenaming(true);
+    sidebarShown_ = shown;
+    KillTimer(window_.Handle(), kToggleTimer);
+    // Like Arc: the final frames set once, the compositor drawing the frames between (no slide
+    // on a window no one sees: minimized, hidden, covered, locked).
+    const bool visible = Seen();
+    const bool wasToggling = toggling_;
+    const double duration = sidebar_->SetShown(shown, visible);
+    toggling_ = duration > 0;
+    // The display at its highest rate while it slides (docs/windows.md, Refresh rate).
+    if (toggling_ != wasToggling) FrameClock::BoostWithoutFrames(toggling_);
+    // The system menu's item says what it will do next (validateMenuItem's retitling).
+    if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
+        ModifyMenuW(menu, kToggleSidebarMenuID, MF_BYCOMMAND | MF_STRING, kToggleSidebarMenuID, ToggleSidebarMenuText().c_str());
+    }
+    // The page clear of the sidebar: a show moves it first, a hide at the end.
+    if (shown || !toggling_) MovePage();
+    // Shown again, what changed while it was hidden draws before the slide's first frame.
+    if (shown) {
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) {
+            OutputDebugStringW((L"Kite: the sidebar couldn't draw: " + problem + L"\n").c_str());
+        }
+        if (sidebar_->DeviceLost()) Draw();
+    }
+    if (compositor_) compositor_->Commit();
+    // The compositor starts it at the commit's frame, up to a frame after now: a frame at 60 Hz to
+    // spare, as the pages' settle.
+    if (toggling_) SetTimer(window_.Handle(), kToggleTimer, static_cast<UINT>(std::ceil(duration * 1000)) + 17, nullptr);
+}
+
+std::wstring BrowserWindowController::ToggleSidebarMenuText() const {
+    std::wstring text = Widen(ToggleSidebarTitle(sidebarShown_));
+    // A menu's key equivalent after a tab, as Windows' menus right-align it.
+    if (const std::optional<KeyShortcut> shortcut = MenuShortcut(shortcuts_, "toggleSidebar")) text += L"\t" + Widen(shortcut->DisplayString());
+    return text;
+}
+
+void BrowserWindowController::FinishToggle() {
+    KillTimer(window_.Handle(), kToggleTimer);
+    if (!toggling_) return;
+    toggling_ = false;
+    FrameClock::BoostWithoutFrames(false);
+    sidebar_->SettleToggle();
+    if (!sidebarShown_) MovePage();
+    if (compositor_) compositor_->Commit();
+}
+
+void BrowserWindowController::MovePage() {
+#ifdef KITE_HAS_CEF
+    if (chromium_) chromium_->SetBounds(ContentBounds());
+#endif
+}
+
 void BrowserWindowController::MakeCommands() {
     // What each shortcut's command does: the Mac's menu items of the same ids (MainMenu.swift).
     commands_ = {
@@ -905,6 +979,7 @@ void BrowserWindowController::MakeCommands() {
              const Tab* tab = state_.SelectedTab();
              if (!tab || !tab->url || !CopyText(window_.Handle(), Widen(*tab->url))) MessageBeep(MB_OK);
          }},
+        {"toggleSidebar", [this] { ToggleSidebar(); }},
         {"collapsePinnedSection",
          [this] {
              TogglePinnedSection(state_, state_.SelectedSpace().id);
@@ -1149,8 +1224,8 @@ void BrowserWindowController::OnSize() {
 bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
     static_assert([] {
         constexpr UINT ids[] = {MainWindow::kWakeMessage, CommandBarView::kRedrawMessage, SidebarView::kRedrawMessage, kFaviconsMessage,
-                                kFrameMessage, kSpaceIconsMessage, kMemoryPressureMessage, kHistoryMessage, kArcReadMessage,
-                                kArcSavedMessage, kOcclusionMessage, kPerfRequestMessage};
+                                kFrameMessage, kSpaceIconsMessage, kMemoryPressureMessage, kHistoryMessage, kArcReadMessage, kArcSavedMessage,
+                                kOcclusionMessage, kPerfRequestMessage};
         for (size_t i = 0; i < std::size(ids); ++i) {
             for (size_t j = i + 1; j < std::size(ids); ++j) {
                 if (ids[i] == ids[j]) return false;
@@ -1348,6 +1423,15 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     // The pages' slide has ended on the compositor.
     if (message == WM_TIMER && wParam == kSettleTimer) {
         FinishSettling();
+        return true;
+    }
+    if (message == WM_TIMER && wParam == kToggleTimer) {
+        FinishToggle();
+        return true;
+    }
+    if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == kToggleSidebarMenuID) {
+        RunCommand("toggleSidebar");
+        result = 0;
         return true;
     }
     if (message == kSpaceIconsMessage) {

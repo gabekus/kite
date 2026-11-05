@@ -45,7 +45,9 @@ struct PageEvents {
     std::function<void(const std::string& tabID, const std::string& title)> titleChanged;
     // The page's favicon: the first it lists, or empty for none (the Mac's faviconDidChange).
     std::function<void(const std::string& tabID, const std::string& url)> faviconChanged;
-    std::function<void(const std::string& tabID, bool loading)> loadingChanged;
+    // The page started or stopped loading, or its history moved (the Mac's navigationState:
+    // OnLoadingStateChange's isLoading, canGoBack and canGoForward).
+    std::function<void(const std::string& tabID, bool loading, bool canGoBack, bool canGoForward)> loadingChanged;
     // A page opened a popup or a target=_blank link: Kite hosts it in a new tab with this id,
     // keeping window.opener (sign-in popups need it), as the Mac does. `url` may be empty
     // (window.open('') before the opener writes to it).
