@@ -42,8 +42,13 @@ public:
     bool IsValid() const { return hwnd_ != nullptr; }
     HWND Handle() const { return hwnd_; }
     void Show(int showCommand);
-    // Shows the window behind every other one without activating it, for quiet test runs
-    // (like the Mac's KITE_DIAGNOSTICS launches).
+    // From now on the window doesn't activate on its own, for a quiet run (like the Mac's
+    // KITE_DIAGNOSTICS launches): Windows doesn't hand it the foreground when the window in
+    // front closes or is minimized (WS_EX_NOACTIVATE; WS_EX_APPWINDOW keeps its taskbar
+    // button, whose click still brings it forward), and a click on it or on a page in it
+    // doesn't activate it (WM_MOUSEACTIVATE).
+    void NeverActivate();
+    // Shows the window behind every other one without activating it.
     void ShowBehindOtherWindows();
     // Lays the window out at `scale`× (96 × scale DPI) whatever its monitor's scale, for
     // captures that must compare with the Mac's 2× ones on any display. Monitor changes then
@@ -94,6 +99,8 @@ private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     LRESULT Handle(UINT message, WPARAM wParam, LPARAM lParam);
     void ResizeClient(int width, int height);
+    // The window's big and small icons (taskbar, Alt+Tab) at `dpi`, replacing the last ones.
+    void SetIcons(UINT dpi);
     // The window rect around a client area `width` × `height` px: the frame's borders but no
     // caption (WM_NCCALCSIZE takes it off).
     RECT FrameAround(int width, int height) const;
@@ -109,7 +116,10 @@ private:
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
     bool allowLargerThanScreen_ = false;
     bool fixedScale_ = false;
+    bool neverActivates_ = false;  // NeverActivate
     HMONITOR autoHideMonitor_ = nullptr;
+    HICON bigIcon_ = nullptr;  // WM_SETICON's, owned
+    HICON smallIcon_ = nullptr;
     std::array<bool, 4> autoHide_{};
 };
 

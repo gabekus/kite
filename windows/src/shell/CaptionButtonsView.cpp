@@ -274,7 +274,7 @@ std::wstring CaptionButtonsView::Draw(Pixels* readBack, POINT* origin) {
     surfaceHeight_ = height;
     if (!dirty_ && !readBack) return {};
     error = compositor_->DrawSurface(
-        surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawContent(context, width); }, readBack, hr);
+        perf::View::CaptionButtons, surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawContent(context, width); }, readBack, hr);
     if (!error.empty()) {
         deviceLost_ = IsDeviceLost(hr);
         return L"the caption buttons: " + error;

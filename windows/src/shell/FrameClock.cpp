@@ -1,3 +1,5 @@
+// See FrameClock.h.
+
 #include "shell/FrameClock.h"
 
 #include <dcomp.h>
@@ -54,14 +56,22 @@ FrameClock::~FrameClock() {
     thread_.join();
 }
 
-void FrameClock::Start() {
+void FrameClock::Start(bool boost) {
+    bool wasRunning = false;
     {
         std::lock_guard lock(mutex_);
-        if (running_) return;
+        wasRunning = running_;
         running_ = true;
     }
-    Boost(true);
-    wake_.notify_one();
+    if (boost) SetBoost(true);
+    if (!wasRunning) wake_.notify_one();
+}
+
+void FrameClock::SetBoost(bool boost) {
+    // Only a running clock boosts: Stop has dropped it.
+    if (boost == boosted_ || (boost && !running_)) return;
+    Boost(boost);
+    boosted_ = boost;
 }
 
 void FrameClock::Stop() {
@@ -70,7 +80,7 @@ void FrameClock::Stop() {
         if (!running_) return;
         running_ = false;
     }
-    Boost(false);
+    SetBoost(false);
 }
 
 double FrameClock::Now() {
@@ -79,9 +89,13 @@ double FrameClock::Now() {
     return static_cast<double>(now.QuadPart) / Frequency();
 }
 
-double FrameClock::NextFrameTime(IDCompositionDevice* device) {
+double FrameClock::NextFrameTime(IDCompositionDevice* device, double* rateHz) {
     DCOMPOSITION_FRAME_STATISTICS statistics{};
+    if (rateHz) *rateHz = 0;
     if (!device || FAILED(device->GetFrameStatistics(&statistics)) || statistics.timeFrequency.QuadPart <= 0) return Now();
+    if (rateHz && statistics.currentCompositionRate.Denominator) {
+        *rateHz = static_cast<double>(statistics.currentCompositionRate.Numerator) / statistics.currentCompositionRate.Denominator;
+    }
     const double next = static_cast<double>(statistics.nextEstimatedFrameTime.QuadPart) /
                         static_cast<double>(statistics.timeFrequency.QuadPart);
     // Its clock is QueryPerformanceCounter's; an estimate behind now (an idle compositor) is now.

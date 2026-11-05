@@ -1,0 +1,132 @@
+{
+  "state": {
+    "adblockAllowedHosts": [],
+    "allowsJavaScriptFromAppleEvents": false,
+    "archiveAfter": "never",
+    "archived": [],
+    "blocksAds": false,
+    "darkPageHosts": [],
+    "darkPages": "matchSystem",
+    "devModeReloadState": "reload",
+    "developerModeEnabledForHosts": [],
+    "favorites": [],
+    "hasSeenLiveFolderIntro": true,
+    "liveFoldersTurnedOff": [],
+    "pageAppearance": "automatic",
+    "recentlyClosed": [],
+    "searchEngine": "duckDuckGo",
+    "selectedSpaceID": "5EED0000-0000-4000-8000-00000000000A",
+    "showsToolbar": false,
+    "siteSearchDefaultsSeeded": 1,
+    "siteSearches": [],
+    "spaces": [
+      {
+        "icon": "🏠",
+        "id": "5EED0000-0000-4000-8000-00000000000A",
+        "name": "Perf A",
+        "pinnedItems": [],
+        "selectedTabID": "5EED0000-0000-4000-8000-0000000000A1",
+        "tabs": [
+          {
+            "id": "5EED0000-0000-4000-8000-0000000000A1",
+            "lastActiveAt": 783000001,
+            "title": "Static page 1",
+            "url": "http://127.0.0.1:18765/p1.html"
+          },
+          {
+            "id": "5EED0000-0000-4000-8000-0000000000A2",
+            "lastActiveAt": 783000002,
+            "title": "Static page 2",
+            "url": "http://127.0.0.2:18765/p2.html"
+          },
+          {
+            "id": "5EED0000-0000-4000-8000-0000000000A3",
+            "lastActiveAt": 783000003,
+            "title": "Static page 3",
+            "url": "http://127.0.0.3:18765/p3.html"
+          },
+          {
+            "id": "5EED0000-0000-4000-8000-0000000000A4",
+            "lastActiveAt": 783000004,
+            "title": "Static page 4",
+            "url": "http://127.0.0.4:18765/p4.html"
+          },
+          {
+            "id": "5EED0000-0000-4000-8000-0000000000A5",
+            "lastActiveAt": 783000005,
+            "title": "Static page 5",
+            "url": "http://127.0.0.5:18765/p5.html"
+          },
+          {
+            "id": "5EED0000-0000-4000-8000-0000000000A6",
+            "lastActiveAt": 783000006,
+            "title": "Static page 6",
+            "url": "http://127.0.0.6:18765/p6.html"
+          },
+          {
+            "id": "5EED0000-0000-4000-8000-0000000000A7",
+            "lastActiveAt": 783000007,
+            "title": "Static page 7",
+            "url": "http://127.0.0.7:18765/p7.html"
+          },
+          {
+            "id": "5EED0000-0000-4000-8000-0000000000A8",
+            "lastActiveAt": 783000008,
+            "title": "Static page 8",
+            "url": "http://127.0.0.8:18765/p8.html"
+          }
+        ],
+        "theme": {
+          "colors": [
+            {
+              "b": 0.1,
+              "g": 0.1,
+              "r": 0.1
+            }
+          ],
+          "grain": 0,
+          "tint": 0.44
+        }
+      },
+      {
+        "icon": "💼",
+        "id": "5EED0000-0000-4000-8000-00000000000B",
+        "name": "Perf B",
+        "pinnedItems": [],
+        "selectedTabID": "5EED0000-0000-4000-8000-0000000000B1",
+        "tabs": [
+          {
+            "id": "5EED0000-0000-4000-8000-0000000000B1",
+            "lastActiveAt": 783000001,
+            "title": "Static page 9",
+            "url": "http://127.0.0.9:18765/p9.html"
+          },
+          {
+            "id": "5EED0000-0000-4000-8000-0000000000B2",
+            "lastActiveAt": 783000002,
+            "title": "Static page 10",
+            "url": "http://127.0.0.10:18765/p10.html"
+          }
+        ],
+        "theme": {
+          "colors": [
+            {
+              "b": 0.4235294,
+              "g": 0.6039216,
+              "r": 1
+            },
+            {
+              "b": 0.60784316,
+              "g": 0.38431373,
+              "r": 0.9411765
+            }
+          ],
+          "grain": 0.35
+        }
+      }
+    ],
+    "spacesWithCollapsedPinnedSections": [],
+    "warnsBeforeQuitting": false
+  },
+  "version": 1
+}

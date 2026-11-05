@@ -5,13 +5,17 @@ import SwiftUI
 /// scrolls left forever as two copies 32pt apart, with a 4pt fade on the leading edge and 8pt on
 /// the trailing edge. Like Arc's, the text sizes itself as a one-line `Text` and draws in an
 /// overlay that reaches past its frame by the fade widths, so at rest the title sits exactly where
-/// a plain `Text` would. Unlike Arc's, the timeline pauses while the text fits.
+/// a plain `Text` would. Unlike Arc's, the timeline pauses while the text fits or rests, and
+/// draws at most 60 times a second: the title moves (width + 32) / 20 pt/s, a fraction of a
+/// pixel per frame even at 60, and the Mini Player shows for as long as music plays.
 struct MarqueeText: View {
     let text: String
     let font: Font
 
     /// Arc's `ViewModel.startAt`: when the text starts moving.
     @State private var startAt = Date.distantFuture
+    /// Past `startAt`: until then every frame would be the same.
+    @State private var moving = false
     @State private var textWidth: CGFloat = 0
     @State private var frameWidth: CGFloat = 0
 
@@ -41,6 +45,12 @@ struct MarqueeText: View {
             // Arc pushes startAt to now + 3 on every frame while the text fits, so a title that
             // stops fitting (a narrower sidebar, the hover buttons) waits 3 s before it moves.
             .onChange(of: overflows) { if overflows { restart() } }
+            .task(id: startAt) {
+                guard startAt != .distantFuture else { return }
+                let wait = startAt.timeIntervalSinceNow
+                if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+                if !Task.isCancelled { moving = true }
+            }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(text)
             .accessibilityIdentifier("MarqueeText")
@@ -48,11 +58,12 @@ struct MarqueeText: View {
     }
 
     private func restart() {
+        moving = false
         startAt = Date().addingTimeInterval(Marquee.startDelay)
     }
 
     private var scroller: some View {
-        TimelineView(.animation(minimumInterval: nil, paused: !overflows)) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !overflows || !moving)) { context in
             let elapsed = context.date.timeIntervalSince(startAt)
             Canvas { graphics, size in
                 draw(in: &graphics, size: size, elapsed: elapsed)
