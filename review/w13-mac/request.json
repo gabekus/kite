@@ -245,6 +245,23 @@
       }
     },
     {
+      "name": "light-selected",
+      "holds": "favorites.json on a light theme (Work's peach): YouTube selected, white at 0.8 with its ring and no tint at rest; the others white at 0.35",
+      "session": {
+        "ref": "origin/helix/W13-favorites",
+        "path": "windows/helix/states/favorites-light.json"
+      },
+      "unverified": "as rest: YouTube's page loads and may report its own icon"
+    },
+    {
+      "name": "light-empty",
+      "holds": "no favorites on a light theme: the empty state's dashed outline and text in black at their opacities",
+      "session": {
+        "ref": "origin/helix/W13-favorites",
+        "path": "windows/helix/states/favorites-empty-light.json"
+      }
+    },
+    {
       "name": "hover",
       "holds": "a hovered unselected favorite (white 0.20 for 0.10)",
       "skip": "a pointer resting on a FavoritePaneView: not a SAFE_TARGETS view and no hover hook; Windows' --favorite-hover only"

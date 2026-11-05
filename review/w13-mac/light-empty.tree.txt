@@ -1,0 +1,11 @@
+## at launch
+Window 18101, 1280×820 pt at 2×. Points from the window's top-left.
+Nothing matches "FavoritePaneView".
+
+## before the capture
+Window 18101, 1280×820 pt at 2×. Points from the window's top-left.
+Nothing matches "FavoritePaneView".
+
+## after the capture
+Window 18101, 1280×820 pt at 2×. Points from the window's top-left.
+Nothing matches "FavoritePaneView".

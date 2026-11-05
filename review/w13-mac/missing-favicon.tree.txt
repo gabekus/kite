@@ -1,5 +1,5 @@
 ## at launch
-Window 18007, 1280×820 pt at 2×. Points from the window's top-left.
+Window 18095, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.1.1.0 FavoritePaneView [8,90 69.33×47]
 0.3.1.2.0 FavoritePaneView [85.33,90 69.33×47]
@@ -10,7 +10,7 @@ Window 18007, 1280×820 pt at 2×. Points from the window's top-left.
 </untrusted-page-content>
 
 ## before the capture
-Window 18007, 1280×820 pt at 2×. Points from the window's top-left.
+Window 18095, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.1.1.0 FavoritePaneView [8,90 69.33×47]
 0.3.1.2.0 FavoritePaneView [85.33,90 69.33×47]
@@ -21,7 +21,7 @@ Window 18007, 1280×820 pt at 2×. Points from the window's top-left.
 </untrusted-page-content>
 
 ## after the capture
-Window 18007, 1280×820 pt at 2×. Points from the window's top-left.
+Window 18095, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.1.1.0 FavoritePaneView [8,90 69.33×47]
 0.3.1.2.0 FavoritePaneView [85.33,90 69.33×47]
