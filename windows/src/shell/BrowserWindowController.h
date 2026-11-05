@@ -237,9 +237,9 @@ public:
     // What's left of `deadline`, for a wait that takes milliseconds.
     static std::chrono::milliseconds Left(std::chrono::steady_clock::time_point deadline);
 
-    // How long the window waits for the session's and downloads.json's last writes, together,
-    // when Windows ends the session (WM_ENDSESSION: the process may end as soon as it returns).
-    // Giving up is safe: the atomic write leaves the old file or the new one.
+    // How long the window waits for the session's, history's and downloads.json's last writes,
+    // together, when Windows ends the session (WM_ENDSESSION: the process may end as soon as it
+    // returns). Giving up is safe: the atomic write leaves the old file or the new one.
     static constexpr std::chrono::milliseconds kEndSessionFlush{3000};
 
 private:
@@ -250,8 +250,8 @@ private:
     // The window's timers and posted messages. The timers' ids on this window, shared out across
     // the checkpoints so two never collide (the ones not in this branch yet are reserved):
     //   1 smoke, 2 archive, 3 settle, 4 session save (W11), 5 history (W25a), 6 Arc merge (W33a),
-    //   7 sidebar toggle (W12), 8 downloads save (W20a), 9 a test's tab close, 11 Chromium's stall
-    //   watch, 12 Change Space Icon…'s 0.15 s (W9e).
+    //   7 sidebar toggle (W12), 8 downloads save (W20a), 9 test tab close, 10 find (W21),
+    //   11 Chromium::kStallTimer (the parked pages' stall check), 12 Change Space Icon…'s 0.15 s (W9e).
     // 0x4B42 and up are the views' (the command bar's caret, Chromium's close deadline, the
     // sidebar's tip and drop, the rename field's caret; 0x4B49 the icon picker's caret, W9e). The WM_APP messages, each its own: +1
     // MainWindow::kWakeMessage, +2 the command bar's redraw, +3 the sidebar's redraw, +4 favicons,
@@ -294,9 +294,9 @@ private:
     static constexpr UINT_PTR kIconPickerTimer = 12;
     // Posted by history's worker when a profile's file has been read (HistoryStores::SetWake).
     static constexpr UINT kHistoryMessage = WM_APP + 8;
-    // --perf-control's queued requests (QueuePerfRequest).
     // Posted by the downloads writer's worker once it has read downloads.json.
     static constexpr UINT kDownloadsReadMessage = WM_APP + 11;
+    // --perf-control's queued requests (QueuePerfRequest).
     static constexpr UINT kPerfRequestMessage = WM_APP + 20;
 
     BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,

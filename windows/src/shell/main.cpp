@@ -659,12 +659,12 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         }
     }
     kite::SessionWriter writer(session, maySave, std::move(clock));
-    // A write still stuck as Kite ends (a disk that hangs past kQuitFlush), the session's or
-    // history's: the process ends there, without the C++ library's teardown running under the
-    // writer's thread. The file is the old one or the new one (the writes are atomic); the run is
-    // a failed save.
+    // A write still stuck as Kite ends (a disk that hangs past kQuitFlush), the session's,
+    // history's or downloads.json's: the process ends there, without the C++ library's teardown
+    // running under the writer's thread. The file is the old one or the new one (the writes are
+    // atomic); the run is a failed save.
     const auto endStuck = [quiet] {
-        const std::wstring message = L"Kite: a last write (the session or history) didn't finish; Kite ended without waiting for it\n";
+        const std::wstring message = L"Kite: a last write (the session, history or downloads.json) didn't finish; Kite ended without waiting for it\n";
         OutputDebugStringW(message.c_str());
         if (quiet) WriteUtf8(STD_ERROR_HANDLE, message);
         TerminateProcess(GetCurrentProcess(), kSaveFailed);
@@ -856,20 +856,20 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
 
     controller->RunMessageLoop();
     kite::perf::Mark("loop-end");
-    // The window's close handed over the last saves, the session's and history's; wait for them
-    // now that the window is gone (no frozen window), kQuitFlush at most for all (the atomic
-    // writes leave the old file or the new one). Before Chromium shuts down: until then this Kite
-    // holds the profile, so a launch in the meantime hands over to it rather than read a file
-    // about to be replaced. One deadline for every write still to come: the session's, history's,
-    // then downloads.json's (a read the window never got is joined first, then its last save).
+    // The window's close handed over the last saves, the session's, history's and
+    // downloads.json's; wait for them now that the window is gone (no frozen window), kQuitFlush
+    // at most for all (the atomic writes leave the old file or the new one). Before Chromium shuts
+    // down: until then this Kite holds the profile, so a launch in the meantime hands over to it
+    // rather than read a file about to be replaced. One deadline for every write still to come.
+    // downloads.json's is handed over first (a read the window never got is joined, then its last
+    // save), so it runs alongside the session's and history's, each on its own worker: a slow
+    // session write can't use up the deadline before the downloads' save has even started.
     const kite::Deadline quitDeadline = kite::DeadlineAfter(kQuitFlush);
+    if (downloadsWriter) controller->FinishDownloads(quitDeadline);
     const std::string saveError = writer.Flush(quitDeadline);
     const std::string historyError = history.Flush(quitDeadline);
     std::string downloadsError;
-    if (downloadsWriter) {
-        controller->FinishDownloads(quitDeadline);
-        downloadsError = downloadsWriter->Flush(kite::BrowserWindowController::Left(quitDeadline));
-    }
+    if (downloadsWriter) downloadsError = downloadsWriter->Flush(kite::BrowserWindowController::Left(quitDeadline));
     // Still writing after that: end here, before Chromium's shutdown or a dialog, while the
     // stuck write may yet rename (no other Kite can have the profile until this one is gone).
     if (writer.Writing() || history.Writing() || (downloadsWriter && downloadsWriter->Writing())) endStuck();
