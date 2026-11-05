@@ -189,13 +189,13 @@ private:
     static constexpr UINT kArchiveIntervalMs = 15 * 60 * 1000;
     // When the pages' slide on the compositor has ended (its duration and a frame, rounded up).
     static constexpr UINT_PTR kSettleTimer = 3;
-    // When the sidebar's hide or show has ended on the compositor (the same allowance).
-    static constexpr UINT_PTR kToggleTimer = 4;
     // The session's save, armed by a change (SaveSchedule) and gone once it fires: never idle.
-    // 7, not W11's 4, which is the sidebar toggle's (5 and 6 are W25a's history and W33a's Arc merge).
-    static constexpr UINT_PTR kSaveTimer = 7;
+    static constexpr UINT_PTR kSaveTimer = 4;
     // History's save (HistoryStores::NextSaveIn), armed by a change and gone once it fires.
     static constexpr UINT_PTR kHistoryTimer = 5;
+    // (6 is Import from Arc's merge, kArcMergeTimer; 8 the downloads' save.)
+    // When the sidebar's hide or show has ended on the compositor (the same allowance).
+    static constexpr UINT_PTR kToggleTimer = 7;
     // View › Hide Sidebar in the window's system menu (Alt+Space, a right-click on the band above the
     // card) until Windows has a menu of Kite's own: a WM_SYSCOMMAND id, under 0xF000.
     static constexpr UINT kToggleSidebarMenuID = 0x0A20;
