@@ -1,0 +1,147 @@
+{
+  "state": {
+    "adblockAllowedHosts": [
+      "news.example.com"
+    ],
+    "allowsJavaScriptFromAppleEvents": false,
+    "archiveAfter": "never",
+    "archived": [],
+    "blocksAds": true,
+    "darkPageHosts": [],
+    "darkPages": "matchSystem",
+    "devModeReloadState": "reload",
+    "developerModeEnabledForHosts": [],
+    "favorites": [
+      {
+        "id": "0B1E5C4A-7A0E-4C7B-9C55-1F3B7D0E2A10",
+        "lastActiveAt": 783000000.5,
+        "pinnedURL": "https://mail.example.com",
+        "title": "Mail",
+        "url": "https://mail.example.com/inbox"
+      }
+    ],
+    "hasSeenLiveFolderIntro": false,
+    "liveFoldersTurnedOff": [],
+    "pageAppearance": "automatic",
+    "recentlyClosed": [],
+    "searchEngine": "duckDuckGo",
+    "selectedSpaceID": "5F0C9A2B-1D3E-4F6A-9B8C-7D6E5F4A3B21",
+    "showsToolbar": false,
+    "siteSearchDefaultsSeeded": 1,
+    "siteSearches": [],
+    "spaces": [
+      {
+        "icon": "🏠",
+        "id": "5F0C9A2B-1D3E-4F6A-9B8C-7D6E5F4A3B21",
+        "name": "Personal",
+        "pinnedItems": [
+          {
+            "tab": {
+              "_0": {
+                "id": "9C8B7A6D-5E4F-4A3B-8C2D-1E0F9A8B7C6D",
+                "lastActiveAt": 782999000,
+                "pinnedURL": "https://docs.example.com",
+                "title": "Docs",
+                "url": "https://docs.example.com/page"
+              }
+            }
+          },
+          {
+            "folder": {
+              "_0": {
+                "id": "2A3B4C5D-6E7F-4801-9A2B-3C4D5E6F7A8B",
+                "isExpanded": false,
+                "items": [
+                  {
+                    "tab": {
+                      "_0": {
+                        "customTitle": "Renamed",
+                        "id": "7F6E5D4C-3B2A-4190-8F7E-6D5C4B3A2918",
+                        "lastActiveAt": 782998000,
+                        "pinnedURL": "https://shop.example.com",
+                        "title": "Shop",
+                        "url": "https://shop.example.com"
+                      }
+                    }
+                  }
+                ],
+                "name": "Work stuff"
+              }
+            }
+          }
+        ],
+        "selectedTabID": "C1D2E3F4-A5B6-4C7D-8E9F-0A1B2C3D4E5F",
+        "tabs": [
+          {
+            "faviconURL": "https://example.com/favicon.ico",
+            "id": "C1D2E3F4-A5B6-4C7D-8E9F-0A1B2C3D4E5F",
+            "lastActiveAt": 783000100.25,
+            "title": "",
+            "url": "https://example.com/"
+          }
+        ],
+        "theme": {
+          "colors": [
+            {
+              "b": 0.1,
+              "g": 0.1,
+              "r": 0.1
+            }
+          ],
+          "grain": 0,
+          "tint": 0.44
+        }
+      },
+      {
+        "about": "Komado: orders and suppliers",
+        "icon": "symbol:briefcase",
+        "id": "6A1D2F0C-3E4B-4B8A-8F21-2C9D0E7A5B33",
+        "name": "Work",
+        "pinned": [
+          {
+            "id": "3D4E5F60-7182-4A93-B4C5-D6E7F8091A2B",
+            "lastActiveAt": 782000000,
+            "title": "Old pinned",
+            "url": "https://legacy.example.com"
+          }
+        ],
+        "tabs": [],
+        "theme": {
+          "colors": [
+            {
+              "b": 0.4235294,
+              "g": 0.6039216,
+              "r": 1
+            },
+            {
+              "b": 0.60784316,
+              "g": 0.38431373,
+              "r": 0.9411765
+            }
+          ],
+          "grain": 0.35
+        }
+      },
+      {
+        "icon": "📚",
+        "id": "8E2F4A6B-5C7D-4E9F-A1B3-C5D7E9F1A3B5",
+        "name": "Reading",
+        "pinnedItems": [],
+        "tabs": [],
+        "theme": {
+          "colors": [
+            {
+              "b": 0.85,
+              "g": 0.55,
+              "r": 0.3
+            }
+          ],
+          "grain": 0.35
+        }
+      }
+    ],
+    "spacesWithCollapsedPinnedSections": [],
+    "warnsBeforeQuitting": false
+  },
+  "version": 1
+}

@@ -234,7 +234,7 @@ final class SidebarSpaceList: NSView {
     private func tabModel(_ tab: BrowserTab, pinned: Bool, selected: Bool, depth: Int, space: UUID, parent: UUID?,
                           groupHeader: TodayTabGroup?) -> SidebarRowModel.Tab {
         let live = parent.flatMap { store.state.folder(matching: $0.uuidString)?.folder }.flatMap { $0.live == nil ? nil : $0 }
-        let page = store.pages[tab.id]
+        let audio = store.tabAudio[tab.id]
         let controlled = claudeControlled.contains(tab.id)
         var claudeControl: String?
         if controlled {
@@ -250,8 +250,8 @@ final class SidebarSpaceList: NSView {
             isRenaming: store.renamingTabID == tab.id,
             aiRename: store.aiRenames[tab.id],
             canReset: pinned && tab.hasLeftPinnedURL,
-            isAudible: page?.isAudible ?? false,
-            isMuted: page?.isAudioMuted ?? false,
+            isAudible: audio?.isAudible ?? false,
+            isMuted: audio?.isMuted ?? false,
             isUnread: live?.isUnread(tab) ?? false,
             liveIconTab: live != nil,
             peek: store.linkPeekBadges[tab.id],
@@ -273,8 +273,8 @@ final class SidebarSpaceList: NSView {
                             parent: UUID?, groupHeader: TodayTabGroup?) -> SidebarRowModel.Split {
         .init(split: split, tabs: tabs, space: space, parent: parent, depth: depth, isPinned: pinned,
               focusedID: tabs.contains { $0.id == selectedID } ? selectedID : nil,
-              audio: tabs.map { (store.pages[$0.id]?.isAudible ?? false, store.pages[$0.id]?.isAudioMuted ?? false) }
-                  .map { SidebarRowModel.Split.Audio(audible: $0.0, muted: $0.1) },
+              audio: tabs.map { store.tabAudio[$0.id] ?? TabAudio() }
+                  .map { SidebarRowModel.Split.Audio(audible: $0.isAudible, muted: $0.isMuted) },
               optionHeld: HeldModifiers.shared.flags.chordModifiers == .alt,
               groupHeader: groupHeader)
     }

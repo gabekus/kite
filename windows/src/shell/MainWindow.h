@@ -75,8 +75,9 @@ public:
     // first, and WM_CLOSE comes again once they're ready).
     std::function<bool()> mayClose;
     // Runs before the window is destroyed (WM_CLOSE), and at logoff or shutdown
-    // (WM_ENDSESSION), e.g. to save the session.
-    std::function<void()> onClose;
+    // (WM_ENDSESSION, `endingSession` true: the process may end once it returns), e.g. to save
+    // the session.
+    std::function<void(bool endingSession)> onClose;
     // kWakeMessage arrived.
     std::function<void()> onWake;
     // The window got keyboard focus (activated, or restored from minimized).

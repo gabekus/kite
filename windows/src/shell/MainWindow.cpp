@@ -305,11 +305,11 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         if (neverActivates_) return MA_NOACTIVATE;
         break;
     case WM_ENDSESSION:
-        if (wParam && onClose) onClose();
+        if (wParam && onClose) onClose(true);
         return 0;
     case WM_CLOSE:
         if (mayClose && !mayClose()) return 0;
-        if (onClose) onClose();
+        if (onClose) onClose(false);
         DestroyWindow(hwnd_);
         return 0;
     case WM_NCDESTROY:
