@@ -150,6 +150,12 @@ public enum FindTestHook: Equatable, Sendable {
             + "progress: \(String(format: "%.2f", progress)), content process: \(processText(contentProcess)))"
     }
 
+    /// A tab's page being made (PagePool), on a run with a find hook: whether it has a URL to load and where a saved
+    /// state to restore came from (`PageRestore.Source`). No URL is written.
+    public static func pageMadeLine(hasURL: Bool, restoredFrom source: PageRestore.Source) -> String {
+        "\(logPrefix) page: made (URL to load: \(hasURL ? "yes" : "no"), saved state: \(source.rawValue))"
+    }
+
     /// The stderr line when no page finished loading in time. The bar opens anyway (`fallbackLine`).
     public static func timeoutLine(_ wait: Wait) -> String {
         func flag(_ value: Bool?) -> String { value.map { $0 ? "yes" : "no" } ?? "unknown" }
