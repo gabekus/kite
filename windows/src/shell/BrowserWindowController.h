@@ -76,6 +76,7 @@
 #include "shell/FrameClock.h"
 #include "shell/MainWindow.h"
 #include "shell/MemoryPressure.h"
+#include "shell/Occlusion.h"
 #include "shell/Renderer.h"
 #include "shell/SidebarView.h"
 #include "shell/ThemeSwatchesView.h"
@@ -120,6 +121,8 @@ public:
         bool perfControl = false;
         // --chromium-switches: added to Chromium's command line (test profiles only).
         std::vector<std::string> chromiumSwitches;
+        // --occlusion-log: shell/Occlusion's verdicts, a JSON line each (empty: none).
+        std::filesystem::path occlusionLog;
         // The profile's SpaceIcons folder: the pictures chosen as space icons (a capture
         // decodes them in place, the rest on a worker).
         std::filesystem::path spaceIcons;
@@ -322,6 +325,8 @@ private:
     static constexpr UINT kMemoryPressureMessage = WM_APP + 7;
     // Posted by history's worker when a profile's file has been read (HistoryStores::SetWake).
     static constexpr UINT kHistoryMessage = WM_APP + 8;
+    // Posted by shell/Occlusion when its verdict changes (the shared WM_APP allocation gives P2 +12).
+    static constexpr UINT kOcclusionMessage = WM_APP + 12;
     // Posted by the downloads writer's worker once it has read downloads.json.
     static constexpr UINT kDownloadsReadMessage = WM_APP + 11;
     // --perf-control's queued requests (QueuePerfRequest).
@@ -373,6 +378,24 @@ private:
     // swipe's step drawn for the composition frame at `time` (the pages' slide runs on the
     // compositor). `rateHz` is the display's, for --perf-log (0 when it isn't on).
     void Frame(double time, double rateHz);
+    // Whether anyone can see the window: shown, not minimized, and not hidden by shell/
+    // Occlusion (covered, locked, display off, another desktop). What animates on screen
+    // (the crossfade, the pages' slide) runs only while it is.
+    bool Seen() const;
+    // shell/Occlusion's verdict changed: while the window can't be seen, its page is hidden
+    // (Chromium stops drawing it) and a crossfade lands at once, as the Mac's ThemeView skips
+    // it for an occluded window.
+    void OcclusionChanged();
+    void SetOccluded(bool hidden);
+    // Watching whether the window can be seen, or not: on from the start but for test runs;
+    // under --perf-control only while kiteperf asks ({"occlusion":"on"}, its covered phase).
+    void StartOcclusion();
+    void StopOcclusion();
+    // A window of Kite's process is the foreground window.
+    bool KiteInFront() const;
+    // The frame clock stops for an unseen window, unless something that isn't drawing still
+    // needs its frames.
+    void StopFrameClockUnseen();
     std::wstring DrawAt(double time, Pixels* readBack);
     // The smoke test's space switch, there and back, run to rest.
     std::wstring SmokeTestSpaces();
@@ -650,7 +673,7 @@ private:
     // from the message loop (RunPerfRequests), so the sender isn't held while it runs and its
     // dispatch is timed like any other. False when it isn't one, or the command does nothing now.
     struct PerfRequest {
-        enum class Kind { Command, Mark, Open, Move, Leave } kind;
+        enum class Kind { Command, Mark, Open, Move, Leave, Occlusion } kind;
         std::string text;
         int64_t x = 0, y = 0, qpc = 0;
     };
@@ -762,6 +785,11 @@ private:
     bool swipeMoved_ = false;  // since the clock's last frame drew
     // A touchpad gesture decided vertical over the list: the rest of it scrolls the list.
     bool listScrolling_ = false;
+    // Whether the window can be seen (after the window, which it posts to, in destruction).
+    std::unique_ptr<Occlusion> occlusion_;
+    bool occluded_ = false;   // the verdict as last handled: hidden for any reason
+    bool touchpadFrames_ = false;  // the touchpad still needed frames at the clock's last one
+    occlusion::PointerRecovery pointerRecovery_;
     std::unique_ptr<Compositor> compositor_;
     std::unique_ptr<Favicons> favicons_;
     OneShotFlags oneShotFlags_;  // the profile's (the favorites' empty state)

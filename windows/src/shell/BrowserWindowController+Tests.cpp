@@ -63,7 +63,7 @@ bool BrowserWindowController::BoostsBalance() const {
 }
 
 std::wstring BrowserWindowController::RunToRest(const wchar_t* what) {
-    const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
+    const bool visible = Seen();
     const bool fades = theme_.Fading();
     if (visible && !sidebarSliding_) return std::wstring(what) + L" didn't slide the pages";
     if (!visible && (sidebarSliding_ || fades)) return std::wstring(what) + L" animated a hidden window";

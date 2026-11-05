@@ -328,6 +328,12 @@ std::wstring BrowserWindowController::Init() {
     window_.filter = [this](UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
         return Filter(message, wParam, lParam, result);
     };
+    // Whether the window can be seen. Not for a capture, which draws one frame and goes, nor
+    // for a smoke test or a frame log, whose checks of the slide and the crossfade would pass
+    // without a frame if the run were covered (a quiet run usually is). Nor under
+    // --perf-control: kiteperf opens Kite behind other windows, so what it measured would hang
+    // on what else is on the desktop; it turns occlusion on for its covered phase.
+    if (!options_.capture && !options_.smokeTest && !options_.frameLog && !options_.perfControl) StartOcclusion();
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE): what the pages
     // reported runs first (titles, addresses), then the session, history and downloads.json are
     // saved at once. Closing doesn't wait for the writes (main.cpp does, once the window is gone);
@@ -336,6 +342,7 @@ std::wstring BrowserWindowController::Init() {
     window_.onClose = [this](bool endingSession) {
         // First, so an Import from Arc whose dialog is still up does nothing more.
         closing_ = true;
+        occlusion_.reset();  // its thread reads the window
         clock_->Stop();
         // A slide still running lets the display's rate go now, not when the controller goes.
         slideBoost_.Set(false);
@@ -385,13 +392,18 @@ void BrowserWindowController::ApplyAppearance(const Theme& theme) {
 
 // MARK: Spaces
 
+bool BrowserWindowController::Seen() const {
+    return IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle()) && !occluded_;
+}
+
 void BrowserWindowController::SetTheme(const Theme& theme) {
-    // Nothing on screen to fade: it's simply the new theme when the window shows again.
-    if (!IsWindowVisible(window_.Handle()) || IsIconic(window_.Handle())) {
-        if (theme != theme_.to || theme_.Fading()) theme_.Snap(theme);
-        return;
-    }
-    if (theme_.Set(theme, FrameClock::Now())) clock_->Start();
+    // Nothing on screen to fade (minimized, hidden, covered, locked, display off, another
+    // desktop): it lands at once (core's CrossfadeTo). Drawn now if there's a window to draw
+    // into, so it's right even if the window is seen after all; a minimized one draws it on
+    // restore (OnSize).
+    bool snapped = false;
+    if (occlusion::CrossfadeTo(theme_, theme, FrameClock::Now(), Seen(), snapped)) clock_->Start();
+    else if (snapped && IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle())) Draw();
 }
 
 void BrowserWindowController::SyncSpace() {
@@ -413,9 +425,8 @@ void BrowserWindowController::SpaceChanged(size_t old, size_t now) {
     KillTimer(window_.Handle(), kSettleTimer);
     pagesAnchor_ = state_.spaces[old].id;
     const float from = (now > old ? 1.0f : -1.0f) * static_cast<float>(kSidebarWidth);
-    // No sidebar on screen to slide (the window or the sidebar hidden): just land.
-    const double duration =
-        IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle()) && sidebarShown_ ? sidebar_->SlidePages(from, 0) : 0;
+    // No sidebar anyone sees to slide (the window unseen, or the sidebar hidden): just land.
+    const double duration = Seen() && sidebarShown_ ? sidebar_->SlidePages(from, 0) : 0;
     if (duration <= 0) {
         SetSliding(false);
         return FinishSettling();
@@ -537,7 +548,8 @@ void BrowserWindowController::FinishSwipe(int landing) {
     swipeNeighbours_.reset();
     if (!target) landing = 0;
     const Space& space = state_.spaces[target.value_or(state_.SelectedSpaceIndex())];
-    const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
+    // Unseen (minimized, covered, locked...): it lands without a fade or a slide.
+    const bool visible = Seen();
     if (visible) {
         theme_.FinishInteractive(space.theme, FrameClock::Now());
         if (theme_.Fading()) clock_->Start();
@@ -612,6 +624,7 @@ void BrowserWindowController::Frame(double time, double rateHz) {
     lastFrameTime_ = time;
     // The touchpad's movement this frame first, so the frame shows it.
     const bool touchpadFrames = touchpad_ && touchpad_->Step();
+    touchpadFrames_ = touchpadFrames;
     // Before the draw, so its commit is this frame's.
     if (perf::On()) perf::Frame(time, sidebar_->PageOffset(), theme_.Progress(time), rateHz);
     // Only what moved draws: the crossfade, or a swipe's step. The touchpad's other frames (a
@@ -634,6 +647,69 @@ void BrowserWindowController::Frame(double time, double rateHz) {
     // The display at its highest rate only while something moves on it: a fade, or fingers (or
     // their momentum) moving. Fingers resting on the touchpad, after a fade too, leave it alone.
     clock_->SetBoost(theme_.Fading() || (touchpad_ && touchpad_->Moving()));
+}
+
+void BrowserWindowController::StartOcclusion() {
+    if (occlusion_ || closing_) return;
+    occlusion_ = Occlusion::Start(window_.Handle(), kOcclusionMessage, options_.occlusionLog);
+    if (occlusion_) occlusion_->RegisterNotifications();
+}
+
+void BrowserWindowController::StopOcclusion() {
+    occlusion_.reset();
+    pointerRecovery_.SetVerdict(occlusion::Hidden::No);
+    SetOccluded(false);
+}
+
+void BrowserWindowController::OcclusionChanged() {
+    const occlusion::Hidden verdict = occlusion_ ? occlusion_->Verdict() : occlusion::Hidden::No;
+    pointerRecovery_.SetVerdict(verdict);
+    // Kite in front is the last word on covered (a verdict posted before its activation may
+    // come after it); a lock, the display or another desktop still hide it. Asked of Windows
+    // now, not remembered from WM_ACTIVATEAPP: when the foreground passes to no window, no
+    // WM_ACTIVATEAPP(FALSE) comes, and a remembered "active" kept a covered Kite drawing for good
+    // (measured: 802 ms/s covered).
+    SetOccluded(verdict != occlusion::Hidden::No && !(verdict == occlusion::Hidden::Covered && KiteInFront()));
+}
+
+bool BrowserWindowController::KiteInFront() const {
+    DWORD process = 0;
+    if (const HWND front = GetForegroundWindow()) GetWindowThreadProcessId(front, &process);
+    return process == GetCurrentProcessId();
+}
+
+void BrowserWindowController::SetOccluded(bool hidden) {
+    if (hidden == occluded_) return;
+    occluded_ = hidden;
+#ifdef KITE_HAS_CEF
+    if (chromium_) chromium_->SetOccluded(hidden);
+#endif
+    if (hidden) {
+        // A crossfade under way lands now, drawn once, and the frame clock stops.
+        if (theme_.Fading()) {
+            theme_.Snap(theme_.to);
+            StopFrameClockUnseen();
+            if (IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle())) Draw();
+        }
+        return;
+    }
+#ifdef KITE_HAS_CEF
+    // Hidden under the keyboard (locked, or the display went off, with Kite in front): the
+    // page that showed again takes it back, unless the command bar has it.
+    if (chromium_ && GetForegroundWindow() == window_.Handle() && (!commandBar_ || !commandBar_->IsOpen())) chromium_->Focus();
+#endif
+}
+
+void BrowserWindowController::StopFrameClockUnseen() {
+    // The clock also steps the touchpad (Frame keeps it for a contact held, a gesture or its
+    // momentum): while that still needs frames it runs on, unboosted, and Frame stops it when
+    // the touchpad's done; otherwise it stops now.
+    if (touchpadFrames_) {
+        clock_->SetBoost(false);
+        return;
+    }
+    clock_->Stop();
+    lastFrameTime_.reset();
 }
 
 std::wstring BrowserWindowController::SaveFrameLog(const std::filesystem::path& file) const {
@@ -1281,8 +1357,8 @@ void BrowserWindowController::SetSidebarShown(bool shown) {
     sidebarShown_ = shown;
     KillTimer(window_.Handle(), kToggleTimer);
     // Like Arc: the final frames set once, the compositor drawing the frames between (no slide
-    // on a window that isn't on screen).
-    const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
+    // on a window no one sees: minimized, hidden, covered, locked).
+    const bool visible = Seen();
     const double duration = sidebar_->SetShown(shown, visible);
     toggling_ = duration > 0;
     // The display at its highest rate while it slides (docs/windows.md, Refresh rate).
@@ -1446,6 +1522,9 @@ bool BrowserWindowController::QueuePerfRequest(const COPYDATASTRUCT* data) {
         queued = {PerfRequest::Kind::Command, *command, 0, 0, number("qpc").value_or(perf::Now())};
     } else if (const std::string* mark = text("mark")) {
         queued = {PerfRequest::Kind::Mark, *mark, 0, 0, 0};
+    } else if (const std::string* occlusion = text("occlusion")) {
+        if (*occlusion != "on" && *occlusion != "off") return false;
+        queued = {PerfRequest::Kind::Occlusion, *occlusion, 0, 0, 0};
     } else if (const std::string* url = text("open")) {
         // Web pages only: nothing of the machine's (file:, view-source:, kite: or a script).
         if (!url->starts_with("http://") && !url->starts_with("https://")) return false;
@@ -1492,6 +1571,11 @@ void BrowserWindowController::RunPerfRequests() {
                 ++perfMovesPosted_;
                 if (perf::On()) perf::Input("move", r.qpc);
             }
+            break;
+        case PerfRequest::Kind::Occlusion:
+            if (r.text == "on") StartOcclusion();
+            else StopOcclusion();
+            perf::Mark("occlusion", r.text);
             break;
         case PerfRequest::Kind::Leave:
             perfPointer_ = false;
@@ -1617,7 +1701,7 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     static_assert([] {
         constexpr UINT ids[] = {MainWindow::kWakeMessage, CommandBarView::kRedrawMessage, SidebarView::kRedrawMessage, kFaviconsMessage,
                                 kFrameMessage, kSpaceIconsMessage, kMemoryPressureMessage, kHistoryMessage, kArcReadMessage, kArcSavedMessage,
-                                kDownloadsReadMessage, kPerfRequestMessage};
+                                kDownloadsReadMessage, kOcclusionMessage, kPerfRequestMessage};
         for (size_t i = 0; i < std::size(ids); ++i) {
             for (size_t j = i + 1; j < std::size(ids); ++j) {
                 if (ids[i] == ids[j]) return false;
@@ -1625,6 +1709,33 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         }
         return true;
     }(), "two of the window's WM_APP messages share an id");
+    if (occlusion_) {
+        if (occlusion_->HandleMessage(message, wParam, lParam, result)) return true;
+        // Moved, resized, minimized, restored or shown, or the monitors, the work area or the
+        // scale changed: what Kite's window covers on screen did (seen, not handled: the
+        // window's own handling follows). In a move or resize loop, once at its end.
+        if (message == WM_ENTERSIZEMOVE || message == WM_EXITSIZEMOVE) occlusion_->SizeMoveLoop(message == WM_ENTERSIZEMOVE);
+        if (message == WM_WINDOWPOSCHANGED) occlusion_->WindowChanged();
+        if (message == WM_DISPLAYCHANGE || message == WM_DPICHANGED || (message == WM_SETTINGCHANGE && wParam == SPI_SETWORKAREA)) {
+            occlusion_->WindowChanged(true);
+        }
+        // The pointer can only reach a covered Kite if it isn't covered after all (uncovered by
+        // something no event says, before the heartbeat saw it): the first one asks for a
+        // pass, and leaves the verdict to it.
+        if ((message == WM_SETCURSOR || message == WM_MOUSEMOVE) && pointerRecovery_.OnPointer()) occlusion_->RequestPass();
+        // Kite's app activated: it's in front, so seen, now on this thread; the watcher hears
+        // after.
+        if (message == WM_ACTIVATEAPP) {
+            if (wParam != FALSE) {
+                if (occlusion_->Verdict() == occlusion::Hidden::Covered) SetOccluded(false);
+                occlusion_->Activated();
+            }
+        }
+    }
+    if (message == kOcclusionMessage) {
+        OcclusionChanged();
+        return true;
+    }
     if (options_.perfControl) {
         if (message == WM_COPYDATA) {
             result = QueuePerfRequest(reinterpret_cast<const COPYDATASTRUCT*>(lParam)) ? 1 : 0;

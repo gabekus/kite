@@ -183,6 +183,7 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
     std::map<std::string, CefRefPtr<CefRequestContext>> contexts;  // by profile directory
     std::string shown;
     bool minimized = false;
+    bool occluded = false;  // SetOccluded
     Hole overlayHole;  // SetOverlayHole's, in client px
     LiveTabPolicy policy;  // at most six live pages, as the Mac's PagePool
     ULONGLONG closingSince = 0;  // when MayCloseWindow started closing
@@ -467,7 +468,7 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
             if (!page.hwnd) continue;
             Change change{page.hwnd, std::nullopt, std::nullopt};
             Placement wanted;
-            wanted.visible = id == shown && !minimized;
+            wanted.visible = id == shown && !minimized && !occluded;
             wanted.rect = wanted.visible ? card : page.placed.rect;
             if (!(wanted == page.placed)) {
                 page.placed = wanted;
@@ -1664,6 +1665,12 @@ void Chromium::SetBounds(const RECT& bounds) {
 
 void Chromium::Minimized() {
     shared_->minimized = true;
+    shared_->Layout();
+}
+
+void Chromium::SetOccluded(bool occluded) {
+    if (shared_->occluded == occluded) return;
+    shared_->occluded = occluded;
     shared_->Layout();
 }
 

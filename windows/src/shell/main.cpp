@@ -105,6 +105,11 @@
 //                            (BrowserWindowController::QueuePerfRequest); --chromium-switches go
 //                            on Chromium's command line, from an allow-list (shell/PerfProtocol.h).
 //                            Never on the default profile. Opens behind other windows.
+//   Kite.exe --occlusion-log FILE
+//                            on a test profile, writes shell/Occlusion's verdicts to FILE as
+//                            they change (visible, locked, displayOff, cloaked, covered), one
+//                            JSON object a line with what the pass saw and the hook thread's
+//                            counters, and a last line as the window closes.
 //
 // Downloads go to the profile's chosen folder, else the user's Downloads. KITE_TEST_DOWNLOADS_PATH
 // (with KITE_SUPPORT_PATH, as on the Mac) puts them in a test's own folder; a quiet run without
@@ -314,7 +319,7 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // value (core/CommandLine.h).
     kite::command_line::Spec spec;
     spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control", "--favicons", "--empty-favorites-hover", "--new-item-menu"};
-    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log", "--rename-row", "--hover-row", "--row-menu", "--favorite-menu", "--run-command", "--find", "--find-result", "--create-space", "--create-space-about", "--create-space-theme"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log", "--rename-row", "--hover-row", "--row-menu", "--favorite-menu", "--run-command", "--find", "--find-result", "--occlusion-log", "--create-space", "--create-space-about", "--create-space-theme"};
     // Its value is switches ("--a --b"), each checked against the allow-list below; Chromium's
     // raw read sees them too, so only allowed ones get this far.
     spec.switchValueOptions = {"--chromium-switches"};
@@ -537,16 +542,19 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         if (!parsed) return Fail(quiet, L"--chromium-switches doesn't allow " + refused, kUsage);
         chromiumSwitches = std::move(*parsed);
     }
+    const PathOptionValue occlusionLogOption = PathOption(args, L"--occlusion-log", L"a file");
+    if (!occlusionLogOption.problem.empty()) return Fail(quiet, occlusionLogOption.problem, kUsage);
 
     const auto supportOverride = kite::EnvironmentPath("KITE_SUPPORT_PATH");
     // Test flags only run on a test profile, like the Mac's KITE_WINDOW_SIZE: a smoke test or
     // capture loads and re-saves the session, which must never be the user's own.
     if ((smokeTest || captureOption.present || sizeOption.present || scaleOption.present || frameLogOption.present ||
-         saveLogOption.present || perfLogOption.present || perfControl || switchesOption.present) &&
+         saveLogOption.present || perfLogOption.present || perfControl || switchesOption.present ||
+         occlusionLogOption.present) &&
         !supportOverride) {
         return Fail(quiet,
-                    L"--smoke-test, --capture, --window-size, --capture-scale, --frame-log, --save-log, --perf-log, --perf-control "
-                    L"and --chromium-switches need KITE_SUPPORT_PATH set to a test profile",
+                    L"--smoke-test, --capture, --window-size, --capture-scale, --frame-log, --save-log, --perf-log, --perf-control, "
+                    L"--chromium-switches and --occlusion-log need KITE_SUPPORT_PATH set to a test profile",
                     kUsage);
     }
     if (supportOverride && !supportOverride->empty()) {
@@ -756,6 +764,7 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     options.quiet = quiet;
     options.perfControl = perfControl;
     options.chromiumSwitches = std::move(chromiumSwitches);
+    if (occlusionLogOption.value) options.occlusionLog = *occlusionLogOption.value;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
     options.supportDirectory = supportDirectory;
     // KITE_TEST_DOWNLOADS_PATH is a test's own folder: a relative one would land wherever Kite

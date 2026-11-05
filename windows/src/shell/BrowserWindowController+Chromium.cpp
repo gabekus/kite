@@ -167,6 +167,8 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         started != Chromium::StartResult::Started) {
         return started;
     }
+    // A verdict that came before Chromium did.
+    chromium_->SetOccluded(occluded_);
     // Each profile's download folder and Ask, as each download starts (read once: nothing on
     // Windows changes them yet; Settings comes with W31a).
     chromium_->SetDownloadLocations(DownloadLocations(), options_.downloadFolder);
