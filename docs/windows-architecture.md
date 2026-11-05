@@ -29,6 +29,13 @@ their own PR, never as a side effect of a checkpoint.
 - No third-party code except CEF. No WinUI or Windows App SDK, no .NET, no
   Swift runtime, no Boost, no JSON or test libraries. First-party Windows APIs
   (WIC, DirectWrite, UI Automation, WinHTTP) are fine.
+- Undocumented Windows exports are not, with one exception: uxtheme's dark-mode
+  exports for popup menus (SetPreferredAppMode and FlushMenuThemes, ordinals 135 and
+  136), so a dark space's Win32 menu is dark, as the Mac's NSMenu follows the
+  window. They're looked up at run time (never imported), called only on Windows 10
+  1903 (build 18362, from RtlGetVersion) and later, only while a menu is open (the
+  mode is process-wide, so it goes back to the default as the menu closes), and a
+  missing export leaves the menu light. Nothing else may use them.
 
 ## Parity with the Mac
 
