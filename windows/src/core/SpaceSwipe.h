@@ -110,23 +110,39 @@ constexpr double kDefaultTiming[4] = {0.25, 0.1, 0.25, 1.0};
 double ThemeCrossfadeProgress(double elapsed, double startProgress = 0);
 
 // The backdrop's crossfade from one theme to another (the same theme at rest): the Mac's
-// ThemeView.setTheme and draw. Times are seconds on the caller's clock.
+// ThemeView.setTheme and draw, and its swipe's setInteractiveTheme and finishInteractiveTheme.
+// Times are seconds on the caller's clock.
 struct ThemeCrossfade {
     Theme from, to;
     std::optional<double> start;  // while fading
+    // Where the fade starts from: 0 for a switch, the swipe's progress when one is let go.
+    double startProgress = 0;
+    // While fingers swipe between spaces: the crossfade follows them, not the clock.
+    std::optional<float> interactive;
 
     ThemeCrossfade() = default;
     explicit ThemeCrossfade(const Theme& theme) : from(theme), to(theme) {}
     // Fades to `theme` from `now`. Interrupted before halfway it carries on from the side that
     // was showing more (to = from), as ThemeView. True when a fade began; false for the theme
-    // it's already going to, or back to the one it came from before halfway (nothing to fade).
+    // it's already going to, back to the one it came from before halfway (nothing to fade), or
+    // mid-swipe (the swipe's release settles it).
     bool Set(const Theme& theme, double now);
-    // At `theme` at once (nothing on screen to fade).
+    // At `theme` at once (nothing on screen to fade), a swipe's crossfade too.
     void Snap(const Theme& theme);
+    // Mid-swipe: `fromTheme` crossfaded towards `toTheme` by `progress` (clamped to 0...1),
+    // held until the swipe moves again. Between one theme and itself the progress stays put, so
+    // nothing draws again for it.
+    void SetInteractive(const Theme& fromTheme, const Theme& toTheme, float progress);
+    // The swipe was let go at `now`: settles on `theme`, either side of the crossfade, with the
+    // switch's spring from wherever the fingers left it (at once when there's nothing to fade).
+    // A third theme (a space selected under the swipe) fades in as a switch would, from the
+    // side that was showing more.
+    void FinishInteractive(const Theme& theme, double now);
     // The progress for a frame shown at `time`, 0...1; from kThemeDuration on, 1 and at rest on
     // `to`.
     float Progress(double time);
     bool Fading() const { return start.has_value(); }
+    bool Interactive() const { return interactive.has_value(); }
 };
 
 }  // namespace kite

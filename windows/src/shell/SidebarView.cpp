@@ -297,6 +297,8 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
         it = pages_.erase(it);
     }
     model_ = std::move(next);
+    built_.clear();
+    for (const PageModel& page : model_.pages) built_.push_back(page.index);
     PlacePages();
     ScheduleDraw();
     // Rows moved under a still pointer: it now hovers whatever is there.
@@ -309,7 +311,8 @@ void SidebarView::SetPageOffset(float offset) {
     pageOffset_ = offset;
     slide_.reset();
     barSlidePending_ = false;
-    bar_->Land();
+    // The bar's light with them: a swipe's frame lights the cells between the pages it shows.
+    bar_->Follow(offset, width_, built_, model_.index);
     if (bar_->NeedsDraw()) ScheduleDraw();
     PlaceStrip();
     // At rest the rows have moved under a still pointer; mid-swipe, as AppKit's, hover waits.
@@ -583,7 +586,8 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         return HResultMessage(what, hr);
     };
     HRESULT hr = S_OK;
-    Pixels header, selectedPage;
+    Pixels header;
+    std::vector<std::pair<size_t, Pixels>> pageShots;  // each built page's, by its space's place
     if (dirty_ || readBack) {
         if (!surface_) {
             if (FAILED(hr = compositor_->Device()->CreateVirtualSurface(width, height, DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -609,10 +613,9 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
 
     // The built pages, each in its own surface.
     for (const PageModel& page : model_.pages) {
-        const bool selected = page.spaceID == model_.spaceID;
-        if (error = DrawPageSurface(page, pages_[page.spaceID], readBack && selected ? &selectedPage : nullptr); !error.empty()) {
-            return error;
-        }
+        Pixels* shot = nullptr;
+        if (readBack) shot = &pageShots.emplace_back(page.index, Pixels{}).second;
+        if (error = DrawPageSurface(page, pages_[page.spaceID], shot); !error.empty()) return error;
     }
     // Only the icons the pages show stay on the GPU.
     std::erase_if(faviconBitmaps_, [this](const auto& entry) {
@@ -624,13 +627,20 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
     if (error = bar_->Draw(static_cast<UINT>(client.bottom), readBack ? &bar : nullptr); !error.empty()) return error;
 
     if (readBack) {
-        // As the screen shows it at rest: the selected page over the address field, and the bar
-        // at the window's bottom.
+        // As the screen shows it: the pages over the address field where the strip has them
+        // (at rest, the selected one), clipped to the sidebar, and the bar at the window's
+        // bottom.
         readBack->width = width;
-        readBack->height = std::max({header.height, selectedPage.height, static_cast<UINT>(client.bottom)});
+        readBack->height = std::max(header.height, static_cast<UINT>(client.bottom));
+        for (const auto& [index, shot] : pageShots) readBack->height = std::max(readBack->height, shot.height);
         readBack->bgra.assign(static_cast<size_t>(readBack->width) * readBack->height * 4, 0);
         ComposeOver(*readBack, header, POINT{0, 0});
-        ComposeOver(*readBack, selectedPage, POINT{0, 0});
+        const RECT clip{0, 0, static_cast<LONG>(width), static_cast<LONG>(readBack->height)};
+        const float strip = PageOffset() * scale;
+        for (const auto& [index, shot] : pageShots) {
+            const float x = (static_cast<float>(index) - static_cast<float>(model_.index)) * static_cast<float>(clipWidth_) + strip;
+            if (std::abs(x) < static_cast<float>(width)) ComposeOver(*readBack, shot, POINT{std::lround(x), 0}, 1, &clip);
+        }
         ComposeOver(*readBack, bar, POINT{0, client.bottom - static_cast<LONG>(bar.height)});
     }
     return {};
@@ -968,6 +978,20 @@ void SidebarView::ClearHover() {
     RefreshHover();
 }
 
+bool SidebarView::OverList(D2D1_POINT_2F p) const {
+    // The list's scroll view: inside its padding, between the header and the space bar.
+    return p.x >= M::kPadding && p.x < width_ - M::kPadding && p.y >= M::kHeaderAreaHeight && p.y < SidebarListBottom(Height());
+}
+
+bool SidebarView::ScrollList(POINT at, float distance) {
+    const D2D1_POINT_2F p = PointOf(at);
+    if (!OverList(p)) return false;
+    if (distance == 0) return true;
+    pointer_ = at;
+    SetScroll(scrollExact_ + distance);
+    return true;
+}
+
 void SidebarView::SetScroll(float scroll) {
     // The wheel's position is kept as it comes (a touchpad's small steps add up); the list
     // draws and takes the pointer at it rounded to whole pixels, so rows keep crisp edges.
@@ -1142,10 +1166,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             return true;
         }
-        // The list's scroll view: inside its padding, between the header and the space bar.
-        if (p.x < M::kPadding || p.x >= width_ - M::kPadding || p.y < M::kHeaderAreaHeight || p.y >= SidebarListBottom(height)) {
-            return false;
-        }
+        if (!OverList(p)) return false;
         UINT lines = 3;
         if (!SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0)) lines = 3;
         const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;

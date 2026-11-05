@@ -30,6 +30,7 @@
 #include "core/SessionSaveDelay.h"
 #include "core/SessionWriter.h"
 #include "core/SpaceSwipe.h"
+#include "core/SpaceSwipeGesture.h"
 #include "core/ThemeBackdrop.h"
 #include "shell/CaptionButtonsView.h"
 #ifdef KITE_HAS_CEF
@@ -43,6 +44,7 @@
 #include "shell/MemoryPressure.h"
 #include "shell/Renderer.h"
 #include "shell/SidebarView.h"
+#include "shell/TouchpadInput.h"
 
 namespace kite {
 
@@ -101,7 +103,9 @@ public:
     std::wstring Draw(Pixels* readBack = nullptr);
     // The animation frames of the run (Options::frameLog), one JSON object a line: `t` (when it
     // was handled, s from the first), `target` (the composition frame it was drawn for, s from
-    // the first), `offset` (the pages', pt) and `theme` (the crossfade, 0...1). Empty on success.
+    // the first), `offset` (the pages', pt) and `theme` (the crossfade, 0...1); then
+    // DirectManipulation's reports (`dm`: status or content, `t` on the clock's seconds). Empty
+    // on success.
     std::wstring SaveFrameLog(const std::filesystem::path& file) const;
     // The run's saves (Options::saveLog) as one JSON object: `saves` (`t`, s from the window's
     // creation; `uiMicros`, the copy handed to the writer; `closing`), `frames` (frames the
@@ -116,6 +120,9 @@ public:
     // The window's frame as the screen shows it: the backdrop with the sidebar, the caption
     // buttons and (with `barText`) the command bar opened with that text, composed over it.
     std::wstring Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip = std::nullopt);
+    // For a capture: two fingers over the sidebar have dragged its content `dx` points sideways
+    // and are held there (the pages, the bar's light and the theme as they follow).
+    std::wstring HoldSwipe(double dx);
 
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
@@ -150,15 +157,44 @@ private:
     void SyncSpace();
     void SpaceChanged(size_t old, size_t now);
     void FinishSettling();
+    // Two fingers over the sidebar (the Mac's SpaceSwipeController): each touchpad event goes
+    // through core's SpaceSwipeGesture, with the pointer `at` (client px) as it is then; a
+    // swipe's pages, bar and theme follow it, and its release settles on a space, selected once
+    // the pages are at rest (CommitLanding, which says how many pages the selection moved). A
+    // vertical gesture scrolls the list under the pointer; one off the sidebar before it's the
+    // swipe's goes back to the system, for whatever is under the pointer.
+    SpaceSwipeGesture::Step SwipeInputArrived(const SwipeInput& input, POINT at);
+    // Whether a point (client px) is over the sidebar with nothing over it: where a touchpad's
+    // gesture is the sidebar's (the Mac's isOverSidebar).
+    bool OverSidebar(POINT at) const;
+    SwipeStart BeginSwipe();
+    void ShowSwipe();
+    void FinishSwipe(int landing);
+    int CommitLanding();
     // Whether a shortcut's command would do anything now (the Mac's validateMenuItem): Space n
     // for a space there isn't passes its key on.
     bool CommandEnabled(const std::string& command) const;
-    // One frame of the clock's: the theme's crossfade drawn for the composition frame at
-    // `time` (the pages' slide runs on the compositor).
+    // One frame of the clock's: the touchpad's movement, then the theme's crossfade or a
+    // swipe's step drawn for the composition frame at `time` (the pages' slide runs on the
+    // compositor).
     void Frame(double time);
     std::wstring DrawAt(double time, Pixels* readBack);
     // The smoke test's space switch, there and back, run to rest.
     std::wstring SmokeTestSpaces();
+    // The smoke test's swipes, fed to SwipeInputArrived as a touchpad's events would be.
+    std::wstring SmokeTestSwipe();
+    // Its cases that need three spaces (one is added for them, then removed): a keyboard switch
+    // overtaking a landing, a space selected under the swipe, and the boost of a fade ending
+    // while the touchpad's frames go on. And with one space (the others set aside meanwhile).
+    std::wstring SmokeTestSwipeThreeSpaces();
+    std::wstring SmokeTestSwipeOneSpace();
+    // The clock's frames and the slide's timer, until the theme and the pages are at rest.
+    std::wstring RunToRest(const wchar_t* what);
+    // The clock's frames and the window's timers until `done` (or `seconds` go by): whether it was.
+    bool RunUntil(const std::function<bool()>& done, double seconds);
+    // A slide's first frame now: the pages' drawing and the strip's animation committed, so the
+    // compositor's timeline starts where PageOffset reads it from.
+    void CommitSlide();
     // What the pages reported and Kite hasn't run yet (the window's close, at logoff, comes
     // with no WM_CLOSE first).
     void RunPending();
@@ -245,6 +281,16 @@ private:
     std::optional<std::string> pagesAnchor_;
     bool sidebarSliding_ = false;
     bool slideStarted_ = false;
+    // The swipe's: the space a release landed on, selected when the pages come to rest, and
+    // that selection under way.
+    SpaceSwipeGesture swipe_;
+    struct Landing {
+        std::string spaceID;
+        int pages;
+    };
+    std::optional<Landing> pendingLanding_;
+    bool selectingBySwipe_ = false;
+    bool swipeMoved_ = false;  // since the clock's last frame drew
     std::unique_ptr<Compositor> compositor_;
     std::unique_ptr<Favicons> favicons_;
     std::unique_ptr<SidebarView> sidebar_;
@@ -253,6 +299,9 @@ private:
     std::wstring barError_;
     // Frames while something animates (before the window in destruction: it posts to it).
     std::unique_ptr<FrameClock> clock_;
+    // A precision touchpad's gestures over the sidebar (null where there's no DirectManipulation,
+    // and once the window closes: it lets the window go while it's still a window).
+    std::unique_ptr<TouchpadInput> touchpad_;
     // Low memory closes the background pages (before the window in destruction: it posts to it).
     std::unique_ptr<MemoryPressureWatch> memoryWatch_;
     bool watchingMemory_ = false;
@@ -267,6 +316,9 @@ private:
         double handled, target, offset, theme;
     };
     std::vector<LoggedFrame> frames_;
+    std::vector<std::string> touchpadLog_;  // TouchpadInput::log's records, after the frames
+    size_t touchpadLogDropped_ = 0;          // and how many didn't fit (kMaxTouchpadLog)
+    std::wstring touchpadError_;            // why there's no touchpad_, when there isn't one
     size_t frameCount_ = 0;  // frames delivered, logged or not (the smoke test checks them)
 
     // What each shortcut's command does, by id (MainMenu.swift's items).
