@@ -171,6 +171,9 @@ private:
     void RestartCaretBlink();
 
     D2D1_COLOR_F Primary() const;  // white in a dark space, black in a light one
+    // NSColor.labelColor, which the Mac's field text, row titles, details and icons use: Primary
+    // at 85% (at `opacity` of that: the Mac's alphaValue on top of it).
+    D2D1_COLOR_F Label(float opacity = 1) const;
     D2D1_COLOR_F Accent() const;
     void DrawPanel(ID2D1DeviceContext* context, float height);
     void DrawField(ID2D1DeviceContext* context);
