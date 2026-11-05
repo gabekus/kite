@@ -17,6 +17,10 @@ struct UIInputSender {
     func send(_ event: UIInputEvent) async throws -> String {
         switch event {
         case .keys(let chords):
+            // A key that types a character goes through the input method like typed text (UITextEntry).
+            if WindowPresenter.testSafe, let chord = chords.first(where: UITextEntry.typesCharacter) {
+                throw AutomationError(.unsupported, UITextEntry.keysRefusal(AutomationController.keyName(chord)))
+            }
             var pressed: [(chord: KeyChord, entry: Int, route: String)] = []
             for chord in chords {
                 let (entry, route) = try press(chord)
@@ -41,6 +45,7 @@ struct UIInputSender {
                 return line
             }.joined(separator: "\n")
         case .text(let text):
+            if WindowPresenter.testSafe { return try insertTestSafe(text) }
             for character in text {
                 let chord = (try? KeyChord.parse(String(character))) ?? KeyChord(
                     key: String(character), code: "", keyCode: 0, text: String(character), modifiers: [], commands: [])
@@ -144,6 +149,33 @@ struct UIInputSender {
 
     private var responderName: String {
         window.firstResponder.map { UIFormat.className($0) } ?? "no first responder"
+    }
+
+    /// Test-safe typing (`UITextEntry`): no key events, which would go through the input method and could draw its
+    /// candidate window on the user's screen. The characters go straight into the command bar's field editor, and
+    /// nowhere else.
+    private func insertTestSafe(_ text: String) throws -> String {
+        // What becoming key would do first: the window's open command bar gets the shared field editor.
+        (window.windowController as? BrowserWindowController)?.takeKeysInBackground()
+        let editor = window.firstResponder as? NSTextView
+        let inCommandBar = editor.map { $0.isFieldEditor && $0.delegate is CommandBarField } ?? false
+        switch UITextEntry.decide(testSafe: true, firstResponderIsCommandBarEditor: inCommandBar) {
+        case .insertIntoCommandBar:
+            guard let editor else { throw AutomationError(.failed, UITextEntry.refusal) }
+            // The field editor's own text checking could show a correction, completion or prediction panel.
+            editor.isAutomaticSpellingCorrectionEnabled = false
+            editor.isAutomaticTextReplacementEnabled = false
+            editor.isAutomaticTextCompletionEnabled = false
+            editor.isContinuousSpellCheckingEnabled = false
+            editor.inlinePredictionType = .no
+            editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+            return "Inserted \(text.count) characters into the command bar of window \(window.windowNumber) "
+                + "(test-safe: no key events, no input method)."
+        case .refused(let reason):
+            throw AutomationError(.unsupported, "\(reason) The first responder is \(responderName).")
+        case .keyEvents:
+            throw AutomationError(.failed, UITextEntry.refusal)
+        }
     }
 
     /// Presses a key; returns its key log entry and where it went.

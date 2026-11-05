@@ -17,7 +17,8 @@ NAME="cef_binary_${CEF_VERSION}_${CEF_PLATFORM}_minimal"
 ARCHIVE="$ROOT/ThirdParty/$NAME.tar.bz2"
 CODECS_ARCHIVE="$ROOT/ThirdParty/codecs/$NAME.tar.bz2"
 STAMP="$CEF_VERSION"
-[[ -f "$CODECS_ARCHIVE" ]] && STAMP="$CEF_VERSION codecs"
+# A rebuilt archive (new patches) has a new size and date, so it replaces the one installed.
+[[ -f "$CODECS_ARCHIVE" ]] && STAMP="$CEF_VERSION codecs $(stat -f %z-%m "$CODECS_ARCHIVE")"
 
 if [[ -f "$DEST/.version" && "$(cat "$DEST/.version")" == "$STAMP" ]]; then
     echo "CEF $STAMP already present"

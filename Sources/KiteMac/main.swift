@@ -48,7 +48,7 @@ MainActor.assumeIsolated {
             hostsQueue.async { syncHosts() }
         }
         settings.remoteDebuggingPort = Int32(environment["KITE_REMOTE_DEBUGGING_PORT"] ?? "") ?? 0
-        KCRuntime.energySaverEnabled = UserDefaults.standard.bool(forKey: AppDelegate.energySaverKey)
+        KCRuntime.energySaverEnabled = AppDelegate.energySaverSetting
         // Test profiles stay out of the login keychain, so test runs never prompt
         // for "Chromium Safe Storage". KITE_MOCK_KEYCHAIN=0 or 1 overrides.
         settings.useMockKeychain = environment["KITE_MOCK_KEYCHAIN"].map { $0 == "1" }

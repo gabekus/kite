@@ -5,14 +5,39 @@
 #include <cctype>
 #include <cstdint>
 #include <random>
+#include <stdexcept>
 
 namespace kite {
 
+namespace {
+
+// The OS's secure generator, opened once (a function-local static, so initialization is
+// thread-safe). MSVC's and MinGW's default device is rand_s, libc++'s is arc4random or
+// getentropy. libstdc++'s default on x86 is the RDSEED instruction instead, and Zen 5's RDSEED
+// returns 0 while reporting success (AMD-SB-7055), so ids collided there: it is asked for
+// /dev/urandom, falling back to the default where there is no /dev (a bare chroot or container).
+std::random_device& Device() {
+#if defined(__GLIBCXX__) && !defined(_WIN32)
+    static std::random_device device = []() -> std::random_device {
+        try {
+            return std::random_device("/dev/urandom");
+        } catch (const std::runtime_error&) {
+            return std::random_device();
+        }
+    }();
+#else
+    static std::random_device device;
+#endif
+    return device;
+}
+
+}  // namespace
+
 std::string NewUuid() {
-    // Every byte straight from the OS's secure generator (rand_s / BCryptGenRandom on Windows,
-    // /dev/urandom elsewhere). A PRNG seeded from one 32-bit word would give every launch one
-    // of only 2^32 id sequences, and two launches could mint the same ids in one profile.
-    std::random_device device;
+    // Every byte straight from the OS's generator (see Device). A PRNG seeded from one 32-bit
+    // word would give every launch one of only 2^32 id sequences, and two launches could mint
+    // the same ids in one profile.
+    std::random_device& device = Device();
     unsigned char bytes[16];
     for (int i = 0; i < 16; i += 4) {
         uint32_t r = static_cast<uint32_t>(device());

@@ -109,6 +109,21 @@ is mid-draw. Keys that arrive before the bar opens open it
   base (#202020 dark, #F3F3F3 light); whether acrylic's own fallback differs
   isn't checked yet. As on the Mac, the material's light or dark appearance
   follows the space's theme.
+  A capture's sidebar is a few levels off the Mac's capture (about 4 darker in
+  dark, 5 to 6 lighter in light), and that's the material under the tint, not
+  the tint (W9b5). Both draw the theme with the same shader and alpha and lay it
+  over the material with the same "over" on sRGB values: solving each pixel of
+  a Mac capture for what's under the tint, `(capture − theme) / (1 − tint)`,
+  gives one flat colour over the whole sidebar, and the PC's captures are the
+  shader over #202020 to within half a level. That flat colour is what the
+  Mac's in-process capture draws for its `.sidebar` material, the unblurred
+  fallback of `cacheDisplay` (UICapture's `composedRender`): #272727 dark on the
+  CI Mac (w9c-mac, w9d-mac), (43, 43, 39) on Gabe's Mac (w9b-mac), and #E6E6E6
+  light. It changes from Mac to Mac, and on screen the material blurs what's
+  behind the window, so there's no Mac colour to port: the capture's fallback
+  stays Mica's base. With Personal's tint of 0.44, #272727 against #202020
+  is 0.56 × 7 ≈ 4 levels in every row; with Work's 0.55, #E6E6E6 against
+  #F3F3F3 is 0.45 × 12.5 ≈ 5.6.
 - **Title bar (W3b):** the window keeps `WS_OVERLAPPEDWINDOW` (so Snap,
   Aero Shake, the system menu and the taskbar behave as Windows expects) but
   `WM_NCCALCSIZE` takes the caption off: the client area, and the backdrop
@@ -169,9 +184,17 @@ As on the Mac, at most six pages stay alive (W5b): past that, showing a tab
 closes the least recently shown page, unless it's tied to a popup, using the
 camera or microphone, or playing sound (asked of the page with the Mac's
 script through DevTools' `Runtime.evaluate`). Its tab stays and loads again
-when it's next shown. Ctrl-click and middle-click open a link in a background tab,
-Ctrl+Shift-click in a foreground one (a `target=_blank` link opens as a popup
-tab either way, as on the Mac). The first page is made once the window is on
+when it's next shown. When memory runs low (W11, the Mac's
+`watchMemoryPressure`) every page but the shown one goes the same way:
+Windows' low-memory resource notification, waited on by the thread pool with
+no thread or timer of Kite's, reports it once per spell of low memory
+(`shell/MemoryPressure.h`). It comes late, by default at about 32 MB free per
+4 GB of memory (64 MB at most), where the Mac's warning level comes well
+before, and Windows has no earlier signal to wait on. The window checks it again
+as it handles the report, so a dip that's already over closes nothing. Ctrl-click and
+middle-click open a link in a background tab, Ctrl+Shift-click in a
+foreground one (a `target=_blank` link opens as a popup tab either way, as on
+the Mac). The first page is made once the window is on
 screen and not minimized. `--smoke-test` loads
 `windows/helix/pages/smoke.html` in CI and fails unless one `WM_CLOSE`
 closes every browser in time. Not yet: the card's 6pt corners (a child window can't be clipped
@@ -251,10 +274,12 @@ SF Symbol and picture icons (W9b2) draw in the bar and the page header
 Apple's systems, so the Icon tab's 56 symbols, "briefcase" and "photo" each
 have a stand-in glyph in Segoe Fluent Icons, or Segoe MDL2 Assets where Fluent
 isn't installed, picked by eye from every glyph each font has and checked
-against both fonts' character maps, except nine drawn as shapes (below). A
-symbol fills its glyph's outline, centred on its ink, at the size that makes the briefcase ink the Mac's 15pt at 12.5 (one
-factor for every symbol), in the theme's accent when lit and in the label colour
-at 45% when greyed. A picture is the Mac's rounded square, round(size × 1.2) on a
+against both fonts' character maps, except ten drawn as shapes (below). A
+symbol fills its glyph's outline, centred on its ink, at the size that makes
+Segoe's briefcase glyph ink the Mac's briefcase width, 14.65pt at 12.5 (one
+factor for every symbol; edge to edge, as a glyph's outline is measured, from
+the Mac's dark 2x bar captures), in the theme's accent when lit and in the label
+colour at 45% when greyed. A picture is the Mac's rounded square, round(size × 1.2) on a
 side with 22% corners, its PNG from the profile's SpaceIcons folder scaled to the
 square's pixels, greyed as an emoji is; a missing file shows "photo". Pictures
 are read and decoded on a worker thread (none over 1 MB or 2048px), which posts
@@ -263,12 +288,14 @@ again; a file that can't be read keeps its placeholder and is looked for again
 at a draw 2 s on (`core/PictureLoads.h`). One painter, the sidebar's, serves
 the bar and the headers. Known differences:
 Fluent has one weight where the Mac's symbols are semibold (the placeholder's
-"photo" is regular on the Mac), and its briefcase is 1.5pt taller for the same
-width; several stand-ins are outlines of filled symbols, cloud and cloud.fill
-share a glyph, and nine have no such object in either font (bookmark, paw, bed,
-cutlery, dumbbell, bandage, baseball, takeaway bag, theatre masks), which W9b4
-draws as Kite's own shapes (see below); glyphs are centred on their ink where the
-Mac centres the symbol's image (checked only for the briefcase, within 0.25pt);
+"photo" is regular on the Mac); several stand-ins are outlines of filled
+symbols, cloud and cloud.fill share a glyph, and nine have no such object in
+either font (bookmark, paw, bed, cutlery, dumbbell, bandage, baseball, takeaway
+bag, theatre masks), which W9b4 draws as Kite's own shapes (see below); glyphs
+are centred on their ink where the Mac centres the symbol's image (checked only
+for the briefcase's glyph, within 0.25pt, before W9b5 drew the briefcase); no
+Mac capture shows a symbol Segoe draws, so the calibration's 14.65pt is checked
+only on the briefcase;
 an SF Symbol name outside the 58 (which the Mac draws, from automation or a
 hand-edited session) shows the dot in the bar and a blank icon slot in the
 header; a picture shows nothing until its decode arrives (the Mac reads it in its
@@ -300,18 +327,35 @@ The nine (W9b4) are Kite's own simple shapes (`core/SymbolShape.h`), not
 Apple's outlines: each is filled figures in the bar's 12.5pt about the icon's
 centre, in layers joined or cut in order (so the front theatre mask cuts a gap
 round itself in the one behind), drawn by the same painter through one Direct2D
-geometry per symbol and scaled for the header's 15pt. Each inks the box the
+geometry per symbol, scaled by 1.2 for the header's 15pt. Each inks the box the
 Mac's symbol inks in its cell (keeping its offset from the centre), measured
 from the Mac's 2x renders to a quarter point, and comes within an eighth of its
-inked area, so it sits and weighs as the Mac's (`SymbolShapeTests`); the PC's
-captures give every one the Mac's ink box in the bar, centred within 0.15pt,
-and within half a point of it in the header. Known differences: the drawings are Kite's own,
-so details differ (the bed's headboard, the bandage's pad marked by two cuts and
-four holes, the baseball's seams and stitches, the masks' faces); the header's
-are the bar's scaled by 1.2, where the Mac's symbol is redrawn at 15pt (the
-captures' header boxes agree to half a point); and the masks reach past the
-header's 26pt slot as the Mac's do (only their width was measured from the bar,
-the slot's capture clips them).
+inked area, so it sits and weighs as the Mac's (`SymbolShapeTests`). Only those
+numbers come from the Mac: the drawings themselves are Kite's own, not fitted to
+Apple's. In the header the Mac redraws the symbol at 15pt and places it by
+metrics it rounds to the half point (`place(.center)` in SidebarKit.swift), which
+Kite's shapes don't have, so each carries where the Mac's 15pt ink sits in its
+slot, measured from the Mac's header renders, as the Mac's own `SymbolOrigins`
+are (`PlaceDrawnSymbol`; W9b5). The PC's captures give every one the Mac's ink
+box in the bar, centred within 0.15pt. Known differences: details differ (the
+bed's headboard, the bandage's pad marked by two cuts and four holes, the
+baseball's seams and stitches, the masks' faces); the header's shapes are the
+bar's scaled, where the Mac's symbol is redrawn at 15pt, so four (paw, dumbbell,
+baseball, masks) ink a header box half a point wider or taller than the Mac's;
+and the masks reach past the header's 26pt slot as the Mac's do (only their
+width was measured from the bar, the slot's capture clips them, so their header
+place across is the bar's scaled). If a shape's
+geometry can't be made, Kite logs it and draws nothing for that symbol, except
+the briefcase, which falls back to its glyph.
+
+The briefcase (W9b5, the test sessions' Work icon) is drawn the same way, held to
+the same numbers: Segoe's glyph is a plain case, where the Mac's has more to it.
+It's Kite's own case, one 1.35pt stroke throughout (the Mac's weight): a handle
+over a rounded body, a straight band across the middle and a tab on the band,
+with the Mac's ink box in the bar (14.5 × 12.5pt, centred at (-0.25, +0.25)), its
+inked area within an eighth, and the Mac's place in the header's slot. Its glyph
+still sizes the other glyphs (the calibration above). Known difference: the band
+and the tab are Kite's, so the inside differs from the Mac's.
 
 The tip over a hovered cell (W9b3) is the Mac's SpaceTip in SpaceTipWindow's place:
 0.4 s after the pointer comes onto a cell, a capsule 28pt tall centred over it, its
@@ -343,6 +387,39 @@ from a page (Chromium's key thread doesn't know the spaces). Not yet: the space
 bar (W9b), a touchpad's swipe (W9c), reordering spaces and the space menu
 (W9d). `Kite.exe --frame-log FILE` writes each frame the clock delivered in a
 test run.
+
+## Saving the session
+
+As on the Mac (`BrowserStore.scheduleSave`, `SessionSaveDelay`), the session is
+saved as it changes (W11): a second after the last sidebar change or
+navigation, ten seconds after a page's title or favicon (which never push a
+waiting save back), and at once when the window closes or Windows ends the
+session. Each change arms one one-shot timer; when it fires, Kite's UI thread
+copies the session (`kitecore save-bench`: a 58–93 μs median for 200 tabs) and
+hands the copy to `core/SessionWriter`, whose thread encodes it, skips the
+write if the bytes are what it last wrote, and writes it atomically
+(`core/StoreFile`: a sibling `.tmp` flushed to the disk, then renamed over the
+file; each write has a temp of its own, so two writers never share one). Kite
+waits for the last write once the window is gone, before Chromium shuts down
+(so a launch meanwhile hands over to it rather than read a file about to be
+replaced; with the window gone, that launch is dropped, and the user launches
+again), 10 s at most; logoff and shutdown wait in the window, 3 s at most.
+Giving up is safe, since the file is then the old one or the new one; a write
+still stuck then ends the process (`TerminateProcess`, exit 4) rather than let
+the C++ library tear down under the writer's thread. The writer also keeps
+the Mac's rolling backups in `Backups\` (`core/SessionBackups`, the same names
+and budgets): the session as found at each launch (not a second launch that
+hands over to the running Kite), and at most one an hour while Kite runs,
+offered after every save as on the Mac, and on each 15-minute auto-archive
+pass, which on the Mac always saves. An unreadable `session.json` is moved aside
+and the newest backup that reads takes its place; the Mac says so in a toast,
+Windows (no toasts yet) only to the debugger and a quiet run's stderr.
+`kitecore backups` lists them; `kitecore save-schedule` replays changes
+through the timer's rules; `kitecore save-bench` measures a save, in a temp
+folder of its own. `Kite.exe --save-log` is the live check: a quiet window that
+logs each save and its UI-thread cost. Not yet: the Mac's `syncPinnedURLs` in
+its page-event path (a pinned tab that had no page adopting the first address
+it reports), which comes with pinning.
 
 ## Refresh rate
 
@@ -376,6 +453,12 @@ Windows that means:
   a 60Hz timer.
 - **DirectComposition animations** run at the compositor's rate.
 - The windowed CEF fallback (child HWND) renders at the monitor's rate on its own.
+- **Chromium's Energy Saver** caps pages at 30fps on battery below 20% by
+  default. As on the Mac (`KCRuntime.mm`), Kite sets
+  `performance_tuning.battery_saver_mode.state` to 0 unless the user turns it
+  on (`Chromium::SetEnergySaverEnabled`). `--smoke-test` reads it back, which
+  proves Kite set it only on a fresh profile: Local State keeps a value an
+  earlier run wrote.
 - **A window no one can see draws nothing** (`shell/Occlusion.h`, P2), as the
   Mac's AppKit occlusion stops a covered window's page and its `ThemeView`
   crossfade. Kite counts as hidden while the session is locked
@@ -478,5 +561,7 @@ Off Windows, the model and its tests build natively, and MinGW cross-compiles th
 
 ```bash
 cmake -S windows -B /tmp/kite-core && cmake --build /tmp/kite-core -j && ctest --test-dir /tmp/kite-core
+# The same tests under ASan and UBSan, as CI runs them (KITE_WERROR=OFF: the build above gates warnings):
+cmake -S windows -B /tmp/kite-asan -DCMAKE_BUILD_TYPE=Debug -DKITE_WERROR=OFF -DCMAKE_CXX_FLAGS="-O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" && cmake --build /tmp/kite-asan --target KiteCoreTests -j && ctest --test-dir /tmp/kite-asan -R KiteCoreTests
 cmake -S windows -B /tmp/kite-mingw -DCMAKE_TOOLCHAIN_FILE="$PWD/windows/cmake/mingw-w64.cmake" && cmake --build /tmp/kite-mingw -j
 ```

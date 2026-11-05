@@ -7,8 +7,10 @@ import SwiftUI
 /// Arc's shape, from its binary and its AuthFeature bundle (docs/arc-visual-spec.md, "Onboarding"): a
 /// window of its own (`_closeOnboardingWindow`) over a saturated, grainy backdrop (`static-bg.png`,
 /// `WindowBackground`), one step per screen with a large title, a line or two of text, one primary
-/// button and a Back button, ending on a welcome step. Kite's steps are its own: Welcome, Set Up
-/// Claude (Copy Prompt for Claude), and You're All Set, which hands off to Import from Arc.
+/// button and a Back button, ending on a welcome step. Kite's steps are its own: Welcome, Camera
+/// and Microphone (macOS's own access, asked up front rather than when a site first needs it),
+/// Set Up Claude (Copy Prompt for Claude), and a last step that hands off to Import from Arc or
+/// Import from Another Browser.
 /// Arc's onboarding itself can't be watched headlessly (it needs an Arc account and a fresh Arc
 /// profile), so its sizes and timings here are Kite's, not measured.
 @MainActor
@@ -56,13 +58,15 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         static let previewLines = 4
     }
 
-    private enum Step: Int, CaseIterable { case welcome, claude, done }
+    private enum Step: Int, CaseIterable { case welcome, access, claude, done }
 
     private let window: NSWindow
     private let browser: () -> BrowserWindowController?
     /// Bumped by every `go`, so a fade that finishes after another `go` doesn't swap in its old step.
     private var generation = 0
     private var menuObserver: NSObjectProtocol?
+    /// Back from System Settings: the access step shows what changed there.
+    private var activeObserver: NSObjectProtocol?
     private let content = NSView()
     private let backButton = OnboardingTextButton(title: "‹ Back")
     private let dots = NSStackView()
@@ -91,9 +95,14 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         menuObserver = NotificationCenter.default.addObserver(forName: NSMenu.willSendActionNotification, object: nil,
                                                               queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
-                guard (note.userInfo?["MenuItem"] as? NSMenuItem)?.identifier?.rawValue == "importFromArc" else { return }
+                let id = (note.userInfo?["MenuItem"] as? NSMenuItem)?.identifier?.rawValue
+                guard id == "importFromArc" || id == "importFromAnotherBrowser" else { return }
                 self?.window.close()
             }
+        }
+        activeObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil,
+                                                                queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshAccess() }
         }
 
         let backdrop = OnboardingBackdrop()
@@ -186,6 +195,21 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
             return column(icon: kiteIcon(), title: "Welcome to Kite.",
                           body: "Spaces, pinned tabs, the command bar and split view, the way Arc had them. With Claude built in.",
                           buttons: [primary("Get Started", #selector(next), id: "onboardingGetStarted")])
+        case .access:
+            let statuses = SystemMediaAccess.Device.allCases.map { ($0, SystemMediaAccess.status($0)) }
+            let buttons: [NSButton]
+            if statuses.contains(where: { $0.1 == .notAsked }) {
+                buttons = [primary("Allow Camera and Microphone", #selector(requestAccess), id: "onboardingAllowAccess"),
+                           secondary("Not Now", #selector(next), id: "onboardingNotNow")]
+            } else if statuses.contains(where: { $0.1 == .off }) {
+                buttons = [primary("Open System Settings", #selector(openAccessSettings), id: "onboardingOpenSettings"),
+                           secondary("Continue", #selector(next), id: "onboardingContinue")]
+            } else {
+                buttons = [primary("Continue", #selector(next), id: "onboardingContinue")]
+            }
+            return column(icon: symbolIcon("video.fill", "mic.fill"), title: "Video calls, voice search.",
+                          body: "macOS asks once whether Kite may use your camera and microphone. Sites still ask you first, every one of them.",
+                          extra: accessRows(statuses), buttons: buttons)
         case .claude:
             let copy = primary("Copy Prompt for Claude", #selector(copyPrompt), id: "onboardingCopyPrompt")
             copyButton = copy
@@ -194,19 +218,100 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
                           extra: promptPreview(),
                           buttons: [copy, secondary("Continue", #selector(next), id: "onboardingContinue")])
         case .done:
-            var buttons = [NSButton]()
-            if Self.arcDataExists {
-                buttons.append(primary("Import from Arc…", #selector(importArc), id: "onboardingImportFromArc"))
-                buttons.append(secondary("Start Browsing", #selector(finish), id: "onboardingStartBrowsing"))
-            } else {
-                buttons.append(primary("Start Browsing", #selector(finish), id: "onboardingStartBrowsing"))
+            let arc = Self.arcDataExists
+            let others = Self.otherBrowsers
+            // The first import offered is the primary button; Start Browsing is when there's none.
+            var imports = [(title: String, action: Selector, id: String)]()
+            if arc { imports.append(("Import from Arc…", #selector(importArc), "onboardingImportFromArc")) }
+            if !others.isEmpty {
+                let title = others.count == 1 ? "Import from \(others[0].title)…" : "Import from Another Browser…"
+                imports.append((title, #selector(importOtherBrowser), "onboardingImportFromBrowser"))
             }
-            return column(icon: kiteIcon(), title: "You're all set.",
-                          body: Self.arcDataExists
-                              ? "Bring your spaces, pinned tabs, favorites and history over from Arc. You can also do it later from the File menu."
-                              : "Press ⌘T to open your first tab. Getting Started is in the Help menu if you want this again.",
+            var buttons = imports.enumerated().map { index, item in
+                index == 0 ? primary(item.title, item.action, id: item.id) : secondary(item.title, item.action, id: item.id)
+            }
+            buttons.append(imports.isEmpty ? primary("Start Browsing", #selector(finish), id: "onboardingStartBrowsing")
+                                           : secondary("Start Browsing", #selector(finish), id: "onboardingStartBrowsing"))
+            let body: String
+            if arc {
+                body = others.isEmpty
+                    ? "Bring your spaces, pinned tabs, favorites and history over from Arc."
+                    : "Bring your spaces, pinned tabs, favorites and history over from Arc, or bookmarks and history from \(Self.list(others.map(\.title)))."
+            } else if !others.isEmpty {
+                body = "Bring your bookmarks and history over from \(Self.list(others.map(\.title))). They become pinned tabs in a space of their own."
+            } else {
+                body = "Press ⌘T to open your first tab. Getting Started is in the Help menu if you want this again."
+            }
+            return column(icon: kiteIcon(), title: imports.isEmpty ? "You're all set." : "Bring your browser with you.",
+                          body: imports.isEmpty ? body : body + " You can also do it later from the menu bar.",
                           buttons: buttons)
         }
+    }
+
+    /// "Chrome", "Chrome and Safari", "Chrome, Firefox and Safari".
+    private static func list(_ names: [String]) -> String {
+        guard names.count > 1 else { return names.first ?? "" }
+        return names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
+    }
+
+    /// Camera and microphone, each with what macOS says about Kite.
+    private func accessRows(_ statuses: [(SystemMediaAccess.Device, SystemMediaAccess.Status)]) -> NSView {
+        let rows = NSStackView()
+        rows.orientation = .vertical
+        rows.spacing = 0
+        rows.wantsLayer = true
+        rows.layer?.cornerRadius = 10
+        rows.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.22).cgColor
+        rows.layer?.borderWidth = 1
+        rows.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+        rows.edgeInsets = NSEdgeInsets(top: 4, left: 14, bottom: 4, right: 14)
+        for (device, status) in statuses {
+            let symbol = NSImageView(image: NSImage(systemSymbolName: device == .camera ? "video.fill" : "mic.fill",
+                                                    accessibilityDescription: nil) ?? NSImage())
+            symbol.contentTintColor = NSColor.white.withAlphaComponent(0.8)
+            symbol.widthAnchor.constraint(equalToConstant: 20).isActive = true
+            let name = NSTextField(labelWithString: device.title)
+            name.font = .systemFont(ofSize: 13, weight: .medium)
+            name.textColor = .white
+            let state = NSTextField(labelWithString: {
+                switch status {
+                case .allowed: "Allowed ✓"
+                case .notAsked: "Not asked yet"
+                case .off: "Off in System Settings"
+                }
+            }())
+            state.font = .systemFont(ofSize: 13)
+            state.textColor = status == .allowed ? NSColor.systemGreen : NSColor.white.withAlphaComponent(status == .off ? 0.9 : 0.55)
+            state.setAccessibilityIdentifier(device == .camera ? "onboardingCameraStatus" : "onboardingMicrophoneStatus")
+            let spacer = NSView()
+            spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            let row = NSStackView(views: [symbol, name, spacer, state])
+            row.orientation = .horizontal
+            row.spacing = 10
+            row.heightAnchor.constraint(equalToConstant: 36).isActive = true
+            rows.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: rows.widthAnchor, constant: -28).isActive = true
+        }
+        return rows
+    }
+
+    /// SF Symbols side by side, in white, where the other steps have an icon.
+    private func symbolIcon(_ names: String...) -> NSView {
+        let configuration = NSImage.SymbolConfiguration(pointSize: 34, weight: .regular)
+        let views = names.map { name -> NSView in
+            let view = NSImageView(image: NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+                .withSymbolConfiguration(configuration) ?? NSImage())
+            view.contentTintColor = .white
+            return view
+        }
+        let row = NSStackView(views: views)
+        row.orientation = .horizontal
+        row.spacing = 18
+        row.setAccessibilityElement(true)
+        row.setAccessibilityRole(.image)
+        row.setAccessibilityLabel("Camera and microphone")
+        row.heightAnchor.constraint(equalToConstant: Metrics.iconSide + 16).isActive = true
+        return row
     }
 
     private func column(icon: NSView, title: String, body: String, extra: NSView? = nil, buttons: [NSButton]) -> NSView {
@@ -339,11 +444,45 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         return FileManager.default.fileExists(atPath: ArcImportController.arcDirectory.appendingPathComponent("StorableSidebar.json").path)
     }
 
+    /// The other browsers Import from Another Browser… finds on this Mac. A test profile only sees
+    /// KITE_BROWSER_DATA_PATH's hand-made ones, never the user's.
+    private static var otherBrowsers: [ImportBrowser] {
+        let environment = ProcessInfo.processInfo.environment
+        if environment["KITE_SUPPORT_PATH"] != nil, environment["KITE_BROWSER_DATA_PATH"] == nil { return [] }
+        return BrowserImportController.installed().map(\.browser)
+    }
+
     // MARK: Actions
 
     @objc private func next() { go(to: step.rawValue + 1, animated: true) }
 
     @objc private func back() { go(to: step.rawValue - 1, animated: true) }
+
+    /// macOS's camera prompt, then its microphone prompt; the step then shows the answers.
+    @objc private func requestAccess() {
+        guard !transitioning else { return }
+        // A test run never puts a system prompt on the user's screen.
+        if UIDiagnostics.enabledByEnvironment {
+            NSLog("Kite: diagnostics: would ask macOS for the camera and microphone")
+            return
+        }
+        Task { @MainActor in
+            await SystemMediaAccess.requestAll()
+            refreshAccess()
+        }
+    }
+
+    @objc private func openAccessSettings() {
+        guard !transitioning, let device = SystemMediaAccess.Device.allCases.first(where: { SystemMediaAccess.status($0) == .off })
+        else { return }
+        SystemMediaAccess.openSettings(device)
+    }
+
+    /// Redraws the access step in place, if it's the one showing.
+    private func refreshAccess() {
+        guard step == .access, !transitioning else { return }
+        go(to: Step.access.rawValue, animated: false)
+    }
 
     @objc private func copyPrompt() {
         guard !transitioning else { return }
@@ -385,8 +524,19 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         }
     }
 
+    @objc private func importOtherBrowser() {
+        guard !transitioning, let controller = browser(), let browserWindow = controller.window else { return }
+        window.close()
+        guard browserWindow.attachedSheet == nil else { return }
+        DispatchQueue.main.async {
+            WindowPresenter.show(browserWindow)
+            controller.importFromAnotherBrowser(nil)
+        }
+    }
+
     func windowWillClose(_ notification: Notification) {
         if let menuObserver { NotificationCenter.default.removeObserver(menuObserver) }
+        if let activeObserver { NotificationCenter.default.removeObserver(activeObserver) }
         copiedReset?.cancel()
         Onboarding.save(.init(completed: true), to: Self.stateURL)
         Self.shown = nil
