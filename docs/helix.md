@@ -143,11 +143,14 @@ request that could reach past that, before anything runs:
   `KITE_TEST_FIND: ready` line before its steps, and fails, uncaptured, without it;
 - the sidebar's hooks, except `KITE_TEST_ICON_PICKER` with a space's name under the same text rule, or
   `KITE_TEST_NEW_SPACE` set to exactly `1` with, optionally, `KITE_TEST_NEW_SPACE_NAME` under the text
-  rule and `KITE_TEST_NEW_SPACE_THEME` one of `1`–`7`; the picker never beside the page's hooks, none
-  beside a find-bar hook, no input steps in the state, on a base with the script's `SIDEBAR_FLOOR`
-  (ci/test-hooks-icon-picker-create-space). On that base a test-safe run opens the picker or Create a
-  Space through the store paths a click takes, and the theme editor from its row's own view, without
-  events. The state waits for Kite's `KITE_TEST_SIDEBAR: ready` line, and fails, uncaptured, without it.
+  rule and `KITE_TEST_NEW_SPACE_THEME` one of `1`–`7`; the picker never beside the page's hooks, no
+  other `KITE_TEST_*` hook beside them, no input steps in the state, on a base with the script's
+  `SIDEBAR_FLOOR` (ci/test-hooks-icon-picker-create-space, #412). On that base a test-safe run opens the
+  picker or Create a Space through the store paths a click takes, and the theme editor from its row's own
+  view, without events. The state waits for Kite's `KITE_TEST_SIDEBAR: ready` line and fails,
+  uncaptured, without it, when it says Kite is the active app or the popover isn't the main window's
+  child (`SIDEBAR_READY_OK`), or when Kite writes `KITE_TEST_SIDEBAR: changed` (the state went, or Kite
+  became active) by just after the capture.
 
 The Mac job only reads the repository (no token left in its checkout); a GitHub-hosted job pushes
 `review/<id>-mac`. Raise `SAFE_FLOOR` whenever new test-safety work lands in Kite.

@@ -35,7 +35,8 @@
 #            {"KITE_TEST_ICON_PICKER": "Work"}      the icon picker open for the space with this name (text rule), or
 #            {"KITE_TEST_NEW_SPACE": "1",           Create a Space, optionally with
 #             "KITE_TEST_NEW_SPACE_NAME": "Notes",  its name field holding this (text rule) and
-#             "KITE_TEST_NEW_SPACE_THEME": "4"}     preset 1-7 picked, the theme editor open; no input steps with these
+#             "KITE_TEST_NEW_SPACE_THEME": "4"}     preset 1-7 picked, the theme editor open; no other hook and no
+#                                                   input steps beside these
 #     "profile_files": {"test-name": "text"},       test-* files in the profile (never test-context-menu-pick),
 #                                                   and history.json (checked like a session, 1 MB at most)
 #     "steps": [{"ui": "input", "args": {"from": [86,795], "to": [150,795], "steps": 10, "hold": 10}},
@@ -82,10 +83,12 @@
 #   "KITE_TEST_FIND: ready" within FIND_READY_SECONDS.
 # - Sidebar: KITE_TEST_ICON_PICKER (a space's name, under the text rule), or KITE_TEST_NEW_SPACE exactly 1 with
 #   optionally KITE_TEST_NEW_SPACE_NAME (the text rule) and KITE_TEST_NEW_SPACE_THEME (one of 1-7); the picker never
-#   beside the page's hooks, NAME and THEME never without NEW_SPACE, none beside a find-bar hook, no input steps (no
-#   click, drag, key or text) in such a state, and only on a base that has SIDEBAR_FLOOR (test-safe only, the build
-#   opens them through the store paths a click takes and the popovers from their own views, without events). A state
-#   fails, uncaptured, if Kite doesn't write "KITE_TEST_SIDEBAR: ready" within SIDEBAR_READY_SECONDS.
+#   beside the page's hooks, NAME and THEME never without NEW_SPACE, no other KITE_TEST_* hook beside them, no input
+#   steps (no click, drag, key or text) in such a state, and only on a base that has SIDEBAR_FLOOR (test-safe only, the
+#   build opens them through the store paths a click takes and the popovers from their own views, without events). A
+#   state fails, uncaptured, if Kite doesn't write "KITE_TEST_SIDEBAR: ready" within SIDEBAR_READY_SECONDS, if that
+#   line doesn't match SIDEBAR_READY_OK (Kite isn't the active app; the popover, if any, is the main window's child),
+#   or if Kite writes "KITE_TEST_SIDEBAR: changed" (the state went, or Kite became active) by just after the capture.
 # - Every test Kite is quit; the build's bundles are unregistered from Launch Services and deleted (never through a
 #   symlink, never outside the checkout).
 set -euo pipefail
@@ -145,11 +148,16 @@ FIND_READY_SECONDS=30
 # activated or fronted. It writes "KITE_TEST_SIDEBAR: ready: …" once the popover shows (or the page is up), and
 # `kite ui capture`'s in-process render draws the open popover over the window. Older Kites ignore the hooks, so the
 # capture would show neither. If that branch lands by squash or rebase, set this to the commit it landed as on main.
-SIDEBAR_FLOOR=83688bb7f07ca4fe475e261150df888214ab3d83
+SIDEBAR_FLOOR=69e0426c0821a7936f94ddee385b01009884a4e8
 # How long a state waits, after Kite's socket answers, for that ready line (or its "failed" line). Kite writes one by
 # 11 s after its window is up (SidebarTestHook.readyTimeout after a 1 s delay), and SidebarTestHookTests checks that
 # this stays at least 5 s above that.
 SIDEBAR_READY_SECONDS=20
+# What Kite's ready line must start with (an ERE, for bash's =~): Kite isn't the active app, and the hook's popover, if
+# it has one, is a child window of the main window (SidebarTestHook.Shown, whose facts come before any name). A key
+# popover window in an inactive app can't take the keyboard from another app. SidebarTestHookTests matches it against
+# the lines Kite writes.
+SIDEBAR_READY_OK='^KITE_TEST_SIDEBAR: ready: app active no; (no popover|popover key (yes|no), level -?[0-9]+, parent the main window); '
 
 # Views a click, right-click (through showSidebarMenu's KITE_TEST_CONTEXT_MENU hook) or drag may start on. Each was
 # read in the Mac source: no hookless NSMenu, no window drag. Window drag: the browser window is movable by its
@@ -739,6 +747,8 @@ for i, state in enumerate(request["states"]):
         fail(f"{where}: KITE_TEST_ICON_PICKER and the KITE_TEST_NEW_SPACE hooks are one or the other, not both")
     if NEW_SPACE_VALUES & set(env) and "KITE_TEST_NEW_SPACE" not in env:
         fail(f"{where}: KITE_TEST_NEW_SPACE_NAME and _THEME only go with KITE_TEST_NEW_SPACE set to 1")
+    if sidebar_hook and set(env) - SIDEBAR_HOOKS:
+        fail(f"{where}: a sidebar hook goes alone: no {', '.join(sorted(set(env) - SIDEBAR_HOOKS))} beside it")
     if sidebar_hook and find_hook:
         fail(f"{where}: a sidebar hook and a find-bar hook are one or the other, not both")
     files = dict(state.get("profile_files") or {}) if isinstance(state.get("profile_files") or {}, dict) else None
@@ -1082,8 +1092,15 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
             kill -0 "$KITE_PID" 2>/dev/null || break
             sleep 0.2
         done
+        ready_line="$(grep -m1 '^KITE_TEST_SIDEBAR: ready' "$PROFILE/kite.log" 2>/dev/null || true)"
         if [[ "$ready" != 1 ]]; then
             echo "failed: no 'KITE_TEST_SIDEBAR: ready' line from Kite in $SIDEBAR_READY_SECONDS s (see test-lines)" >"$folder/status"
+        elif [[ ! "$ready_line" =~ $SIDEBAR_READY_OK ]]; then
+            # Kite was the active app, or the popover isn't the main window's child: nothing is captured.
+            echo "failed: Kite's ready line isn't a background run's: ${ready_line:0:300}" >"$folder/status"
+            ready=0
+        fi
+        if [[ "$ready" != 1 ]]; then
             grep -E '^KITE_TEST_[A-Z_]+:' "$PROFILE/kite.log" >"$folder/test-lines" 2>/dev/null || true
             cp "$PROFILE/kite.log" "$LOGS/$NAME.kite.log" 2>/dev/null || true
             stop_kite; unset KITE_SUPPORT_PATH; failed=1; continue
@@ -1199,6 +1216,16 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
             rm -f "$OUT/$NAME.png"; failed=1
         fi
         perl -MTime::HiRes=time -e 'printf "%.1f", time - shift' "$held_from" >"$folder/elapsed"
+        # Kite looks every 0.2 s, after its ready line, for the state going (a transient popover closing, the page
+        # ending) or Kite becoming active, and writes "changed": then the capture may not show the state, so it's dropped.
+        if [[ "$SIDEBAR" == 1 && -f "$OUT/$NAME.png" ]]; then
+            sleep 0.5
+            changed="$(grep -m1 '^KITE_TEST_SIDEBAR: changed' "$PROFILE/kite.log" 2>/dev/null || true)"
+            if [[ -n "$changed" ]]; then
+                echo "failed: the hook's state didn't hold through the capture: ${changed:0:300}" >"$folder/status"
+                rm -f "$OUT/$NAME.png"; failed=1
+            fi
+        fi
         tmo 60 "$CLI" ui tree "$tree_args" >"$folder/tree-after.txt" 2>&1 || true
         if [[ -f "$OUT/$NAME.png" ]]; then
             sips -g pixelWidth -g pixelHeight "$OUT/$NAME.png" 2>/dev/null \
