@@ -257,6 +257,16 @@ void AddLook(json::Object& o, const SpaceIconLook& look, LookIn in = LookIn::Bar
 // Ids typed in either case, like UUID(uuidString:).
 std::string Id(const std::string& text) { return NormalizeUuid(text).value_or(text); }
 
+// What closing a tab did, as `close` and a click's `outcome` print it.
+const char* OutcomeName(CloseOutcome outcome) {
+    switch (outcome) {
+    case CloseOutcome::Removed: return "removed";
+    case CloseOutcome::Unloaded: return "unloaded";
+    case CloseOutcome::NotFound: return "notFound";
+    }
+    return "notFound";
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -564,7 +574,7 @@ int main(int argc, char** argv) {
                 const SidebarTap tap = SidebarMiddleRelease(*press, rows, 240, values[2], values[3], values[0], values[1], listTop);
                 out.emplace("action", std::string(tap.action == SidebarTap::Action::CloseTab ? "closeTab" : "none"));
                 if (tap.action == SidebarTap::Action::CloseTab) {
-                    out.emplace("outcome", std::string(state.Close(tap.id) == CloseOutcome::Unloaded ? "unloaded" : "removed"));
+                    out.emplace("outcome", std::string(OutcomeName(state.Close(tap.id))));
                     changed = true;
                 }
             }
@@ -633,7 +643,7 @@ int main(int argc, char** argv) {
                 case SidebarTap::Action::SetFolderExpanded: state.SetFolderExpanded(tap.id, tap.expanded); changed = true; break;
                 case SidebarTap::Action::TogglePinnedSection: TogglePinnedSection(state, tap.id); changed = true; break;
                 case SidebarTap::Action::CloseTab:
-                    out.emplace("outcome", std::string(state.Close(tap.id) == CloseOutcome::Unloaded ? "unloaded" : "removed"));
+                    out.emplace("outcome", std::string(OutcomeName(state.Close(tap.id))));
                     changed = true;
                     break;
                 case SidebarTap::Action::ResetTab:
@@ -759,7 +769,7 @@ int main(int argc, char** argv) {
         // Ctrl+W on a tab: prints whether it was removed (and archived) or only unloaded.
         const CloseOutcome outcome = state.Close(Id(args[1]));
         if (outcome == CloseOutcome::NotFound) return kNotFound;
-        std::puts(outcome == CloseOutcome::Removed ? "removed" : "unloaded");
+        std::puts(OutcomeName(outcome));
         changed = true;
     } else if (command == "reopen" && args.size() <= 2) {
         // Ctrl+Shift+T, or Undo Archive Tab for one tab: prints the tab that came back.

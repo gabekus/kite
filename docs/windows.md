@@ -647,14 +647,17 @@ Back to Pinned URL's tooltip, and the "Pin Tab"/"Unpin Tab" retitling (no menu s
 ## Middle-click to close (a Windows addition)
 
 A middle click on a tab's row in the sidebar closes that tab, as Chrome, Edge and Arc for Windows
-do: Today's tabs, pinned tabs and tabs in folders. It's the row's close button (Ctrl+W for the
-selected tab): Today's tab is archived and its page closes; a pinned tab, in a folder or not,
-unloads (its row stays and its page closes, the close button's "Unload"), and one that closes
-for good (a split's pane, or one with no page) goes. A tab in one of Claude's folders, which has no close
-button, takes no middle click. It acts on release inside the row it went down on, so a press
-moved off the row closes nothing. The press itself draws nothing. A middle click on a favorite,
-a folder, the header, New Tab, the space bar, the top row or empty sidebar does nothing: a
-favorite is a tile, not a tab row, and has no close button to stand in for. A page's
+do: Today's tabs, pinned tabs and tabs in folders. It does what the row's close button does (and
+Ctrl+W for the selected tab): Today's tab is archived and its page closes; a pinned tab, in a
+folder or not, unloads, keeping its row while its page closes (the button's tooltip on the Mac
+says "Unload"); one that closes for good (a split's pane, or one with no page) goes. A tab in one
+of Claude's folders has no close button unless it closes for good, and without one it takes no
+middle click. It acts on release inside the row it went down on, so a press moved off the row, or
+one the mouse capture was taken from, closes nothing. The press itself draws nothing. While a row
+or the header is renamed, a middle click on it does nothing (its close button is hidden then);
+one anywhere else ends the rename, keeping what was typed, as a left press does. A middle click on
+a favorite, a folder, the header, New Tab, the space bar, the top row or empty sidebar does
+nothing: a favorite is a tile, not a tab row, and has no close button to stand in for. A page's
 own middle clicks (a link opening in a background tab, autoscroll) are Chromium's, in the page's
 window, and unchanged. Known difference: the Mac has none (no sidebar middle click, and its
 `ui input` refuses middle clicks). `core/Sidebar`'s `SidebarMiddlePressAt` and

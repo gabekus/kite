@@ -993,6 +993,7 @@ std::wstring BrowserWindowController::SmokeTestMiddleClick() {
     const auto done = [&](std::wstring problem) {
         SendMouse(window, WM_MOUSELEAVE, POINT{}, 0);
         sidebar_->ClearHover();
+        if (sidebar_->Renaming()) sidebar_->TakeRename();
         std::vector<std::string> made;
         for (const Tab* tab : state_.SelectedSpace().AllTabs()) {
             if (!before.FindTabByID(tab->id)) made.push_back(tab->id);
@@ -1069,6 +1070,73 @@ std::wstring BrowserWindowController::SmokeTestMiddleClick() {
     if (state_.FindTabByID(tab) || rowOf(SidebarRow::Kind::Tab, tab)) return done(L"a middle click on a Today tab's row didn't close it");
     if (!pageGone(tab)) return done(L"a middle click on a Today tab's row left its page");
     if (state_.archived.empty() || state_.archived.back().tab.id != tab) return done(L"a middle-clicked tab wasn't archived");
+
+    // Two more Today tabs (the second selected, on top) for the cases below.
+    const auto centreOf = [&](const std::string& id) -> std::optional<POINT> {
+        const auto r = rowOf(SidebarRow::Kind::Tab, id);
+        return r ? sidebar_->RowCentre(*r) : std::nullopt;
+    };
+    const std::string other = state_.OpenTab("data:text/html,middle-other", std::nullopt, true);
+    const std::string renamed = state_.OpenTab("data:text/html,middle-renamed", std::nullopt, true);
+    StateChanged();
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    std::optional<POINT> otherAt = centreOf(other), renamedAt = centreOf(renamed);
+    if (!otherAt || !renamedAt) return done(L"the middle-click test's tabs aren't in view");
+
+    // A press whose mouse capture is taken (another window takes it), or that the sidebar drops (the
+    // command bar opening), then let go on its row: nothing closes, and the mouse isn't kept.
+    SendMouse(window, WM_MOUSEMOVE, *otherAt, 0);
+    SendMouse(window, WM_MBUTTONDOWN, *otherAt, MK_MBUTTON);
+    ReleaseCapture();
+    SendMouse(window, WM_MBUTTONUP, *otherAt, 0);
+    if (!state_.FindTabByID(other) || GetCapture() == window) return done(L"a middle press that lost the mouse still closed its tab");
+    SendMouse(window, WM_MBUTTONDOWN, *otherAt, MK_MBUTTON);
+    sidebar_->ClearHover();
+    SendMouse(window, WM_MBUTTONUP, *otherAt, 0);
+    if (!state_.FindTabByID(other) || GetCapture() == window) return done(L"a middle press the sidebar dropped still closed its tab");
+
+    // A second press whose first never let go replaces it: let go on the second row, that tab
+    // closes, not the first's. (Then opened again where it was, for what follows.)
+    SendMouse(window, WM_MBUTTONDOWN, *otherAt, MK_MBUTTON);
+    SendMouse(window, WM_MBUTTONDOWN, *renamedAt, MK_MBUTTON);
+    SendMouse(window, WM_MBUTTONUP, *renamedAt, 0);
+    if (state_.FindTabByID(renamed) || !state_.FindTabByID(other) || GetCapture() == window) {
+        return done(L"a second middle press didn't replace the first");
+    }
+    if (state_.ReopenClosed(renamed) != renamed) return done(L"the middle-clicked tab didn't reopen");
+    StateChanged();
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    otherAt = centreOf(other);
+    renamedAt = centreOf(renamed);
+    if (!otherAt || !renamedAt) return done(L"the middle-click test's tabs aren't in view");
+
+    // While a tab is renamed: a middle click on its row does nothing (its close button is hidden),
+    // and one on another row ends the rename, keeping what was typed, then closes that row's tab.
+    state_.Select(renamed);
+    StateChanged();
+    RunCommand("renameCurrentTab");
+    for (wchar_t c : std::wstring_view(L"Kept")) SendMessageW(window, WM_CHAR, c, 0);
+    middleClick(*renamedAt, *renamedAt);
+    if (!state_.FindTabByID(renamed) || sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Tab, renamed}) {
+        return done(L"a middle click on the row being renamed closed it or ended the rename");
+    }
+    middleClick(*otherAt, *otherAt);
+    if (sidebar_->Renaming() || !state_.FindTabByID(renamed) || state_.FindTabByID(renamed)->DisplayTitle() != "Kept") {
+        return done(L"a middle click on another row didn't end the rename, keeping what was typed");
+    }
+    if (state_.FindTabByID(other)) return done(L"a middle click that ended a rename didn't close its own row's tab");
+
+    // A space's cell in the bar: nothing.
+    if (const std::optional<POINT> cell = sidebar_->SpaceCellCentre(state_.SelectedSpaceIndex())) {
+        const std::string spaceID = state_.SelectedSpace().id;
+        const size_t count = state_.SelectedSpace().AllTabs().size();
+        middleClick(*cell, *cell);
+        if (state_.SelectedSpace().id != spaceID || state_.SelectedSpace().AllTabs().size() != count || GetCapture() == window) {
+            return done(L"a middle click on a space's cell did something");
+        }
+    } else {
+        return done(L"the selected space has no cell in the bar");
+    }
 
     // A pinned tab: it unloads, as its close button does: its row stays, its page goes.
     const std::string pinned = state_.OpenTab("data:text/html,middle-pinned", std::nullopt, true);

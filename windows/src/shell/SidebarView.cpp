@@ -1790,14 +1790,33 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         // Windows' middle click on a tab's row closes it on release over that row (Chrome's and
         // Edge's; the Mac has none), as its close button does. Only a tab's row with a close button
         // takes it: favorites, folders, the header, the bar and the top row don't. It draws
-        // nothing until the close does. During another press it's ignored.
+        // nothing until the close does. During another button's press it's ignored; a middle press
+        // whose release never came is replaced by this one.
         const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
         if (p.x < 0 || p.x >= width_) return false;
-        if (press_ || barPress_ || topPress_ || favoritePress_ || renamePressed_ || middlePress_) return true;
-        if (TopRowItemAt(topRow_->Items(), p.x, p.y) || BarPoint(p) || InFavorites(favorites_->Tray(), width_, p.x, p.y)) return true;
+        if (press_ || barPress_ || topPress_ || favoritePress_ || renamePressed_) return true;
+        middlePress_.reset();
+        // While a row or header is renamed: a press on it is ignored (its close button is hidden
+        // while it renames, and closing it would lose what was typed); anywhere else it ends the
+        // rename, keeping what was typed, as a left press does, then goes on as a press.
+        if (rename_) {
+            const D2D1_POINT_2F q = OnPage(p);
+            const auto row = SidebarRowAt(model_.rows, width_, Height(), scroll_, q.x, q.y, listTop_);
+            if (row && Renames(model_.rows[*row])) {
+                if (GetCapture() == window_) ReleaseCapture();
+                return true;
+            }
+            EndRenaming(true);  // the rename's action rebuilds the rows
+        }
+        if (TopRowItemAt(topRow_->Items(), p.x, p.y) || BarPoint(p) || InFavorites(favorites_->Tray(), width_, p.x, p.y)) {
+            if (GetCapture() == window_) ReleaseCapture();
+            return true;
+        }
         const D2D1_POINT_2F q = OnPage(p);
         middlePress_ = SidebarMiddlePressAt(model_.rows, width_, Height(), scroll_, q.x, q.y, listTop_);
-        if (middlePress_) SetCapture(window_);
+        // A replaced press's capture carries over to the new one.
+        if (middlePress_ && GetCapture() != window_) SetCapture(window_);
+        else if (!middlePress_ && GetCapture() == window_) ReleaseCapture();
         return true;
     }
     case WM_MBUTTONUP: {
