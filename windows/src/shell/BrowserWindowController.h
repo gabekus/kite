@@ -553,8 +553,18 @@ private:
     void EditState(const std::function<void()>& change, bool selectionMoved = false);
     void RecordEdit(const std::function<void()>& change);
     // The keyboard for a rename field opening (a space's, a tab's or a folder's): the one place
-    // W21's GiveKeyboard(KeyboardField::Rename) goes.
-    void TakeKeyboardForRename();
+    // W21's GiveKeyboard(KeyboardField::Rename) goes. `open` opens the field before the window
+    // takes the focus, so the window's onFocus sees the rename as the keyboard's owner and doesn't
+    // hand the keyboard on to the page (which would end the rename as it took it, a moment later
+    // on CEF's thread).
+    void TakeKeyboardForRename(const std::function<void()>& open);
+    // Kite's window takes the focus when it's the one in front (a quiet run never is). For the
+    // smoke test's check of that order, `testFocus_` delivers the WM_SETFOCUS SetFocus would,
+    // without the activation (a quiet run never comes to the front), and onFocus only counts it.
+    void TakeFocusIfInFront();
+    bool testFocus_ = false;
+    // How often onFocus has handed the keyboard on to the page.
+    size_t pageFocusHandoffs_ = 0;
     // The Tabs menu's and the command bar's tab commands, by the Mac's ids.
     void MakeTabCommands();
     // Their validateMenuItem: whether `command` would do anything now; none when it isn't one of them.

@@ -1228,6 +1228,28 @@ std::wstring BrowserWindowController::SmokeTestTabEditing() {
     if (sidebar_->PageDraws() != pageDraws) return done(L"typing in a tab's rename drew its page, not only the field");
     SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
     if (sidebar_->Renaming() || state_.FindTabByID(tab)->DisplayTitle() != "Smoke") return done(L"Return didn't rename the tab");
+#ifdef KITE_HAS_CEF
+    // A rename begun while the page has the keyboard keeps it: the window takes the focus (as it does
+    // in front; here its WM_SETFOCUS) once the field is open, so onFocus doesn't hand the keyboard on
+    // to the page, which would end the rename as it took it. A tab's (Rename Current Tab…) and a
+    // space's (Rename Space…).
+    if (chromium_) {
+        for (const bool spaceRename : {false, true}) {
+            const size_t handoffs = pageFocusHandoffs_;
+            testFocus_ = true;
+            if (spaceRename) BeginRenaming(state_.selectedSpaceID);
+            else RunCommand("renameCurrentTab");
+            testFocus_ = false;
+            if (!sidebar_->Renaming() || KeyboardOwner() != KeyboardField::Rename) return done(L"the rename didn't open");
+            if (pageFocusHandoffs_ != handoffs) {
+                return done(spaceRename ? L"Kite's window gave the page the keyboard as a space's rename opened"
+                                  : L"Kite's window gave the page the keyboard as a tab's rename opened");
+            }
+            SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+            if (sidebar_->Renaming()) return done(L"Escape didn't end the rename");
+        }
+    }
+#endif
     // Rename Current Tab…: Escape keeps the name; a blank name goes back to the page's title.
     RunCommand("renameCurrentTab");
     typed(L"Not this");
