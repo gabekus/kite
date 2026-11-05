@@ -78,5 +78,9 @@ std::variant<Value, ParseError> Parse(std::string_view text);
 
 // Compact, sorted keys, UTF-8 output; numbers use the shortest round-trip form.
 std::string Write(const Value& value);
+// The same, appended to `out`: for a file written as a stream (history.json) rather than
+// built as one Value first.
+void Append(std::string& out, const Value& value);
+void AppendString(std::string& out, std::string_view text);
 
 }  // namespace kite::json
