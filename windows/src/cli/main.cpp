@@ -83,7 +83,9 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <knownfolders.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #endif
 
 using namespace kite;
@@ -271,6 +273,22 @@ json::Value BackupsSummary(const SessionBackups& backups) {
     return json::Value(json::Object{{"directory", PathUtf8(backups.Directory())}, {"backups", json::Value(std::move(rows))}});
 }
 
+// The user's Downloads folder, as Kite.exe finds it: FOLDERID_Downloads (wherever they moved
+// it), else %USERPROFILE%\Downloads; ~/Downloads off Windows.
+std::filesystem::path UserDownloads() {
+#ifdef _WIN32
+    PWSTR path = nullptr;
+    std::filesystem::path folder;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Downloads, KF_FLAG_DEFAULT, nullptr, &path)) && path) folder = path;
+    CoTaskMemFree(path);
+    if (!folder.empty()) return folder;
+    if (auto home = EnvironmentPath("USERPROFILE"); home && !home->empty()) return *home / "Downloads";
+#else
+    if (auto home = EnvironmentPath("HOME"); home && !home->empty()) return *home / "Downloads";
+#endif
+    return {};
+}
+
 json::Value DownloadsSummary(const DownloadList& list) {
     json::Array items;
     for (const DownloadItem& item : list.Items()) {
@@ -289,14 +307,20 @@ json::Value DownloadsSummary(const DownloadList& list) {
 // downloads.json's commands that touch only it (`location` reads the session too, below).
 int DownloadsCommand(const std::vector<std::string>& args, const std::filesystem::path& support) {
     const std::filesystem::path file = support / "downloads.json";
-    auto read = downloads_file::Read(file);
+    auto read = downloads_file::ReadOnly(file);
     if (!read) {
         std::fprintf(stderr, "kitecore: downloads.json doesn't read; left as it is\n");
         return kLoadFailed;
     }
     const std::string action = args.size() > 1 ? args[1] : "list";
+    // Writing the list back would lose the items it couldn't read (a newer Kite's, say): only
+    // looking is allowed then. Kite.exe copies such a file aside before it saves.
+    if (read->dropped > 0 && action != "list") {
+        std::fprintf(stderr, "kitecore: %zu of downloads.json's items don't read; not writing over them\n", read->dropped);
+        return kLoadFailed;
+    }
     DownloadsModel model;
-    model.Restore(*read, true, 0);
+    model.Restore(read->list, true, 0);
     json::Array reports;
     if (action == "list" && args.size() <= 2) {
         std::puts(json::Write(DownloadsSummary(model.List())).c_str());
@@ -492,13 +516,10 @@ int main(int argc, char** argv) {
     bool changed = false;
 
     if (command == "downloads" && args.size() >= 2 && args.size() <= 4) {
-        // Where a profile's downloads go, as a normal launch of Kite.exe resolves it.
-        std::filesystem::path userDownloads;
-        if (auto home = EnvironmentPath("USERPROFILE"); home && !home->empty()) userDownloads = *home / "Downloads";
-        else if (auto home2 = EnvironmentPath("HOME"); home2 && !home2->empty()) userDownloads = *home2 / "Downloads";
-        const std::filesystem::path defaultFolder =
-            DefaultDownloadFolder(EnvironmentPath("KITE_TEST_DOWNLOADS_PATH"), profile.has_value() || EnvironmentPath("KITE_SUPPORT_PATH").has_value(), false,
-                                  support, userDownloads);
+        // Where a profile's downloads go, as a normal launch of Kite.exe on it resolves them: the
+        // same test-profile rule, the same Downloads folder.
+        const std::filesystem::path defaultFolder = DefaultDownloadFolder(
+            EnvironmentPath("KITE_TEST_DOWNLOADS_PATH"), IsTestProfile(support, EnvironmentPath("LOCALAPPDATA")), false, support, UserDownloads());
         std::vector<std::string> profiles{BrowserState::kDefaultProfile};
         if (auto list = state.extra.find("profiles"); list != state.extra.end() && list->second.AsArray()) {
             for (const auto& entry : *list->second.AsArray()) {
@@ -520,12 +541,14 @@ int main(int argc, char** argv) {
                     settings.downloadDirectory.reset();
                     settings.promptsForDownload = false;
                 } else {
-                    // DownloadLocation.setFolder: the Downloads folder itself is stored as none.
-                    const std::filesystem::path chosen = std::filesystem::path(std::u8string(choice.begin(), choice.end()));
+                    // DownloadLocation.setFolder: the folder Kite saves into anyway is stored as
+                    // none; any other is kept absolute (a relative one would follow the caller).
                     std::error_code error;
-                    const bool same = std::filesystem::equivalent(chosen, defaultFolder, error) && !error;
-                    if (same) settings.downloadDirectory.reset();
-                    else settings.downloadDirectory = choice;
+                    const std::filesystem::path chosen =
+                        std::filesystem::absolute(std::filesystem::path(std::u8string(choice.begin(), choice.end())), error).lexically_normal();
+                    std::error_code same;
+                    if (std::filesystem::equivalent(chosen, defaultFolder, same) && !same) settings.downloadDirectory.reset();
+                    else settings.downloadDirectory = PathUtf8(chosen);
                     settings.promptsForDownload = false;
                 }
             });

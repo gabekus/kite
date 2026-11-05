@@ -52,9 +52,17 @@ std::optional<ProfileSettings> DecodeProfileSettings(const json::Value& v) {
 std::filesystem::path DefaultDownloadFolder(const std::optional<std::filesystem::path>& testDownloads, bool supportOverridden,
                                             bool quiet, const std::filesystem::path& support,
                                             const std::filesystem::path& userDownloads) {
-    if (supportOverridden && testDownloads && !testDownloads->empty()) return *testDownloads;
+    if (supportOverridden && testDownloads && testDownloads->is_absolute()) return *testDownloads;
     if (quiet) return support / "Downloads";
     return userDownloads;
+}
+
+bool IsTestProfile(const std::filesystem::path& support, const std::optional<std::filesystem::path>& localAppData) {
+    if (!localAppData || localAppData->empty()) return true;
+    const std::filesystem::path real = *localAppData / "Kite";
+    std::error_code error;
+    if (std::filesystem::equivalent(support, real, error) && !error) return false;
+    return std::filesystem::absolute(support, error).lexically_normal() != std::filesystem::absolute(real, error).lexically_normal();
 }
 
 // MARK: BrowserState (ProfileSettings.swift's extension, Profiles.swift's profile(_:))

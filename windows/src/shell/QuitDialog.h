@@ -5,8 +5,11 @@
 // "Close Kite" (the default) and "Keep browsing" (also Esc and the dialog's close button).
 //
 // The Mac draws its own window there, laid out as a macOS alert (Arc's look isn't measured);
-// Windows uses its own alert, a task dialog (comctl32 6, which Kite.manifest asks for), over
-// Kite's window. Without one (comctl32 5) it's a message box asking the same question.
+// Windows uses its own alert, a task dialog (comctl32 6, which Kite.manifest asks for,
+// delay-loaded), over Kite's window; a message box asks the same if the dialog can't be made.
+// It's asked as the window closes, before the pages close, where the Mac asks at terminate
+// (applicationShouldTerminate): on Windows closing the window is quitting. Logoff and shutdown
+// don't ask yet (a follow-up: WM_QUERYENDSESSION with ShutdownBlockReasonCreate's reason).
 //
 // A quiet run shows nothing: it logs the dialog's KITE_TEST_MODAL line (shell/QuietRun.h) and
 // answers as the Mac's test-safe run does (SkippedModal::DownloadsInProgress proceeds: Close

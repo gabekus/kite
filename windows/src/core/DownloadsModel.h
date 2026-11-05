@@ -73,6 +73,8 @@ public:
     void EndIncognitoSession(const std::string& context);
     // Hide from the list (the file stays); clear the finished ones; Delete browsing data's
     // download history since a date (none: all); a file moved. Each returns the save delay.
+    // Remove only forgets the row: the Mac's remove(_:) cancels a running download first, which
+    // is the shell's to do (Chromium::CancelDownloads) when W20b's Downloads page offers it.
     std::optional<double> Remove(const std::string& id, double now);
     std::optional<double> ClearFinished(double now);
     std::optional<double> RemoveHistory(std::optional<Timestamp> since, double now);

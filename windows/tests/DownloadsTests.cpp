@@ -23,6 +23,7 @@
 #include "core/ProfileSettings.h"
 #include "core/SkippedModal.h"
 #include "core/StoreFile.h"
+#include "core/Unicode.h"
 #include "core/Uuid.h"
 
 using namespace kite;
@@ -384,7 +385,12 @@ TEST(missingFolderFallsBackToDownloads) {
 
 TEST(detectsExtensionPackages) {
     const std::string blob = "https://clients2.googleusercontent.com/crx/blobs/abc/EXT_1_0.crx";
-    CHECK(IsExtensionPackage("application/x-chrome-extension", "a.crx", ""));
+    // The Mac takes the MIME type from anywhere (url: nil); Windows wants the store's host for it too.
+    CHECK(IsExtensionPackage("application/x-chrome-extension", "a.crx", "https://clients2.google.com/service/update2/crx"));
+    CHECK(!IsExtensionPackage("application/x-chrome-extension", "a.crx", ""));
+    CHECK(!IsExtensionPackage("application/x-chrome-extension", "notes.txt", "https://evil.example/notes.txt"));
+    CHECK(!IsExtensionPackage("application/x-chrome-extension", "a.crx", "http://clients2.google.com/a.crx"));
+    CHECK(!IsExtensionPackage("application/x-chrome-extension", "a.crx", "https://clients2.google.com.evil.example/a.crx"));
     CHECK(IsExtensionPackage("application/octet-stream", "EXT_1_0.crx", blob));
     CHECK(IsExtensionPackage("", "x.CRX", "https://r1---sn-abc.gvt1.com/edgedl/x.crx"));
     CHECK(!IsExtensionPackage("application/octet-stream", "x.crx", "https://example.com/x.crx"));
@@ -506,11 +512,45 @@ TEST(uniqueNamesNumberTheCopiesAsTheMacDoes) {
     CHECK(UniqueDownloadPath("..", folder, taken) == folder / "download");
     CHECK(UniqueDownloadPath("", folder, taken) == folder / "download");
     // UTF-8 names stay whole.
-    CHECK(UniqueDownloadPath("\xE6\x97\xA5\xE6\x9C\xAC.txt", folder, taken).filename().u8string() == u8"\u65E5\u672C.txt");
+    CHECK(UniqueDownloadPath("\xE6\x97\xA5\xE6\x9C\xAC.txt", folder, taken)->filename().u8string() == u8"\u65E5\u672C.txt");
+    // Bounded: a folder where every name is taken (or a check that always fails) gives up.
+    CHECK(!UniqueDownloadPath("x.bin", folder, [](const fs::path&) { return true; }));
+    int asked = 0;
+    CHECK(!UniqueDownloadPath("x.bin", folder, [&](const fs::path&) { return ++asked > 0; }) && asked == kUniqueNameTries);
+}
+
+TEST(downloadNamesAreSafeOnWindows) {
+    // A drive-relative name, an alternate data stream and the characters Windows refuses.
+    CHECK(SafeDownloadName("C:evil.exe") == "evil.exe");
+    CHECK(SafeDownloadName("report.pdf:Zone.Identifier") == "report.pdf_Zone.Identifier");
+    CHECK(SafeDownloadName("a<b>c\"d|e?f*g") == "a_b_c_d_e_f_g");
+    CHECK(SafeDownloadName(std::string("tab\there\x01")) == "tab_here_");
+    // Trailing dots and spaces go (Windows would drop them, and a name could change under it).
+    CHECK(SafeDownloadName("setup.exe. . ") == "setup.exe");
+    CHECK(SafeDownloadName("...") == "download");
+    CHECK(SafeDownloadName(" .") == "download");
+    // Device names, any case, with an extension or not.
+    CHECK(SafeDownloadName("CON") == "_CON");
+    CHECK(SafeDownloadName("nul.txt") == "_nul.txt");
+    CHECK(SafeDownloadName("Com1.tar.gz") == "_Com1.tar.gz");
+    CHECK(SafeDownloadName("lpt9") == "_lpt9");
+    CHECK(SafeDownloadName("console.txt") == "console.txt" && SafeDownloadName("com10") == "com10" && SafeDownloadName("COM0") == "COM0");
+    // At most 255 UTF-16 units, the extension kept; a number added after still fits.
+    const std::string longName = std::string(300, 'a') + ".pdf";
+    CHECK(SafeDownloadName(longName) == std::string(251, 'a') + ".pdf");
+    std::string wide;
+    for (int i = 0; i < 200; ++i) wide += "\xF0\x9F\x98\x80";  // U+1F600, two UTF-16 units each
+    const auto points = unicode::Decode(SafeDownloadName(wide + ".txt"));
+    CHECK(points.size() == 125 + 4);
+    const fs::path folder = "D:/Downloads";
+    auto numbered = UniqueDownloadPath(longName, folder, [&](const fs::path& p) { return p == folder / (std::string(251, 'a') + ".pdf"); });
+    CHECK(numbered && numbered->filename().u8string().size() == 255 && numbered->extension() == ".pdf");
 }
 
 TEST(theDownloadFolderNeverLeavesATestProfile) {
-    const fs::path support = "T:/profile", user = "C:/Users/me/Downloads", test = "T:/downloads";
+    // Absolute on every OS (a test folder must be).
+    const fs::path base = fs::temp_directory_path();
+    const fs::path support = base / "profile", user = base / "Users" / "me" / "Downloads", test = base / "downloads";
     // KITE_TEST_DOWNLOADS_PATH counts only with KITE_SUPPORT_PATH.
     CHECK(DefaultDownloadFolder(test, true, false, support, user) == test);
     CHECK(DefaultDownloadFolder(test, false, false, support, user) == user);
@@ -519,6 +559,28 @@ TEST(theDownloadFolderNeverLeavesATestProfile) {
     CHECK(DefaultDownloadFolder(std::nullopt, true, true, support, user) == support / "Downloads");
     CHECK(DefaultDownloadFolder(test, true, true, support, user) == test);
     CHECK(DefaultDownloadFolder(std::nullopt, false, false, support, user) == user);
+    // A relative folder isn't a test folder (Kite.exe refuses it).
+    CHECK(DefaultDownloadFolder(fs::path("downloads"), true, false, support, user) == user);
+    // A test profile is anything but %LOCALAPPDATA%\Kite, decided the same way by Kite.exe and kitecore.
+    TempFolder local;
+    fs::create_directories(local.dir / "Kite");
+    CHECK(!IsTestProfile(local.dir / "Kite", local.dir));
+    CHECK(!IsTestProfile(local.dir / "x" / ".." / "Kite", local.dir));
+    CHECK(IsTestProfile(local.dir / "other", local.dir));
+    CHECK(IsTestProfile(local.dir / "Kite", std::nullopt));
+}
+
+TEST(readingWithoutWritingCountsWhatItCouldntRead) {
+    TempFolder folder;
+    const fs::path file = folder.dir / "downloads.json";
+    CHECK(downloads_file::ReadOnly(file) && downloads_file::ReadOnly(file)->list.Items().empty());
+    WriteText(file, R"({"version":1,"downloads":{"items":[{"id":"nope"},{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","url":"u",
+        "path":"","state":"inProgress","receivedBytes":1,"totalBytes":2,"startedAt":1}]}})");
+    auto read = downloads_file::ReadOnly(file);
+    CHECK(read && read->dropped == 1 && read->list.Items().size() == 1 && read->list.Items()[0].state == S::Interrupted);
+    WriteText(file, "{nope");
+    CHECK(!downloads_file::ReadOnly(file));
+    CHECK(ReadText(file) == "{nope");  // never moved
 }
 
 TEST(profileSettingsDecodeAsSwiftDoes) {

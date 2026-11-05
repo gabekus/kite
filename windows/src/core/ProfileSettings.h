@@ -48,13 +48,18 @@ std::optional<ProfileSettings> DecodeProfileSettings(const json::Value&);
 inline constexpr const char* kDefaultDataStoreID = "00000000-0000-0000-0000-000000000000";
 
 // Where downloads go when no folder was chosen (DownloadLocation.defaultFolder): a test run's
-// own folder (KITE_TEST_DOWNLOADS_PATH, honoured only with KITE_SUPPORT_PATH, so a stray
-// variable can't move a real profile's downloads), else the user's Downloads. A quiet run
-// (Kite.exe's --smoke-test, --capture, --save-log, which need KITE_SUPPORT_PATH) without one
-// saves into its profile's own Downloads folder, never the user's: on the Mac a throwaway
-// profile without the variable still saves into ~/Downloads.
+// own folder (KITE_TEST_DOWNLOADS_PATH, an absolute path, honoured only on a test profile, one
+// that isn't %LOCALAPPDATA%\Kite, so a stray variable can't move a real profile's downloads),
+// else the user's Downloads. A quiet run (Kite.exe's --smoke-test, --capture, --save-log, which
+// need KITE_SUPPORT_PATH) without one saves into its profile's own Downloads folder, never the
+// user's: on the Mac a throwaway profile without the variable still saves into ~/Downloads.
+// `supportOverridden` is IsTestProfile's answer.
 std::filesystem::path DefaultDownloadFolder(const std::optional<std::filesystem::path>& testDownloads, bool supportOverridden,
                                             bool quiet, const std::filesystem::path& support,
                                             const std::filesystem::path& userDownloads);
+
+// Whether `support` is a test profile: anything but the default %LOCALAPPDATA%\Kite (Kite.exe and
+// kitecore decide it the same way, from where the profile is).
+bool IsTestProfile(const std::filesystem::path& support, const std::optional<std::filesystem::path>& localAppData);
 
 }  // namespace kite

@@ -442,14 +442,19 @@ std::filesystem::path AsidePath(const std::filesystem::path& file) {
     return aside;
 }
 
-std::optional<DownloadList> Read(const std::filesystem::path& file) {
+std::optional<Read> ReadOnly(const std::filesystem::path& file) {
     std::error_code error;
-    if (!std::filesystem::exists(file, error) && !error) return DownloadList();
+    if (!std::filesystem::exists(file, error) && !error) return Read{};
     auto bytes = store_file::Read(file);
     if (!bytes) return std::nullopt;
-    auto list = Decode(*bytes);
-    if (list) list->MarkRestored();
-    return list;
+    auto parsed = json::Parse(*bytes);
+    const Value* value = std::get_if<Value>(&parsed);
+    auto list = value ? DecodeValue(*value) : std::nullopt;
+    if (!list) return std::nullopt;
+    list->MarkRestored();
+    const size_t stored = StoredItemCount(*value);
+    const size_t dropped = stored > list->Items().size() ? stored - list->Items().size() : 0;
+    return Read{std::move(*list), dropped};
 }
 
 std::optional<Loaded> Load(const std::filesystem::path& file) {
@@ -560,25 +565,80 @@ std::string Kind(std::string_view fileName) {
 // MARK: Extension packages, unique names
 
 bool IsExtensionPackage(std::string_view mimeType, std::string_view suggestedName, std::string_view url) {
-    if (AsciiLower(mimeType) == "application/x-chrome-extension") return true;
-    if (!AsciiLower(suggestedName).ends_with(".crx") || url::Scheme(url) != "https") return false;
+    if (url::Scheme(url) != "https") return false;
     const auto host = url::Host(url);
     if (!host) return false;
     const std::string lower = AsciiLower(*host);
-    return lower == "clients2.google.com" || lower == "clients2.googleusercontent.com" || lower.ends_with(".gvt1.com");
+    if (lower != "clients2.google.com" && lower != "clients2.googleusercontent.com" && !lower.ends_with(".gvt1.com")) return false;
+    return AsciiLower(mimeType) == "application/x-chrome-extension" || AsciiLower(suggestedName).ends_with(".crx");
 }
 
-std::filesystem::path UniqueDownloadPath(std::string_view name, const std::filesystem::path& directory,
-                                         const std::function<bool(const std::filesystem::path&)>& taken) {
-    std::string file = LastPathComponent(name);
-    if (file.empty() || std::all_of(file.begin(), file.end(), IsSeparator) || file == "." || file == "..") file = "download";
+namespace {
+
+// UTF-16 units of UTF-8 text (a code point past U+FFFF takes two).
+size_t Utf16Length(std::u32string_view points) {
+    size_t n = 0;
+    for (char32_t c : points) n += c > 0xFFFF ? 2 : 1;
+    return n;
+}
+
+bool IsDeviceName(std::string_view base) {
+    const std::string lower = AsciiLower(base);
+    if (lower == "con" || lower == "prn" || lower == "aux" || lower == "nul" || lower == "conin$" || lower == "conout$") return true;
+    return lower.size() == 4 && (lower.starts_with("com") || lower.starts_with("lpt")) && lower[3] >= '1' && lower[3] <= '9';
+}
+
+}  // namespace
+
+std::string SafeDownloadName(std::string_view name) {
+    std::vector<char32_t> points = unicode::Decode(LastPathComponent(name));
+    // A drive-relative "C:x" is "x".
+    if (points.size() >= 2 && points[1] == U':' && ((points[0] | 0x20) >= U'a' && (points[0] | 0x20) <= U'z')) {
+        points.erase(points.begin(), points.begin() + 2);
+    }
+    for (char32_t& c : points) {
+        if (c < 0x20 || c == 0x7F || c == U'<' || c == U'>' || c == U':' || c == U'"' || c == U'|' || c == U'?' || c == U'*' ||
+            c == U'/' || c == U'\\') {
+            c = U'_';
+        }
+    }
+    while (!points.empty() && (points.back() == U'.' || points.back() == U' ')) points.pop_back();
+    while (!points.empty() && points.front() == U' ') points.erase(points.begin());
+    std::u32string text(points.begin(), points.end());
+    if (text.empty() || text == U"..") return "download";
+    // CON, NUL.txt, com1.tar.gz: the part before the first dot names a device.
+    const size_t firstDot = text.find(U'.');
+    const std::string stem = unicode::Encode(std::u32string_view(text).substr(0, firstDot));
+    if (IsDeviceName(stem)) text.insert(text.begin(), U'_');
+    // At most 255 UTF-16 units, the extension kept (or cut too when it's the long part).
+    if (Utf16Length(text) > 255) {
+        const size_t dot = text.rfind(U'.');
+        std::u32string extension = dot != std::u32string::npos && dot > 0 ? text.substr(dot) : std::u32string();
+        if (Utf16Length(extension) > 32) extension.clear();
+        std::u32string base = text.substr(0, text.size() - extension.size());
+        while (!base.empty() && Utf16Length(base) + Utf16Length(extension) > 255) base.pop_back();
+        while (!base.empty() && (base.back() == U'.' || base.back() == U' ')) base.pop_back();
+        text = base + extension;
+    }
+    return unicode::Encode(text);
+}
+
+std::optional<std::filesystem::path> UniqueDownloadPath(std::string_view name, const std::filesystem::path& directory,
+                                                        const std::function<bool(const std::filesystem::path&)>& taken) {
+    const std::string file = SafeDownloadName(name);
     const auto [base, extension] = SplitExtension(file);
     const auto utf8 = [](const std::string& text) { return std::filesystem::path(std::u8string(text.begin(), text.end())); };
     std::filesystem::path candidate = directory / utf8(file);
+    const std::vector<char32_t> basePoints = unicode::Decode(base);
+    const std::vector<char32_t> extensionPoints = unicode::Decode(extension);
+    const std::u32string tail = extension.empty() ? std::u32string() : U"." + std::u32string(extensionPoints.begin(), extensionPoints.end());
     for (int n = 2; taken(candidate); ++n) {
-        std::string numbered = std::string(base) + " " + std::to_string(n);
-        if (!extension.empty()) numbered += "." + std::string(extension);
-        candidate = directory / utf8(numbered);
+        if (n > kUniqueNameTries) return std::nullopt;
+        // The number goes before the extension; the base gives way so the name stays within 255 units.
+        const std::string number = " " + std::to_string(n);
+        std::u32string numbered(basePoints.begin(), basePoints.end());
+        while (!numbered.empty() && Utf16Length(numbered) + number.size() + Utf16Length(tail) > 255) numbered.pop_back();
+        candidate = directory / utf8(unicode::Encode(numbered) + number + unicode::Encode(tail));
     }
     return candidate;
 }

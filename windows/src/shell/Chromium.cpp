@@ -150,22 +150,28 @@ struct Chromium::Shared {
 
     // MARK: Downloads (KCBrowser.mm's LiveDownloads and its download handler)
 
-    // A download Kite has handed a path to and is still following. Chromium numbers each
-    // browser context's downloads from 1, so a download is its id plus its context's key ("" for
-    // the default profile, the folder for another; a page's client knows its profile). Its
-    // callback is kept until it completes or is canceled (interrupted too, as it can resume),
-    // so Kite can cancel it. Under downloadsMutex: CEF's thread follows them, Kite's cancels.
+    // A download Kite is following. Chromium numbers each browser context's downloads from 1,
+    // so a download is its id plus its context's key ("" for the default profile, the folder
+    // for another; a page's client knows its profile). Its callback is kept until it completes
+    // or is canceled (interrupted too, as it can resume), so Kite can cancel it. Under
+    // downloadsMutex: CEF's thread follows them, Kite's cancels and asks which page has one.
     struct LiveDownload {
         std::string context;
         uint32_t id = 0;
+        // The browser that last reported it (Chromium carries a download over to another page
+        // of its profile when its own closes).
+        int browser = 0;
         // The path it saves to, held so no other download is given it until this one is done:
-        // Chromium creates the file only once data arrives.
+        // Chromium creates the file only once data arrives. Empty while its name is found.
         std::filesystem::path path;
         CefRefPtr<CefDownloadItemCallback> callback;
-        bool interrupted = false;
+        bool running = true;  // in progress (not interrupted, finished or a store package)
+        // A Chrome Web Store package (IsExtensionPackage, decided once, when it's first seen):
+        // cancelled until Kite can install extensions (W27a), and never listed.
+        bool storePackage = false;
     };
     // Interrupted downloads stay followed and a destroyed browser may never send a final
-    // update, so past this many the oldest interrupted one goes, else the oldest.
+    // update, so past this many the oldest one not running goes. A running one never does.
     static constexpr size_t kMaxLiveDownloads = 200;
     mutable std::mutex downloadsMutex;
     std::vector<LiveDownload> liveDownloads;
@@ -177,6 +183,24 @@ struct Chromium::Shared {
     std::vector<DownloadUpdate> downloadReports;
     bool downloadsPosted = false;
     uint64_t reportsFromChromium = 0, reportsDelivered = 0;
+    // Pages closed while one of their downloads ran (Kite's UI thread): hidden, and closed once
+    // their downloads are done, so Chromium keeps reporting them (Shared::ReleaseParked). Once a
+    // page's browser is gone Chromium may stop reporting its downloads (it hands them to another
+    // page of the profile only if one is there as it goes, seen both ways on the PC). `window`:
+    // a page that closed itself, past DoClose, whose window is destroyed then; else one Kite
+    // closed, which CloseBrowser closes then.
+    struct Parked {
+        CefRefPtr<CefBrowser> browser;
+        HWND window = nullptr;
+    };
+    std::vector<Parked> parked;
+    // Closes a parked page now, on CEF's thread.
+    static void CloseParked(const Parked& page) {
+        RunOnCefUIThread([page] {
+            if (page.window) DestroyWindow(page.window);
+            else page.browser->GetHost()->CloseBrowser(true);
+        });
+    }
 
     LiveDownload* FindLiveDownload(const std::string& context, uint32_t id) {
         for (LiveDownload& download : liveDownloads) {
@@ -185,31 +209,54 @@ struct Chromium::Shared {
         return nullptr;
     }
     LiveDownload& AddLiveDownload(const std::string& context, uint32_t id) {
-        while (liveDownloads.size() >= kMaxLiveDownloads) {
-            auto stale = std::find_if(liveDownloads.begin(), liveDownloads.end(), [](const LiveDownload& d) { return d.interrupted; });
-            liveDownloads.erase(stale != liveDownloads.end() ? stale : liveDownloads.begin());
+        if (liveDownloads.size() >= kMaxLiveDownloads) {
+            auto stale = std::find_if(liveDownloads.begin(), liveDownloads.end(), [](const LiveDownload& d) { return !d.running; });
+            if (stale != liveDownloads.end()) liveDownloads.erase(stale);
         }
-        liveDownloads.push_back({context, id, {}, nullptr, false});
+        LiveDownload download;
+        download.context = context;
+        download.id = id;
+        liveDownloads.push_back(std::move(download));
         return liveDownloads.back();
     }
 
-    // The folder a download from `profile` saves into, and whether to ask where first: the
-    // profile's chosen folder while it exists, else the default one (DownloadLocation.folder).
-    std::pair<std::filesystem::path, bool> DownloadTarget(const std::string& profile) {
-        ProfileSettings settings;
-        std::filesystem::path fallback;
-        {
-            std::lock_guard lock(downloadsMutex);
-            auto it = downloadSettings.find(profile);
-            if (it == downloadSettings.end()) it = downloadSettings.find(BrowserState::kDefaultProfile);
-            if (it != downloadSettings.end()) settings = it->second;
-            fallback = downloadFolder;
+    // Windows' names don't care about case: two reservations differing only in it are one file.
+    static bool SamePath(const std::filesystem::path& a, const std::filesystem::path& b) {
+        return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_EQUAL;
+    }
+    // Whether another download than (context, id) has reserved `path` (under downloadsMutex).
+    bool Reserved(const std::filesystem::path& path, const std::string& context, uint32_t id) const {
+        for (const LiveDownload& download : liveDownloads) {
+            if ((download.id != id || download.context != context) && !download.path.empty() && SamePath(download.path, path)) return true;
         }
-        const std::filesystem::path folder = settings.DownloadFolder(fallback, [](const std::string& path) {
-            std::error_code error;
-            return std::filesystem::is_directory(std::filesystem::path(std::u8string(path.begin(), path.end())), error);
-        });
-        return {folder, settings.promptsForDownload};
+        return false;
+    }
+    // Whether a download of the browser's is still running (any thread).
+    bool RunningDownloadsIn(int browser) const {
+        std::lock_guard lock(downloadsMutex);
+        return std::any_of(liveDownloads.begin(), liveDownloads.end(),
+                           [&](const LiveDownload& d) { return d.browser == browser && d.running && !d.storePackage; });
+    }
+    // Kite's thread: a parked page whose downloads are done closes now.
+    void ReleaseParked() {
+        for (auto it = parked.begin(); it != parked.end();) {
+            if (closing || RunningDownloadsIn(it->browser->GetIdentifier())) {
+                ++it;
+                continue;
+            }
+            CloseParked(*it);
+            it = parked.erase(it);
+        }
+    }
+
+    // The settings for a download from `profile` (DownloadLocation.settings; a profile Kite
+    // doesn't know reads Default's) and the folder for one that chose none. No disk here: the
+    // chosen folder's existence is checked with the name, on CEF's file thread.
+    std::pair<ProfileSettings, std::filesystem::path> DownloadSettings(const std::string& profile) {
+        std::lock_guard lock(downloadsMutex);
+        auto it = downloadSettings.find(profile);
+        if (it == downloadSettings.end()) it = downloadSettings.find(BrowserState::kDefaultProfile);
+        return {it != downloadSettings.end() ? it->second : ProfileSettings(), downloadFolder};
     }
 
     // CEF's thread: hands the report to Kite's, folded into one still waiting for the same
@@ -333,12 +380,16 @@ struct Chromium::Shared {
         pressurePicks.erase(it->first);
         pages.erase(it);
         retiring.push_back(browser);
-        RunOnCefUIThread([browser, hwnd] {
+        // One of its downloads is running: the page stays, hidden, until it's done, so Chromium
+        // keeps reporting it (Shared::ReleaseParked); the window's close still closes it.
+        const bool park = !closing && RunningDownloadsIn(browser->GetIdentifier());
+        if (park) parked.push_back({browser, nullptr});
+        RunOnCefUIThread([browser, hwnd, park] {
             if (hwnd) {
                 if (const HWND widget = FindPageWidget(hwnd)) ShowWindow(widget, SW_HIDE);
                 ShowWindow(hwnd, SW_HIDE);
             }
-            browser->GetHost()->CloseBrowser(true);
+            if (!park) browser->GetHost()->CloseBrowser(true);
         });
     }
 
@@ -371,7 +422,7 @@ struct Chromium::Shared {
         std::optional<Timestamp> pickedUnderPressure;
         if (auto pick = pressurePicks.extract(tabID)) pickedUnderPressure = pick.mapped();
         if (busy || closing || tabID == shown || it == pages.end() || !it->second.browser || !it->second.browser->IsSame(browser) ||
-            it->second.mediaInUse || (events.keepAlive && events.keepAlive(tabID))) {
+            it->second.mediaInUse || RunningDownloadsIn(browser->GetIdentifier()) || (events.keepAlive && events.keepAlive(tabID))) {
             return;
         }
         if (pickedUnderPressure) {
@@ -568,13 +619,29 @@ public:
         if (!shared_->closing) {
             // Only its own window goes, as the Mac's KCBrowser tears down just its view.
             // Returning false would send WM_CLOSE to Kite's window and quit.
-            RunOnCefUIThread([hwnd = browser->GetHost()->GetWindowHandle()] { DestroyWindow(hwnd); });
-            shared_->Post([shared = shared_, id = tabID_, browser] {
+            const HWND hwnd = browser->GetHost()->GetWindowHandle();
+            // A page that closed itself while one of its downloads runs is hidden instead, and its
+            // window destroyed once the download is done, so Chromium keeps reporting it.
+            const bool park = shared_->RunningDownloadsIn(browser->GetIdentifier());
+            if (park) {
+                if (const HWND widget = FindPageWidget(hwnd)) ShowWindow(widget, SW_HIDE);
+                ShowWindow(hwnd, SW_HIDE);
+            } else {
+                RunOnCefUIThread([hwnd] { DestroyWindow(hwnd); });
+            }
+            shared_->Post([shared = shared_, id = tabID_, browser, park, hwnd] {
                 // Still its tab's page: it closed itself (window.close(), as a sign-in popup
                 // does when it's done), and Kite hears of it. Otherwise Kite closed it.
                 if (shared->PageFor(id, browser)) {
                     if (shared->shown == id) shared->shown.clear();
                     shared->pages.erase(id);
+                    if (park) {
+                        // The window's close waits for it, as for a page Kite closed.
+                        shared->retiring.push_back(browser);
+                        shared->parked.push_back({browser, hwnd});
+                        // Its download may have finished on the way here.
+                        shared->ReleaseParked();
+                    }
                     if (shared->events.pageClosed) shared->events.pageClosed(id);
                 } else {
                     shared->Retired(browser);
@@ -684,74 +751,133 @@ public:
     // The context key of this page's downloads ("" for the default profile, as the Mac's).
     std::string DownloadContext() const { return profile_ == BrowserState::kDefaultProfile ? std::string() : profile_; }
 
-    bool OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item, const CefString& suggestedName,
+    bool OnBeforeDownload(CefRefPtr<CefBrowser> browser, CefRefPtr<CefDownloadItem> item, const CefString& suggestedName,
                           CefRefPtr<CefBeforeDownloadCallback> callback) override {
-        namespace fs = std::filesystem;
-        const std::string name = suggestedName.ToString();
-        if (IsExtensionPackage(item->GetMimeType().ToString(), name, item->GetOriginalUrl().ToString())) {
-            // Chromium's installer picks it up from here; it never reaches Downloads.
-            std::error_code ignored;
-            const fs::path directory = fs::temp_directory_path(ignored) / L"KiteExtensionInstalls";
-            fs::create_directories(directory, ignored);
-            const fs::path path =
-                UniqueDownloadPath(std::to_string(item->GetId()) + "-" + name, directory, [](const fs::path&) { return false; });
-            callback->Continue(path.wstring(), false);
-            return true;
-        }
         const std::string context = DownloadContext();
-        auto [folder, prompt] = shared_->DownloadTarget(profile_);
-        if (prompt && shared_->quiet) {
+        const uint32_t id = item->GetId();
+        bool store = false;
+        {
+            std::lock_guard lock(shared_->downloadsMutex);
+            Chromium::Shared::LiveDownload* live = shared_->FindLiveDownload(context, id);
+            if (!live) {
+                live = &shared_->AddLiveDownload(context, id);
+                live->storePackage =
+                    IsExtensionPackage(item->GetMimeType().ToString(), suggestedName.ToString(), item->GetOriginalUrl().ToString());
+            }
+            live->browser = browser->GetIdentifier();
+            // Asked again for the same download (Chromium restarting an interrupted one): its
+            // own reservation doesn't count against it.
+            live->path.clear();
+            store = live->storePackage;
+        }
+        if (store) {
+            // Nothing on Windows installs extensions yet (W27a): cancelled, rather than left in a
+            // folder nobody reads. Returning false cancels it (Alloy's default).
+            OutputDebugStringW((L"Kite: cancelled a Chrome Web Store package (" + suggestedName.ToWString() +
+                                L"): extensions can't be installed yet\n").c_str());
+            return false;
+        }
+        auto [settings, fallback] = shared_->DownloadSettings(profile_);
+        if (settings.promptsForDownload && shared_->quiet) {
             // A quiet run shows no save panel: it answers as a dismissed one (SkippedModal's
             // openOrSavePanel), and Chromium cancels the download.
             LogSkippedModal(L"save panel: " + suggestedName.ToWString());
             return false;
         }
-        std::error_code ignored;
-        fs::create_directories(folder, ignored);
-        fs::path path;
-        {
-            std::lock_guard lock(shared_->downloadsMutex);
-            Chromium::Shared::LiveDownload* live = shared_->FindLiveDownload(context, item->GetId());
-            if (!live) live = &shared_->AddLiveDownload(context, item->GetId());
-            // Asked again for the same download (Chromium restarting an interrupted one): its own
-            // reservation doesn't count against it.
-            live->path.clear();
-            path = UniqueDownloadPath(name, folder, [&](const fs::path& candidate) {
-                for (const auto& download : shared_->liveDownloads) {
-                    if (download.path == candidate) return true;
-                }
-                std::error_code error;
-                return fs::exists(candidate, error) || error;
-            });
-            live->path = path;
-        }
-        // With `prompt`, Chromium's Save As dialog opens in the folder with the name filled in.
-        callback->Continue(path.wstring(), prompt);
+        Resolve(shared_, context, id, suggestedName.ToString(), std::move(settings), std::move(fallback), callback, 0);
         return true;
     }
 
-    void OnDownloadUpdated(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item, CefRefPtr<CefDownloadItemCallback> callback) override {
-        // A store install's package isn't the user's download: not listed.
-        if (IsExtensionPackage(item->GetMimeType().ToString(), item->GetSuggestedFileName().ToString(),
-                               item->GetOriginalUrl().ToString())) {
-            return;
+    // The download's folder and free name are found on CEF's file thread (a chosen folder can be
+    // a network share that takes seconds to answer), then reserved and handed to Chromium on its
+    // UI thread. A name another download reserved meanwhile is looked for again, a few times.
+    // Kite's lock is never held while the disk is asked.
+    static void Resolve(std::shared_ptr<Chromium::Shared> shared, std::string context, uint32_t id, std::string name,
+                        ProfileSettings settings, std::filesystem::path fallback, CefRefPtr<CefBeforeDownloadCallback> callback,
+                        int attempt) {
+        namespace fs = std::filesystem;
+        std::vector<fs::path> reserved;
+        {
+            std::lock_guard lock(shared->downloadsMutex);
+            for (const auto& download : shared->liveDownloads) {
+                if ((download.id != id || download.context != context) && !download.path.empty()) reserved.push_back(download.path);
+            }
         }
+        CefPostTask(TID_FILE_USER_BLOCKING, new FunctionTask([shared, context, id, name, settings, fallback, callback, attempt,
+                                                               reserved = std::move(reserved)] {
+            const fs::path folder = settings.DownloadFolder(fallback, [](const std::string& chosen) {
+                std::error_code error;
+                return fs::is_directory(fs::path(std::u8string(chosen.begin(), chosen.end())), error);
+            });
+            std::error_code ignored;
+            fs::create_directories(folder, ignored);
+            // A path that can't be checked counts as free, as the Mac's fileExists says no.
+            const std::optional<fs::path> path = UniqueDownloadPath(name, folder, [&](const fs::path& candidate) {
+                for (const fs::path& other : reserved) {
+                    if (Chromium::Shared::SamePath(other, candidate)) return true;
+                }
+                std::error_code error;
+                return fs::exists(candidate, error);
+            });
+            RunOnCefUIThread([shared, context, id, name, settings, fallback, callback, attempt, path] {
+                if (!path) {
+                    // kUniqueNameTries names taken: the callback goes unused, which cancels it.
+                    OutputDebugStringW(L"Kite: no free name for a download; cancelled\n");
+                    return;
+                }
+                {
+                    std::lock_guard lock(shared->downloadsMutex);
+                    Chromium::Shared::LiveDownload* live = shared->FindLiveDownload(context, id);
+                    if (!live) return;  // canceled while its name was found
+                    if (!shared->Reserved(*path, context, id) || attempt >= 3) {
+                        live->path = *path;
+                    } else {
+                        live = nullptr;
+                    }
+                    if (live) {
+                        // With Ask, Chromium's Save As opens in the folder with the name filled in.
+                        callback->Continue(path->wstring(), settings.promptsForDownload);
+                        return;
+                    }
+                }
+                Resolve(shared, context, id, name, settings, fallback, callback, attempt + 1);
+            });
+        }));
+    }
+
+    void OnDownloadUpdated(CefRefPtr<CefBrowser> browser, CefRefPtr<CefDownloadItem> item,
+                           CefRefPtr<CefDownloadItemCallback> callback) override {
         const std::string context = DownloadContext();
         const std::wstring fullPath = item->GetFullPath().ToWString();
+        const bool finished = item->IsComplete() || item->IsCanceled();
+        bool settled = false;
         {
             std::lock_guard lock(shared_->downloadsMutex);
             Chromium::Shared::LiveDownload* live = shared_->FindLiveDownload(context, item->GetId());
             // A repeat after the download finished (Kite already let it go): nothing new to report.
             if (!live && !item->IsInProgress() && !item->IsInterrupted()) return;
-            if (!live) live = &shared_->AddLiveDownload(context, item->GetId());
-            // The Save As dialog may have put it somewhere else: hold the path it really uses.
-            if (!fullPath.empty()) live->path = std::filesystem::path(fullPath);
-            live->callback = callback;
-            live->interrupted = item->IsInterrupted();
-            if (item->IsComplete() || item->IsCanceled()) {
-                shared_->liveDownloads.erase(shared_->liveDownloads.begin() + (live - shared_->liveDownloads.data()));
+            if (!live) {
+                // Chromium can report a download before asking where it goes: decided now, once.
+                live = &shared_->AddLiveDownload(context, item->GetId());
+                live->storePackage = IsExtensionPackage(item->GetMimeType().ToString(), item->GetSuggestedFileName().ToString(),
+                                                        item->GetOriginalUrl().ToString());
             }
+            live->browser = browser->GetIdentifier();
+            // A store package isn't the user's download: never listed.
+            const bool store = live->storePackage;
+            if (!store) {
+                // The Save As dialog may have put it somewhere else: hold the path it really uses.
+                if (!fullPath.empty()) live->path = std::filesystem::path(fullPath);
+                live->callback = callback;
+            }
+            const bool wasRunning = live->running;
+            live->running = item->IsInProgress();
+            settled = wasRunning && !live->running;
+            if (finished) shared_->liveDownloads.erase(shared_->liveDownloads.begin() + (live - shared_->liveDownloads.data()));
+            if (store) return;
         }
+        // A page Kite closed while this ran may close now.
+        if (settled) shared_->Post([shared = shared_] { shared->ReleaseParked(); });
         DownloadUpdate update;
         update.engineID = item->GetId();
         update.engineContext = context;
@@ -955,7 +1081,10 @@ void Chromium::Shared::Evict() {
     for (const std::string& id : OverTheLimit()) {
         const Page& page = pages.at(id);
         // A page still being made can't be asked; it counts, and goes on a later pass.
-        if (!page.browser || page.mediaInUse || (events.keepAlive && events.keepAlive(id))) continue;
+        if (!page.browser || page.mediaInUse || RunningDownloadsIn(page.browser->GetIdentifier()) ||
+            (events.keepAlive && events.keepAlive(id))) {
+            continue;
+        }
         RunOnCefUIThread([browser = page.browser] {
             // Every page's client is a PageClient (Show and OnBeforePopup make them).
             CefRefPtr<CefClient> client = browser->GetHost()->GetClient();
@@ -970,7 +1099,10 @@ void Chromium::Shared::DiscardUnderPressure() {
     if (!shown.empty()) keep.insert(shown);
     for (const std::string& id : TabsToDiscardUnderPressure(LivePages(), keep)) {
         const Page& page = pages.at(id);
-        if (!page.browser || page.mediaInUse || (events.keepAlive && events.keepAlive(id))) continue;
+        if (!page.browser || page.mediaInUse || RunningDownloadsIn(page.browser->GetIdentifier()) ||
+            (events.keepAlive && events.keepAlive(id))) {
+            continue;
+        }
         pressurePicks[id] = page.lastShown;
         RunOnCefUIThread([browser = page.browser] {
             CefRefPtr<CefClient> client = browser->GetHost()->GetClient();
@@ -1085,6 +1217,8 @@ bool Chromium::Shutdown() {
     for (auto& [id, page] : shared_->pages) {
         if (page.browser && !page.closeReady) page.browser->GetHost()->CloseBrowser(true);
     }
+    for (const auto& page : shared_->parked) Shared::CloseParked(page);
+    shared_->parked.clear();
     // Messages are pumped while waiting: the page windows' teardown on CEF's thread sends
     // messages to this one (their input queues are attached), and a bare wait stalled
     // OnBeforeClose until the timeout, then shut down under live browsers.
@@ -1295,6 +1429,9 @@ bool Chromium::MayCloseWindow() {
         for (auto& [id, page] : shared_->pages) {
             if (page.browser) page.browser->GetHost()->CloseBrowser(true);
         }
+        // Pages kept for their downloads go too (quitting cancels those downloads first).
+        for (const auto& page : shared_->parked) Shared::CloseParked(page);
+        shared_->parked.clear();
         // A browser that never answers mustn't keep the window open: after this the close
         // goes ahead, and Shutdown's bounded wait covers the rest. The timer repeats (it goes
         // with the window), since its tick and GetTickCount64's can disagree by one step.

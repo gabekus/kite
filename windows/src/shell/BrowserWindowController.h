@@ -147,14 +147,17 @@ public:
     void SessionChanged(SessionSaveDelay delay = SessionSaveDelay::Soon);
 
     // After the message loop: a downloads.json read that hadn't reached the window yet is
-    // waited for (`wait` at most) and joined, and the list's last save handed over (the
-    // window's close hands it over itself when the read was in). The caller then flushes.
-    void FinishDownloads(std::chrono::milliseconds wait);
-    const DownloadsModel& Downloads() const { return downloads_; }
+    // waited for (until `deadline`, quitting's one deadline) and joined, and the list's last
+    // save handed over (the window's close hands it over itself when the read was in). The
+    // caller then flushes.
+    void FinishDownloads(std::chrono::steady_clock::time_point deadline);
 
-    // How long the window waits for the session's last write when Windows ends the session
-    // (WM_ENDSESSION: the process may end as soon as it returns). Giving up is safe: the
-    // atomic write leaves the old file or the new one.
+    // What's left of `deadline`, for a wait that takes milliseconds.
+    static std::chrono::milliseconds Left(std::chrono::steady_clock::time_point deadline);
+
+    // How long the window waits for the session's and downloads.json's last writes, together,
+    // when Windows ends the session (WM_ENDSESSION: the process may end as soon as it returns).
+    // Giving up is safe: the atomic write leaves the old file or the new one.
     static constexpr std::chrono::milliseconds kEndSessionFlush{3000};
 
 private:
@@ -259,6 +262,7 @@ private:
         std::atomic<HWND> target{nullptr};
     };
     std::shared_ptr<DownloadsReadSlot> downloadsRead_ = std::make_shared<DownloadsReadSlot>();
+    bool downloadsReadAsked_ = false;
     // What the downloads cost Kite's UI thread, for the save log: each report Chromium's thread
     // handed over (the model's rules and the timer), and each save (the list's copy).
     struct DownloadCost {

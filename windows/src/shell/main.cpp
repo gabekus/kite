@@ -371,8 +371,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     options.saveLog = saveLogOption.present;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
     options.quiet = quiet;
-    options.downloadFolder = kite::DefaultDownloadFolder(kite::EnvironmentPath("KITE_TEST_DOWNLOADS_PATH"), supportOverride.has_value(),
-                                                         quiet, supportDirectory, UserDownloads());
+    // KITE_TEST_DOWNLOADS_PATH is a test's own folder: a relative one would land wherever Kite
+    // was started from, so it's refused rather than guessed.
+    const auto testDownloads = kite::EnvironmentPath("KITE_TEST_DOWNLOADS_PATH");
+    if (testDownloads && !testDownloads->empty() && !testDownloads->is_absolute()) {
+        return Fail(quiet, L"KITE_TEST_DOWNLOADS_PATH must be an absolute path", kUsage);
+    }
+    options.downloadFolder = kite::DefaultDownloadFolder(
+        testDownloads, kite::IsTestProfile(supportDirectory, kite::EnvironmentPath("LOCALAPPDATA")), quiet, supportDirectory, UserDownloads());
     auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer,
                                                             downloadsWriter ? &*downloadsWriter : nullptr, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
@@ -454,12 +460,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // frozen window), for kQuitFlush at most (the atomic write leaves the old file or the new
     // one). Before Chromium shuts down: until then this Kite holds the profile, so a launch in
     // the meantime hands over to it rather than read a session.json about to be replaced.
-    const std::string saveError = writer.Flush(kQuitFlush);
-    // downloads.json likewise: a read the window never got is joined first, then the last save.
+    // One deadline for every write still to come: the session's, then downloads.json's (a read
+    // the window never got is joined first, then its last save).
+    const auto quitDeadline = std::chrono::steady_clock::now() + kQuitFlush;
+    const std::string saveError = writer.Flush(kite::BrowserWindowController::Left(quitDeadline));
     std::string downloadsError;
     if (downloadsWriter) {
-        controller->FinishDownloads(kQuitFlush);
-        downloadsError = downloadsWriter->Flush(kQuitFlush);
+        controller->FinishDownloads(quitDeadline);
+        downloadsError = downloadsWriter->Flush(kite::BrowserWindowController::Left(quitDeadline));
     }
     // Still writing after that: end here, before Chromium's shutdown or a dialog, while the
     // stuck write may yet rename (no other Kite can have the profile until this one is gone).

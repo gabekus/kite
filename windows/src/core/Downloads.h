@@ -171,8 +171,13 @@ struct Loaded {
 // unreadable file couldn't be moved aside: then nothing should be saved over it.
 std::optional<Loaded> Load(const std::filesystem::path& file);
 // The list in `file` without moving or copying anything (kitecore only looks): an empty list
-// when there's no file, none when it doesn't read.
-std::optional<DownloadList> Read(const std::filesystem::path& file);
+// when there's no file, none when it doesn't read. `dropped`: items it couldn't read, which a
+// write of the list would lose.
+struct Read {
+    DownloadList list;
+    size_t dropped = 0;
+};
+std::optional<Read> ReadOnly(const std::filesystem::path& file);
 
 // Next to the file, named as the session's are ("corrupt-<stamp>"), with milliseconds and a
 // few random characters so two in one second can't collide.
@@ -193,16 +198,25 @@ std::string Kind(std::string_view fileName);
 
 }  // namespace download_text
 
-// A Chrome Web Store package (Extensions.swift's ExtensionPackage): Chromium's installer
-// takes it, so it never reaches Downloads or the list. By its MIME type, or a .crx name from
-// Google's extension hosts (the store serves packages as octet-stream from them).
+// A Chrome Web Store package (Extensions.swift's ExtensionPackage): its MIME type or a .crx
+// name, from Google's extension hosts over https (the store serves packages as octet-stream
+// from them). The Mac trusts the MIME type from any host; Windows doesn't, so a site can't
+// pass a file off as a store package to keep it out of Downloads.
 bool IsExtensionPackage(std::string_view mimeType, std::string_view suggestedName, std::string_view url);
 
-// KCBrowser.mm's UniqueDownloadURL: `name` in `directory`, or "name 2.ext", "name 3.ext"...
-// when `taken` says a path is used (a file there, or reserved by a download still running,
-// since Chromium creates the file only once data arrives). A name with path separators keeps
-// its last part, so a download never lands outside the folder.
-std::filesystem::path UniqueDownloadPath(std::string_view name, const std::filesystem::path& directory,
-                                         const std::function<bool(const std::filesystem::path&)>& taken);
+// A file name that's safe in a Windows folder, from what a site suggests: its last path part
+// (no separators, no drive: "C:x" is "x"), each character Windows refuses in a name (< > : " |
+// ? * and controls, so no alternate data stream) as "_", without trailing dots and spaces, a
+// device name (CON, NUL, COM1, LPT9..., with an extension or not, any case) prefixed with "_",
+// and at most 255 UTF-16 units, the extension kept. "download" when nothing is left.
+std::string SafeDownloadName(std::string_view name);
+
+// KCBrowser.mm's UniqueDownloadURL: SafeDownloadName(name) in `directory`, or "name 2.ext",
+// "name 3.ext"... while `taken` says a path is used (a file there, or reserved by a download
+// still running, since Chromium creates the file only once data arrives). None after
+// kUniqueNameTries names (the Mac tries for ever).
+inline constexpr int kUniqueNameTries = 1000;
+std::optional<std::filesystem::path> UniqueDownloadPath(std::string_view name, const std::filesystem::path& directory,
+                                                        const std::function<bool(const std::filesystem::path&)>& taken);
 
 }  // namespace kite

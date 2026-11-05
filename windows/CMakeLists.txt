@@ -120,9 +120,9 @@ if(WIN32)
     src/shell/FrameClock.cpp
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
+    src/shell/MemoryPressure.cpp
     src/shell/QuietRun.cpp
     src/shell/QuitDialog.cpp
-    src/shell/MemoryPressure.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
@@ -131,7 +131,7 @@ if(WIN32)
     ${KITE_SHADER_HEADERS}
   )
   target_include_directories(Kite PRIVATE "${KITE_SHADER_DIR}")
-  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp)
+  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp comctl32)
 
   # Chromium (CEF), from windows/scripts/fetch-cef.ps1. Without it (no download yet, or the
   # MinGW check, which can't link CEF's MSVC wrapper) Kite.exe builds without pages.
@@ -151,7 +151,9 @@ if(WIN32)
     # CEF's own CEF_EXE_LINKER_FLAGS) it gets an 8 MiB main-thread stack, which deep pages
     # need, and loads the window's graphics DLLs only in the process that draws the window.
     target_link_options(Kite PRIVATE /STACK:0x800000
-      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:dwmapi.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll)
+      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:dwmapi.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll
+      # comctl32 for the quit's task dialog ("Downloads in progress"): only the window's process calls it.
+      /DELAYLOAD:comctl32.dll)
     # libcef.dll and its resources go next to Kite.exe, where Chromium looks for them.
     add_custom_command(TARGET Kite POST_BUILD
       COMMAND ${CMAKE_COMMAND} -DCEF_ROOT=${KITE_CEF_ROOT} -DDEST=$<TARGET_FILE_DIR:Kite>
@@ -167,7 +169,7 @@ if(WIN32)
     target_compile_definitions(Kite PRIVATE KITE_RUNTIME_SHADERS)
     target_link_libraries(Kite PRIVATE d3dcompiler)
   endif()
-  target_link_libraries(kitecore PRIVATE shell32)
+  target_link_libraries(kitecore PRIVATE shell32 ole32)
   # Both get Kite.manifest: per-monitor DPI v2, the UTF-8 code page, long paths.
   if(MSVC)
     target_sources(Kite PRIVATE resources/Kite.manifest)

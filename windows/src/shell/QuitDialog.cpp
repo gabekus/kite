@@ -4,6 +4,7 @@
 
 #include <commctrl.h>
 
+#include <iterator>
 #include <string>
 
 #include "core/SkippedModal.h"
@@ -20,18 +21,6 @@ constexpr wchar_t kKeep[] = L"Keep browsing";
 constexpr int kCloseButton = 100;
 constexpr int kKeepButton = 101;
 
-using TaskDialogIndirectFunction = HRESULT(WINAPI*)(const TASKDIALOGCONFIG*, int*, int*, BOOL*);
-
-// comctl32 6's TaskDialogIndirect, looked up rather than linked: Kite.exe is also Chromium's
-// helper processes, which never ask, and a system with only comctl32 5 has none.
-TaskDialogIndirectFunction TaskDialogEntry() {
-    static const TaskDialogIndirectFunction entry = [] {
-        HMODULE comctl = LoadLibraryExW(L"comctl32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-        return comctl ? reinterpret_cast<TaskDialogIndirectFunction>(GetProcAddress(comctl, "TaskDialogIndirect")) : nullptr;
-    }();
-    return entry;
-}
-
 }  // namespace
 
 bool RunDownloadsInProgress(HWND owner, bool quiet) {
@@ -40,7 +29,7 @@ bool RunDownloadsInProgress(HWND owner, bool quiet) {
         LogSkippedModal(std::wstring(L"dialog: ") + kTitle + L" | [" + kClose + L", " + kKeep + L"]");
         return Proceeds(SkippedModal::DownloadsInProgress);
     }
-    if (TaskDialogIndirectFunction taskDialog = TaskDialogEntry()) {
+    {
         const TASKDIALOG_BUTTON buttons[] = {{kCloseButton, kClose}, {kKeepButton, kKeep}};
         TASKDIALOGCONFIG config{};
         config.cbSize = sizeof config;
@@ -54,8 +43,10 @@ bool RunDownloadsInProgress(HWND owner, bool quiet) {
         config.pButtons = buttons;
         config.nDefaultButton = kCloseButton;
         int picked = 0;
-        if (SUCCEEDED(taskDialog(&config, &picked, nullptr, nullptr))) return picked == kCloseButton;
+        // comctl32 is delay-loaded (only the window's process asks), as 6, which Kite.manifest asks for.
+        if (SUCCEEDED(TaskDialogIndirect(&config, &picked, nullptr, nullptr))) return picked == kCloseButton;
     }
+    // The dialog couldn't be made (out of memory, say): the same question in a message box.
     const std::wstring text = std::wstring(kMessage) + L"\n\nClose Kite?";
     return MessageBoxW(owner, text.c_str(), kTitle, MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON1) == IDOK;
 }

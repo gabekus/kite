@@ -48,7 +48,11 @@ constexpr UINT kMemoryPressureMessage = WM_APP + 7;
 // downloads.json's save, armed by a change (DownloadsSaveSchedule) and gone once it fires.
 constexpr UINT_PTR kDownloadsSaveTimer = 5;
 // Posted by the downloads writer's worker once it has read downloads.json.
-constexpr UINT kDownloadsReadMessage = WM_APP + 8;
+// Kite's WM_APP messages, across the open checkpoints, so none is used twice: +1 wake
+// (MainWindow), +2/+3 redraw (CommandBarView, SidebarView), +4 favicons, +5 frames, +6 space
+// icons, +7 memory pressure, +8 history (W25a), +9 Arc read and +10 Arc saved (W15), +11
+// downloads read, +20 perf request.
+constexpr UINT kDownloadsReadMessage = WM_APP + 11;
 
 // Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
 bool CopyText(HWND owner, const std::wstring& text) {
@@ -247,12 +251,16 @@ std::wstring BrowserWindowController::Init() {
         // The read is in (else FinishDownloads joins it once the window is gone): the list's
         // last state, as the Mac's applicationWillTerminate saves it.
         if (downloads_.Restored()) SaveDownloadsNow();
+        // The window is going: the worker's read posts nowhere now (FinishDownloads takes it).
+        downloadsRead_->target = nullptr;
+        // Logoff and shutdown: one deadline for both files.
+        const auto deadline = std::chrono::steady_clock::now() + kEndSessionFlush;
         if (endingSession && writer_) {
-            if (std::string problem = writer_->Flush(kEndSessionFlush); !problem.empty()) {
+            if (std::string problem = writer_->Flush(Left(deadline)); !problem.empty()) {
                 OutputDebugStringW((L"Kite: " + Widen(problem) + L"\n").c_str());
             }
         }
-        if (endingSession && downloadsWriter_) downloadsWriter_->Flush(kEndSessionFlush);
+        if (endingSession && downloadsWriter_) downloadsWriter_->Flush(Left(deadline));
     };
     return {};
 }
@@ -402,6 +410,27 @@ std::wstring BrowserWindowController::SaveSaveLog(const std::filesystem::path& f
                                                  {"lastWriteMicros", stats.lastWriteMicros},
                                                  {"lastError", stats.lastError}});
     }
+    // Each finished file's mark of the web, as Windows reads it (its Zone.Identifier stream,
+    // which Chromium's quarantine writes): the live check that a download is marked as from the
+    // internet. Read here, after the window has gone.
+    json::Array completed;
+    for (const DownloadItem& item : downloads_.List().Items()) {
+        if (item.state != DownloadState::Complete || item.path.empty()) continue;
+        std::filesystem::path stream(std::u8string(item.path.begin(), item.path.end()));
+        stream += L":Zone.Identifier";
+        json::Object entry{{"path", item.path}};
+        std::ifstream in(stream, std::ios::binary);
+        std::string line;
+        while (in && std::getline(in, line)) {
+            // Chromium ends the stream with a NUL.
+            while (!line.empty() && (line.back() == '\r' || line.back() == '\0' || line.back() == ' ')) line.pop_back();
+            if (line.starts_with("ZoneId=")) entry.emplace("zoneId", line.substr(7));
+            if (line.starts_with("HostUrl=")) entry.emplace("hostUrl", line.substr(8));
+            if (line.starts_with("ReferrerUrl=")) entry.emplace("referrerUrl", line.substr(12));
+        }
+        completed.push_back(json::Value(std::move(entry)));
+    }
+    downloads.emplace("completed", json::Value(std::move(completed)));
     log.emplace("downloads", json::Value(std::move(downloads)));
     if (writer_) {
         const SessionWriter::Statistics stats = writer_->Stats();
@@ -486,8 +515,14 @@ void BrowserWindowController::SaveDownloadsNow() {
     downloadCost_.saveMaxMicros = std::max(downloadCost_.saveMaxMicros, micros);
 }
 
+std::chrono::milliseconds BrowserWindowController::Left(std::chrono::steady_clock::time_point deadline) {
+    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+    return std::max(left, std::chrono::milliseconds(0));
+}
+
 void BrowserWindowController::ReadDownloads() {
-    if (!downloadsWriter_ || downloadsRead_->target) return;
+    if (!downloadsWriter_ || downloadsReadAsked_) return;
+    downloadsReadAsked_ = true;
     downloadsRead_->target = window_.Handle();
     downloadsWriter_->Load([slot = downloadsRead_](std::optional<downloads_file::Loaded> loaded) {
         {
@@ -526,10 +561,10 @@ void BrowserWindowController::DownloadsRead() {
     DownloadsChanged(downloads_.Restore(loaded ? loaded->list : DownloadList(), loaded && loaded->canSave, FrameClock::Now()));
 }
 
-void BrowserWindowController::FinishDownloads(std::chrono::milliseconds wait) {
-    if (!downloadsWriter_ || downloads_.Restored() || !downloadsRead_->target) return;
+void BrowserWindowController::FinishDownloads(std::chrono::steady_clock::time_point deadline) {
+    if (!downloadsWriter_ || downloads_.Restored() || !downloadsReadAsked_) return;
     // The window is gone, so the worker's post went nowhere: wait for the read itself.
-    downloadsWriter_->Flush(wait);
+    downloadsWriter_->Flush(Left(deadline));
     DownloadsRead();
     if (downloads_.Restored()) SaveDownloadsNow();
 }
