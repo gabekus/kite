@@ -1,5 +1,5 @@
 ## at launch
-Window 18249, 1280×820 pt at 2×. Points from the window's top-left.
+Window 18261, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.3.0.0.0.0.0.0.1 SpaceHeaderRowCell #header [8,157 224×39]
 0.3.3.0.0.0.0.0.1.1 TabRowCell #tab [8,196 224×41]
@@ -11,7 +11,7 @@ Window 18249, 1280×820 pt at 2×. Points from the window's top-left.
 </untrusted-page-content>
 
 ## before the capture
-Window 18249, 1280×820 pt at 2×. Points from the window's top-left.
+Window 18261, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.3.0.0.0.0.0.0.1 SpaceHeaderRowCell #header [8,157 224×39]
 0.3.3.0.0.0.0.0.1.1 TabRowCell #tab [8,196 224×41]
@@ -23,7 +23,7 @@ Window 18249, 1280×820 pt at 2×. Points from the window's top-left.
 </untrusted-page-content>
 
 ## after the capture
-Window 18249, 1280×820 pt at 2×. Points from the window's top-left.
+Window 18261, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.3.0.0.0.0.0.0.1 SpaceHeaderRowCell #header [8,157 224×39]
 0.3.3.0.0.0.0.0.1.1 TabRowCell #tab [8,196 224×41]
