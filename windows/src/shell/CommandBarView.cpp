@@ -89,8 +89,10 @@ constexpr UINT kSwapChainFlags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJ
 constexpr wchar_t kGlobeGlyph = 0xE774;
 constexpr wchar_t kSearchGlyph = 0xE721;
 constexpr wchar_t kArrowGlyph = 0xE72A;
-// The Mac's FaviconView with no favicon yet: the globe at 60%.
+// The Mac's FaviconView with no favicon yet: the globe at 60% (of labelColor, SidebarKit.swift:269, 313).
 constexpr float kNoFaviconOpacity = 0.6f;
+// NSColor.labelColor's alpha, in both appearances.
+constexpr float kLabelAlpha = 0.85f;
 
 // How much of a Gaussian of standard deviation `sigma` falls between `from` and `to`: the
 // shadow's falloff along one axis at `x`.
@@ -1245,6 +1247,11 @@ std::wstring CommandBarView::Draw(Pixels* readBack, POINT* origin) {
 
 D2D1_COLOR_F CommandBarView::Primary() const { return look_.dark ? Color(1, 1, 1, 1) : Color(0, 0, 0, 1); }
 
+// labelColor is white (dark) or black (light) at 0.85 alpha. Where the Mac takes it with
+// withAlphaComponent (the subtitle, the placeholder, the arrow box) that alpha is replaced, not
+// multiplied, so those use Primary with their own.
+D2D1_COLOR_F CommandBarView::Label(float opacity) const { return WithAlpha(Primary(), kLabelAlpha * opacity); }
+
 D2D1_COLOR_F CommandBarView::Accent() const { return Color(look_.accent.r, look_.accent.g, look_.accent.b, 1); }
 
 void CommandBarView::DrawPanel(ID2D1DeviceContext* context, float height) {
@@ -1303,7 +1310,7 @@ void CommandBarView::DrawField(ID2D1DeviceContext* context) {
                 }
             }
         }
-        brush_->SetColor(Primary());
+        brush_->SetColor(Label());  // CommandBar.swift:533, textColor = .labelColor
         context->DrawTextLayout(origin, textLayout_.Get(), brush_.Get());
     }
     // The caret is its own visual (UpdateCaret).
@@ -1350,7 +1357,9 @@ void CommandBarView::DrawRow(ID2D1DeviceContext* context, size_t index, float to
         iconOpacity = kNoFaviconOpacity;
         break;
     }
-    Glyph(context, icon, C::kRowIconSize, tile, WithAlpha(highlighted ? accent : Primary(), iconOpacity));
+    // CommandBar.swift:820 (the symbol's tint) and SidebarKit.swift:269 (the favicon's globe):
+    // labelColor, at the globe's 60%.
+    Glyph(context, icon, C::kRowIconSize, tile, highlighted ? WithAlpha(accent, iconOpacity) : Label(iconOpacity));
 
     // The arrow in its 24pt box, 13pt from the fill's right.
     const float boxRight = fill.right - C::kActionBoxTrailing;
@@ -1359,23 +1368,25 @@ void CommandBarView::DrawRow(ID2D1DeviceContext* context, size_t index, float to
     const float boxOpacity = highlighted ? 1 : 0.7f;
     brush_->SetColor(highlighted ? white : WithAlpha(Primary(), 0.06f * boxOpacity));
     context->FillRoundedRectangle(D2D1::RoundedRect(box, 6, 6), brush_.Get());
-    Glyph(context, kArrowGlyph, 13, box, highlighted ? accent : WithAlpha(Primary(), boxOpacity));
+    Glyph(context, kArrowGlyph, 13, box, highlighted ? accent : Label(boxOpacity));  // CommandBar.swift:821, 823
 
     if (index >= rowText_.size()) return;
     const RowText& text = rowText_[index];
     if (text.detail) {
         const float right = box.left - C::kActionGap;
-        brush_->SetColor(highlighted ? WithAlpha(white, 0.8f) : WithAlpha(Primary(), C::kRowDetailOpacity));
+        brush_->SetColor(highlighted ? WithAlpha(white, 0.8f) : Label(C::kRowDetailOpacity));  // CommandBar.swift:836-837
         context->DrawTextLayout(D2D1::Point2F(right - text.detailWidth, fill.top), text.detail.Get(), brush_.Get());
     }
     if (text.title) {
-        brush_->SetColor(highlighted ? white : WithAlpha(Primary(), C::kRowTextOpacity));
+        brush_->SetColor(highlighted ? white : Label(C::kRowTextOpacity));  // CommandBar.swift:826, 833
         context->DrawTextLayout(D2D1::Point2F(fill.left + C::kRowTitleX, fill.top), text.title.Get(), brush_.Get(),
                                 D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
     if (text.subtitle) {
         // The Mac's dim part: white at 0.7 on the accent, else the label colour at 0.5, both
         // under the title's own 0.8 when not highlighted.
+        // CommandBar.swift:829, 833: labelColor.withAlphaComponent(0.5) (replacing its 0.85), under
+        // the title's 0.8.
         brush_->SetColor(highlighted ? WithAlpha(white, 0.7f) : WithAlpha(Primary(), 0.5f * C::kRowTextOpacity));
         context->DrawTextLayout(D2D1::Point2F(fill.left + C::kRowTitleX + text.titleWidth, fill.top), text.subtitle.Get(), brush_.Get(),
                                 D2D1_DRAW_TEXT_OPTIONS_CLIP);

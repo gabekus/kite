@@ -454,6 +454,11 @@ Known differences from the Mac:
 - A file over 20,000 pages is trimmed to 20,000 as it's read; the Mac keeps it
   as it is until the next new page, then cuts it to 18,000 (Windows' next new
   page past the cap cuts to 18,000 too).
+- Kite for Mac's CEF bridge (`ToNSURL`, KCBrowser.mm:110) encodes a URL that
+  has both an escape and a raw invalid character in the same part twice over
+  (`?a=%2C&b=x|y` becomes `?a=%252C&b=x%7Cy`). Windows does the same, so both
+  apps key the page alike; it's a Mac bug, to be fixed on the Mac side (and
+  then here).
 - A raw Unicode host would be kept as typed, where NSURL IDNA-encodes it
   (`xn--…`). Chromium reports hosts in punycode, so a visit never has one; a
   hand-written or imported file could.
