@@ -123,12 +123,24 @@ struct FindTestHookTests {
         wait.windowOrderedIn = true
         wait.screens = 1
         wait.contentProcessEnds = 2
+        wait.contentProcess = 0
         #expect(FindTestHook.timeoutLine(wait)
             == "KITE_TEST_FIND: no page finished loading in 20 s, so the find bar opens without it (finished loads seen: 3, "
             + "of the selected tab: 1; selected tab: yes, page shown: yes, loading: yes, progress: 0.10; web view loading: "
-            + "yes, web view progress: 0.10, web view URL set: yes, content process ended: 2 times; window visible: no, "
-            + "ordered in: yes, on a screen: no, screens: 1)")
+            + "yes, web view progress: 0.10, web view URL set: yes, content process ended: 2 times, content process: none; "
+            + "window visible: no, ordered in: yes, on a screen: no, screens: 1)")
         #expect(FindTestHook.timeoutLine(FindTestHook.Wait()).contains("loading: unknown, progress: unknown; web view loading: unknown"))
+        #expect(FindTestHook.timeoutLine(FindTestHook.Wait()).contains("content process: unknown;"))
+    }
+
+    @Test func theLoadLineSaysWhetherWebKitTookTheLoad() {
+        // Straight after webView.load WebKit has set the URL and loading; a page with no web content process can't load.
+        #expect(FindTestHook.loadLine("load asked", urlSet: true, loading: true, progress: 0.1, contentProcess: 4321)
+            == "KITE_TEST_FIND: page: load asked (web view URL set: yes, loading: yes, progress: 0.10, content process: running)")
+        #expect(FindTestHook.loadLine("2 s after the load", urlSet: false, loading: false, progress: 0, contentProcess: 0)
+            == "KITE_TEST_FIND: page: 2 s after the load (web view URL set: no, loading: no, progress: 0.00, content process: none)")
+        #expect(FindTestHook.processText(nil) == "unknown")
+        #expect(!FindTestHook.loadLine("load asked", urlSet: true, loading: true, progress: 0, contentProcess: nil).contains("ready"))
     }
 
     @Test func whenThePageNeverLoadsTheBarOpensAnywayAndSaysSo() {
@@ -326,5 +338,19 @@ struct FindTestHookSourceTests {
         let line = try #require(script.split(whereSeparator: \.isNewline).first { $0.hasPrefix("FIND_READY_SECONDS=") })
         let seconds = try #require(Double(line.dropFirst("FIND_READY_SECONDS=".count)))
         #expect(FindTestHook.pageLoadTimeout + 5 <= seconds)
+    }
+
+    @Test func aLoadIsLoggedOnFindHookRunsOnlyAndStillLoads() throws {
+        let webKit = try source("Engine/WebKitEngine.swift")
+        #expect(webKit.contains("""
+                func load(_ url: URL) {
+                    webView.load(URLRequest(url: url))
+                    FindTestHookRunner.logLoadAsked(webView)
+            """))
+        let runner = try source("Diagnostics/FindTestHookRunner.swift")
+        #expect(try body(of: "static func logLoadAsked(_ webView: WKWebView) {", in: runner).hasPrefix(
+            "static func logLoadAsked(_ webView: WKWebView) {\n        guard configured != nil else { return }"))
+        #expect(try body(of: "private func poll(until deadline: Date) {", in: runner)
+            .contains("wait.contentProcess = Self.contentProcess(of: webView)"))
     }
 }

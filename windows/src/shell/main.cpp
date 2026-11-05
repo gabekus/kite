@@ -59,6 +59,13 @@
 //   Kite.exe --capture FILE.png --favorite-hover N | --favorite-click N
 //                            the same with the pointer resting on the Nth favorite's pane (from 1, in
 //                            the grid's order), or after a click on it (pressed and let go there).
+//   Kite.exe --capture FILE.png --rename-row N | --hover-row N
+//                            the same with the selected space's Nth row (from 1, as kitecore's
+//                            `sidebar` lists them) renamed in place, a tab's or folder's, its name
+//                            all selected; or with the pointer resting on it (a pinned tab off its
+//                            page shows Back to Pinned URL).
+//   Kite.exe --capture FILE.png --run-command ID
+//                            the same after the command ID (pinTab, say) ran, as its shortcut runs it.
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
@@ -292,7 +299,7 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // value (core/CommandLine.h).
     kite::command_line::Spec spec;
     spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control", "--favicons", "--empty-favorites-hover"};
-    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log", "--find", "--find-result"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log", "--rename-row", "--hover-row", "--run-command", "--find", "--find-result"};
     // Its value is switches ("--a --b"), each checked against the allow-list below; Chromium's
     // raw read sees them too, so only allowed ones get this far.
     spec.switchValueOptions = {"--chromium-switches"};
@@ -463,6 +470,21 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a favorite's place, from 1", kUsage);
         if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
     }
+    // The sidebar's rows, for a capture: one renamed in place (a tab's or folder's, its place from
+    // 1 as kitecore's `sidebar` lists the selected space's rows), one with the pointer resting on it,
+    // and a command run by its id first (pinTab, say), as its shortcut would.
+    std::optional<size_t> heldRowRename, heldRowHover;
+    for (const auto& [flag, out] :
+         {std::pair<const wchar_t*, std::optional<size_t>*>{L"--rename-row", &heldRowRename}, {L"--hover-row", &heldRowHover}}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        *out = option.value ? place(*option.value) : std::nullopt;
+        if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a row's place, from 1", kUsage);
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+    }
+    const OptionValue runCommandOption = Option(args, L"--run-command");
+    if (runCommandOption.present && !runCommandOption.value) return Fail(quiet, L"--run-command takes a command's id", kUsage);
+    if (runCommandOption.present && !captureOption.present) return Fail(quiet, L"--run-command only goes with --capture", kUsage);
     const PathOptionValue frameLogOption = PathOption(args, L"--frame-log", L"a file");
     if (!frameLogOption.problem.empty()) return Fail(quiet, frameLogOption.problem, kUsage);
     if (!perfLogOption.problem.empty()) return Fail(quiet, perfLogOption.problem, kUsage);
@@ -636,12 +658,12 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         }
     }
     kite::SessionWriter writer(session, maySave, std::move(clock));
-    // A write still stuck as Kite ends (a disk that hangs past kQuitFlush), the session's or
-    // history's: the process ends there, without the C++ library's teardown running under the
-    // writer's thread. The file is the old one or the new one (the writes are atomic); the run is
-    // a failed save.
+    // A write still stuck as Kite ends (a disk that hangs past kQuitFlush), the session's,
+    // history's or downloads.json's: the process ends there, without the C++ library's teardown
+    // running under the writer's thread. The file is the old one or the new one (the writes are
+    // atomic); the run is a failed save.
     const auto endStuck = [quiet] {
-        const std::wstring message = L"Kite: a last write (the session or history) didn't finish; Kite ended without waiting for it\n";
+        const std::wstring message = L"Kite: a last write (the session, history or downloads.json) didn't finish; Kite ended without waiting for it\n";
         OutputDebugStringW(message.c_str());
         if (quiet) WriteUtf8(STD_ERROR_HANDLE, message);
         TerminateProcess(GetCurrentProcess(), kSaveFailed);
@@ -815,6 +837,9 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         if (captureError.empty() && swipe) captureError = controller->HoldSwipe(*swipe);
         if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
         if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
+        if (captureError.empty() && runCommandOption.value) captureError = controller->RunCommandForCapture(Narrow(*runCommandOption.value));
+        if (captureError.empty() && heldRowRename) captureError = controller->HoldRowRename(*heldRowRename, std::nullopt, true);
+        if (captureError.empty() && heldRowHover) captureError = controller->HoldRowHover(*heldRowHover);
         if (heldMenu) controller->HoldSpaceMenu(*heldMenu);
         if (captureError.empty() && heldFavoriteClick) captureError = controller->ClickFavorite(*heldFavoriteClick);
         if (captureError.empty() && heldFavoriteHover) captureError = controller->HoldFavoriteHover(*heldFavoriteHover);
@@ -835,20 +860,20 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
 
     controller->RunMessageLoop();
     kite::perf::Mark("loop-end");
-    // The window's close handed over the last saves, the session's and history's; wait for them
-    // now that the window is gone (no frozen window), kQuitFlush at most for all (the atomic
-    // writes leave the old file or the new one). Before Chromium shuts down: until then this Kite
-    // holds the profile, so a launch in the meantime hands over to it rather than read a file
-    // about to be replaced. One deadline for every write still to come: the session's, history's,
-    // then downloads.json's (a read the window never got is joined first, then its last save).
+    // The window's close handed over the last saves, the session's, history's and
+    // downloads.json's; wait for them now that the window is gone (no frozen window), kQuitFlush
+    // at most for all (the atomic writes leave the old file or the new one). Before Chromium shuts
+    // down: until then this Kite holds the profile, so a launch in the meantime hands over to it
+    // rather than read a file about to be replaced. One deadline for every write still to come.
+    // downloads.json's is handed over first (a read the window never got is joined, then its last
+    // save), so it runs alongside the session's and history's, each on its own worker: a slow
+    // session write can't use up the deadline before the downloads' save has even started.
     const kite::Deadline quitDeadline = kite::DeadlineAfter(kQuitFlush);
+    if (downloadsWriter) controller->FinishDownloads(quitDeadline);
     const std::string saveError = writer.Flush(quitDeadline);
     const std::string historyError = history.Flush(quitDeadline);
     std::string downloadsError;
-    if (downloadsWriter) {
-        controller->FinishDownloads(quitDeadline);
-        downloadsError = downloadsWriter->Flush(kite::BrowserWindowController::Left(quitDeadline));
-    }
+    if (downloadsWriter) downloadsError = downloadsWriter->Flush(kite::BrowserWindowController::Left(quitDeadline));
     // Still writing after that: end here, before Chromium's shutdown or a dialog, while the
     // stuck write may yet rename (no other Kite can have the profile until this one is gone).
     if (writer.Writing() || history.Writing() || (downloadsWriter && downloadsWriter->Writing())) endStuck();

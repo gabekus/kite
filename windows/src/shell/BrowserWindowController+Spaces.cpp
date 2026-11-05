@@ -54,10 +54,7 @@ void BrowserWindowController::BeginRenaming(const std::string& spaceID) {
         state_.SelectSpace(spaceID);
         SelectionMoved();
     }
-    // The keyboard, when Kite is the window in front (a quiet test run never activates), taken
-    // from the find field first so its caret goes before the rename's.
-    GiveKeyboard(KeyboardField::Rename);
-    if (GetForegroundWindow() == window_.Handle()) SetFocus(window_.Handle());
+    TakeKeyboardForRename();
     sidebar_->BeginRenaming(spaceID, state_.spaces[*index].name);
 }
 
@@ -65,7 +62,7 @@ void BrowserWindowController::RenameSpace(const std::string& spaceID, const std:
     const auto index = state_.SpaceIndex(spaceID);
     if (!index) return;
     const std::string before = state_.spaces[*index].name;
-    state_.RenameSpace(spaceID, name);
+    RecordEdit([&] { state_.RenameSpace(spaceID, name); });
     if (state_.spaces[*index].name != before) StateChanged();
 }
 

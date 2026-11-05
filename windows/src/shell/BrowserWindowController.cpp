@@ -253,6 +253,11 @@ std::wstring BrowserWindowController::Init() {
     actions.spaceMenu = [this](const std::string& spaceID, POINT screen) { ShowSpaceMenu(spaceID, screen); };
     actions.renameSpace = [this](const std::string& spaceID, const std::string& name) { RenameSpace(spaceID, name); };
     actions.beginRenaming = [this](const std::string& spaceID) { BeginRenaming(spaceID); };
+    // Tabs and folders (+Tabs.cpp): their row's rename, a double-click on a tab, Back to Pinned URL.
+    actions.renameTab = [this](const std::string& tabID, const std::string& name) { RenameTab(tabID, name); };
+    actions.renameFolder = [this](const std::string& folderID, const std::string& name) { RenameFolder(folderID, name); };
+    actions.beginRenamingTab = [this](const std::string& tabID) { BeginRenamingTab(tabID, true); };
+    actions.resetTab = [this](const std::string& tabID) { BackToPinnedURL(tabID); };
     // The top row's buttons run the commands of the same names (the Mac's SidebarActions).
     actions.topRow = [this](TopRowButton button) { RunCommand(TopRowCommand(button)); };
     // The empty favorites tray's Dismiss (the Mac's OneShotFlags.set): a write of a few bytes.
@@ -285,10 +290,10 @@ std::wstring BrowserWindowController::Init() {
         return Filter(message, wParam, lParam, result);
     };
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE): what the pages
-    // reported runs first (titles, addresses), then the session and history are saved at once.
-    // Closing doesn't wait for the writes (main.cpp does, once the window is gone); logoff and
-    // shutdown can end the process as soon as WM_ENDSESSION returns, so that waits for both,
-    // kEndSessionFlush at most between them.
+    // reported runs first (titles, addresses), then the session, history and downloads.json are
+    // saved at once. Closing doesn't wait for the writes (main.cpp does, once the window is gone);
+    // logoff and shutdown can end the process as soon as WM_ENDSESSION returns, so that waits for
+    // all three, kEndSessionFlush at most between them.
     window_.onClose = [this](bool endingSession) {
         // First, so an Import from Arc whose dialog is still up does nothing more.
         closing_ = true;
@@ -558,6 +563,8 @@ bool BrowserWindowController::CommandEnabled(const std::string& command) const {
     if (command.size() == 6 && command.starts_with("space") && command[5] >= '1' && command[5] <= '9') {
         return static_cast<size_t>(command[5] - '0') <= state_.spaces.size();
     }
+    // Pin Tab and the other tab commands need a tab, or one off its pinned page.
+    if (const std::optional<bool> enabled = TabCommandEnabled(command)) return *enabled;
     return true;
 }
 
@@ -934,12 +941,16 @@ bool BrowserWindowController::MayQuit() {
 
 void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save) {
     FindBarFollowsSelection();
-    // A rename ends once its space isn't the one shown (another selected, or it was deleted),
-    // keeping what was typed, as leaving the field does: renamed here, in this update, so the
-    // sidebar's Update stays a picture of the session.
-    if (const std::optional<std::string> renaming = sidebar_->Renaming(); renaming && *renaming != state_.selectedSpaceID) {
+    // A tab pinned by any path remembers its page, and a page reported by a pinned tab with none yet
+    // becomes its pinned URL (the Mac's BrowserStore.mutate and mutatePage sync after every change):
+    // a change there is a sidebar change, saved soon, whatever this update's own save was.
+    if (state_.SyncPinnedURLs()) save = SessionSaveDelay::Soon;
+    // A rename ends once its header or row isn't shown (another space selected, the space, tab or
+    // folder gone or hidden in a closed folder), keeping what was typed, as leaving the field does:
+    // renamed here, in this update, so the sidebar's Update stays a picture of the session.
+    if (const auto renaming = sidebar_->Renaming(); renaming && !RenameStillShown(*renaming)) {
         if (const auto taken = sidebar_->TakeRename()) {
-            state_.RenameSpace(taken->first, taken->second);
+            ApplyRename(taken->first, taken->second);
             if (!save) save = SessionSaveDelay::Soon;
         }
     }
@@ -972,7 +983,7 @@ void BrowserWindowController::SelectionMoved() {
 
 void BrowserWindowController::ShowPage() {
 #ifdef KITE_HAS_CEF
-    if (chromium_) ShowSelectedTab();
+    if (chromium_ && !(options_.smokeTest && holdPages_)) ShowSelectedTab();
 #endif
 }
 
@@ -980,8 +991,9 @@ void BrowserWindowController::LoadInTab(const std::string& tabID, const std::str
 #ifdef KITE_HAS_CEF
     // kite:// pages are drawn by the window, never loaded (the Mac's InternalPage).
     if (!chromium_ || url.starts_with("kite:")) return;
-    // A tab whose page closed itself (an unloaded pinned tab) gets a new one.
-    if (!chromium_->Navigate(tabID, url)) ShowSelectedTab();
+    // A tab whose page closed itself (an unloaded pinned tab) gets a new one, as the selected tab's
+    // (ShowPage: none for the smoke test's own tabs).
+    if (!chromium_->Navigate(tabID, url)) ShowPage();
 #else
     (void)tabID;
     (void)url;
@@ -1335,6 +1347,7 @@ void BrowserWindowController::MakeCommands() {
         {"findNext", [this] { StepFind(true); }},
         {"findPrevious", [this] { StepFind(false); }},
     };
+    MakeTabCommands();
     for (int n = 1; n <= 9; ++n) {
         commands_[n == 9 ? "lastTab" : "tab" + std::to_string(n)] = [this, n] {
             state_.SelectTabNumber(n);

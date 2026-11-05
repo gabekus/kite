@@ -122,6 +122,12 @@ jobs:
           $smokePage = ([uri](Resolve-Path windows/helix/pages/smoke.html).Path).AbsoluteUri
           & windows/build/Release/kitecore.exe --profile $profileDir open $smokePage | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "kitecore open exited with $LASTEXITCODE" }
+          # Chromium's Energy Saver as an earlier run could have left it, off: the smoke test
+          # fails unless Kite turns it on (1, Chromium's own default, so a fresh profile can't
+          # tell).
+          New-Item -ItemType Directory -Path (Join-Path $profileDir 'Chromium') | Out-Null
+          [IO.File]::WriteAllText((Join-Path $profileDir 'Chromium\Local State'),
+            '{"performance_tuning":{"battery_saver_mode":{"state":0}}}')
 
           # It also fails unless the first page's renderer is in Chromium's sandbox and no helper
           # but the network service runs at medium integrity (W6b); it prints each one's sandbox.

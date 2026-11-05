@@ -301,6 +301,19 @@ const std::vector<ShortcutCommand>& ShortcutCommands() {
     static const std::vector<ShortcutCommand> commands = [] {
         std::vector<ShortcutCommand> c{
             {"newTab", "New Tab…", Ctrl("t")},
+            // The Tabs menu: Pin Tab (retitled Unpin Tab for a pinned one), New Folder…, and the
+            // command bar's Duplicate Tab and Rename Current Tab… (hidden from the Mac's menu bar).
+            {"pinTab", "Pin Tab", Ctrl("d")},
+            {"newFolder", "New Folder…", std::nullopt},
+            {"duplicate", "Duplicate Tab", std::nullopt},
+            {"renameCurrentTab", "Rename Current Tab…", std::nullopt},
+            // Reset all tabs in this Space; Arc's resetTab binding (hidden, no menu item) and its
+            // command-bar action replacePinnedTab.
+            {"resetSpace", "Reset all tabs in this Space", std::nullopt},
+            {"resetTab", "Reset Tab to Original URL", std::nullopt},
+            {"replacePinnedTab", "Replace Pin with Current Page", std::nullopt},
+            // The Spaces menu's command-bar Add to Favorites (Remove from Favorites for a favorite).
+            {"toggleFavorite", "Add to Favorites", std::nullopt},
             {"reopenClosedTab", "Restore Last Closed Tab", CtrlShift("t"), {}},
             {"importFromArc", "Import from Arc…", std::nullopt},
             {"openLocation", "Open Location…", std::nullopt},

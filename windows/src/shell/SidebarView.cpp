@@ -94,6 +94,7 @@ constexpr wchar_t kFolderFill = 0xE8D5;
 constexpr wchar_t kPlus = 0xE710;
 constexpr wchar_t kChevronRight = 0xE76C;
 constexpr wchar_t kClose = 0xE711;  // xmark
+constexpr wchar_t kUndo = 0xE7A7;   // arrow.uturn.backward (Back to Pinned URL), the same in both fonts
 constexpr wchar_t kChevronDown = 0xE70D;  // chevron.right turned a quarter (an open folder or section)
 constexpr wchar_t kHistory = 0xE81C;
 constexpr wchar_t kArchive = 0xE7B8;
@@ -696,6 +697,7 @@ std::wstring SidebarView::DrawPageSurface(const PageModel& page, Page& gpu, Pixe
     }
     std::set<FaviconKey> icons;
     drawnIcons_ = &icons;
+    if (page.spaceID == model_.spaceID) ++pageDraws_;
     std::wstring error = compositor_->DrawSurface(
         perf::View::Sidebar, gpu.surface.Get(), width, height, dpi_,
         [&](ID2D1DeviceContext* context) {
@@ -794,7 +796,7 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
     Pixels field;
     POINT fieldAt{};
     if (rename_) {
-        const auto page = pages_.find(rename_->SpaceID());
+        const auto page = pages_.find(renamePage_);
         IDCompositionVisual* parent = page != pages_.end() ? page->second.visual.Get() : nullptr;
         if (parent != rename_->Parent()) rename_->UseCompositor(compositor_, parent);
         rename_->SetPageOrigin(POINT{std::lround(PageOffset() * scale), 0});
@@ -821,7 +823,10 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
             const float x = (static_cast<float>(index) - static_cast<float>(model_.index)) * static_cast<float>(clipWidth_) + strip;
             if (std::abs(x) < static_cast<float>(width)) ComposeOver(*readBack, shot, POINT{std::lround(x), 0}, 1, &clip);
             if (rename_ && index == model_.index && !field.bgra.empty()) {
-                ComposeOver(*readBack, field, POINT{std::lround(x) + fieldAt.x, fieldAt.y}, 1, &clip);
+                // Only over the list, as the field's visual is clipped.
+                const RECT list{0, static_cast<LONG>(std::floor(listTop_ * scale)), static_cast<LONG>(width),
+                                static_cast<LONG>(std::ceil(SidebarListBottom(Height(), listTop_) * scale))};
+                ComposeOver(*readBack, field, POINT{std::lround(x) + fieldAt.x, fieldAt.y}, 1, &list);
             }
         }
         ComposeOver(*readBack, bar, POINT{0, client.bottom - static_cast<LONG>(bar.height)});
@@ -950,20 +955,60 @@ D2D1_RECT_F SidebarView::HeaderNameRect(const SidebarRow& row, float top) {
     return Rect(x, textY, x + std::min(metrics.width, std::max(end - x, 0.0f)), textY + line);
 }
 
-void SidebarView::PlaceRenameField(float x, float top) {
-    // SpaceHeaderRowCell.layout while renaming: no chevron; from the cell's end, a gap and the
-    // icon inset, Done (its label's width), a gap, then the field takes the room from the name's
-    // place. The field's line and Done's label each sit in the 26pt row, rounded down.
+bool SidebarView::Renames(const SidebarRow& row) const {
+    return rename_ && renameTarget_.kind == row.kind && renameTarget_.id == row.id;
+}
+
+bool SidebarView::InRenamedRow(D2D1_POINT_2F q) const {
+    if (!rename_ || renameTarget_.kind == SidebarRow::Kind::Header || renamePage_ != model_.spaceID) return false;
+    if (!OverList(q)) return false;
+    for (const SidebarRow& row : model_.rows) {
+        if (row.kind != renameTarget_.kind || row.id != renameTarget_.id) continue;
+        const auto [pillTop, pillBottom] = PillSpan(listTop_ + row.top - scroll_);
+        return q.y >= pillTop && q.y < pillBottom;
+    }
+    return false;
+}
+
+std::pair<float, float> SidebarView::PillSpan(float top) const {
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    auto snap = [scale](float points) { return std::round(points * scale) / scale; };
+    const float pillTop = snap(top + (M::kRowPitch - M::kPillHeight) / 2);
+    return {pillTop, snap(pillTop + M::kPillHeight)};
+}
+
+void SidebarView::PlaceRenameField(const SidebarRow& row, float top) {
     const float right = width_ - M::kPadding;
-    const float rowTop = top + M::kHeaderIconTop;
-    float end = right - (kHeaderGap + (M::kIconInset - M::kPadding));
-    end -= rename_->DoneWidth();
-    const D2D1_RECT_F done = Rect(end, rowTop, end + rename_->DoneWidth(), rowTop + M::kHeaderIconSize);
-    end -= kHeaderGap;
-    const float line = LineHeight(M::kHeaderFontSize);
-    const float lineTop = rowTop + std::floor((M::kHeaderIconSize - line) / 2);
-    const float doneBaseline = rowTop + std::floor((M::kHeaderIconSize - LineHeight(M::kDoneFontSize)) / 2) + M::kDoneFontSize * kAscender;
-    rename_->Place(x, std::max(end, x), lineTop, line, lineTop + M::kHeaderFontSize * kAscender, done, doneBaseline, dpi_, model_.dark);
+    const float clipBottom = SidebarListBottom(Height(), listTop_);
+    if (row.kind == SidebarRow::Kind::Header) {
+        // SpaceHeaderRowCell.layout while renaming: no chevron; from the cell's end, a gap and the
+        // icon inset, Done (its label's width), a gap, then the field takes the room from the name's
+        // place. The field's line and Done's label each sit in the 26pt row, rounded down.
+        const float x = row.icon.empty() ? M::kHeaderIconX : M::kHeaderTextX;
+        const float rowTop = top + M::kHeaderIconTop;
+        float end = right - (kHeaderGap + (M::kIconInset - M::kPadding));
+        end -= rename_->DoneWidth();
+        const D2D1_RECT_F done = Rect(end, rowTop, end + rename_->DoneWidth(), rowTop + M::kHeaderIconSize);
+        end -= kHeaderGap;
+        const float line = LineHeight(M::kHeaderFontSize);
+        const float lineTop = rowTop + std::floor((M::kHeaderIconSize - line) / 2);
+        const float doneBaseline = rowTop + std::floor((M::kHeaderIconSize - LineHeight(M::kDoneFontSize)) / 2) + M::kDoneFontSize * kAscender;
+        rename_->Place(x, std::max(end, x), lineTop, line, lineTop + M::kHeaderFontSize * kAscender, done, doneBaseline, listTop_, clipBottom,
+                       dpi_, model_.dark);
+        return;
+    }
+    // TabRowCell's and FolderRowCell's layout while renaming: the field where the title was, from
+    // its x to where the title would end with nothing after it (a tab's close and Back to Pinned
+    // URL go while it renames; a folder keeps its chevron's slot), on the label's line.
+    const auto [pillTop, pillBottom] = PillSpan(top);
+    const float x = M::kPadding + M::kIconInset + static_cast<float>(row.depth) * M::kNestingIndent + M::kIconSize + M::kIconTextGap;
+    const float end = row.kind == SidebarRow::Kind::Tab ? TabRowTrailingOf(row, width_, false).titleEnd
+                                                        : right - M::kIconInset - kFolderChevronWidth - M::kIconTextGap - M::kIconTextGap;
+    const float line = LineHeight(M::kTabFontSize);
+    const float lineTop = pillTop + TextTop(M::kPillHeight, line);
+    const float fieldEnd = std::max(end, x);
+    const D2D1_RECT_F box = Rect(fieldEnd + RenameField::kEditorAfter, pillTop, fieldEnd + RenameField::kEditorAfter, pillBottom);
+    rename_->Place(x, fieldEnd, lineTop, line, lineTop + M::kTabFontSize * kAscender, box, 0, listTop_, clipBottom, dpi_, model_.dark);
 }
 
 void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, float top, bool hovered) {
@@ -972,8 +1017,7 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
     // them at other scales so its edges and the favicon stay sharp.
     const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
     auto snap = [scale](float points) { return std::round(points * scale) / scale; };
-    const float pillTop = snap(top + (M::kRowPitch - M::kPillHeight) / 2);
-    const float pillBottom = snap(pillTop + M::kPillHeight);
+    const auto [pillTop, pillBottom] = PillSpan(top);
     // The favicon's square, a whole number of pixels on the pixel grid.
     const float iconSide = std::round(M::kIconSize * scale) / scale;
     auto washPill = [&](D2D1_COLOR_F color) {
@@ -1017,9 +1061,9 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
             }
             x = M::kHeaderTextX;
         }
-        if (rename_ && rename_->SpaceID() == row.id) {
+        if (Renames(row)) {
             // Renaming: the field and Done (its own visual) where the name and the chevron were.
-            PlaceRenameField(x, top);
+            PlaceRenameField(row, top);
             break;
         }
         float end = right;
@@ -1050,17 +1094,26 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
         const float x = left + M::kIconInset + static_cast<float>(row.depth) * M::kNestingIndent;
         DrawFavicon(context, row.favicon, faviconBox(x));
         const float textX = x + M::kIconSize + M::kIconTextGap;
-        // Trailing, from the pill's end (6pt in): the close button while hovered, and the title
-        // up to a gap before it; with nothing there, to a gap before the 6pt.
-        float textEnd = right - M::kCloseButtonEndInset - M::kIconTextGap;
-        if (hovered && row.showsClose) {
-            const float closeRight = right - M::kCloseButtonEndInset, closeLeft = closeRight - M::kCloseButtonSize;
-            const float closeTop = pillTop + (M::kPillHeight - M::kCloseButtonSize) / 2;
-            DrawGlyph(context, kClose, 9 / kGlyphInk, Rect(closeLeft, closeTop, closeRight, closeTop + M::kCloseButtonSize),
-                      Primary(kLabelAlpha * kCloseButtonOpacity));
-            textEnd = closeLeft - M::kIconTextGap - M::kIconTextGap;
+        // Trailing, right to left from the pill's end (6pt in), while hovered: the close button,
+        // then Back to Pinned URL for a pinned tab off its page; the title up to a gap before them
+        // (with nothing there, to a gap before the 6pt). Renaming, the field (its own visual) takes
+        // the title's place and the buttons go.
+        if (Renames(row)) {
+            PlaceRenameField(row, top);
+            break;
         }
-        DrawText(context, row.title, tabFormat_.Get(), textX, tabBaseline, textEnd - textX, Primary(kLabelAlpha * M::kTabTextOpacity));
+        const TabRowTrailing trailing = TabRowTrailingOf(row, width_, hovered);
+        const float buttonTop = pillTop + (M::kPillHeight - M::kCloseButtonSize) / 2;
+        if (trailing.close) {
+            DrawGlyph(context, kClose, 9 / kGlyphInk, Rect(trailing.close->first, buttonTop, trailing.close->second, buttonTop + M::kCloseButtonSize),
+                      Primary(kLabelAlpha * kCloseButtonOpacity));
+        }
+        if (trailing.reset) {
+            // arrow.uturn.backward at 10pt semibold, a SymbolButton as the close button is.
+            DrawGlyph(context, kUndo, 10 / kGlyphInk, Rect(trailing.reset->first, buttonTop, trailing.reset->second, buttonTop + M::kResetButtonSize),
+                      Primary(kLabelAlpha * kCloseButtonOpacity));
+        }
+        DrawText(context, row.title, tabFormat_.Get(), textX, tabBaseline, trailing.titleEnd - textX, Primary(kLabelAlpha * M::kTabTextOpacity));
         break;
     }
     case SidebarRow::Kind::Folder: {
@@ -1070,7 +1123,9 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
         DrawGlyph(context, row.expanded ? kFolder : kFolderFill, 14 / kGlyphInk, faviconBox(x), Primary(kLabelAlpha * kFolderIconOpacity));
         const float textX = x + M::kIconSize + M::kIconTextGap;
         const float textEnd = right - M::kIconInset - kFolderChevronWidth - M::kIconTextGap - M::kIconTextGap;
-        DrawText(context, row.title, folderFormat_.Get(), textX, tabBaseline, textEnd - textX, Primary(kLabelAlpha * M::kTabTextOpacity));
+        // Renaming, the field (its own visual) takes the name's place.
+        if (Renames(row)) PlaceRenameField(row, top);
+        else DrawText(context, row.title, folderFormat_.Get(), textX, tabBaseline, textEnd - textX, Primary(kLabelAlpha * M::kTabTextOpacity));
         if (hovered) {
             // Its chevron, at the pill's end: turned down while it's open.
             const float centerX = right - M::kIconInset - kFolderChevronWidth / 2, centerY = (pillTop + pillBottom) / 2;
@@ -1121,10 +1176,20 @@ void SidebarView::DrawPage(ID2D1DeviceContext* context, const PageModel& page, f
     const float listTop = listTop_;
     const float listBottom = std::max(listTop, bottom);
     context->PushAxisAlignedClip(Rect(0, listTop, width_, listBottom), D2D1_ANTIALIAS_MODE_ALIASED);
+    // A row being renamed out of view still places its field, which its clip hides: rows past the
+    // bottom are walked until it's placed.
+    bool fieldPending = rename_ && renamePage_ == page.spaceID;
     for (const SidebarRow& row : page.rows) {
         const float top = listTop + row.top - scroll;
-        if (top >= listBottom) break;
-        if (top + row.height <= listTop) continue;
+        if (top >= listBottom || top + row.height <= listTop) {
+            if (fieldPending && Renames(row)) {
+                PlaceRenameField(row, top);
+                fieldPending = false;
+            }
+            if (top >= listBottom && !fieldPending) break;
+            continue;
+        }
+        if (Renames(row)) fieldPending = false;
         const bool hovered = selected && hover_ && hover_->first == row.kind && hover_->second == row.id;
         DrawRow(context, row, top, hovered);
     }
@@ -1252,22 +1317,31 @@ std::optional<POINT> SidebarView::SpaceCellCentre(size_t index) const {
 
 // Renaming a space ---------------------------------------------------------------------------
 
-void SidebarView::BeginRenaming(const std::string& spaceID, const std::string& name) {
-    if (rename_ && rename_->SpaceID() == spaceID) return;
+void SidebarView::BeginRenaming(const RenameTarget& target, const std::string& text) {
+    if (rename_ && renameTarget_ == target) return;
     if (rename_) EndRenaming(true);
     std::wstring error;
-    rename_ = SpaceRenameField::Create(window_, dwrite_.Get(), headerFormat_.Get(), doneFormat_.Get(), spaceID, name, error);
+    using Kind = SidebarRow::Kind;
+    // The header's 13pt semibold with Done; a tab's 14pt regular (its placeholder Arc's "Keep it
+    // short and sweet!") or a folder's 14pt semibold (none), with no Done.
+    IDWriteTextFormat* format = target.kind == Kind::Header ? headerFormat_.Get() : target.kind == Kind::Tab ? tabFormat_.Get() : folderFormat_.Get();
+    const std::wstring_view placeholder = target.kind == Kind::Header ? L"Space Name" : target.kind == Kind::Tab ? L"Keep it short and sweet!" : L"";
+    rename_ = RenameField::Create(window_, dwrite_.Get(), format, target.kind == Kind::Header ? doneFormat_.Get() : nullptr, target.id, text,
+                                  placeholder, error);
     if (!rename_) {
         OutputDebugStringW((L"Kite: the rename field couldn't open: " + error + L"\n").c_str());
         return;
     }
+    renameTarget_ = target;
+    // A space's header is in its own page; a row is in the selected one's.
+    renamePage_ = target.kind == Kind::Header ? target.id : model_.spaceID;
     HideTip();
     InvalidateSelectedPage();
 }
 
-std::optional<std::pair<std::string, std::string>> SidebarView::TakeRename() {
+std::optional<std::pair<SidebarView::RenameTarget, std::string>> SidebarView::TakeRename() {
     if (!rename_) return std::nullopt;
-    std::pair<std::string, std::string> taken{rename_->SpaceID(), rename_->Text()};
+    std::pair<RenameTarget, std::string> taken{renameTarget_, rename_->Text()};
     renamePressed_ = false;
     rename_.reset();
     if (GetCapture() == window_ && !press_ && !barPress_) ReleaseCapture();
@@ -1277,15 +1351,35 @@ std::optional<std::pair<std::string, std::string>> SidebarView::TakeRename() {
 
 void SidebarView::EndRenaming(bool commit) {
     const auto taken = TakeRename();
-    // The Mac's commitRename: a blank name keeps the old one (renameSpace).
-    if (taken && commit && actions_.renameSpace) actions_.renameSpace(taken->first, taken->second);
+    if (!taken || !commit) return;
+    // The Mac's commits: a blank space or folder name keeps the old one, a blank tab name goes back
+    // to the page's title (renameSpace, renameFolder, renameTab).
+    switch (taken->first.kind) {
+    case SidebarRow::Kind::Header:
+        if (actions_.renameSpace) actions_.renameSpace(taken->first.id, taken->second);
+        break;
+    case SidebarRow::Kind::Tab:
+        if (actions_.renameTab) actions_.renameTab(taken->first.id, taken->second);
+        break;
+    case SidebarRow::Kind::Folder:
+        if (actions_.renameFolder) actions_.renameFolder(taken->first.id, taken->second);
+        break;
+    default: break;
+    }
 }
 
 std::optional<POINT> SidebarView::RenameDoneCentre() const {
-    if (!rename_) return std::nullopt;
-    const D2D1_RECT_F& done = rename_->DoneBox();
+    if (!rename_ || !rename_->DoneBox()) return std::nullopt;
+    const D2D1_RECT_F done = *rename_->DoneBox();
     const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
     return POINT{std::lround(((done.left + done.right) / 2 + PageOffset()) * scale), std::lround((done.top + done.bottom) / 2 * scale)};
+}
+
+std::optional<POINT> SidebarView::RenameFieldEnd() const {
+    if (!rename_) return std::nullopt;
+    const D2D1_RECT_F box = rename_->Box();
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    return POINT{std::lround((box.right + PageOffset()) * scale), std::lround((box.top + box.bottom) / 2 * scale)};
 }
 
 std::optional<POINT> SidebarView::HeaderNameCentre() {
@@ -1303,9 +1397,32 @@ void SidebarView::FocusRenameForCapture() {
     ScheduleDraw();
 }
 
-std::optional<std::string> SidebarView::Renaming() const {
+std::optional<SidebarView::RenameTarget> SidebarView::Renaming() const {
     if (!rename_) return std::nullopt;
-    return rename_->SpaceID();
+    return renameTarget_;
+}
+
+std::optional<std::string> SidebarView::RenamingSpace() const {
+    if (!rename_ || renameTarget_.kind != SidebarRow::Kind::Header) return std::nullopt;
+    return renameTarget_.id;
+}
+
+std::optional<POINT> SidebarView::RowCentre(size_t index) const {
+    if (index >= model_.rows.size()) return std::nullopt;
+    const SidebarRow& row = model_.rows[index];
+    const float top = listTop_ + row.top - scroll_;
+    if (top < listTop_ || top + row.height > SidebarListBottom(Height(), listTop_)) return std::nullopt;
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    return POINT{std::lround((width_ / 2 + PageOffset()) * scale), std::lround((top + row.height / 2) * scale)};
+}
+
+std::optional<POINT> SidebarView::ResetButtonCentre(size_t index) const {
+    const std::optional<POINT> centre = RowCentre(index);
+    if (!centre) return std::nullopt;
+    const TabRowTrailing trailing = TabRowTrailingOf(model_.rows[index], width_, true);
+    if (model_.rows[index].kind != SidebarRow::Kind::Tab || !trailing.reset) return std::nullopt;
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    return POINT{std::lround(((trailing.reset->first + trailing.reset->second) / 2 + PageOffset()) * scale), centre->y};
 }
 
 void SidebarView::TypeInRename(std::string_view text) {
@@ -1316,7 +1433,7 @@ void SidebarView::TypeInRename(std::string_view text) {
 
 bool SidebarView::HandleKey(UINT message, WPARAM wParam, LPARAM lParam) {
     if (!rename_) return false;
-    using Outcome = SpaceRenameField::Outcome;
+    using Outcome = RenameField::Outcome;
     const auto apply = [this](Outcome outcome) {
         if (outcome == Outcome::Commit) EndRenaming(true);
         else if (outcome == Outcome::Cancel) EndRenaming(false);
@@ -1441,6 +1558,9 @@ void SidebarView::Perform(const SidebarTap& tap) {
     case Action::CloseTab:
         if (actions_.closeTab) actions_.closeTab(tap.id);
         break;
+    case Action::ResetTab:
+        if (actions_.resetTab) actions_.resetTab(tap.id);
+        break;
     case Action::None:
         break;
     }
@@ -1480,7 +1600,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         pointer_ = POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         if (renamePressed_ && rename_) {
             const D2D1_POINT_2F q = OnPage(PointOf(*pointer_));
-            if (rename_->Move(q.x, q.y) != SpaceRenameField::Outcome::None) ScheduleDraw();
+            if (rename_->Move(q.x, q.y) != RenameField::Outcome::None) ScheduleDraw();
             return true;
         }
         if (favoritePress_) {
@@ -1525,8 +1645,11 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         lastClickTime_ = time;
         lastClickAt_ = at;
         pointer_ = at;
-        // While a space is renamed, a press in its field edits it, on Done commits it on release,
-        // and anywhere else ends it (keeping what was typed) and goes on as a press.
+        // While something is renamed, a press in its field edits it, on Done commits it on release.
+        // Elsewhere in a renamed tab's or folder's row it does nothing and the field keeps editing
+        // (the Mac's row isn't a responder, so its field editor stays, and tapped(at:) ignores a
+        // renaming row; its close and Back to Pinned URL are hidden). Anywhere else it ends the
+        // rename (keeping what was typed) and goes on as a press.
         if (rename_) {
             const D2D1_POINT_2F q = OnPage(p);
             if (rename_->Press(q.x, q.y, (wParam & MK_SHIFT) != 0)) {
@@ -1535,6 +1658,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
                 ScheduleDraw();
                 return true;
             }
+            if (InRenamedRow(q)) return true;
             EndRenaming(true);
         }
         // A top-row button (SymbolButton): it takes the click that brings the window forward too,
@@ -1567,6 +1691,13 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         }
         const D2D1_POINT_2F q = OnPage(p);
         press_ = SidebarPressAt(model_.rows, width_, Height(), scroll_, q.x, q.y, clicks_, activating, listTop_);
+        // The second press of a double-click on a tab's row renames it as it goes down
+        // (SidebarRowCell.mouseDown's doubleTapped); its release taps nothing.
+        if (const auto tab = press_ ? SidebarRenameOnPress(*press_) : std::nullopt) {
+            press_.reset();
+            if (actions_.beginRenamingTab) actions_.beginRenamingTab(*tab);
+            return true;
+        }
         if (press_) SetCapture(window_);
         return true;
     }
@@ -1601,7 +1732,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             renamePressed_ = false;
             if (GetCapture() == window_) ReleaseCapture();
             const D2D1_POINT_2F q = OnPage(PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}));
-            if (rename_ && rename_->Release(q.x, q.y) == SpaceRenameField::Outcome::Commit) EndRenaming(true);
+            if (rename_ && rename_->Release(q.x, q.y) == RenameField::Outcome::Commit) EndRenaming(true);
             return true;
         }
         if (barPress_) {

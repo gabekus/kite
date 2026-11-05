@@ -772,7 +772,7 @@ A right-click on a cell or the space's header opens the space's menu with the Ma
 order and words (`SpaceMenu`): Change Space Icon…, Rename Space…, What's This Space For?…,
 Edit Theme Color…, Set Profile ▸, then New Folder and Live Folders ▸, then Delete Space
 (disabled for the last space). Rename Space…, or a click on the current space's name, opens
-the header's name field (`shell/SpaceRenameField`, the Mac's SpaceRenameField and Done): the
+the header's name field (`shell/RenameField`, the Mac's SpaceRenameField and Done): the
 name all selected in the header's 13pt semibold, 2pt into the field as in AppKit's field
 editor, over the editor's textBackgroundColor (#1E1E1E dark, white light, square, from 3pt
 before the field to 1pt past its end and 22pt tall, as the Mac's capture draws it), "Space Name" when
@@ -896,14 +896,16 @@ the session's writer does (atomically, skipping unchanged bytes), so the UI
 thread touches no file; a download that starts before the read is in waits for
 it, and the list read joins under it. An unreadable file is moved aside, and
 one with items Kite can't read is copied aside first, as on the Mac. Quitting
-waits for the session's and downloads.json's last writes within one 10 s
-deadline, and logoff within one of 3 s. A progress report costs Kite's UI thread
-about 8 μs (the model and the timer; nothing is drawn: the Library comes with
-W20b), measured by `--save-log`, which logs Chromium's reports, those that
-reached Kite, their cost and downloads.json's writes. Closing the window with
-downloads running asks first, the Mac's "Downloads in progress"
-(`shell/QuitDialog.h`, a task dialog where the Mac draws its own alert); Close
-Kite cancels them. It's asked as the window closes, before its pages do, where
+waits for the session's, history's and downloads.json's last writes within one
+10 s deadline (downloads.json's handed over first, so it runs alongside the
+other two on its own worker), and logoff within one of 3 s. A progress report
+costs Kite's UI thread about 8 μs (the model and the timer; nothing is drawn:
+the Library comes with W20b), measured by `--save-log`, which logs Chromium's
+reports, those that reached Kite, their cost and downloads.json's writes.
+Closing the window with downloads running asks first, the Mac's "Downloads in
+progress" (`shell/QuitDialog.h`, a task dialog where the Mac draws its own
+alert); Close Kite cancels them. It's asked as the window closes, before its
+pages do, where
 the Mac asks at terminate: closing the window is quitting here. A quiet run logs
 `KITE_TEST_MODAL: dialog: Downloads in progress | [Close Kite, Keep browsing]`
 and closes, as the Mac's test-safe run answers, and a profile set to Ask has its
@@ -1098,6 +1100,56 @@ Known differences from the Mac's history import:
 - Two rows that are one URL once normalized are one page: the newer row's visit
   and title (the older title when the newer has none) and the higher count.
 
+## Pinning, renaming and folders
+
+Pin Tab (Ctrl+D, the Mac's ⌘D, Arc's Use Both priority) moves the selected tab to the end of its
+space's pinned items, or a pinned tab (from any folder) to the top of its space's Today; a split
+moves as one, its panes in order. A pinned tab or favorite remembers the page it was pinned at
+(`pinnedURL`, `BrowserState::SyncPinnedURLs`, run after every change and as a session loads, as
+the Mac's store and decoder do: never Kite's own pages or about:blank, and unpinned tabs lose
+theirs). One that has left that page (`Tab::HasLeftPinnedURL`: a fragment, a trailing slash,
+"www." and http/https don't count) shows Back to Pinned URL (arrow.uturn.backward, Segoe's Undo
+glyph) on hover, left of the close button, which sends it home and loads its page if it has
+one. These commands have the Mac's ids and no default shortcut, so keybindings.json can bind
+them: New Folder… (`newFolder`, "New Folder" at the end of the selected space's pinned items;
+as on the Mac it doesn't open the folder's rename), Duplicate Tab (`duplicate`, a copy below
+the tab in Today, or at Today's top for a pinned tab or favorite, selected), Rename Current
+Tab… (`renameCurrentTab`), Reset all tabs in this Space (`resetSpace`), Reset Tab to Original
+URL (`resetTab`), Replace Pin with Current Page (`replacePinnedTab`) and Add to Favorites
+(`toggleFavorite`). Each is enabled as the Mac's validateMenuItem has it (a tab selected, or
+one off its pinned page), and a disabled one's key passes on.
+
+A double-click on a tab's row (on the second press, as the Mac's mouseDown) or Rename Current
+Tab… opens the row's name field (`shell/RenameField`, W9d's header field generalized): the
+title all selected in the row's 14pt, "Keep it short and sweet!" when empty, over the field
+editor's background, with no Done; Return renames (a blank name goes back to the page's title),
+Escape doesn't, and leaving it keeps what was typed, as does its row going (another space shown,
+the tab moved into a closed folder: `SidebarShowsRow`, one walk to the row). A press elsewhere in the
+renamed row does nothing and the field keeps editing (the Mac's row hides its close and Back to
+Pinned URL while it renames, and its tap ignores a renaming row). A row that only moves
+(Pin Tab mid-rename) keeps its field, still editing, as the Mac's list moves a row by its id
+(SidebarList.apply's moveRow), keeping its cell and field. A double-click on a split pane's row does
+nothing (the Mac's split is one SplitRowCell, with no doubleTapped). A folder's field is the same in its 14pt semibold with no
+placeholder, and a blank name keeps the old one. The fields are visuals in their page, clipped to
+the list, so a keystroke draws only the field (the smoke test checks the page doesn't draw). A
+favorite or a split's pane has no row to rename in: the Mac's Rename Tab… dialog for those, and
+for a hidden sidebar, comes with ArcDialog (W19), a beep until then. A folder's rename has no
+way in yet but `--rename-row`: the Mac's is its menu's Rename… (W17).
+
+`kitecore tab pin|favorite|rename|duplicate|reset|reset-all|separate|reveal|pinned-url|replace-pin`
+and `kitecore folder new|rename|delete|move` (a folder by id or name) do the same headless;
+`kitecore sidebar` gives each tab row's `canReset` and `renamed`, `kitecore shown KIND ID` whether
+the page lists a row, and `click … --double` is a double-click's second press.
+`--capture FILE --rename-row N` opens row N's field (from 1, as `sidebar` lists the selected
+space's rows), `--hover-row N` rests the pointer on row N, and `--run-command ID` runs a command
+first (`pinTab` on a pinned tab is the "after unpin" state). Until W17's menus, a folder New Folder
+makes can't be renamed, deleted or filled from the window (only by kitecore, or a drag once W18a
+lands). Not yet: the rows' context menus
+(Pin/Unpin, Rename…, Back to Pinned URL, Separate From Pinned Tab, Edit Pinned Page, a folder's
+Rename… and Delete: W17, whose model is here and in kitecore), Undo (W16: `EditState` is where
+it records), the command bar's command rows (the commands are there to bind, not to search),
+Back to Pinned URL's tooltip, and the "Pin Tab"/"Unpin Tab" retitling (no menu shows it).
+
 ## Refresh rate
 
 Kite renders at whatever the display supports (60Hz, 120/144Hz laptops, 240 to
@@ -1143,12 +1195,16 @@ Windows that means:
   a 60Hz timer.
 - **DirectComposition animations** run at the compositor's rate.
 - The windowed CEF fallback (child HWND) renders at the monitor's rate on its own.
-- **Chromium's Energy Saver** caps pages at 30fps on battery below 20% by
-  default. As on the Mac (`KCRuntime.mm`), Kite sets
-  `performance_tuning.battery_saver_mode.state` to 0 unless the user turns it
-  on (`Chromium::SetEnergySaverEnabled`). `--smoke-test` reads it back, which
-  proves Kite set it only on a fresh profile: Local State keeps a value an
-  earlier run wrote.
+- **Chromium's Energy Saver** caps pages at 30fps on battery below 20%. As on
+  the Mac (`KCRuntime.mm`, on by default since 9e19088c, as in Chrome), Kite
+  sets `performance_tuning.battery_saver_mode.state` to 1 unless the user turns
+  it off (`Chromium::SetEnergySaverEnabled`); every launch sets it, so Local
+  State's value from an earlier run doesn't stick. Nothing turns it off on
+  Windows yet: the Mac's toggle (Settings › Advanced › Kite, and the Kite menu)
+  and its stored choice (`chromiumEnergySaver` in UserDefaults) come with
+  Settings (W31). `--smoke-test` reads it back and fails unless it's 1. That's
+  Chromium's own default too, so CI's smoke writes a Local State with it off (0)
+  first, and a 1 then shows that Kite set it.
 
 ## Measuring performance
 

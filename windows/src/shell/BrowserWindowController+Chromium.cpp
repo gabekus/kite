@@ -229,11 +229,13 @@ std::wstring BrowserWindowController::ShutDownChromium() {
     if (!chromium_->PagesCanBeHidden()) return L"a page had no Chromium widget window to hide: background tabs would keep drawing";
     if (!smokeFindProblem_.empty()) return L"find in page: " + smokeFindProblem_;
     if (findBar_ && smokeFind_ != SmokeFind::Done) return L"find in page: the page's search never finished";
-    // Chromium's default would cap pages at 30 fps on a low battery (Chromium::SetEnergySaverEnabled).
+    // On, as in Chrome and on the Mac (Chromium::SetEnergySaverEnabled). That's Chromium's own
+    // default too, so only a profile whose Local State has it off (CI's smoke writes 0 first)
+    // shows that Kite set it.
     if (!energySaverRead_) return L"Chromium's Energy Saver preference was never read back";
-    if (!energySaverState_) return L"Chromium has no Energy Saver preference to turn off";
-    if (*energySaverState_ != 0) {
-        return L"Chromium's Energy Saver is " + std::to_wstring(*energySaverState_) + L", not off (0)";
+    if (!energySaverState_) return L"Chromium has no Energy Saver preference to turn on";
+    if (*energySaverState_ != 1) {
+        return L"Chromium's Energy Saver is " + std::to_wstring(*energySaverState_) + L", not on (1)";
     }
     // One WM_CLOSE must close the window (the browsers first); the 30 s timer's second one
     // would otherwise hide a close that hangs.

@@ -123,8 +123,9 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
     bool reenabling = false;
     // Use Both's "second press" bookkeeping, on CEF's UI thread only (OnPreKeyEvent, OnKeyEvent).
     ShortcutPriorityGate gate;
-    // The Mac's gEnergySaverEnabled: off unless the user turns it on (SetEnergySaverEnabled).
-    std::atomic<bool> energySaverEnabled{false};
+    // The Mac's gEnergySaverEnabled: on unless the user turns it off, as in Chrome
+    // (SetEnergySaverEnabled).
+    std::atomic<bool> energySaverEnabled{true};
 
     // Both threads, under the mutex.
     std::mutex mutex;
