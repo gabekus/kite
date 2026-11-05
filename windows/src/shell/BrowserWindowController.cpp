@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <utility>
 
 #include "core/CommandBar.h"
@@ -37,6 +38,11 @@ constexpr UINT kFaviconsMessage = WM_APP + 4;
 // Posted by the frame clock once a composition frame while something animates.
 constexpr UINT kFrameMessage = WM_APP + 5;
 constexpr UINT kSpaceIconsMessage = WM_APP + 6;
+
+// The window's WM_APP messages, each its own: +1 MainWindow::kWakeMessage, +2 the command bar's
+// redraw, +3 the sidebar's redraw, +4 favicons, +5 the frame clock, +6 space icons, +7 memory
+// pressure (W11), +8 history, +9 Import from Arc's read (kArcReadMessage), +10 arcSaved,
+// +11 downloads, +20 perf. Filter checks that the ids this file sees don't overlap.
 
 // Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
 bool CopyText(HWND owner, const std::wstring& text) {
@@ -634,6 +640,16 @@ void BrowserWindowController::OnSize() {
 // MARK: The window's messages
 
 bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
+    static_assert([] {
+        constexpr UINT ids[] = {MainWindow::kWakeMessage, CommandBarView::kRedrawMessage, SidebarView::kRedrawMessage, kFaviconsMessage,
+                                kFrameMessage, kSpaceIconsMessage, BrowserWindowController::kArcReadMessage};
+        for (size_t i = 0; i < std::size(ids); ++i) {
+            for (size_t j = i + 1; j < std::size(ids); ++j) {
+                if (ids[i] == ids[j]) return false;
+            }
+        }
+        return true;
+    }(), "two of the window's WM_APP messages share an id");
     // The caption buttons' presses, whatever else is open.
     if (caption_->HandleMessage(message, wParam, lParam, result)) return true;
 #ifdef KITE_HAS_CEF

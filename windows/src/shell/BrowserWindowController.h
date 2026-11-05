@@ -164,7 +164,7 @@ private:
     void MakeCommands();
     // Import from Arc (BrowserWindowControllerArcImport.cpp, the Mac's ArcImportController):
     // Arc's files are read on a worker, which posts kArcReadMessage when they're in.
-    static constexpr UINT kArcReadMessage = WM_APP + 7;
+    static constexpr UINT kArcReadMessage = WM_APP + 9;  // the window's WM_APP ids: BrowserWindowController.cpp
     // The window's system menu item for it (Alt+Space): a WM_SYSCOMMAND id, under 0xF000.
     static constexpr UINT kImportFromArcMenuID = 0x0A10;
     struct ArcJob;
