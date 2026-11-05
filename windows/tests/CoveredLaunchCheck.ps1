@@ -2,7 +2,7 @@
 # first page, made after Kite's occlusion already said "covered", ends up hidden and its
 # requestAnimationFrame stops, and stays that way while Kite stays covered.
 #
-#   pwsh windows/tests/CoveredLaunchCheck.ps1 -Kite windows\build\Release\Kite.exe [-Cover] [-Seconds 15]
+#   pwsh windows/tests/CoveredLaunchCheck.ps1 -Kite windows\build\Release\Kite.exe [-Cover] [-Seconds 20]
 #        [-Attack none|stopPropagation|spoofState|docOpen|docOpenStop|endlessOpen|iframeStorm]
 #
 # Kite runs as a quiet --perf-log run on a fresh %TEMP% test profile, so it opens at the bottom of
@@ -20,13 +20,14 @@
 # response), so the page never ends loading, and rewrites itself with document.open at once.
 # iframeStorm points an iframe somewhere new every 150 ms. The page's own log reads
 # Document.prototype's getter, so it sees through the spoof.
-# The run is 15 s so its last 6 s come after Kite's last re-hide after a load (6 s after it):
-# each one shows the page for a few ms, a frame or two. Never run -Cover on a PC in use: it
+# The run is 20 s so its last 6 s come after Kite's last re-hide (6 s after the page's last load,
+# which a cold Kite can take 4 s to start); each re-hide shows the page for a few ms, a frame or
+# two. Never run -Cover on a PC in use: it
 # blacks out every monitor for the run.
 param(
   [Parameter(Mandatory)] [string] $Kite,
   [switch] $Cover,
-  [int] $Seconds = 15,
+  [int] $Seconds = 20,
   [ValidateSet('none', 'stopPropagation', 'spoofState', 'docOpen', 'docOpenStop', 'endlessOpen', 'iframeStorm')] [string] $Attack = 'none'
 )
 $ErrorActionPreference = 'Stop'
