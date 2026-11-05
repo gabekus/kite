@@ -1,0 +1,104 @@
+{
+  "firebaseSyncState": {
+    "currentPublishTransactionRetryCount": 0,
+    "publishInProgress": false,
+    "syncData": {"items": [], "orderedSpaceIDs": {"lastChangeDate": 0, "lastChangedDevice": "TESTDEVICE", "value": []}, "spaceModels": []},
+    "syncHealthStatus": {"off": {}},
+    "unacknowledgedItemDeletions": []
+  },
+  "sidebar": {
+    "containers": [
+      {"global": {}},
+      {
+        "spaces": [
+          "00000000-0000-4000-8000-000000000001",
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "title": "Reading",
+            "customInfo": {
+              "iconType": {"icon": "book"},
+              "windowTheme": {"background": {"single": {"_0": {"style": {"color": {"_0": {"blendedSingleColor": {"_0": {
+                "color": {"red": 0.2, "green": 0.4, "blue": 0.6, "alpha": 1, "colorSpace": "extendedSRGB"},
+                "modifiers": {"noiseFactor": 0.1}
+              }}}}}}}}, "intensityFactor": 0.5, "translucencyStyle": {"opaque": {}}}
+            },
+            "newContainerIDs": [{"pinned": {}}, "00000000-0000-4000-8000-000000000010", {"unpinned": {"_0": {"shared": {}}}}, "00000000-0000-4000-8000-000000000011"],
+            "profile": {"default": true}
+          },
+          "00000000-0000-4000-8000-000000000002",
+          {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "customInfo": {"iconType": {"icon": "kiteless"}},
+            "containerIDs": ["unpinned", "00000000-0000-4000-8000-000000000021", "pinned", "00000000-0000-4000-8000-000000000020"],
+            "newContainerIDs": [{"unpinned": {"_0": {"shared": {}}}}, "00000000-0000-4000-8000-000000000021", {"pinned": {}}, "00000000-0000-4000-8000-000000000020"],
+            "profile": {"custom": {"_0": {"directoryBasename": "Profile 1", "machineID": "TESTMACHINE"}}}
+          }
+        ],
+        "items": [
+          "00000000-0000-4000-8000-000000000010",
+          {"id": "00000000-0000-4000-8000-000000000010", "parentID": null, "title": null, "createdAt": 800000000.5, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": ["00000000-0000-4000-8000-000000000101", "00000000-0000-4000-8000-000000000102", "00000000-0000-4000-8000-000000000104"],
+           "data": {"itemContainer": {"containerType": {"spaceItems": {"_0": "00000000-0000-4000-8000-000000000001"}}}}},
+          "00000000-0000-4000-8000-000000000101",
+          {"id": "00000000-0000-4000-8000-000000000101", "parentID": "00000000-0000-4000-8000-000000000010", "title": "My Mail", "createdAt": 800000001, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": [], "data": {"tab": {"savedURL": "https://mail.example.test/inbox", "savedTitle": "Inbox", "savedMuteStatus": "allowAudio"}}},
+          "00000000-0000-4000-8000-000000000102",
+          {"id": "00000000-0000-4000-8000-000000000102", "parentID": "00000000-0000-4000-8000-000000000010", "title": "Docs", "createdAt": 800000002, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": ["00000000-0000-4000-8000-000000000103"], "data": {"list": {}}},
+          "00000000-0000-4000-8000-000000000103",
+          {"id": "00000000-0000-4000-8000-000000000103", "parentID": "00000000-0000-4000-8000-000000000102", "title": null, "createdAt": 800000003, "isUnread": true, "originatingDevice": "TESTDEVICE",
+           "childrenIds": [], "data": {"tab": {"savedURL": "https://docs.example.test/guide", "savedTitle": "Guide", "savedMuteStatus": "allowAudio"}}},
+          "00000000-0000-4000-8000-000000000104",
+          {"id": "00000000-0000-4000-8000-000000000104", "parentID": "00000000-0000-4000-8000-000000000010", "title": null, "createdAt": 800000004, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": ["00000000-0000-4000-8000-000000000105", "00000000-0000-4000-8000-000000000106"],
+           "data": {"splitView": {"customInfo": null, "focusItemID": null, "itemWidthFactors": [], "layoutOrientation": "horizontal", "timeLastActiveAt": null}}},
+          "00000000-0000-4000-8000-000000000105",
+          {"id": "00000000-0000-4000-8000-000000000105", "parentID": "00000000-0000-4000-8000-000000000104", "title": null, "createdAt": 800000005, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": [], "data": {"tab": {"savedURL": "https://left.example.test/", "savedTitle": "Left", "savedMuteStatus": "allowAudio"}}},
+          "00000000-0000-4000-8000-000000000106",
+          {"id": "00000000-0000-4000-8000-000000000106", "parentID": "00000000-0000-4000-8000-000000000104", "title": null, "createdAt": 800000006, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": [], "data": {"tab": {"savedURL": "https://right.example.test/", "savedTitle": "Right", "savedMuteStatus": "allowAudio"}}},
+          "00000000-0000-4000-8000-000000000011",
+          {"id": "00000000-0000-4000-8000-000000000011", "parentID": null, "title": null, "createdAt": 800000007, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": ["00000000-0000-4000-8000-000000000110", "00000000-0000-4000-8000-000000000112", "00000000-0000-4000-8000-000000000111"],
+           "data": {"itemContainer": {"containerType": {"spaceItems": {"_0": "00000000-0000-4000-8000-000000000001"}}}}},
+          "00000000-0000-4000-8000-000000000110",
+          {"id": "00000000-0000-4000-8000-000000000110", "parentID": "00000000-0000-4000-8000-000000000011", "title": null, "createdAt": 800000008, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": [], "data": {"tab": {"savedURL": "https://news.example.test/today", "savedTitle": "Today", "savedMuteStatus": "allowAudio"}}},
+          "00000000-0000-4000-8000-000000000112",
+          {"id": "00000000-0000-4000-8000-000000000112", "parentID": "00000000-0000-4000-8000-000000000011", "title": null, "createdAt": 800000009, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": [], "data": {"easel": {}}},
+          "00000000-0000-4000-8000-000000000111",
+          {"id": "00000000-0000-4000-8000-000000000111", "parentID": "00000000-0000-4000-8000-000000000011", "title": null, "createdAt": 800000010, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": [], "data": {"tab": {"savedURL": "https://video.example.test/watch?v=1", "savedTitle": "A Video", "savedMuteStatus": "allowAudio"}}},
+          "00000000-0000-4000-8000-000000000020",
+          {"id": "00000000-0000-4000-8000-000000000020", "parentID": null, "title": null, "createdAt": 800000011, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": ["00000000-0000-4000-8000-000000000201"],
+           "data": {"itemContainer": {"containerType": {"spaceItems": {"_0": "00000000-0000-4000-8000-000000000002"}}}}},
+          "00000000-0000-4000-8000-000000000201",
+          {"id": "00000000-0000-4000-8000-000000000201", "parentID": "00000000-0000-4000-8000-000000000020", "title": null, "createdAt": 800000012, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": [], "data": {"tab": {"savedURL": "https://tracker.example.test/board", "savedTitle": "Board", "savedMuteStatus": "allowAudio"}}},
+          "00000000-0000-4000-8000-000000000021",
+          {"id": "00000000-0000-4000-8000-000000000021", "parentID": null, "title": null, "createdAt": 800000013, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": [], "data": {"itemContainer": {"containerType": {"spaceItems": {"_0": "00000000-0000-4000-8000-000000000002"}}}}},
+          "00000000-0000-4000-8000-000000000030",
+          {"id": "00000000-0000-4000-8000-000000000030", "parentID": null, "title": null, "createdAt": 800000014, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": ["00000000-0000-4000-8000-000000000300"],
+           "data": {"itemContainer": {"containerType": {"topApps": {"_0": {"default": true}}}}}},
+          "00000000-0000-4000-8000-000000000300",
+          {"id": "00000000-0000-4000-8000-000000000300", "parentID": "00000000-0000-4000-8000-000000000030", "title": null, "createdAt": 800000015, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": [], "data": {"tab": {"savedURL": "https://calendar.example.test/", "savedTitle": "Calendar", "savedMuteStatus": "allowAudio"}}},
+          "00000000-0000-4000-8000-000000000031",
+          {"id": "00000000-0000-4000-8000-000000000031", "parentID": null, "title": null, "createdAt": 800000016, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": ["00000000-0000-4000-8000-000000000310"],
+           "data": {"itemContainer": {"containerType": {"topApps": {"_0": {"custom": {"_0": {"directoryBasename": "Profile 1", "machineID": "TESTMACHINE"}}}}}}}},
+          "00000000-0000-4000-8000-000000000310",
+          {"id": "00000000-0000-4000-8000-000000000310", "parentID": "00000000-0000-4000-8000-000000000031", "title": null, "createdAt": 800000017, "isUnread": false, "originatingDevice": "TESTDEVICE",
+           "childrenIds": [], "data": {"tab": {"savedURL": "https://chat.example.test/", "savedTitle": "Chat", "savedMuteStatus": "allowAudio"}}}
+        ],
+        "topAppsContainerIDs": [{"default": true}, "00000000-0000-4000-8000-000000000030", {"custom": {"_0": {"directoryBasename": "Profile 1", "machineID": "TESTMACHINE"}}}, "00000000-0000-4000-8000-000000000031"]
+      }
+    ]
+  },
+  "version": 1
+}

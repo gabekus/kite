@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "rules": [
+    {"id": "00000000-0000-4000-8000-0000000000a1",
+     "sourceComponents": [{"id": "00000000-0000-4000-8000-0000000000c1", "componentType": {"urlMatch": {"_0": {"contains": {}}, "_1": "news.example.test"}}}],
+     "destination": {"space": {"_0": {"space": {"_0": "00000000-0000-4000-8000-000000000001"}}}}},
+    {"id": "00000000-0000-4000-8000-0000000000a2",
+     "sourceComponents": [{"id": "00000000-0000-4000-8000-0000000000c2", "componentType": {"urlMatch": {"_0": {"matches": {}}, "_1": "bank.example.test"}}}],
+     "destination": {"profile": {"_0": {"custom": {"_0": {"directoryBasename": "Profile 1"}}}}}}
+  ],
+  "defaultDestination": {"mostRecent": {}}
+}

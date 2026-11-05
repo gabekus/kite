@@ -1,0 +1,44 @@
+// Kite's version resource: the name Task Manager and Explorer show for Kite and its Chromium
+// processes. Built into Kite.exe, or with Chromium into Kite.dll (KITE_VERSION_DLL) and into a
+// resource-only module whose copy tools/build/StampBootstrap.cpp puts in Kite.exe.
+#include <windows.h>
+
+#define KITE_VERSION 0,1,0,0
+#define KITE_VERSION_TEXT "0.1.0.0"
+
+#ifdef KITE_VERSION_DLL
+#define KITE_FILE_TYPE VFT_DLL
+#define KITE_FILE_NAME "Kite.dll"
+#else
+#define KITE_FILE_TYPE VFT_APP
+#define KITE_FILE_NAME "Kite.exe"
+#endif
+
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION KITE_VERSION
+PRODUCTVERSION KITE_VERSION
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE KITE_FILE_TYPE
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription", "Kite"
+      VALUE "FileVersion", KITE_VERSION_TEXT
+      VALUE "InternalName", "Kite"
+      VALUE "OriginalFilename", KITE_FILE_NAME
+      VALUE "ProductName", "Kite"
+      VALUE "ProductVersion", KITE_VERSION_TEXT
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 0x04B0
+  END
+END

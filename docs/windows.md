@@ -48,14 +48,20 @@ enforce: [windows-architecture.md](windows-architecture.md). The plan:
 windows/
   CMakeLists.txt
   src/core/     the model (KiteCore's counterpart): JSON, BrowserState, session, URL input
-  src/shell/    Kite.exe: main.cpp (the command line, the session), BrowserWindowController
+  src/shell/    Kite.exe (with Chromium, Kite.dll under CEF's bootstrap): main.cpp (the command
+                line, the session), BrowserWindowController
                 (the window and what's in it: views, Chromium, shortcuts), composition, input
   src/cli/      kitecore: the model, headless
-  tests/        unit tests (no test framework dependency)
+  tests/        unit tests (no test framework dependency); fixtures/ holds hand-made inputs
+                (an Arc for Windows folder, Chromium Web Data databases)
+  tools/perf/   kiteperf: the measurement harness, its session fixture and pages (never shipped)
   helix/        checkpoints.md and states/ (sessions for the UI gate)
-  resources/    Kite.manifest (DPI, UTF-8 code page, long paths) and its MinGW .rc
-  scripts/      fetch-cef.ps1, gen-unicode-tables.py
-  cmake/        mingw-w64.cmake (cross-compile check off Windows)
+  resources/    Kite.manifest (DPI, UTF-8 code page, long paths, Common Controls 6), Kite.ico (the
+                Mac's AppIcon.icns, from make-icon.py), Kite.rc, which embeds them, and Version.rc
+  tools/build/  StampBootstrap.cpp: makes Kite.exe from CEF's bootstrap.exe (W6b)
+  scripts/      fetch-cef.ps1, gen-unicode-tables.py, make-icon.py, make-web-data.py (the Web Data
+                fixtures)
+  cmake/        mingw-w64.cmake (cross-compile check off Windows), CopyCef.cmake
 ```
 
 ## Rendering
@@ -109,6 +115,21 @@ is mid-draw. Keys that arrive before the bar opens open it
   base (#202020 dark, #F3F3F3 light); whether acrylic's own fallback differs
   isn't checked yet. As on the Mac, the material's light or dark appearance
   follows the space's theme.
+  A capture's sidebar is a few levels off the Mac's capture (about 4 darker in
+  dark, 5 to 6 lighter in light), and that's the material under the tint, not
+  the tint (W9b5). Both draw the theme with the same shader and alpha and lay it
+  over the material with the same "over" on sRGB values: solving each pixel of
+  a Mac capture for what's under the tint, `(capture − theme) / (1 − tint)`,
+  gives one flat colour over the whole sidebar, and the PC's captures are the
+  shader over #202020 to within half a level. That flat colour is what the
+  Mac's in-process capture draws for its `.sidebar` material, the unblurred
+  fallback of `cacheDisplay` (UICapture's `composedRender`): #272727 dark on the
+  CI Mac (w9c-mac, w9d-mac), (43, 43, 39) on Gabe's Mac (w9b-mac), and #E6E6E6
+  light. It changes from Mac to Mac, and on screen the material blurs what's
+  behind the window, so there's no Mac colour to port: the capture's fallback
+  stays Mica's base. With Personal's tint of 0.44, #272727 against #202020
+  is 0.56 × 7 ≈ 4 levels in every row; with Work's 0.55, #E6E6E6 against
+  #F3F3F3 is 0.45 × 12.5 ≈ 5.6.
 - **Title bar (W3b):** the window keeps `WS_OVERLAPPEDWINDOW` (so Snap,
   Aero Shake, the system menu and the taskbar behave as Windows expects) but
   `WM_NCCALCSIZE` takes the caption off: the client area, and the backdrop
@@ -121,7 +142,8 @@ is mid-draw. Keys that arrive before the bar opens open it
   and `HTCLOSE`, so Snap Layouts appear over maximize (checked on Gabe's PC with a
   real pointer). The band above the
   content card and the sidebar's top row (down to the address field) drag
-  the window (`core/TitleBar`). The card starts under the buttons, 32pt
+  the window (`core/TitleBar`), but for the top row's buttons, which take
+  their presses (W12). With the sidebar hidden the whole band drags. The card starts under the buttons, 32pt
   down, since a Chromium child window over the buttons would take their
   clicks. A maximized window keeps its client area on the screen and leaves
   a pixel for an auto-hiding taskbar (asked of Explorer once per monitor, and
@@ -155,7 +177,23 @@ DirectComposition are untouched; CEF's callbacks reach Kite's thread through
 stay synchronous between the threads, because a child window on another
 thread shares its parent's input (focus and DPI changes, destroying the
 window), until W10 removes the child windows. A second
-launch hands over to the running Kite (Chromium allows one per profile). Profiles sit where the Mac keeps them: `<support>\Chromium`
+launch hands over to the running Kite (Chromium allows one per profile). Kite.exe's command
+line is Kite's, but Chromium reads the raw line too: CEF's startup parses it before
+`command_line_args_disabled` stops the browser process's later reads, and each helper's
+`CefExecuteProcess` reads it whole. Chromium trims every argument of Unicode whitespace and takes
+`--`, `-` and `/` as switch prefixes, case-insensitively, and acts on `chromehtml:` itself. So
+Kite takes only its own flags and their values (`core/CommandLine.h`): any other argument, a
+value Chromium could read as a switch, or `chromehtml:` anywhere, is an error before anything
+starts. A value that is exactly an integer, like `--swipe -120`'s, is the one exception:
+Chromium reads `-120` as a switch named `120`, and none of its switches is a number.
+`--type` launches are Chromium's own helpers: one spelled any other way than Chromium's
+`--type=X`, or for a helper Kite doesn't run (a crashpad handler), exits at once.
+`--wait-for-debugger` is still honoured before Kite's parser runs (CEF's own startup); it only
+waits. W30's protocol and file handlers must register as `"Kite.exe" --single-argument %1`, as
+Chrome does, with `Arguments()` reading the raw line the same way (everything after
+`--single-argument` is one argument, never a switch), and must pass the URL it checked itself: a
+second launch's arguments don't reach `OnAlreadyRunningAppRelaunch` with arguments disabled, so
+the relaunch message has to carry and validate it. Profiles sit where the Mac keeps them: `<support>\Chromium`
 is `root_cache_path`, the default profile is `Chromium\Default`, and a
 space's other profile gets its own request context in `Chromium\<directory>`.
 Popups and `target=_blank` links open as tabs that keep `window.opener`, as
@@ -183,7 +221,214 @@ the Mac). The first page is made once the window is on
 screen and not minimized. `--smoke-test` loads
 `windows/helix/pages/smoke.html` in CI and fails unless one `WM_CLOSE`
 closes every browser in time. Not yet: the card's 6pt corners (a child window can't be clipped
-smoothly; W10), the sandbox (W6b), and the page in `--capture` (W10).
+smoothly; W10), and the page in `--capture` (W10).
+
+**Chromium's sandbox (W6b).** Every helper (renderer, GPU, utility) runs in
+Chromium's sandbox, as on the Mac, whose helpers enter it in KiteHelper/main.mm
+before the framework loads. CEF 156 does it on Windows only through its bootstrap
+(it no longer ships `cef_sandbox.lib` to link into a client), so `Kite.exe` is
+CEF's prebuilt `bootstrap.exe` and Kite's code is `Kite.dll` beside it. The
+bootstrap starts every process, puts a helper in the sandbox before any of Kite's
+code loads there, and calls `RunWinMain` in Kite.dll (`shell/main.cpp`), which
+checks the bootstrap's CEF version and hands its sandbox info to
+`CefExecuteProcess` and `CefInitialize`.
+
+- **Kite.exe** is made at build time by `windows/tools/build/StampBootstrap.cpp`
+  (the `KiteExe` target, run again only when one of its inputs changes). It's the
+  bootstrap with Kite's manifest (`resources/Kite.manifest`: per-monitor DPI v2,
+  the UTF-8 code page, long paths, and the common controls v6 the bootstrap's own
+  manifest asks for), Kite's version resource (`resources/Version.rc`, so Task
+  Manager says Kite rather than "CEF Bootstrap Application"), Kite's icon
+  (`resources/Kite.ico`, as its first icon group, in place of CEF's), and
+  chrome.exe's 8 MiB main-thread stack (the bootstrap reserves 1 MiB; Kite.exe
+  had 8). `stamp-bootstrap --check` verifies all of it in ctest's `kite-binaries`.
+- **The wrapper** is built for `CEF_API_VERSION_LAST` (`fetch-cef.ps1`'s
+  `USE_SANDBOX`), as Kite.dll is, and with Control Flow Guard (`/guard:cf`, which
+  CMake's defaults leave out), into `build-sandbox-cfg-release` and
+  `build-sandbox-cfg-debug`. The names change with how it's built, so a checkout
+  from before that shares the CEF folder keeps its own wrapper folders.
+- **Kite.dll** loads with only kernel32 and libcef.dll and delay-loads the rest:
+  every helper maps it, renderers under win32k lockdown, where user32 can't load.
+  A renderer now loads 21 DLLs where it loaded 28, none of user32, gdi32,
+  shell32, ole32 and imm32. Kite.dll and Kite.exe both have Control Flow Guard and
+  are CET compatible, as Chromium's binaries are, and every object of the
+  wrapper linked into Kite.dll is compiled with `/guard:cf`. `kite-binaries`
+  checks all of it.
+- **What runs where.** As in Chrome on Windows (Chrome 155 on the same PC shows
+  the same), renderers run at untrusted integrity with a restricted token and no
+  win32k, the GPU process at low integrity, the storage service untrusted, and
+  the network service unsandboxed at medium. Each renderer's main frame reports
+  its process (`kite.rendererPID`, sent in every run as the Mac's helper does for
+  its Task Manager). `--smoke-test` fails unless that renderer is below medium
+  integrity, restricted or in an AppContainer, and without win32k, and unless no
+  helper but the network service runs at medium (`shell/Sandbox.h`). It prints
+  each one's sandbox.
+- **The LPAC grant.** The build grants ALL RESTRICTED APPLICATION PACKAGES read
+  and execute on its output folder, as CEF's `SET_LPAC_ACLS` does, for a helper
+  Chromium runs as a less privileged AppContainer. Nothing at today's defaults
+  needs it: with the grant removed from the folder and its files, `--smoke-test`
+  passed and every helper ran as above (2026-11-04). Installing covers it anyway
+  (see Installing), for when one does.
+- **Absolute paths.** The bootstrap makes Kite.exe's folder the browser
+  process's working directory (so no helper inherits a handle to wherever Kite
+  was started). So every path Kite is given (`--capture`, `--frame-log`,
+  `KITE_SUPPORT_PATH`) must be absolute (`PathOption` in `shell/main.cpp`), and a
+  relative one is refused.
+
+CEF logs `Timeout of new browser info response for frame … (has_rfh=0)` at
+ERROR, sandboxed or not, every time Chromium's error page reloads itself (its
+NetErrorAutoReloader tries again after 1 s, 5 s, 30 s, 1 min, 5 min, 10 min and
+then every 30 min while the page is visible). Each try makes a speculative main
+frame in a renderer, which asks the browser process for its browser over a
+synchronous IPC; the try fails again, Chromium discards the frame, and CEF's
+browser side, which only answers frames it has attached, never answers or cancels
+the request, so it times out after 2 s and logs (CEF's `browser_info_manager.cc`).
+The renderer whose frame is gone waits those 2 s; nothing on screen does. The Mac
+runs the same CEF with the same settings, so it logs the same. Hiding it would
+take a log level above ERROR or turning off the error page's auto-reload, which
+the Mac has, so Kite leaves it to a fix in CEF (cancel the request when the frame
+is deleted). Popups were said to log it too; one that opens from a click wasn't
+reproduced here, since that needs a real click.
+
+## The sidebar's top row
+
+W12 ports the top of the Mac's `SidebarHeaderView` (`core/SidebarTopRow.h`,
+`shell/SidebarTopRowView`): the sidebar toggle, then back, forward and reload
+at the far end, 32pt buttons 2pt apart ending 6pt short of the sidebar's edge,
+on the row at y 7.5 (ArcMetrics.Sidebar). As SymbolButtons they're SF Symbols at
+15pt in labelColor at 0.6, and back, forward and reload at 0.125 while disabled
+(back and forward from the page's history, reload with a tab); reload is the X
+while the page loads, keeping its "Reload" tooltip. Like the Mac's they show no
+hover or press of their own, take the click that brings the window forward, and
+are cut out of the window's drag. Their tooltips are Windows' own: a comctl32
+tooltip made on the first hover over a button (so comctl32 doesn't load at
+launch), the window's mouse messages relayed to it (`TTM_RELAYEVENT`, no
+subclass of the window), with the system's delay and light look. What a page
+reports comes from CEF's `OnLoadingStateChange` (the Mac's navigation state)
+and goes with the page.
+
+- **Where the row starts.** The Mac's toggle sits at x 71, just right of the
+  traffic lights (their cluster runs from 12 to 72, centred on y 24 against the
+  row's 23.5). Windows has nothing on the left (its caption buttons stay top-right,
+  W3b, 138pt wide at the window's right edge, well clear of the sidebar's 234),
+  so the toggle starts 6pt in, the same inset the navigation buttons keep from the
+  sidebar's other edge: its ink starts at x 13.5, about where the Mac's first
+  traffic light does. The row's height and everything right of the toggle are the
+  Mac's. `top_row_metrics::kToggleX` is the one number to change for another
+  choice (the Mac's 71 is `kMacToggleX`).
+- **Symbols.** sidebar.left, reload's arrow.clockwise and the X are Kite's own
+  geometry (core's `TopRowShape`), measured from the Mac's 15pt renders
+  (review/w9d-mac and review/w12-mac): Segoe's Refresh opens at one o'clock with
+  a corner arrowhead, where SF's opens at the top, its arc running into a chevron
+  there. The X is two crossed strokes of reload's weight, 11pt across, an
+  estimate until a Mac capture holds the loading state. Back and forward are
+  Segoe Fluent Icons' (Segoe MDL2 Assets' on Windows 10) Back and Forward, scaled
+  to cover the Mac's measured ink and centred on it.
+- **Each button is a `FadedLayer`** (shell/FadedLayer.h, shared with the space
+  bar's icons): turning one on or off is an effect group's opacity, committed on
+  the sidebar's next pass with nothing drawn; the X draws only reload's surface,
+  and a hover draws nothing (the smoke test counts the surfaces drawn and the
+  commit).
+- **Not yet:** the compact layout under 212pt (no toggle, a More menu,
+  HeaderLayout), which comes with resizing the sidebar (it's 240 until then);
+  View › Show Toolbar and Developer Mode's reload options; and the hover reveal
+  of a hidden sidebar (SidebarPeek), a checkpoint of its own.
+
+**Hiding the sidebar** (View › Hide Sidebar, Ctrl+S as the Mac's ⌘S, or the
+toggle; the `toggleSidebar` command) is the Mac's `updateSidebar`: the sidebar
+slides off the window's left edge, and back, over 0.08 s on (0.25, 0.46, 0.45,
+0.94), a DirectComposition animation of its root visual's offset (a toggle caught
+mid-slide turns back from where it is), with the compositor clock boosted while
+it runs (`FrameClock::BoostWithoutFrames`; no frames of Kite's). The card's
+leading edge goes from the sidebar's 240 to the 10pt inset. As on the Mac the
+state isn't saved (a launch shows the sidebar), a hidden sidebar takes no pointer
+or touchpad swipe and draws nothing at rest (what changes meanwhile draws as it
+shows again), a space switch doesn't slide its pages, and Rename Space shows it
+first. The page is a child window, which no compositor property moves, so until
+W10's off-screen pages it moves once: as a show begins and as a hide ends (the
+card keeps the sidebar's edge while it slides off, so a tab switch or a resize
+meanwhile doesn't put the page over it). Chromium moves it on CEF's thread, a
+little after that. The Mac's page slides with the card, kept at the wider width
+meanwhile. A rename open in the header ends as the sidebar hides, keeping what
+was typed.
+
+- **A pointer's way back.** Windows has no menu bar yet and no hover reveal, and
+  the toggle leaves with the sidebar, so Show Sidebar / Hide Sidebar is also in
+  the window's system menu (Alt+Space, or a right-click on the band above the
+  card), retitled for what it will do, as Import from Arc is there (W15). Until
+  SidebarPeek lands that, and Ctrl+S, are the only ways to bring a hidden sidebar
+  back.
+
+`kitecore sidebar [--page back,forward,loading] [--hidden]` prints the row and the
+card's edge; `kitecore click X Y --page …` says what a click on a button runs.
+Captures: `--page-status` and `--toggle-sidebar N` (main.cpp); a hover draws
+nothing, which the smoke test checks.
+
+## The favorites grid
+
+W13 ports the Mac's favorites tray (`FavoritesTrayView`, `FavoriteTileView`,
+`FavoritePaneView` and `FavoritesEmptyStateView` in SidebarFavorites.swift,
+`FavoritesTrayLayout`; core's `core/Favorites.h`, `shell/FavoritesView`): the
+current space's profile's favorites (`favoritesByProfile`), between the address
+field and the space's page, which starts under them. Tiles are 47pt high and 8pt
+apart, at most four a row, as many as square tiles fit and then the rows balanced
+(5 are 3 + 2, 9 are 3 × 3), with 8pt above and below; a favorite split is one
+tile, its panes 2pt apart. The grid stays put while the pages slide, under the
+space bar and the pages (the Mac's subview order), which also get the pointer
+first. An unselected pane is the address field's white wash (0.10, 0.20 hovered;
+3.5 times on a light theme); the selected one is white at 0.45 (0.8 light) with
+its favicon's colour over it at 0.2 (0.3 hovered; none, 0.1 hovered on a light
+theme) and a 2pt ring of that colour. The colour is NSImage.dominantColor's (the
+fullest of twelve hue bins in the icon drawn 16px a side) half way to white as
+`NSColor.blended(withFraction:of:)` mixes it: in calibrated RGB (Apple's Generic
+RGB, gamma 1.8), not sRGB, which is what makes YouTube's ring (255, 149, 150) and
+not (255, 129, 129). That mix is `core/ColorSpaces.h`'s `BlendCalibrated` (alpha
+too), with sRGB's transfer function, shared with the OKLab maths and the backdrop.
+A grey or missing favicon has no colour: the pane is just white, the globe in its
+middle (Segoe's globe fills its em square, so it's set at
+the favicon's 18pt, the Mac's 36px at 2×; the rows' globes with it). A click
+selects the favorite (released inside the pane, not after a 4pt drag, not the
+click that brings the window forward), the window's whole band is the tray's (no
+window drag, no row), and a pane's tooltip is the tab's title (comctl32's, as the
+top row's: `shell/RelayedTooltips`, their tools placed from where the sidebar
+rests). Ctrl+1–9 count the favorites first, a split once (`SidebarStops`,
+unchanged from W8).
+
+- **The empty state.** With no favorites, Arc's dashed box ("Drag to add
+  Favorites" over "Favorites keep your most used sites and apps close", 59pt in
+  a 240pt sidebar, so the space's header sits near y 157), until its close button
+  (shown while the pointer is over the box) dismisses it. That's a one-shot flag
+  (`core/OneShotFlags.h`): the Mac keeps it in UserDefaults on a real profile and
+  in the profile's `One-Shot Flags.plist` on a test one; Windows has no
+  UserDefaults, so every profile keeps it in that file, a binary property list in
+  the Mac's format (`Tests/Fixtures/one-shot-flags.plist`, which both test suites
+  read). The box's lines are as DirectWrite wraps them (the Mac's two at 240pt).
+  The close button's X is Kite's own two strokes (`favorites_empty::CloseShape`),
+  6.2pt across with 1pt strokes for the Mac's 8pt bold xmark, centred in its 18pt
+  box at 0.5: an estimate, since a Mac reference can't hover
+  (`--empty-favorites-hover` shows it on Windows).
+- **Each pane is up to four `FadedLayer`s** (the wash, the tint, the ring and the
+  favicon; the tint and ring only once there's a colour) in a visual of its own,
+  each drawn once at full strength and faded by its effect group, so a hover or a
+  selection is opacities the sidebar's next pass commits, with nothing drawn (the
+  smoke test counts the layers drawn and the commit). A favicon arriving draws
+  only its pane's icon layer, and, once its 16px icon gives the colour, its tint
+  and ring; a pane whose favicon changes draws its icon and tint again
+  (`FavoriteRedrawFor`). The empty state's box is one layer and its close button
+  another, whose opacity the hover sets.
+- **Captures.** `--favicons` fetches the favicons as the window does (a capture
+  otherwise has none, so no network), waits for them, and names any favorite's
+  that didn't load (the globe shows, as on the Mac); `--favorite-hover N` and
+  `--favorite-click N` hold a pane hovered or clicked. `kitecore sidebar` gives
+  `favorites` (columns, height, `listTop`, each tile and pane with its frame, the
+  empty state and its close button), and `kitecore click` on a pane selects it,
+  on the close button dismisses the empty state.
+- **Not yet:** dragging tiles and the drop gap (W18b, which also shows the tray
+  while a drag is on with no favorites), the tile's menu and its Ctrl+click
+  (W17), Add to / Remove from Favorites (W14, W17), the preview cards over a
+  hovered favorite (FavoritePreviewCard, W38), accessibility for the panes (W35c),
+  and hiding the tray while Create a Space shows (the Mac's `creating`, W9f).
+  Corners are circular rather than continuous, as in the rest of the sidebar.
 
 ## Shortcuts
 
@@ -259,10 +504,12 @@ SF Symbol and picture icons (W9b2) draw in the bar and the page header
 Apple's systems, so the Icon tab's 56 symbols, "briefcase" and "photo" each
 have a stand-in glyph in Segoe Fluent Icons, or Segoe MDL2 Assets where Fluent
 isn't installed, picked by eye from every glyph each font has and checked
-against both fonts' character maps, except nine drawn as shapes (below). A
-symbol fills its glyph's outline, centred on its ink, at the size that makes the briefcase ink the Mac's 15pt at 12.5 (one
-factor for every symbol), in the theme's accent when lit and in the label colour
-at 45% when greyed. A picture is the Mac's rounded square, round(size × 1.2) on a
+against both fonts' character maps, except ten drawn as shapes (below). A
+symbol fills its glyph's outline, centred on its ink, at the size that makes
+Segoe's briefcase glyph ink the Mac's briefcase width, 14.65pt at 12.5 (one
+factor for every symbol; edge to edge, as a glyph's outline is measured, from
+the Mac's dark 2x bar captures), in the theme's accent when lit and in the label
+colour at 45% when greyed. A picture is the Mac's rounded square, round(size × 1.2) on a
 side with 22% corners, its PNG from the profile's SpaceIcons folder scaled to the
 square's pixels, greyed as an emoji is; a missing file shows "photo". Pictures
 are read and decoded on a worker thread (none over 1 MB or 2048px), which posts
@@ -271,12 +518,14 @@ again; a file that can't be read keeps its placeholder and is looked for again
 at a draw 2 s on (`core/PictureLoads.h`). One painter, the sidebar's, serves
 the bar and the headers. Known differences:
 Fluent has one weight where the Mac's symbols are semibold (the placeholder's
-"photo" is regular on the Mac), and its briefcase is 1.5pt taller for the same
-width; several stand-ins are outlines of filled symbols, cloud and cloud.fill
-share a glyph, and nine have no such object in either font (bookmark, paw, bed,
-cutlery, dumbbell, bandage, baseball, takeaway bag, theatre masks), which W9b4
-draws as Kite's own shapes (see below); glyphs are centred on their ink where the
-Mac centres the symbol's image (checked only for the briefcase, within 0.25pt);
+"photo" is regular on the Mac); several stand-ins are outlines of filled
+symbols, cloud and cloud.fill share a glyph, and nine have no such object in
+either font (bookmark, paw, bed, cutlery, dumbbell, bandage, baseball, takeaway
+bag, theatre masks), which W9b4 draws as Kite's own shapes (see below); glyphs
+are centred on their ink where the Mac centres the symbol's image (checked only
+for the briefcase's glyph, within 0.25pt, before W9b5 drew the briefcase); no
+Mac capture shows a symbol Segoe draws, so the calibration's 14.65pt is checked
+only on the briefcase;
 an SF Symbol name outside the 58 (which the Mac draws, from automation or a
 hand-edited session) shows the dot in the bar and a blank icon slot in the
 header; a picture shows nothing until its decode arrives (the Mac reads it in its
@@ -301,25 +550,41 @@ measured archivebox and plus (Segoe Fluent's glyphs differ in size and shape),
 and the emoji is set so it draws the Mac's 14.5pt, centred on its ink. Cells sit
 on whole pixels at every scale (core snaps them), so they draw where they take
 clicks. Known differences: in the 2pt where two cells overlap only the later
-cell's backing shows (the Mac shows both), and a touchpad's sideways scroll over
-the bar scrolls the strip until W9c sends it to the swipe.
+cell's backing shows (the Mac shows both).
 
 The nine (W9b4) are Kite's own simple shapes (`core/SymbolShape.h`), not
 Apple's outlines: each is filled figures in the bar's 12.5pt about the icon's
 centre, in layers joined or cut in order (so the front theatre mask cuts a gap
 round itself in the one behind), drawn by the same painter through one Direct2D
-geometry per symbol and scaled for the header's 15pt. Each inks the box the
+geometry per symbol, scaled by 1.2 for the header's 15pt. Each inks the box the
 Mac's symbol inks in its cell (keeping its offset from the centre), measured
 from the Mac's 2x renders to a quarter point, and comes within an eighth of its
-inked area, so it sits and weighs as the Mac's (`SymbolShapeTests`); the PC's
-captures give every one the Mac's ink box in the bar, centred within 0.15pt,
-and within half a point of it in the header. Known differences: the drawings are Kite's own,
-so details differ (the bed's headboard, the bandage's pad marked by two cuts and
-four holes, the baseball's seams and stitches, the masks' faces); the header's
-are the bar's scaled by 1.2, where the Mac's symbol is redrawn at 15pt (the
-captures' header boxes agree to half a point); and the masks reach past the
-header's 26pt slot as the Mac's do (only their width was measured from the bar,
-the slot's capture clips them).
+inked area, so it sits and weighs as the Mac's (`SymbolShapeTests`). Only those
+numbers come from the Mac: the drawings themselves are Kite's own, not fitted to
+Apple's. In the header the Mac redraws the symbol at 15pt and places it by
+metrics it rounds to the half point (`place(.center)` in SidebarKit.swift), which
+Kite's shapes don't have, so each carries where the Mac's 15pt ink sits in its
+slot, measured from the Mac's header renders, as the Mac's own `SymbolOrigins`
+are (`PlaceDrawnSymbol`; W9b5). The PC's captures give every one the Mac's ink
+box in the bar, centred within 0.15pt. Known differences: details differ (the
+bed's headboard, the bandage's pad marked by two cuts and four holes, the
+baseball's seams and stitches, the masks' faces); the header's shapes are the
+bar's scaled, where the Mac's symbol is redrawn at 15pt, so four (paw, dumbbell,
+baseball, masks) ink a header box half a point wider or taller than the Mac's;
+and the masks reach past the header's 26pt slot as the Mac's do (only their
+width was measured from the bar, the slot's capture clips them, so their header
+place across is the bar's scaled). If a shape's
+geometry can't be made, Kite logs it and draws nothing for that symbol, except
+the briefcase, which falls back to its glyph.
+
+The briefcase (W9b5, the test sessions' Work icon) is drawn the same way, held to
+the same numbers: Segoe's glyph is a plain case, where the Mac's has more to it.
+It's Kite's own case, one 1.35pt stroke throughout (the Mac's weight): a handle
+over a rounded body, a straight band across the middle and a tab on the band,
+with the Mac's ink box in the bar (14.5 × 12.5pt, centred at (-0.25, +0.25)), its
+inked area within an eighth, and the Mac's place in the header's slot. Its glyph
+still sizes the other glyphs (the calibration above). Known difference: the band
+and the tab are Kite's, so the inside differs from the Mac's.
 
 The tip over a hovered cell (W9b3) is the Mac's SpaceTip in SpaceTipWindow's place:
 0.4 s after the pointer comes onto a cell, a capsule 28pt tall centred over it, its
@@ -344,13 +609,145 @@ continuous; and its x is on whole pixels where the Mac's is on whole points (up 
 0.5pt at 2x). A window restored under a still pointer shows its cell's tip 0.4 s
 later, as the Mac's tracking area enters again.
 
+Two fingers sideways on a precision touchpad over the sidebar (W9c) page between
+spaces, as the Mac's SpaceSwipeController: the pages follow the fingers,
+rubber-banding past the first and last space, the bar's light follows them
+(`SpaceSwipe::Highlight`), and the backdrop crossfades towards the neighbour by
+how far they've gone (`ThemeCrossfade::SetInteractive`). Let go past half a page,
+or flicked faster than 300pt/s towards a neighbour, the pages settle there on the
+switch's spring and the theme settles from where the fingers left it
+(`FinishInteractive`); the space is selected only once the pages are at rest, its
+page where the neighbour's was, so the slide's first frames don't wait for the
+selection's redraw and the page swap. A gesture is the swipe's when its first
+movement is more sideways than vertical; one that starts vertically scrolls the
+list for its whole length, momentum included, and a swipe's own momentum is
+swallowed (`core/SpaceSwipeGesture.h`, `kitecore space swipe DX [SECONDS]`). Until
+the gesture is decided (its began, and its movement until the first that has some),
+each event asks where the pointer is then, as the Mac's `isOverSidebar`; a vertical
+gesture decided over the list scrolls it to its end, momentum included, wherever the
+pointer goes after: the gesture stays with the list it was decided under. One decided
+vertical elsewhere on the sidebar (the top row, the header, the space bar) has nothing
+of Kite's to scroll, so its contact is released at once. A swipe can catch the pages
+mid-settle and carries on from where they are. Windows' wheel messages carry no
+gesture phases, so the touchpad's contact is taken on
+`DM_POINTERHITTEST` by a DirectManipulation viewport on manual updates
+(`shell/TouchpadInput.h`, Chromium's way). The frame clock steps it once a frame
+while the gesture or its momentum runs, at the display's highest rate, and while the
+fingers rest before moving, unboosted and for 10 s at most; each frame draws the
+backdrop only when the swipe moved. The pages' settle after a release runs on the
+compositor with the compositor clock boosted, as a keyboard switch's slide
+(`FrameClock::BoostWithoutFrames`), so a settle with no crossfade (two spaces in the
+same theme) is at the display's highest rate too, as the Mac's settle on its clock
+is. A gesture whose pointer is off the sidebar before it's decided (over the page,
+or the command bar opened), and a contact that rests past 10 s, are released
+(`ReleaseContact`), so the rest is the system's wheel messages for whatever is under
+the pointer. Core's `TouchpadPhases` turns the viewport's statuses and content
+reports into the Mac's phases and sends the viewport back over its content's middle
+after a gesture that moved it, the next gesture counting from there however late
+DirectManipulation applies it (its tests replay the sequences:
+momentum, fingers down mid-momentum, the system taking the viewport, the reset's own
+pass). `--capture FILE --swipe DX` holds a swipe DX points in, and the smoke test
+feeds the same handler a vertical gesture, one whose pointer has moved over the page
+before it's decided, a vertical one that carries on over the page (still the list's,
+its momentum too, and its contact kept), one decided vertical over the top row
+(released), a swipe that lands, one caught mid-settle, a short one that stays and a
+flick back; then, with a third space added for it, a keyboard switch overtaking a
+landing, a space selected under the swipe, a release in a hidden window (it lands at
+once), the rubber band before the first space and a crossfade's boost ending while the
+touchpad's frames go on; and with the other spaces set aside, both ways on one
+space. `--frame-log` also records every status, content report, release and poll,
+for a run on a real touchpad. Known differences:
+- What moves the pages is DirectManipulation's content travel, which follows
+  Windows' scrolling direction setting (the Mac's pages follow the fingers whichever
+  way its natural scrolling is set).
+- A mouse's sideways wheel or Shift and the wheel never pages spaces (the Mac's
+  doesn't either), it scrolls the bar's strip.
+- Fingers that rest on the touchpad over the sidebar for 10 s without moving lose
+  their contact (`TouchpadInput`'s `kLongestRest`), so the frame clock doesn't poll
+  DirectManipulation for as long as a hand lies there; moving after that, they're
+  the system's wheel messages, which scroll the list (or, sideways over the space
+  bar, its strip) but never page. The Mac has no
+  such cap: fingers can rest as long as they like and still swipe.
+- Only a contact that comes down over the sidebar can page: one that comes down over
+  the page is Chromium's (the hit test goes to its window), and its wheel messages
+  have no phases to page with, so a pointer that moves onto the sidebar before the
+  fingers do still scrolls the page. The Mac asks where its first movement is.
+- A space selected under the swipe (from the keyboard) leaves its theme between
+  three: the release goes on to the selected space's from whichever of the two was
+  showing more (`ThemeCrossfade::FinishInteractive`), where the Mac's
+  finishInteractiveTheme has no such branch and settles back on the theme the swipe
+  started from. For the same case the neighbour is looked up guarded (a release with
+  no space left that side stays), where the Mac's show and finish index the spaces
+  unguarded and would trap.
+Unverified on a real touchpad (synthetic touchpad input doesn't exist):
+DirectManipulation's actual status sequences and their timing, the scrolling
+direction, the hit test's point, whether the pointer moves while a contact is held,
+and whether a released contact's rest comes back as wheel messages.
+
 Known differences from the Mac: during the 0.2 s slide only the selected page
 takes clicks and shows hover (the Mac's outgoing page is a live list too), and
 Space n for a missing space is passed on from Kite's own window but still kept
-from a page (Chromium's key thread doesn't know the spaces). Not yet: the space
-bar (W9b), a touchpad's swipe (W9c), reordering spaces and the space menu
-(W9d). `Kite.exe --frame-log FILE` writes each frame the clock delivered in a
-test run.
+from a page (Chromium's key thread doesn't know the spaces). `Kite.exe --frame-log FILE`
+writes each frame the clock delivered in a test run.
+
+Editing spaces (W9d) is the Mac's SidebarSpaceBar cellDragged and menu(for:) with
+KiteCore's space edits (`core/SpaceEditing.h`, `BrowserState::RenameSpace`, `InsertSpace`,
+`SetSpaceIcon`, `DeleteSpace`, `MoveSpace`, `CreateFolder`). A press on a cell that moves 4pt
+picks its icon up: the cell it left shows nothing, a ghost (a visual sharing that cell's
+surfaces and the hover backing's) follows the pointer, and the other cells slide aside to open
+the slot it aims at, each an `IDCompositionAnimation` of its offset over 0.2 s on Core
+Animation's ease-in-ease-out (`core/SpaceBar.h`'s `SpaceDrag`). A drag draws nothing: a move
+within the open slot moves only the ghost's visual, a new slot starts the cells' slides, and
+the sidebar's redraw message coalesces a burst of moves into one commit. A drop over the strip
+lands in that slot, anywhere else (or the mouse taken away) back where it came from, the ghost
+settling there over the same 0.2 s; then, a frame later, the space moves, keeping the
+selection where it was. A drop still landing refuses a new drag, as the Mac's, and the spaces
+changing under a drag end it. A swipe keeps the spaces it began between by id
+(`SpaceSwipe::Neighbours`, the Mac's): once a reorder or a delete under it leaves the pages on
+screen the wrong ones, it's dropped, the pages and the theme settle back, and the rest of its
+gesture shows nothing (`SpaceSwipeGesture::Abandon`).
+
+A right-click on a cell or the space's header opens the space's menu with the Mac's items,
+order and words (`SpaceMenu`): Change Space Icon…, Rename Space…, What's This Space For?…,
+Edit Theme Color…, Set Profile ▸, then New Folder and Live Folders ▸, then Delete Space
+(disabled for the last space). Rename Space…, or a click on the current space's name, opens
+the header's name field (`shell/SpaceRenameField`, the Mac's SpaceRenameField and Done): the
+name all selected in the header's 13pt semibold, 2pt into the field as in AppKit's field
+editor, over the editor's textBackgroundColor (#1E1E1E dark, white light, square, from 3pt
+before the field to 1pt past its end and 22pt tall, as the Mac's capture draws it), "Space Name" when
+empty, Done at the right (its width rounded up to a point, as SidebarLabel's naturalWidth);
+Return or Done renames (a blank name keeps the old one), Escape doesn't, and leaving it (a
+press elsewhere in the window, the page or the command bar taking the keyboard, the menu
+opening, another space shown) keeps what was typed; another app taking the keyboard doesn't
+end it. The field is a visual of its own in its space's page, so it slides and swipes with
+the page and a keystroke draws only the field; its editing, layout, scrolling, selection,
+caret and blink are the command bar's, moved out for both (`shell/TextEditing`,
+`shell/TextLine`). Delete Space deletes a space with no tabs at once and asks first about one
+with tabs, in the Mac's words ("Delete “Name”?", "Its pinned and unpinned tabs are closed.",
+Delete and Cancel), its pages closing with it. `kitecore space menu`, `rename`, `icon`,
+`folder`, `delete`, `new`, `move` and `drag` do the same headless. Kite.exe delay-loads
+comctl32 (the question) and gdi32 (the menu's read-back), so Chromium's processes don't load
+them.
+
+Known differences: the menu is Windows' own (TrackPopupMenuEx), as the Mac's is AppKit's: it
+looks like Windows' and opens on the right button's release, as Windows' context menus do,
+where the Mac's opens on the press. It's dark in a dark space through uxtheme's unnamed
+SetPreferredAppMode and FlushMenuThemes (ordinals 135 and 136, as Explorer and Notepad use
+them), on Windows 10 1903 and later only, set as the menu opens and put back to the default as
+it closes (the mode is the whole process's; docs/windows-architecture.md); without them it's
+light. The question before Delete Space is a task dialog (Common Controls 6, which the
+manifest now asks for), always light, where the Mac has a sheet. Disabled until their
+checkpoints: Change Space Icon… (the icon picker, W9e), What's This Space For?… and Edit Theme
+Color… (their dialogs, and the theme editor), Set Profile and Live Folders (Windows can't move
+a space's pages to another profile or keep live folders yet). Not yet: the + button's menu and
+Arc's Create a Space page, which New Space opens (W9f; `kitecore space new` makes the space
+they'd leave), Undo, and the rename's caret in `--capture` (its own visual, as the command
+bar's). `--capture FILE --space-drag N,X` holds space N's cell dragged to X points along the
+bar, `--space-drop N,X` lets it go there and settle, `--space-menu N` reads back space N's menu
+(PrintWindow of this machine's own Windows menu, so it differs by Windows version, theme and
+monitor scale, without DWM's rounded corners and shadow, resampled from its monitor's scale
+to the capture's) and puts its bottom-left on the cell's centre, and `--rename-space N` opens
+space N's name field drawn as with the keyboard (a quiet capture's window never has it).
 
 ## Saving the session
 
@@ -468,6 +865,178 @@ its Remove must cancel a running download first, as the Mac's does), the
 progress badge and the download's flight (W20c), Tidy Downloads, incognito
 windows (W29b), and the Settings pane that changes the location (W31a).
 
+## History
+
+Browsing history (W25a) is the Mac's: one entry per page (`url`, `title`,
+`lastVisit`, `visitCount`), web pages only, at most 20,000 (the oldest tenth
+goes past the cap), in `history.json` for the default profile and
+`Chromium\<dir>\Kite History.json` for another, in the Mac's format
+(`core/History`, `Tests/Fixtures/history-v1.json`, which both suites read). A
+page's main-frame address (CEF's `OnAddressChange`, as the Mac's
+`addressDidChange`: the URL a navigation commits, after its redirects, and a
+same-document change to a new URL, such as pushState or a fragment) is a visit
+when it isn't the address that tab's page last recorded, so a reload isn't one
+and a page closed for the live-page limit records again when it loads; the
+page's title goes to the address last recorded, and a repeat changes nothing.
+A URL is kept as the Mac's NSURL keeps it (`History::Normalized`): a path,
+query or fragment that holds what it may not, which Chromium sometimes leaves
+as typed (`|`, `^`, `` ` ``, `{`, `}`, `[`, `]`, `\`, a stray `%`), is taken as
+unescaped and percent-encoded whole, its `%` signs too; a valid part is left
+as it is.
+
+History saves 3 s after the last change and at least every 30 s while changes
+keep coming (`CappedDebounce`), at once for an import, and when the window
+closes; logoff and shutdown wait for it within the same 3 s as the session,
+and quitting within the same 10 s. `core/HistoryStore` reads each profile's
+file and writes it on a worker of its own (`core/WorkerThread`, the
+session writer's thread too), from a snapshot that costs the UI thread a few
+μs: the entries are kept in 256 shards that copies share and copy on write, a
+shard at a time. The files are read only once the launch is Kite's (after
+Chromium starts, or for a capture), so a second launch never opens the running
+Kite's history. Until a file has been read, its store keeps this run's visits
+and replays them over it. A file over 64 MB isn't read (and isn't written
+over); one over the cap is trimmed as it's read, on the worker. The command
+bar shows up to three pages from the current space's profile's history after
+the tabs, never one already shown as a tab, the page you're on or the Open
+row's URL; each entry keeps its title, URL and host lowercased and decomposed,
+so a keystroke's search is a byte search with Swift's Character rules checked
+only where it hits. `kitecore history` lists, searches, adds, merges, removes
+and clears; the `history-bench` executable measures it.
+
+Known differences from the Mac:
+
+- A file that's there but couldn't be read or moved aside (or is over 64 MB) is
+  never written over; the Mac's `try?` reads it as no file and overwrites it.
+- Only URLs Foundation reads back are recorded (`url::HasValidAuthority`), so
+  one entry can't make the Mac drop the whole file.
+- A page history doesn't keep (about:blank) saves nothing; the Mac's store
+  marks itself changed and saves anyway.
+- Ties in the ranking and the prune go to the later visit, then the lower URL;
+  the Mac leaves them in no set order.
+- A visit that takes the history past the cap while the writer holds a
+  snapshot doesn't prune; the next visit after the writer has let go does (the
+  Mac prunes at once, on a copy-on-write dictionary that copies everything).
+- Before a profile's file has been read, a search sees only this run's
+  visits; the Mac reads the file on its main thread, so it never waits.
+- One shell timer serves every profile's saves, armed for the store due first;
+  each store keeps its own debounce, so the timing is the Mac's.
+- The bar's history rows show the no-favicon globe, as its tab rows do; the
+  Mac fetches `host/favicon.ico`.
+- The tab rows above the history rows are still W7a's; the Mac's Arc order is
+  W7c.
+- An unreadable file moved aside when `<name>.corrupt-<unix time>.json` is
+  already there gets a `-N` suffix (up to 99); the Mac's `try? moveItem` fails
+  then, and its next save writes over the unreadable file.
+- `HistoryStore::Merge` before the profile's file has been read counts the new
+  pages against this run's history only (the import is replayed over the file
+  once it's in, so nothing is lost or doubled); the Mac's read is done first.
+- A file over 20,000 pages is trimmed to 20,000 as it's read; the Mac keeps it
+  as it is until the next new page, then cuts it to 18,000 (Windows' next new
+  page past the cap cuts to 18,000 too).
+- Kite for Mac's CEF bridge (`ToNSURL`, KCBrowser.mm:110) encodes a URL that
+  has both an escape and a raw invalid character in the same part twice over
+  (`?a=%2C&b=x|y` becomes `?a=%252C&b=x%7Cy`). Windows does the same, so both
+  apps key the page alike; it's a Mac bug, to be fixed on the Mac side (and
+  then here).
+- A raw Unicode host would be kept as typed, where NSURL IDNA-encodes it
+  (`xn--…`). Chromium reports hosts in punycode, so a visit never has one; a
+  hand-written or imported file could.
+
+URL keys (`History::Normalized`) follow NSURL's RFC 3986 parsing, which is
+macOS 14's and later (Kite for Mac's minimum). Both suites read the same
+raw-to-key pairs (`Tests/Fixtures/history-url-keys.json`); the Mac's checks
+them against NSURL itself, last on macOS 15.7.4 (24G517), Gabe's runner. macOS
+14 itself hasn't been checked.
+
+Not yet: the history page (`kite://history`, with the Mac's days and
+headings), Delete browsing data, Import from Arc (W33a), and the bar's
+favicons.
+
+Import from Arc brings Arc's history into it (W33a, below).
+
+## Import from Arc
+
+Arc stops working on 2026-12-22, so Kite for Windows imports Arc for Windows'
+data the way the Mac imports Mac Arc's (W15; `core/ArcImport*`, ported from
+KiteCore's `ArcImport*.swift` and KiteMac's `ArcImportController.swift`). Arc
+for Windows keeps it in its package,
+`%LOCALAPPDATA%\Packages\TheBrowserCompany.Arc_*\LocalCache\Local\Arc`:
+`StorableSidebar.json` (with dated backups, tried newest first when the current
+file doesn't read), `StorableArchiveItems.json`, `StorableKeyBindings.json` and
+`StorableLinkRouting.json` when there are any, Site Search in
+`User Data\Default\Web Data` (read with Kite's own SQLite reader) and profile
+names in `User Data\Local State`. Its settings aren't macOS defaults but an
+XML plist beside that folder, `LocalCache\Local\company.thebrowser.arc.plist`.
+Its sidebar is Mac Arc's shape with two differences Kite reads too: a space's
+containers may come as `newContainerIDs` (enum-keyed), and its icon as
+`customInfo.iconType.icon`, a name from Arc's own icon set (one of Kite's
+symbols when it matches, else a stand-in).
+
+Spaces, pinned tabs, folders, splits, favorites, profiles, the archive, Site
+Search and Arc's settings go into `session.json`, in the Mac's format;
+shortcut changes into `keybindings.json` (read at launch) and Air Traffic
+Control routes into `LinkRouting.json`, as the Mac's stores keep them.
+The session is saved first, then the other two files, both on the session
+writer's thread (`SessionWriter::SaveThen`). Arc's unnamed spaces stay
+out, as the Mac's dialog starts, unless Arc has no named space at all (Arc for
+Windows often has one unnamed space holding everything): then they come over, a
+deliberate difference from the Mac. A sidebar item listed twice or in a loop
+is placed once, and nothing nests past 64 levels (the Mac's #362). Site Search
+is left out while Arc is writing Web Data (a hot journal beside it).
+`kitecore --profile P import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]`
+runs it headless and prints the counts per kind and what was skipped and why;
+`kitecore profile list|add|rename|delete` manages the profiles it makes. In the
+app it's the `importFromArc` command, also in the window's system menu
+(Alt+Space): the system folder picker stands in for the Mac's open panel, and
+a message box with the Mac's text for its dialog. Not yet: sign-ins (cookies)
+and extensions, and the Little Kite setting (no Little Kite).
+
+Arc's browsing history comes too (W33a; `core/ArcHistoryImport`, ported from
+KiteMac's `ArcHistoryImport.swift` and `BrowserHistoryImport.chromium`): each
+profile's `User Data\<profile>\History`, Chromium's database, read as the
+Mac's query reads its `urls` table (`hidden = 0 AND last_visit_time > 0`, the
+newest 20,000 by last visit, then the web pages among them, each URL as the
+Mac's `URL(string:)` writes it, `History::Normalized`; "" for no title, a count
+of at least 1), and merged with `History.merge` into the history of the Kite
+profile that Arc profile's spaces went to, once the session that names that
+profile is saved; Kite's 20,000-page cap applies after the merge, and importing
+again doubles nothing. Kite for Windows reads the file in place with its own
+reader, a page at a time (`sqlite::FilePages`, `ScanTable`), keeping the newest
+rows in a heap as they stream past: a synthetic 201 MB History (360,000 pages,
+`scripts/make-history.py --synthetic`) imports in about 0.45 s with a 35–45 MB
+peak working set (warm cache). Since it isn't a copy, a profile's history (and
+Web Data) is left out, with the reason in the confirmation and the summary,
+while Arc may be changing it (`DatabaseBusy`): a live writer of the database,
+its journal, its log or `User Data\lockfile` (a probe that opens each for
+reading while denying writers, before and after the read: *Arc is writing it*),
+a hot journal or a `History-wal` that isn't empty with no writer (*Arc didn't
+finish its last write*), or the file changing during the read. A lockfile
+nobody holds is nothing; failing to open a file for any reason but its not
+being there counts as a writer. Merging runs on the UI thread after the
+session is saved, one profile a message: about 45 ms for 20,000 pages, 65–135 ms
+into a full history (merging on the history worker from a snapshot is the
+follow-up). A window that closes with the writer's result in merges the rest at
+once; one that closes before it (the session still being written) keeps the
+spaces and side files, and Arc's history isn't merged. `kitecore import-arc` prints the history
+counts: rows found, pages imported and new, and what was left out by reason.
+
+Known differences from the Mac's history import:
+
+- The Mac copies History (with its `-journal` and `-wal`) and opens the copy
+  with SQLite, which rolls a hot journal back and reads a WAL's frames; Kite for
+  Windows refuses both (*open and quit Arc once*). After Arc shuts down for good
+  (2026-12-22) that can't be cleared, so the follow-up is reading through them:
+  an in-memory rollback of the journal's pages, or the WAL's committed frames.
+- While Arc is writing (running), the Mac reads its copy; Kite for Windows
+  refuses.
+- A row over 4 MiB, or a URL over Chromium's 2 MB, is left out.
+- Rows tied on last visit at the 20,000th place go by row order (SQLite leaves
+  it unspecified).
+- A history store whose file isn't read yet queues an import and merges it
+  once it is, so its new pages aren't counted in the summary.
+- Two rows that are one URL once normalized are one page: the newer row's visit
+  and title (the older title when the newer has none) and the higher count.
+
 ## Refresh rate
 
 Kite renders at whatever the display supports (60Hz, 120/144Hz laptops, 240 to
@@ -484,15 +1053,28 @@ Windows that means:
   a thread waits on `DCompositionWaitForCompositorClock` (Windows 11), or
   `DwmFlush` before it, and posts the window one message a frame, only while
   something has to redraw each frame (the theme's crossfade, a shader mix that
-  a compositor property can't do). While it runs it calls
-  `DCompositionBoostCompositorClock`, so a display with a dynamic refresh rate
-  runs at its highest, as the Mac asks for the screen's maximum rate. The
+  a compositor property can't do), or a touchpad gesture's DirectManipulation
+  updates need stepping (W9c). While something moves (a crossfade, fingers or
+  their momentum) it calls `DCompositionBoostCompositorClock`, so a display with
+  a dynamic refresh rate runs at its highest, as the Mac asks for the screen's
+  maximum rate; the window decides that each frame (`FrameClock::SetBoost`), so
+  fingers resting after a fade leave the rate alone. The
   compositor's clock is the system's: with several displays it follows the
   fastest, not necessarily the window's. Each frame is drawn for
   DirectComposition's estimate of when it reaches the screen
   (`GetFrameStatistics`), as the Mac's `FrameClock.targetTimestamp`. What a
   compositor property can do (the pages' slide) is an `IDCompositionAnimation`
-  instead, with no frames of Kite's.
+  instead, with no frames of Kite's, the compositor clock boosted while it runs
+  (`FrameClock::BoostWithoutFrames`, one per animation: the pages' slide, the
+  sidebar's hide and show), as the Mac's clock asks for the screen's top rate
+  while it runs the settle. With the display off, the compositor clock's wait
+  fails at once (`STATUS_GRAPHICS_PRESENT_OCCLUDED`) and the thread falls back on
+  `DwmFlush`, which paces it at DWM's displayless 500 Hz with stalls of a few
+  hundred ms. So the smoke test checks the thread first (3 frames within 5 s
+  while the touchpad polls, and once it's done the next frame stops the clock),
+  then steps the clock's frames itself at 60 Hz (`FrameClock::SetManual`): its
+  frame-clock checks are of when Kite starts, boosts and stops the clock and what
+  each frame does, never of whether the display is ticking.
 - **Swap chains** are flip-model (`DXGI_SWAP_EFFECT_FLIP_DISCARD`) composition
   swap chains with a frame-latency waitable object, so frames present on the
   next vblank of a high-refresh or variable-refresh (G-Sync/FreeSync) display
@@ -500,6 +1082,113 @@ Windows that means:
   a 60Hz timer.
 - **DirectComposition animations** run at the compositor's rate.
 - The windowed CEF fallback (child HWND) renders at the monitor's rate on its own.
+- **Chromium's Energy Saver** caps pages at 30fps on battery below 20% by
+  default. As on the Mac (`KCRuntime.mm`), Kite sets
+  `performance_tuning.battery_saver_mode.state` to 0 unless the user turns it
+  on (`Chromium::SetEnergySaverEnabled`). `--smoke-test` reads it back, which
+  proves Kite set it only on a fresh profile: Local State keeps a value an
+  earlier run wrote.
+
+## Measuring performance
+
+Kite.exe has three hooks for measuring it. They need `KITE_SUPPORT_PATH` to be a test profile,
+one holding a `kite-test-profile` file (kiteperf writes it into each profile it makes), and
+they're refused when it is the default profile (`%LOCALAPPDATA%\Kite`, from the environment or
+the known folder, compared by volume and file id, so any spelling of it counts) or can't be
+resolved. The checked directory stays open, undeletable, for the whole run, and the run uses its
+resolved path. The marker guards against mistakes (a script pointed at the real profile), not
+against another program running as the same user. Off, each costs
+one predictable bool check (`perf::On()`) and allocates nothing. A run with any of them opens
+behind other windows, without asking for the focus, and never shows a dialog, as
+`--smoke-test` does.
+
+- `--perf-log FILE`: JSON lines (`shell/PerfLog.h` lists them) with raw QueryPerformanceCounter
+  values; the header has `qpcFrequency` and the Chromium switches. A writer thread writes them
+  within 50 ms, so the UI thread never waits on the file. Marks: `started`, `window-created`,
+  `first-commit`, `cef-init-begin` and `cef-init-end`, `shown`, `browser-created`, `load-begin`
+  and `load-end` per tab (from CEF's thread), `command-begin` and `command-end` with the
+  command's id, `loop-end`, `exit`, and any the control asks for. Each mark carries the counters
+  so far: presents (the backdrop's and the command bar's), the real pointer's moves over and
+  out of the window (not the control's; Kite's chrome only, since a page is CEF's own child
+  window and its moves never reach Kite), commits (every
+  `IDCompositionDevice::Commit`, which all go through `Compositor::Commit`) and surface draws per
+  view. A dispatched message that takes over 8 ms is logged with how long it took. A control
+  input (a pointer move or a command) is logged with its first commit within 250 ms, or with
+  none, and the first composition frame the compositor made after that commit (a lower bound:
+  it can take a commit up later), from `DCompositionGetFrameId` and `DCompositionGetStatistics`
+  (Windows 11): the vblank the compositor made it for, and when it was presented on the monitor
+  Kite's window is on, where the statistics can say. The frame clock's frames are logged with
+  `--frame-log`'s content, the compositor's rate and the same frame times.
+- `--perf-control`: requests by `WM_COPYDATA` (`dwData` 'KPRF', a UTF-8 JSON object):
+  `{"command":ID}` runs a shortcut's command by its id (`kitecore shortcuts`), `{"mark":NAME}`
+  logs a mark, `{"open":URL}` opens an http or https page in a tab, `{"input":"move","x":X,
+  "y":Y,"qpc":Q}` posts a pointer move at client pixels, and `{"input":"leave"}` takes it away.
+  A request is checked and queued, and the answer is 1, or 0 for one Kite can't run; it then
+  runs from the message loop, so the sender isn't held and its dispatch is timed like any
+  other. While a posted pointer is over the window the system's `WM_MOUSELEAVE` is ignored,
+  since the real pointer is somewhere else.
+- `--chromium-switches "--a --b=c"`: switches for Chromium's browser process
+  (`OnBeforeCommandLineProcessing`), from an allow-list (`shell/PerfProtocol.h`): the GPU
+  backend and rasterization (always in the sandboxed GPU process), throttling and backgrounding,
+  the renderer limit, and four features that can be turned off by name, to measure Kite with one
+  and without. Nothing that weakens the sandbox, site isolation or web security, opens a
+  debugging port, or changes a path or a launched process. Chromium reads nothing else of
+  Kite.exe's command line.
+
+`kiteperf` (`windows/tools/perf`, built with the app by MSVC only, never shipped) drives them.
+Each run launches Kite.exe on a fresh `%TEMP%` profile (marked `kite-test-profile`) holding
+`sessions/perf-10tabs-2spaces.json` (ten static tabs, eight and two, in two spaces with
+different themes), suspended into a job object; pages come from its own Winsock server on
+127.0.0.1 to 127.0.0.12, port 18765, each address its own site. Kite inherits only its output
+file. Once a second, and at each phase's start and end, it samples every process of Kite's (the
+job's list, and a parent walk over the system's process list), typed by `--type` (`unknown`
+when the command line can't be read): CPU, private working set and commit (never the shared
+working set), writes, context switches (ended threads included), handles, threads, and PDH's
+GPU memory and GPU engine time. A process that starts or ends mid-phase counts from its start
+and to its end, and the job's own CPU total is kept beside the per-process sum as a check. Any
+figure an API couldn't read is null, never 0. Each sample also says how
+much of Kite's window no other window covers, whether the real pointer is over it and whether
+it's in front, with dwm.exe and the rest of the machine for context. A phase is `noisy` when
+the rest of the machine kept the CPUs over 25% busy; other work shares this PC, so results are
+medians of runs.
+
+For a PR (docs/windows-architecture.md, Performance), build main and the branch, then, back to
+back:
+
+```powershell
+windows\build\tools\Release\kiteperf.exe --kite <main>\Kite.exe --phases idle,hover --runs 3 --label main --out main.json
+windows\build\tools\Release\kiteperf.exe --kite <branch>\Kite.exe --phases idle,hover --runs 3 --label branch --out branch.json
+windows\build\tools\Release\kiteperf.exe --compare main.json branch.json   # the markdown table for the PR
+```
+
+`--compare` warns when the two differ in scenario, phases, run count, frame statistics, GPU
+counters, assets or the primary display's rate. `--chromium-switches` is checked against
+Kite's allow-list before anything starts. The standard scenario's phases: open (every tab, a load each, counting processes
+started and ended); settle 30 s; idle 60 s; switchSpaces (every 0.5 s for 20 s: the crossfade's
+frame intervals from one clock, p50/p99 and missed, and switch-to-present); switchTabs and
+reload (every 0.5 s for 10 s); hover (pointer moves posted at 120 Hz for 10 s over the rows:
+moves sent, committed and move-to-present); titleTick (a page that retitles itself every
+second, 20 s); anim (a CSS and requestAnimationFrame page selected, 10 s), hiddenAnim (the
+same in a background tab, 20 s), covered (under kiteperf's own black window, 20 s) and
+minimized (20 s); then one `WM_CLOSE` and the time until every process is gone. `--phases`
+runs some of them (open and settle always first); `--scenario idle` stops after idle,
+`startup` after the first page, and `smoke` (CI) is a few seconds each of open, idle,
+switchSpaces and hover. A request Kite refuses (when it comes in, or when it comes to run it), a
+page that doesn't load within 3 s, or (in
+smoke) a phase that logged no frames or moves fails the run (exit 3), and failed runs stay
+out of the medians. The idle check fails when Kite presented or committed anything; it says
+how often the real pointer moved over Kite meanwhile (Kite's own count), and exits 4 only when
+it never did (Kite drew by itself).
+
+Nothing in kiteperf takes the focus or sends real input: Kite opens behind other windows, the
+moves are posted to it, the cover never activates and sits just over Kite in the z-order (not
+topmost), and Kite is minimized with `SW_SHOWMINNOACTIVE`. Since Kite opens behind other
+windows, its window is usually covered on a desktop in use, and each phase reports how
+visible it was (`window.kiteVisiblePct`): anim is "selected", not necessarily on screen. Kite
+itself can still come to the front: Chromium activates a top-level `Chrome_WidgetWin_1` of
+Kite's as the first page's browser is made, so when nobody has used the machine for longer
+than Windows' foreground lock timeout, Kite takes the foreground. A result says so
+(`tookFocus`, and `kiteInFront` per phase).
 
 ## Plan
 
@@ -510,7 +1199,7 @@ The checkpoint list in windows/helix/checkpoints.md is the detailed plan. In sho
 2. The model core and session file with their tests and a shared fixture (in
    review, #260).
 3. CEF: `windows/scripts/fetch-cef.ps1`, one browser per tab, windowed first
-   so pages load (W6), then the sandbox (W6b) and the off-screen spike: D3D11
+   so pages load (W6), then the sandbox (W6b, done) and the off-screen spike: D3D11
    shared texture, frame time, input latency (W10).
 4. DirectComposition tree and the chrome (sidebar, command bar, spaces), matched
    to measurements of Kite for Mac. HLSL shaders with a golden-image test.
@@ -529,7 +1218,38 @@ windows\build\Release\Kite.exe
 ```
 
 Without `KITE_SUPPORT_PATH` the profile is `%LOCALAPPDATA%\Kite`. A
-`KITE_SUPPORT_PATH` that isn't an existing directory is refused.
+`KITE_SUPPORT_PATH` that isn't an existing directory, or isn't an absolute path,
+is refused. With Chromium the build makes `Kite.dll` and `Kite.exe` (CEF's
+bootstrap, see "Chromium's sandbox") in `windows/build/<config>`, the folder
+that ships, with kitecore.exe and Chromium's runtime; the import libraries go to
+`lib/<config>`, the tests to `tests/<config>` and the build tools to
+`tools/<config>`. The runtime is copied when Kite.exe is made again (Kite.dll,
+the manifest, the icon or the bootstrap changed); a runtime file deleted from
+the folder by hand comes back only with that, or a clean build. CMake stops until `fetch-cef.ps1` has built the sandboxed
+wrapper (`build-sandbox-*`).
+
+## Installing
+
+What ships is `windows/build/Release` without `*.lib`, `*.pdb` and `*.exp`
+(CI's `kite-windows-x64` artifact). Two things a copy of it
+needs that a plain copy doesn't give:
+
+- **The LPAC grant**, once, on the install folder, inheritable so that files
+  copied in later get it too (robocopy and a zip don't carry the build folder's):
+
+  ```
+  icacls "%LOCALAPPDATA%\Programs\Kite" /grant "*S-1-15-2-2:(OI)(CI)(RX)"
+  ```
+
+  Today's helpers run without it (see "Chromium's sandbox"); a helper Chromium
+  puts in an LPAC AppContainer can't load Kite.dll or libcef.dll without it.
+- **Signing covers Kite.exe, Kite.dll and libcef.dll with the same
+  certificate**, and chrome_elf.dll with them. Once Kite.exe is signed, the
+  bootstrap requires the DLL it loads and chrome_elf.dll to carry valid
+  signatures with the same primary certificate, or it stops (CEF's
+  `bootstrap_win.cc`, `CheckDllCodeSigning`). libcef.dll is signed with them so
+  the whole set is one publisher's. An unsigned build passes because all of them
+  are unsigned.
 
 Every run, quiet or not, makes its pages without activating them. CEF shows a
 page's Chromium widget (`Chrome_WidgetWin_1`, the child of its `CefBrowserWindow`
@@ -561,5 +1281,7 @@ Off Windows, the model and its tests build natively, and MinGW cross-compiles th
 
 ```bash
 cmake -S windows -B /tmp/kite-core && cmake --build /tmp/kite-core -j && ctest --test-dir /tmp/kite-core
+# The same tests under ASan and UBSan, as CI runs them (KITE_WERROR=OFF: the build above gates warnings):
+cmake -S windows -B /tmp/kite-asan -DCMAKE_BUILD_TYPE=Debug -DKITE_WERROR=OFF -DCMAKE_CXX_FLAGS="-O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" && cmake --build /tmp/kite-asan --target KiteCoreTests -j && ctest --test-dir /tmp/kite-asan -R KiteCoreTests
 cmake -S windows -B /tmp/kite-mingw -DCMAKE_TOOLCHAIN_FILE="$PWD/windows/cmake/mingw-w64.cmake" && cmake --build /tmp/kite-mingw -j
 ```

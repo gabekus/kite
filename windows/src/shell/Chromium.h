@@ -27,6 +27,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -38,9 +39,10 @@
 namespace kite {
 
 // When Chromium started this process as one of its helpers (renderer, GPU, utility), runs it
-// and returns its exit code; returns -1 in the browser process. First thing in wWinMain,
-// before Kite parses the command line (helpers get Chromium's own switches).
-int RunChromiumSubprocess(HINSTANCE instance);
+// and returns its exit code; returns -1 in the browser process. First thing in RunWinMain,
+// before Kite parses the command line (helpers get Chromium's own switches). `sandboxInfo` is
+// what CEF's bootstrap (Kite.exe) set the sandbox up with; the helper is already in it.
+int RunChromiumSubprocess(HINSTANCE instance, void* sandboxInfo);
 
 // What the pages report, on Kite's UI thread.
 struct PageEvents {
@@ -48,7 +50,9 @@ struct PageEvents {
     std::function<void(const std::string& tabID, const std::string& title)> titleChanged;
     // The page's favicon: the first it lists, or empty for none (the Mac's faviconDidChange).
     std::function<void(const std::string& tabID, const std::string& url)> faviconChanged;
-    std::function<void(const std::string& tabID, bool loading)> loadingChanged;
+    // The page started or stopped loading, or its history moved (the Mac's navigationState:
+    // OnLoadingStateChange's isLoading, canGoBack and canGoForward).
+    std::function<void(const std::string& tabID, bool loading, bool canGoBack, bool canGoForward)> loadingChanged;
     // A page opened a popup or a target=_blank link: Kite hosts it in a new tab with this id,
     // keeping window.opener (sign-in popups need it), as the Mac does. `url` may be empty
     // (window.open('') before the opener writes to it).
@@ -86,6 +90,10 @@ struct PageEvents {
     // packages never come here. Coalesced on CEF's thread, so however often Chromium reports,
     // Kite's thread gets each download's latest once per wake.
     std::function<void(const DownloadUpdate& update)> downloadUpdated;
+    // The renderer process now hosting the tab's main frame, as it reports itself from each new
+    // script context there (the Mac's kite.rendererPID, for its Task Manager; here
+    // --smoke-test checks that renderer's sandbox).
+    std::function<void(const std::string& tabID, DWORD pid)> rendererStarted;
 };
 
 class Chromium {
@@ -95,14 +103,17 @@ public:
     // Starts Chromium with its profiles under `root` (the Mac's <support>/Chromium): the
     // default profile in root\Default, a space's other profile in root\<directory>.
     // AlreadyRunning: another Kite has this profile and has been told to come forward.
+    // `sandboxInfo` is the bootstrap's (RunWinMain): every helper runs in Chromium's sandbox.
     // Pages are always made without activating their windows (SetAsPage in Chromium.cpp), so
     // one made while Kite is behind another app leaves it there. `quiet`: a quiet run (main.cpp's
     // `quiet`), which never comes to the front: the pages never take the focus or activate,
     // and show no dialogs (file choosers cancelled, JavaScript and Leave Page dialogs answered,
-    // window.print() and Developer Tools skipped), each with a KITE_TEST_MODAL line; a download whose profile asks where to save is
-    // cancelled the same way.
-    static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events, bool quiet,
-                             std::unique_ptr<Chromium>& out, std::wstring& error);
+    // window.print() and Developer Tools skipped), each with a KITE_TEST_MODAL line; a download
+    // whose profile asks where to save is cancelled the same way.
+    // `switches` ("name" or "name=value", no leading dashes) go on the browser process's
+    // command line (--chromium-switches, test profiles only).
+    static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, void* sandboxInfo, PageEvents events,
+                             bool quiet, std::vector<std::string> switches, std::unique_ptr<Chromium>& out, std::wstring& error);
     // Shuts Chromium down (or does nothing if it already has); the destructor calls it too.
     ~Chromium();
     Chromium(const Chromium&) = delete;
@@ -188,6 +199,16 @@ public:
     // False when a page's Chromium widget window wasn't where Kite looks for it, so hidden
     // tabs would keep drawing (a CEF update moved it). --smoke-test fails on it.
     bool PagesCanBeHidden() const;
+    // Chromium's Energy Saver, which drops pages to 30 fps on battery below 20%: the Mac's
+    // KCRuntime.energySaverEnabled. Off unless the user turns it on, so pages run at the
+    // display's full rate; set as Chromium starts, and again on each change. Nothing turns it
+    // on yet (Windows has no Settings toggle for it).
+    void SetEnergySaverEnabled(bool enabled);
+    // For --smoke-test: Chromium's Energy Saver preference as Chromium has it (nullopt: it has
+    // none), read on CEF's thread; `done` runs on Kite's UI thread, ahead of the answer to
+    // anything Kite asks of CEF after this call (CloseBrowser's DoClose). Only a fresh profile
+    // shows that Kite set it: Local State keeps a value an earlier run wrote.
+    void ReadEnergySaver(std::function<void(std::optional<int> state)> done);
     // After the main window is gone: waits (at most 10 s) for every browser to close, then
     // shuts Chromium down. False when a browser didn't close in time, here or within the
     // window's 5 s close deadline, so Chromium went down under it. --smoke-test fails on it.

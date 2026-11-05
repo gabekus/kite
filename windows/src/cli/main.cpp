@@ -10,6 +10,9 @@
 //   kitecore [--profile DIR] open TEXT... [--space ID] [--background]
 //   kitecore [--profile DIR] select TAB_ID
 //   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
+//   kitecore [--profile DIR] space swipe DX [SECONDS]
+//   kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...
+//   kitecore [--profile DIR] space move ID PLACE|drag ID X [Y]
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
 //   kitecore [--profile DIR] backups
 //   kitecore [--profile DIR] downloads [list]
@@ -18,19 +21,43 @@
 //   kitecore [--profile DIR] downloads location [PROFILE [FOLDER|ask|folder|downloads]]
 //   kitecore save-schedule KIND@SECONDS... [--at SECONDS]
 //   kitecore save-bench [TABS]
+//   kitecore [--profile DIR] history list|search TEXT... [--limit N]|add URL [TITLE...] [--at SECONDS]
+//            |merge FILE|remove URL...|remove-since SECONDS|all|clear [--chromium PROFILE]
+//   kitecore history chromium-date MICROSECONDS
+//   kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]
+//   kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
 // an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
-// isn't running on: both write session.json. `theme` prints the space's theme maths
+// isn't running on: both write session.json and history.json. `theme` prints the space's theme maths
 // (lightness, foreground, glow, accent) and its window backdrop (material, and the corner and
 // centre pixels at WIDTH×HEIGHT px, default 1280×820) as sRGB hex. `suggest` prints the command
 // bar's rows for TEXT, top first (--current: editing the current tab's address, Ctrl+L).
 // `sidebar` prints what the sidebar shows for a space (default the selected one): the address
 // field's text and the space page's rows, top to bottom, with their place in points, then the
 // space bar's cells (in the bar's points, for a 240pt sidebar, exact: the window snaps them to
-// its pixels, under 1px from these at a fractional scale). `click` in the bar's 50pt along the
-// bottom selects the space whose cell it hits.
+// its pixels, under 1px from these at a fractional scale). Its `favorites` are the grid over the
+// page: its columns, its height with its gaps, where the page's rows start (`listTop`: their `top`s
+// are from there), and each tile with its panes and their frames, in sidebar points; with none,
+// the empty state (until the profile's One-Shot Flags.plist says it was dismissed).
+// `click` in the bar's 50pt along the bottom selects the space whose cell it hits; on a favorite's
+// pane, it selects that favorite (in the space you're in); on the empty state's close button, it
+// dismisses it (the one-shot flag, written to the profile).
 // `collapse` is View → Collapse / Expand Pinned Tabs for a space.
+// `space swipe` is two fingers sideways over the sidebar: the content dragged DX points (positive
+// towards the previous space) at a steady pace over SECONDS (default 0.25), an event every
+// 1/60 s, then let go. It prints where the pages were at the release (offset, the theme's
+// progress and direction) and where it lands, and selects that space.
+// The space menu and its edits (the bar's cells and the header's): `space menu` prints the menu
+// as the window shows it (each item's title, whether it's enabled, whether it's a submenu) and
+// its `line`, as the Mac's KITE_TEST_CONTEXT_MENU logs one; `rename`, `icon` (an emoji,
+// symbol:NAME, image:FILE, or "" for the dot), `folder` (New Folder) and `delete` are its items.
+// `delete` prints whether the window deletes at once or asks first (and what), then deletes; the
+// last space stays (exit 6; 5 is a space that isn't there). `new` is + › New Space, named
+// NAME. `move` puts a space at PLACE (from 1) among the others, as a drop in the bar; `drag`
+// presses its cell in the 240pt bar, drags to X (and Y, default the bar's middle) in bar points
+// and prints the strip there (the open slot, each cell's left, the ghost's), then lets go,
+// prints the slot it lands in and moves it there.
 // `backups` lists the profile's session backups (Backups/session.<stamp>[.kind].json), newest
 // first as Restore Data orders them, with what each holds; it works when session.json doesn't
 // read. `save-schedule` replays changes (soon@0 pageEvent@0.5 ...: a sidebar change or a page's
@@ -51,6 +78,28 @@
 // stored as that path, since kitecore doesn't look the folder up: `downloads` stores none) it
 // saves there, `ask` asks every time, `folder` stops asking, `downloads` goes back to the
 // Downloads folder (Settings › Profiles › Download location).
+// `history` reads and changes a profile's browsing history (history.json, or with --chromium a
+// Chromium profile folder's Kite History.json, as the Mac's HistoryStore keeps them): `list` is
+// every page, last visited first; `search` the command bar's ranking (--limit, default 4); `add`
+// records a visit (now, or --at Foundation seconds since 2001); `merge` adds a history.json's
+// pages as Import from Arc does (a later visit and the higher count win); `remove` is Remove from
+// History, `remove-since` Delete browsing data's (pages last visited at or after SECONDS, or all);
+// `clear` forgets every page. Each prints JSON. `history chromium-date` turns Chromium's
+// microseconds since 1601 into Foundation seconds, as the Arc import reads them. `suggest`
+// includes history's rows, from the selected space's profile, as the bar. The history-bench
+// executable (windows/tests/HistoryBench.cpp) measures history on the app's own path.
+// `import-arc` is Import from Arc (core/ArcImportController.h): from Arc for Windows' folder
+// (--auto, the default), or PATH (Arc's folder, the folder holding it, or a sidebar file). It
+// prints what came over, per kind, and what was skipped and why: counts only, never Arc's
+// titles or addresses. Arc's unnamed spaces stay out, as the Mac's dialog starts, unless Arc
+// has no named space (then they're all there is) or --include-unnamed; --leave-out-unnamed
+// leaves them out either way. The session is saved first, then keybindings.json and
+// LinkRouting.json, then each Arc profile's history into its Kite profile's history (found:
+// historyRows, historyPages; imported: historyPages, historyPagesNew; skipped: history* by
+// reason); the summary prints once all of it is written. With --profile or
+// KITE_SUPPORT_PATH, KITE_ARC_DATA_PATH stands in for Arc's folder, as in the Mac's test runs.
+// `profile` lists, makes, renames and deletes Kite profiles (core/Profiles.h). A deleted one's
+// folder name is free again once its Chromium folder is gone, which kitecore never deletes.
 
 #include <algorithm>
 #include <charconv>
@@ -65,19 +114,29 @@
 #include <string>
 #include <vector>
 
+#include "core/ArcImportController.h"
 #include "core/CommandBar.h"
 #include "core/Downloads.h"
 #include "core/DownloadsModel.h"
+#include "core/Favorites.h"
+#include "core/History.h"
+#include "core/HistoryStore.h"
 #include "core/KeyBindings.h"
 #include "core/ProfileSettings.h"
 #include "core/StoreFile.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
+#include "core/OneShotFlags.h"
+#include "core/Profiles.h"
 #include "core/SessionSaveDelay.h"
 #include "core/SessionStore.h"
 #include "core/SessionWriter.h"
 #include "core/Sidebar.h"
+#include "core/SidebarTopRow.h"
 #include "core/SpaceBar.h"
+#include "core/SpaceEditing.h"
+#include "core/SpaceSwipeGesture.h"
+#include "core/StoreFile.h"
 #include "core/SupportDirectory.h"
 #include "core/ThemeBackdrop.h"
 #include "core/URLInput.h"
@@ -93,16 +152,16 @@ using namespace kite;
 
 namespace {
 
-enum ExitCode : int { kOk = 0, kUsage = 1, kBadProfile = 2, kLoadFailed = 3, kSaveFailed = 4, kNotFound = 5 };
+enum ExitCode : int { kOk = 0, kUsage = 1, kBadProfile = 2, kLoadFailed = 3, kSaveFailed = 4, kNotFound = 5, kRefused = 6 };
 
 int Usage() {
     std::fputs(
         "usage: kitecore [--profile DIR] state\n"
         "       kitecore [--profile DIR] resolve TEXT...\n"
         "       kitecore [--profile DIR] suggest TEXT... [--current]\n"
-        "       kitecore [--profile DIR] sidebar [SPACE_ID]\n"
+        "       kitecore [--profile DIR] sidebar [SPACE_ID] [--page back,forward,loading] [--hidden]\n"
         "       kitecore [--profile DIR] collapse SPACE_ID\n"
-        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]]\n"
+        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]] [--page back,forward,loading]\n"
         "       kitecore [--profile DIR] open TEXT... [--space ID] [--background]\n"
         "       kitecore [--profile DIR] select TAB_ID\n"
         "       kitecore [--profile DIR] tab next|prev|NUMBER\n"
@@ -112,6 +171,9 @@ int Usage() {
         "       kitecore [--profile DIR] archive-stale [NOW]\n"
         "       kitecore [--profile DIR] evict MAX [--shown TAB_ID] [--popup POPUP_ID=OPENER_ID]... TAB_ID=LAST_SHOWN...\n"
         "       kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]\n"
+        "       kitecore [--profile DIR] space swipe DX [SECONDS]\n"
+        "       kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...\n"
+        "       kitecore [--profile DIR] space move ID PLACE|drag ID X [Y]\n"
         "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n"
         "       kitecore [--profile DIR] backups\n"
         "       kitecore [--profile DIR] downloads [list]\n"
@@ -119,7 +181,12 @@ int Usage() {
         "       kitecore [--profile DIR] downloads clear|remove ID\n"
         "       kitecore [--profile DIR] downloads location [PROFILE [FOLDER|ask|folder|downloads]]\n"
         "       kitecore save-schedule KIND@SECONDS... [--at SECONDS]\n"
-        "       kitecore save-bench [TABS]\n",
+        "       kitecore save-bench [TABS]\n"
+        "       kitecore [--profile DIR] history list|search TEXT... [--limit N]|add URL [TITLE...] [--at SECONDS]\n"
+        "                |merge FILE|remove URL...|remove-since SECONDS|all|clear [--chromium PROFILE]\n"
+        "       kitecore history chromium-date MICROSECONDS\n"
+        "       kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]\n"
+        "       kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY\n",
         stderr);
     return kUsage;
 }
@@ -434,6 +501,139 @@ int SaveBenchCommand(int tabs) {
     return kOk;
 }
 
+// MARK: History
+
+json::Value EntrySummary(const HistoryEntry& entry) {
+    return json::Value(json::Object{{"url", entry.url},
+                                    {"title", entry.title},
+                                    {"displayTitle", entry.DisplayTitle()},
+                                    {"lastVisit", entry.lastVisit},
+                                    {"visitCount", entry.visitCount}});
+}
+
+json::Value EntriesSummary(const std::vector<HistoryEntry>& entries) {
+    json::Array rows;
+    for (const HistoryEntry& entry : entries) rows.push_back(EntrySummary(entry));
+    return json::Value(std::move(rows));
+}
+
+std::optional<size_t> ParseCount(const std::string& text) {
+    size_t value = 0;
+    auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (error != std::errc() || end != text.data() + text.size()) return std::nullopt;
+    return value;
+}
+
+// kitecore history ...: on the file itself, read and written at once (the app's are on its
+// writer thread). An unreadable file is reported and left as it is, never written over.
+int HistoryCommand(std::vector<std::string> args, const std::filesystem::path& support) {
+    std::string chromium = BrowserState::kDefaultProfile;
+    std::optional<size_t> limit;
+    std::optional<double> at;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const bool hasValue = i + 1 < args.size();
+        if (args[i] == "--chromium" && hasValue) {
+            chromium = args[i + 1];
+        } else if (args[i] == "--limit" && hasValue) {
+            if (!(limit = ParseCount(args[i + 1]))) return Usage();
+        } else if (args[i] == "--at" && hasValue) {
+            if (!(at = ParseSeconds(args[i + 1]))) return Usage();
+        } else {
+            continue;
+        }
+        args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+        --i;
+    }
+    // A profile folder's name, never a path out of the support folder.
+    if (args.size() < 2 || chromium.empty() || chromium.find_first_of("/\\:") != std::string::npos || chromium == "." || chromium == "..") {
+        return Usage();
+    }
+    const std::string& action = args[1];
+    if (action == "chromium-date") {
+        if (args.size() != 3) return Usage();
+        int64_t micros = 0;
+        auto [end, error] = std::from_chars(args[2].data(), args[2].data() + args[2].size(), micros);
+        if (error != std::errc() || end != args[2].data() + args[2].size()) return Usage();
+        std::puts(json::Write(json::Value(History::ChromiumDate(micros))).c_str());
+        return kOk;
+    }
+    const HistoryFile file(HistoryStores::FileFor(support, chromium));
+    auto loaded = file.Load(HistoryFile::Unreadable::Leave);
+    if (auto* error = std::get_if<HistoryFile::Error>(&loaded)) {
+        std::fprintf(stderr, "kitecore: unreadable history: %s\n", error->message.c_str());
+        return kLoadFailed;
+    }
+    History history;
+    if (auto* found = std::get_if<History>(&loaded)) history = std::move(*found);
+    const auto save = [&] {
+        if (std::string error = file.Save(history); !error.empty()) {
+            std::fprintf(stderr, "kitecore: %s\n", error.c_str());
+            return static_cast<int>(kSaveFailed);
+        }
+        return static_cast<int>(kOk);
+    };
+    if (action == "list" && args.size() == 2) {
+        std::vector<HistoryEntry> entries = history.Entries();
+        std::stable_sort(entries.begin(), entries.end(), [](const HistoryEntry& a, const HistoryEntry& b) { return a.lastVisit > b.lastVisit; });
+        if (limit && entries.size() > *limit) entries.resize(*limit);
+        std::puts(json::Write(EntriesSummary(entries)).c_str());
+        return kOk;
+    }
+    if (action == "search" && args.size() >= 3) {
+        std::puts(json::Write(EntriesSummary(history.Search(Join(args, 2), limit.value_or(4)))).c_str());
+        return kOk;
+    }
+    if (action == "add" && args.size() >= 3) {
+        const std::string& url = args[2];
+        if (!History::Records(url)) {
+            std::fprintf(stderr, "kitecore: history keeps web pages only (http and https): %s\n", url.c_str());
+            return kNotFound;
+        }
+        history.RecordVisit(url, Join(args, 3), at.value_or(Now()));
+        if (int code = save(); code != kOk) return code;
+        std::puts(json::Write(EntrySummary(*history.Find(url))).c_str());
+        return kOk;
+    }
+    if (action == "merge" && args.size() == 3) {
+        const auto text = store_file::Read(std::filesystem::path(std::u8string(args[2].begin(), args[2].end())),
+                                           store_file::kMaxHistoryReadBytes);
+        if (!text) {
+            std::fprintf(stderr, "kitecore: couldn't read %s\n", args[2].c_str());
+            return kLoadFailed;
+        }
+        auto imported = History::DecodeFile(*text);
+        if (auto* error = std::get_if<std::string>(&imported)) {
+            std::fprintf(stderr, "kitecore: not a history file: %s\n", error->c_str());
+            return kLoadFailed;
+        }
+        const size_t added = history.Merge(std::get<History>(imported).Entries());
+        if (int code = save(); code != kOk) return code;
+        std::puts(json::Write(json::Value(json::Object{{"added", added}, {"entries", history.Count()}})).c_str());
+        return kOk;
+    }
+    if (action == "remove" && args.size() >= 3) {
+        const size_t before = history.Count();
+        history.Remove(std::vector<std::string>(args.begin() + 2, args.end()));
+        if (int code = save(); code != kOk) return code;
+        std::puts(json::Write(json::Value(json::Object{{"removed", before - history.Count()}})).c_str());
+        return kOk;
+    }
+    if (action == "remove-since" && args.size() == 3) {
+        std::optional<Timestamp> since;
+        if (args[2] != "all" && !(since = ParseSeconds(args[2]))) return Usage();
+        const size_t before = history.Count();
+        history.RemoveVisits(since);
+        if (int code = save(); code != kOk) return code;
+        std::puts(json::Write(json::Value(json::Object{{"removed", before - history.Count()}})).c_str());
+        return kOk;
+    }
+    if (action == "clear" && args.size() == 2) {
+        history.RemoveAll();
+        return save();
+    }
+    return Usage();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -478,6 +678,9 @@ int main(int argc, char** argv) {
     }
     SessionStore store(std::get<std::filesystem::path>(resolved) / "session.json");
 
+    // History is its own file: the session isn't read.
+    if (args[0] == "history") return HistoryCommand(args, std::get<std::filesystem::path>(resolved));
+
     // These don't read the session: backups are there for when it can't be read.
     if (args[0] == "backups" && args.size() == 1) {
         std::puts(json::Write(BackupsSummary(store.Backups())).c_str());
@@ -494,7 +697,37 @@ int main(int argc, char** argv) {
         return kLoadFailed;
     }
     const bool existed = std::holds_alternative<BrowserState>(loaded);
+    // The profile's one-shot flags (the favorites' empty state, dismissed or not).
+    OneShotFlags flags = OneShotFlags::Load(std::get<std::filesystem::path>(resolved));
     state = existed ? std::move(std::get<BrowserState>(loaded)) : BrowserState::MakeDefault();
+
+    // The page the selected tab shows, as Chromium would report it (kitecore has no pages): what the
+    // top row shows (sidebar, click). And the sidebar hidden (View › Hide Sidebar, which the session
+    // doesn't keep): where the card's edge is.
+    PageStatus page;
+    bool hidden = false;
+    if (args[0] == "sidebar" || args[0] == "click") {
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--hidden" && args[0] == "sidebar") {
+                hidden = true;
+            } else if (args[i] == "--page" && i + 1 < args.size()) {
+                std::string_view rest = args[i + 1];
+                while (!rest.empty()) {
+                    const std::string_view word = rest.substr(0, rest.find(','));
+                    if (word == "back") page.canGoBack = true;
+                    else if (word == "forward") page.canGoForward = true;
+                    else if (word == "loading") page.isLoading = true;
+                    else if (word != "none") return Usage();
+                    rest = rest.size() > word.size() ? rest.substr(word.size() + 1) : std::string_view{};
+                }
+                args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
+            } else {
+                continue;
+            }
+            args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
+            --i;
+        }
+    }
 
     const std::string& command = args[0];
     const SearchEngine engine = SearchEngineFromRaw(state.searchEngine).value_or(SearchEngine::Google);
@@ -610,13 +843,24 @@ int main(int argc, char** argv) {
             if (args[i] == "--current") mode = CommandBarMode::EditCurrent;
             else words.push_back(args[i]);
         }
+        // The current space's profile's history, as the bar searches it. One that doesn't read
+        // shows no rows, as in the app.
+        const HistoryFile historyFile(HistoryStores::FileFor(std::get<std::filesystem::path>(resolved), state.SelectedProfileDirectory()));
+        auto history = historyFile.Load(HistoryFile::Unreadable::Leave);
+        if (auto* error = std::get_if<HistoryFile::Error>(&history)) {
+            std::fprintf(stderr, "kitecore: unreadable history, left out: %s\n", error->message.c_str());
+        }
+        const History* visited = std::get_if<History>(&history);
         json::Array rows;
-        for (const CommandSuggestion& row : CommandBarSuggestions(Join(words, 0), state, mode)) {
-            const char* kind = row.kind == CommandSuggestion::Kind::Open ? "open"
-                               : row.kind == CommandSuggestion::Kind::Search ? "search" : "switchTab";
+        for (const CommandSuggestion& row : CommandBarSuggestions(Join(words, 0), state, mode, visited)) {
+            const char* kind = row.kind == CommandSuggestion::Kind::Open        ? "open"
+                               : row.kind == CommandSuggestion::Kind::Search    ? "search"
+                               : row.kind == CommandSuggestion::Kind::SwitchTab ? "switchTab"
+                                                                                : "history";
             json::Object o{{"kind", std::string(kind)}, {"url", row.url}, {"title", row.title}, {"detail", row.detail}};
             if (!row.tabID.empty()) o.emplace("tabID", row.tabID);
             if (row.faviconURL) o.emplace("faviconURL", *row.faviconURL);
+            if (!row.subtitle.empty()) o.emplace("subtitle", row.subtitle);
             rows.emplace_back(std::move(o));
         }
         std::puts(json::Write(json::Value(std::move(rows))).c_str());
@@ -686,7 +930,66 @@ int main(int argc, char** argv) {
             cell.emplace("tip", std::move(t));
             bar.emplace_back(std::move(cell));
         }
+        // The top row over the address field (sidebar points), for the page given with --page, and
+        // where the sidebar and the card's leading edge sit, shown or hidden (window points).
+        json::Array topRow;
+        for (const TopRowItem& item : LayOutTopRow(240, TopRowModelOf(state, page))) {
+            json::Object button{{"button", std::string(TopRowButtonName(item.button))},
+                                {"symbol", item.symbol},
+                                {"tooltip", item.tooltip},
+                                {"enabled", item.enabled},
+                                {"opacity", static_cast<double>(item.Opacity())},
+                                {"left", static_cast<double>(item.frame.left)},
+                                {"top", static_cast<double>(item.frame.top)},
+                                {"width", static_cast<double>(item.frame.Width())},
+                                {"height", static_cast<double>(item.frame.Height())}};
+            button.emplace("command", TopRowCommand(item.button));
+            topRow.emplace_back(std::move(button));
+        }
+        // The favorites over the page (FavoritesTrayView), for a 240pt sidebar.
+        const FavoritesTray tray =
+            LayOutFavorites(state, *space, 240, flags.Get(OneShotFlags::kFavoritesEmptyStateDismissed));
+        const auto frameOf = [](json::Object& o, const BarRect& r) {
+            o.emplace("left", static_cast<double>(r.left));
+            o.emplace("top", static_cast<double>(r.top));
+            o.emplace("width", static_cast<double>(r.Width()));
+            o.emplace("height", static_cast<double>(r.Height()));
+        };
+        json::Array tiles;
+        for (const FavoriteTile& tile : tray.tiles) {
+            json::Array panes;
+            for (const FavoritePane& pane : tile.panes) {
+                json::Object p{{"id", pane.tabID}, {"title", pane.title}, {"selected", pane.selected}};
+                if (pane.favicon.url) p.emplace("favicon", *pane.favicon.url);
+                // Its fill at rest, with no favicon colour known (kitecore decodes no icons).
+                const FavoriteLook look = FavoriteLookOf(pane.selected, false, !PrefersDarkForeground(state.spaces[*space].theme), false);
+                p.emplace("fill", static_cast<double>(look.fill));
+                frameOf(p, pane.frame);
+                panes.emplace_back(std::move(p));
+            }
+            json::Object t{{"id", tile.id}, {"split", tile.split}, {"panes", json::Value(std::move(panes))}};
+            if (tile.split) t.emplace("vertical", tile.vertical);
+            frameOf(t, tile.frame);
+            tiles.emplace_back(std::move(t));
+        }
+        json::Object favorites{{"columns", tray.columns},
+                               {"height", static_cast<double>(tray.height)},
+                               {"listTop", static_cast<double>(SidebarListTop(tray))},
+                               {"tiles", json::Value(std::move(tiles))}};
+        if (tray.emptyState) {
+            json::Object empty{{"title", std::string(favorites_empty::kTitle)}, {"subtitle", std::string(favorites_empty::kSubtitle)}};
+            frameOf(empty, tray.emptyFrame);
+            json::Object close{{"tooltip", std::string(favorites_empty::kCloseTooltip)}};
+            frameOf(close, tray.closeFrame);
+            empty.emplace("close", json::Value(std::move(close)));
+            favorites.emplace("emptyState", json::Value(std::move(empty)));
+        }
         json::Object out{{"address", AddressFieldText(state)},
+                         {"topRow", json::Value(std::move(topRow))},
+                         {"favorites", json::Value(std::move(favorites))},
+                         {"shown", !hidden},
+                         {"sidebarLeft", static_cast<double>(SidebarLeft(!hidden, 240))},
+                         {"cardLeft", static_cast<double>(CardLeft(!hidden, 240))},
                          {"rows", json::Value(std::move(rows))},
                          {"spaceBar", json::Object{{"fits", layout.fits}, {"cells", json::Value(std::move(bar))}}}};
         std::puts(json::Write(json::Value(std::move(out))).c_str());
@@ -700,9 +1003,20 @@ int main(int argc, char** argv) {
             if (error != std::errc() || end != args[i].data() + args[i].size()) return Usage();
         }
         const auto rows = SidebarRows(state, state.SelectedSpaceIndex());
+        const std::vector<TopRowItem> topRow = LayOutTopRow(240, TopRowModelOf(state, page));
+        const FavoritesTray tray =
+            LayOutFavorites(state, state.SelectedSpaceIndex(), 240, flags.Get(OneShotFlags::kFavoritesEmptyStateDismissed));
+        const float listTop = SidebarListTop(tray);
         // The space bar along the bottom: a click on a space's cell selects it (pressed and let
         // go at the point, as the window's).
-        if (values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) {
+        if (const auto button = values[0] >= 0 && values[0] < 240 ? TopRowItemAt(topRow, values[0], values[1]) : std::nullopt) {
+            // A top-row button: the command the window runs (nothing for a disabled one). Toggle
+            // Sidebar and the page's commands are the window's, so nothing here changes.
+            const TopRowItem& item = topRow[*button];
+            json::Object out{{"target", std::string("topRow")}, {"button", std::string(TopRowButtonName(item.button))}, {"enabled", item.enabled}};
+            out.emplace("action", item.enabled ? TopRowCommand(item.button) : std::string("none"));
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) {
             const std::vector<SpaceCell> cells = SpaceCells(state);
             const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
             const float x = values[0], y = values[1] - SpaceBarTop(values[2]);
@@ -717,15 +1031,39 @@ int main(int argc, char** argv) {
                 }
             }
             std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (InFavorites(tray, 240, values[0], values[1])) {
+            // The tray's band: a pane's press selects its favorite on release (FavoritePaneView's
+            // mouseUp), the empty state's close button dismisses it; the rest takes the press and
+            // does nothing.
+            const auto press = FavoritePressAt(tray, values[0], values[1]);
+            const bool close = press && press->target == FavoritePress::Target::CloseEmptyState;
+            json::Object out{{"target", std::string(close ? "favoritesClose" : press ? "favorite" : "favorites")}};
+            if (press) {
+                if (!close) out.emplace("id", press->tabID);
+                const FavoriteTap tap = FavoriteRelease(*press, tray, values[0], values[1]);
+                out.emplace("action", std::string(tap.action == FavoriteTap::Action::SelectTab           ? "selectTab"
+                                                  : tap.action == FavoriteTap::Action::DismissEmptyState ? "dismissEmptyState"
+                                                                                                         : "none"));
+                if (tap.action == FavoriteTap::Action::SelectTab) {
+                    state.Select(tap.tabID);
+                    changed = true;
+                } else if (tap.action == FavoriteTap::Action::DismissEmptyState) {
+                    if (const std::string problem = flags.Set(OneShotFlags::kFavoritesEmptyStateDismissed, true); !problem.empty()) {
+                        std::fprintf(stderr, "kitecore: %s\n", problem.c_str());
+                        return kLoadFailed;
+                    }
+                }
+            }
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else {
-            const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], 1);
+            const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], 1, false, listTop);
             static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron", "closeButton"};
             static constexpr const char* kActions[] = {"none",      "editAddress", "togglePinnedSection", "selectTab", "setFolderExpanded",
                                                        "newTab",    "closeTab"};
             json::Object out{{"target", std::string(kTargets[static_cast<int>(press ? press->target : SidebarHit::Target::None)])}};
             if (press) {
                 if (!press->id.empty()) out.emplace("id", press->id);
-                const SidebarTap tap = SidebarRelease(*press, rows, 240, values[2], values[3], values[0], values[1]);
+                const SidebarTap tap = SidebarRelease(*press, rows, 240, values[2], values[3], values[0], values[1], listTop);
                 out.emplace("action", std::string(kActions[static_cast<int>(tap.action)]));
                 switch (tap.action) {
                 case SidebarTap::Action::SelectTab: state.Select(tap.id); changed = true; break;
@@ -835,7 +1173,35 @@ int main(int argc, char** argv) {
         }
     } else if (command == "space" && args.size() >= 2) {
         const std::string& action = args[1];
-        if (action == "next") state.SelectAdjacentSpace(1);
+        if (action == "swipe" && (args.size() == 3 || args.size() == 4)) {
+            double values[2] = {0, 0.25};
+            for (size_t i = 2; i < args.size(); ++i) {
+                auto [end, error] = std::from_chars(args[i].data(), args[i].data() + args[i].size(), values[i - 2]);
+                if (error != std::errc() || end != args[i].data() + args[i].size()) return Usage();
+            }
+            if (!std::isfinite(values[0]) || !std::isfinite(values[1]) || values[1] < 0) return Usage();
+            // The window's sidebar, the pages at rest.
+            const size_t index = state.SelectedSpaceIndex();
+            const SwipeStart start{240, index > 0, index + 1 < state.spaces.size(), 0};
+            SpaceSwipeGesture gesture;
+            const auto begin = [&] { return start; };
+            const int events = std::max(1, static_cast<int>(std::lround(values[1] * 60)));
+            gesture.Handle(SwipeInput{SwipeInput::Phase::Began, 0, 0, 0}, true, begin);
+            for (int i = 1; i <= events; ++i) {
+                gesture.Handle(SwipeInput{SwipeInput::Phase::Changed, values[0] / events, 0, i / 60.0}, true, begin);
+            }
+            json::Object out;
+            if (const auto& swipe = gesture.Swipe()) {
+                out.emplace("offset", swipe->Offset());
+                out.emplace("progress", swipe->Progress());
+                out.emplace("direction", static_cast<double>(swipe->Direction()));
+            }
+            gesture.Handle(SwipeInput{SwipeInput::Phase::Ended, 0, 0, (events + 1) / 60.0}, true, begin);
+            out.emplace("landing", static_cast<double>(gesture.Landing()));
+            state.SelectSpaceAt(index + static_cast<size_t>(gesture.Landing()));
+            out.emplace("space", state.SelectedSpace().id);
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (action == "next") state.SelectAdjacentSpace(1);
         else if (action == "prev") state.SelectAdjacentSpace(-1);
         else if (args.size() == 2 && action.size() == 1 && action[0] >= '1' && action[0] <= '9') {
             // Space 1–9 (the Mac's selectSpaceNumber): nothing past the last space.
@@ -845,11 +1211,183 @@ int main(int argc, char** argv) {
             const std::string id = Id(args[2]);
             if (!state.SpaceIndex(id)) return kNotFound;
             state.SelectSpace(id);
+        } else if (action == "menu" && args.size() == 3) {
+            const std::vector<SpaceMenuItem> menu = SpaceMenu(state, Id(args[2]));
+            if (menu.empty()) return kNotFound;
+            json::Array items;
+            for (const SpaceMenuItem& item : menu) {
+                if (item.command == SpaceMenuItem::Command::Separator) {
+                    items.emplace_back(json::Object{{"separator", true}});
+                    continue;
+                }
+                items.emplace_back(json::Object{{"title", item.title}, {"enabled", item.enabled}, {"submenu", item.submenu}});
+            }
+            std::puts(json::Write(json::Object{{"items", json::Value(std::move(items))}, {"line", SpaceMenuLine(menu)}}).c_str());
+            return kOk;
+        } else if (action == "rename" && args.size() >= 4) {
+            const std::string id = Id(args[2]);
+            if (!state.SpaceIndex(id)) return kNotFound;
+            state.RenameSpace(id, Join(args, 3));
+            std::puts(state.spaces[*state.SpaceIndex(id)].name.c_str());
+        } else if (action == "icon" && args.size() == 4) {
+            const std::string id = Id(args[2]);
+            if (!state.SpaceIndex(id)) return kNotFound;
+            state.SetSpaceIcon(id, args[3]);
+            std::puts(state.spaces[*state.SpaceIndex(id)].icon.c_str());
+        } else if (action == "folder" && args.size() == 3) {
+            const auto space = state.SpaceIndex(Id(args[2]));
+            if (!space) return kNotFound;
+            std::puts(state.CreateNewFolder(*space).c_str());
+        } else if (action == "delete" && args.size() == 3) {
+            const std::string id = Id(args[2]);
+            if (!state.SpaceIndex(id)) return kNotFound;
+            const SpaceDeletion deletion = DeletionOf(state, id);
+            if (deletion.kind == SpaceDeletion::Kind::Refused) return kRefused;
+            json::Object out{{"kind", std::string(deletion.kind == SpaceDeletion::Kind::Now ? "now" : "ask")}};
+            if (deletion.kind == SpaceDeletion::Kind::Ask) {
+                out.emplace("title", deletion.title);
+                out.emplace("message", deletion.message);
+            }
+            state.DeleteSpace(id);
+            out.emplace("selected", state.selectedSpaceID);
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (action == "new" && args.size() >= 3) {
+            const auto id = NewSpace(state, Join(args, 2));
+            if (!id) return Usage();
+            std::puts(id->c_str());
+        } else if (action == "move" && args.size() == 4) {
+            const std::string id = Id(args[2]);
+            size_t place = 0;
+            auto [end, error] = std::from_chars(args[3].data(), args[3].data() + args[3].size(), place);
+            if (error != std::errc() || end != args[3].data() + args[3].size() || place == 0) return Usage();
+            if (!state.SpaceIndex(id)) return kNotFound;
+            state.MoveSpace(id, place - 1);
+            std::puts(std::to_string(*state.SpaceIndex(id) + 1).c_str());
+        } else if (action == "drag" && (args.size() == 4 || args.size() == 5)) {
+            const std::string id = Id(args[2]);
+            float point[2] = {0, space_bar_metrics::kHeight / 2};
+            for (size_t i = 3; i < args.size(); ++i) {
+                auto [end, error] = std::from_chars(args[i].data(), args[i].data() + args[i].size(), point[i - 3]);
+                if (error != std::errc() || end != args[i].data() + args[i].size() || !std::isfinite(point[i - 3])) return Usage();
+            }
+            const auto index = state.SpaceIndex(id);
+            if (!index) return kNotFound;
+            const std::vector<SpaceCell> cells = SpaceCells(state);
+            const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
+            const BarRect& cell = layout.cells[*index];
+            const float x0 = (cell.left + cell.right) / 2, y0 = (cell.top + cell.bottom) / 2;
+            auto press = SpaceBarPressAt(layout, cells, x0, y0);
+            if (!press) return kNotFound;
+            SpaceBarMove(*press, point[0], point[1]);
+            auto drag = BeginSpaceDrag(layout, cells, *press);
+            // One space, or a drag shorter than 4pt: a click, not a drag.
+            if (!drag) return Usage();
+            MoveSpaceDrag(*drag, layout, cells.size(), point[0], point[1]);
+            std::vector<std::string> ids;
+            for (const SpaceCell& c : cells) ids.push_back(c.spaceID);
+            const std::vector<BarRect> placed = SpaceDragCells(layout, ids, *drag);
+            json::Array strip;
+            for (size_t i = 0; i < ids.size(); ++i) {
+                strip.emplace_back(json::Object{{"id", ids[i]}, {"left", static_cast<double>(placed[i].left)}, {"hidden", ids[i] == id}});
+            }
+            const BarRect ghost = SpaceDragGhost(layout, *drag);
+            json::Object out{{"target", drag->target ? json::Value(static_cast<double>(*drag->target)) : json::Value()},
+                             {"cells", json::Value(std::move(strip))},
+                             {"ghost", json::Object{{"left", static_cast<double>(ghost.left)}, {"top", static_cast<double>(ghost.top)}}}};
+            const size_t slot = DropSpaceDrag(*drag, layout, cells.size(), point[0], point[1]);
+            out.emplace("landing", static_cast<double>(slot));
+            state.MoveSpace(id, slot);
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else if (action == "add" && (args.size() == 3 || args.size() == 4) && !unicode::Trim(args[2]).empty()) {
             // Like the Mac's New Space sheet: a name of only spaces isn't one.
             const auto& presets = Theme::Presets();
             std::puts(state.AddSpace(std::string(unicode::Trim(args[2])), args.size() == 4 ? args[3] : "",
                                      presets[state.spaces.size() % presets.size()]).c_str());
+        } else {
+            return Usage();
+        }
+        changed = true;
+    } else if (command == "import-arc") {
+        arc_import::ImportOptions options;
+        std::optional<std::filesystem::path> picked;
+        bool automatic = false;
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--include-unnamed" && !options.includeUntitled) options.includeUntitled = true;
+            else if (args[i] == "--leave-out-unnamed" && !options.includeUntitled) options.includeUntitled = false;
+            else if (args[i] == "--auto" && !picked) automatic = true;
+            else if (!automatic && !picked && !args[i].starts_with("--")) picked = std::filesystem::path(std::u8string(args[i].begin(), args[i].end()));
+            else return Usage();
+        }
+        const auto arcDirectory = arc_import::ArcDirectory(profile ? profile : EnvironmentPath("KITE_SUPPORT_PATH"),
+                                                           EnvironmentPath("KITE_ARC_DATA_PATH"), EnvironmentPath("LOCALAPPDATA"));
+        std::variant<arc_import::Plan, arc_import::LoadError> plan = arc_import::LoadError{};
+        try {
+            plan = picked ? arc_import::ReadPicked(*picked, arcDirectory) : arc_import::ReadAuto(arcDirectory);
+        } catch (const std::exception& e) {
+            plan = arc_import::ReadFailed(e.what());
+        } catch (...) {
+            plan = arc_import::ReadFailed(nullptr);
+        }
+        if (auto* error = std::get_if<arc_import::LoadError>(&plan)) {
+            std::fprintf(stderr, "kitecore: %s %s\n", error->message.c_str(), error->detail.c_str());
+            return kNotFound;
+        }
+        arc_import::Imported imported = arc_import::Import(state, std::get<arc_import::Plan>(plan), options);
+        // The session first: shortcut changes and routes to spaces it doesn't have would be no use.
+        if (std::string error = store.Save(state); !error.empty()) {
+            std::fprintf(stderr, "kitecore: %s\n", error.c_str());
+            return kSaveFailed;
+        }
+        arc_import::WriteProfileFiles(imported, std::get<std::filesystem::path>(resolved));
+        // Then each Arc profile's history, into the stores the app keeps (history.json, and
+        // Chromium/<dir>/Kite History.json for another profile), written before the summary.
+        HistoryStores stores(std::get<std::filesystem::path>(resolved));
+        stores.Start();
+        if (!arc_import::MergeHistories(imported, stores, std::chrono::seconds(60))) {
+            std::fputs("kitecore: history: the profiles' history files weren't read within 60 s, so Arc's history wasn't merged\n", stderr);
+            return kSaveFailed;
+        }
+        stores.SaveNow();
+        if (std::string error = stores.Flush(DeadlineAfter(std::chrono::seconds(60))); !error.empty()) {
+            std::fprintf(stderr, "kitecore: history: %s\n", error.c_str());
+            return kSaveFailed;
+        }
+        std::puts(json::Write(arc_import::Summary(imported)).c_str());
+        return kOk;
+    } else if (command == "profile" && args.size() >= 2) {
+        const std::string& action = args[1];
+        if (action == "list" && args.size() == 2) {
+            json::Array rows;
+            for (const Profile& p : AllProfiles(state)) {
+                json::Object o{{"directory", p.directory}, {"name", p.name}, {"dataStoreID", p.dataStoreID}};
+                o.emplace("deletable", CanDeleteProfile(state, p.directory));
+                rows.push_back(json::Value(std::move(o)));
+            }
+            std::puts(json::Write(json::Value(std::move(rows))).c_str());
+            return kOk;
+        } else if (action == "add" && args.size() == 3) {
+            auto made = CreateProfile(state, args[2]);
+            if (auto* error = std::get_if<ProfileNameError>(&made)) {
+                std::fprintf(stderr, "kitecore: %s\n", Message(*error));
+                return kUsage;
+            }
+            std::puts(std::get<Profile>(made).directory.c_str());
+        } else if (action == "rename" && args.size() == 4) {
+            if (ProfileFor(state, args[2]).directory != args[2] || args[2] == Profile::kDefaultDirectory) return kNotFound;
+            if (auto error = RenameProfile(state, args[2], args[3])) {
+                std::fprintf(stderr, "kitecore: %s\n", Message(*error));
+                return kUsage;
+            }
+        } else if (action == "delete" && args.size() == 3) {
+            // Arc's rule: only a profile no space uses, never the default one.
+            if (!DeleteProfile(state, args[2])) return kNotFound;
+            // The shell deletes a profile's Chromium folder; with none, its name is free at once.
+            std::error_code error;
+            if (!std::filesystem::exists(std::get<std::filesystem::path>(resolved) / "Chromium" /
+                                             std::filesystem::path(std::u8string(args[2].begin(), args[2].end())),
+                                         error)) {
+                ForgetRetiredProfiles(state, {args[2]});
+            }
         } else {
             return Usage();
         }

@@ -6,14 +6,15 @@
 // session that goes Mac → Windows → Mac loses nothing.
 //
 // Ported so far: tabs, folders, spaces, themes, favorites per profile, selection,
-// opening, selecting, closing, archiving and reopening tabs (TabClosing.cpp), spaces, and
-// splits as data (closing keeps them whole). Not yet: making splits, profiles, live folders,
-// Tidy Tabs. Those arrive as Helix checkpoints (docs/helix.md).
+// opening, selecting, closing, archiving and reopening tabs (TabClosing.cpp), spaces and
+// editing them (SpaceEditing.cpp), and splits as data (closing keeps them whole). Not yet:
+// making splits, profiles, live folders, Tidy Tabs. Those arrive as Helix checkpoints (docs/helix.md).
 
 #include <functional>
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -231,6 +232,31 @@ struct BrowserState {
     // Opens or closes a pinned folder, at any depth in any space.
     void SetFolderExpanded(const std::string& folderID, bool expanded);
     std::string AddSpace(std::string name, std::string icon, Theme theme);
+
+    // MARK: Editing spaces (SpaceEditing.cpp, BrowserState+ArcCommands.swift)
+
+    // The space's new name, trimmed; a blank one keeps the old name.
+    void RenameSpace(const std::string& id, std::string_view name);
+    // Arc puts a new space right after the one you're in, and switches to it. `profile` is the
+    // Mac's Space.profile (its profile folder; none for the default). Its id.
+    std::string InsertSpace(std::string name, std::string icon, Theme theme, std::optional<std::string> profile = std::nullopt);
+    // A space's icon, trimmed: an emoji (its first character), a "symbol:" SF Symbol name, an
+    // "image:" file name, or empty for none (Arc shows a dot). An image name with a path in it
+    // is refused and leaves the icon as it was.
+    void SetSpaceIcon(const std::string& id, std::string_view icon);
+    // Removes a space with its pinned and unpinned tabs (not archived, as the Mac's). The last
+    // space stays: a window always has one. Deleting the selected space selects the one before
+    // it (the next one, for the first).
+    void DeleteSpace(std::string id);
+    // Moves a space to `index` among the others (the drop's slot in the bar), clamped to the
+    // end; the selection stays on the space it was.
+    void MoveSpace(const std::string& id, size_t index);
+    // An empty folder named `name`, open, at the end of space `space`'s pinned items (the space
+    // menu's New Folder: BrowserState+Automation.swift's createFolder). Its id; empty for no such
+    // space.
+    std::string CreateFolder(std::string name, size_t space);
+    // New Folder (createNewFolder): "New Folder" in space `space`, or the selected one.
+    std::string CreateNewFolder(std::optional<size_t> space = std::nullopt) { return CreateFolder("New Folder", space.value_or(SelectedSpaceIndex())); }
 
     // MARK: Closing, archiving and reopening (TabClosing.cpp, BrowserState.swift)
     // The mutators take the id by value: a caller's id is often the tab's own (SelectedTab()->id),

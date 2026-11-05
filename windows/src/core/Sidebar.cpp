@@ -227,38 +227,39 @@ std::vector<SidebarRow> SidebarRows(const BrowserState& state, size_t spaceIndex
     return rows;
 }
 
-float SidebarListBottom(float height) { return std::max(M::kHeaderAreaHeight, SpaceBarTop(height)); }
+float SidebarListBottom(float height, float listTop) { return std::max(listTop, SpaceBarTop(height)); }
 
 float SidebarContentHeight(const std::vector<SidebarRow>& rows) { return rows.empty() ? 0 : rows.back().top + rows.back().height; }
 
-float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height) {
-    return std::max(0.0f, SidebarContentHeight(rows) - (SidebarListBottom(height) - M::kHeaderAreaHeight));
+float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height) { return SidebarMaxScroll(rows, height, 0); }
+
+float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height, float scale, float listTop) {
+    const float limit = std::max(0.0f, SidebarContentHeight(rows) - (SidebarListBottom(height, listTop) - listTop));
+    return scale > 0 ? std::floor(limit * scale) / scale : limit;
 }
 
-float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height, float scale) {
-    return scale > 0 ? std::floor(SidebarMaxScroll(rows, height) * scale) / scale : SidebarMaxScroll(rows, height);
-}
-
-std::optional<size_t> SidebarRowAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y) {
-    if (x < M::kPadding || x >= width - M::kPadding || y < M::kHeaderAreaHeight || y >= SidebarListBottom(height)) return std::nullopt;
-    const float at = y - M::kHeaderAreaHeight + scroll;
+std::optional<size_t> SidebarRowAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y,
+                                   float listTop) {
+    if (x < M::kPadding || x >= width - M::kPadding || y < listTop || y >= SidebarListBottom(height, listTop)) return std::nullopt;
+    const float at = y - listTop + scroll;
     for (size_t i = 0; i < rows.size(); ++i) {
         if (at >= rows[i].top && at < rows[i].top + rows[i].height) return i;
     }
     return std::nullopt;
 }
 
-SidebarHit SidebarHitTest(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y) {
+SidebarHit SidebarHitTest(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y,
+                          float listTop) {
     using Target = SidebarHit::Target;
     // The field's text button: all of it but the 2pt at its end (SidebarHeader's textArea, with
     // no buttons in the field yet).
     if (y >= M::kUrlFieldTop && y < M::kHeaderAreaHeight && x >= M::kPadding && x < width - M::kPadding - 2) {
         return {Target::AddressField, 0};
     }
-    const auto index = SidebarRowAt(rows, width, height, scroll, x, y);
+    const auto index = SidebarRowAt(rows, width, height, scroll, x, y, listTop);
     if (!index) return {};
     const SidebarRow& row = rows[*index];
-    const float inRow = y - M::kHeaderAreaHeight + scroll - row.top;
+    const float inRow = y - listTop + scroll - row.top;
     switch (row.kind) {
     case SidebarRow::Kind::Header: {
         // The chevron's 26pt button, 1pt in from the row's end.
@@ -288,9 +289,9 @@ SidebarHit SidebarHitTest(const std::vector<SidebarRow>& rows, float width, floa
 }
 
 std::optional<SidebarPress> SidebarPressAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x,
-                                           float y, int clicks, bool activating) {
+                                           float y, int clicks, bool activating, float listTop) {
     using Target = SidebarHit::Target;
-    const SidebarHit hit = SidebarHitTest(rows, width, height, scroll, x, y);
+    const SidebarHit hit = SidebarHitTest(rows, width, height, scroll, x, y, listTop);
     if (hit.target == Target::None) return std::nullopt;
     // Rows don't accept first mouse (NSView's default); the field and SymbolButtons (the
     // chevron, a tab's close button) do.
@@ -304,7 +305,7 @@ std::optional<SidebarPress> SidebarPressAt(const std::vector<SidebarRow>& rows, 
 }
 
 SidebarTap SidebarRelease(const SidebarPress& press, const std::vector<SidebarRow>& rows, float width, float height, float scroll,
-                          float x, float y) {
+                          float x, float y, float listTop) {
     using Target = SidebarHit::Target;
     using Action = SidebarTap::Action;
     // The pressed row where it is now (the header, divider and New Tab share the space's id).
@@ -316,18 +317,18 @@ SidebarTap SidebarRelease(const SidebarPress& press, const std::vector<SidebarRo
     };
     switch (press.target) {
     case Target::AddressField:
-        if (SidebarHitTest(rows, width, height, scroll, x, y).target == Target::AddressField) return {Action::EditAddress, {}, false};
+        if (SidebarHitTest(rows, width, height, scroll, x, y, listTop).target == Target::AddressField) return {Action::EditAddress, {}, false};
         return {};
     case Target::PinnedChevron:
     case Target::CloseButton: {
         // A button acts when let go over itself (SymbolButton's mouseUp), whatever the clicks.
         const auto row = pressedRow();
-        if (!row || SidebarHitTest(rows, width, height, scroll, x, y) != SidebarHit{press.target, *row}) return {};
+        if (!row || SidebarHitTest(rows, width, height, scroll, x, y, listTop) != SidebarHit{press.target, *row}) return {};
         return {press.target == Target::CloseButton ? Action::CloseTab : Action::TogglePinnedSection, press.id, false};
     }
     case Target::Row: {
         const auto row = pressedRow();
-        if (press.clicks > 1 || !row || SidebarRowAt(rows, width, height, scroll, x, y) != row) return {};
+        if (press.clicks > 1 || !row || SidebarRowAt(rows, width, height, scroll, x, y, listTop) != row) return {};
         const SidebarRow& r = rows[*row];
         switch (r.kind) {
         case SidebarRow::Kind::Tab: return {Action::SelectTab, r.id, false};

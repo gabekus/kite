@@ -80,8 +80,8 @@ TEST(everySymbolTheIconTabOffersHasAPrivateUseGlyphForBothFonts) {
     }
     // That each is in its font is the PC's cmap check (the table's comment). Where the fonts differ:
     CHECK(SymbolGlyphFor("folder.fill") == (SymbolGlyph{u'\uE8D5', u'\uF12B'}));
-    CHECK(SymbolGlyphFor("briefcase") == (SymbolGlyph{u'\uE821', u'\uE821'}));
-    // Nine have no such object in either font: Kite draws its own shape for each, and only those.
+    // Nine have no such object in either font, and the briefcase's glyph is a plain case: Kite
+    // draws its own shape for each, and only those. The briefcase keeps its glyph as the fallback.
     std::vector<std::string_view> drawn;
     for (std::string_view name : all) {
         const auto glyph = SymbolGlyphFor(name);
@@ -91,6 +91,7 @@ TEST(everySymbolTheIconTabOffersHasAPrivateUseGlyphForBothFonts) {
     }
     CHECK(drawn == DrawnSymbols());
     CHECK(SymbolGlyphFor("pawprint.fill") == (SymbolGlyph{0, 0, true}));
+    CHECK(SymbolGlyphFor("briefcase") == (SymbolGlyph{u'\uE821', u'\uE821', true}));
     CHECK(SymbolGlyphFor("star.fill") == (SymbolGlyph{u'\uE735', u'\uE735'}));
 }
 

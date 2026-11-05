@@ -165,6 +165,10 @@ using ShortcutMap = std::map<KeyShortcut, ShortcutTarget>;
 // Which command each shortcut runs, after the user's overrides (their ⌘ read as Ctrl): the
 // shown shortcuts, then the extra ones that no command's shown shortcut took.
 ShortcutMap ShortcutTable(const KeyBindings& bindings);
+// The shortcut a menu item shows for `command` in `table` (NSMenuItem's key equivalent): its
+// default while that still runs it, else the first key that does (a user's binding); none when no
+// key runs it.
+std::optional<KeyShortcut> MenuShortcut(const ShortcutMap& table, std::string_view command);
 
 // Whether a text field uses these keys itself (Alt+Left, Ctrl+Backspace…), so they stay the
 // command bar's while it's open, as the Mac doesn't take ⌘← and ⌘→ from a focused field.

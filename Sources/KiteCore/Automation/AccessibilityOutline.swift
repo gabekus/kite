@@ -156,7 +156,8 @@ public enum AccessibilityOutline {
         return parts.joined(separator: " ")
     }
 
-    static func clean(_ text: String, limit: Int = 120) -> String {
+    /// One line: whitespace runs (newlines included) become one space, cut at `limit` with an ellipsis.
+    public static func clean(_ text: String, limit: Int = 120) -> String {
         let flat = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
         return flat.count > limit ? flat.prefix(limit - 1) + "…" : flat
     }

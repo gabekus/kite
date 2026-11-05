@@ -22,6 +22,9 @@
 // worker's state is shared with it (not owned by this object), so a worker still writing when
 // the writer goes is let go and finishes, or dies with the process, on its own.
 //
+// The thread itself, its bounded waits and OnStuck, are core/WorkerThread.h's, which
+// history's store (core/HistoryStore.h) shares.
+//
 // Everything public is for one thread (Kite's UI thread), except Stats.
 
 #include <chrono>
@@ -29,8 +32,8 @@
 #include <functional>
 #include <memory>
 #include <string>
-#include <thread>
 
+#include "core/WorkerThread.h"
 #include "core/Models.h"
 #include "core/SessionStore.h"
 
@@ -39,7 +42,7 @@ namespace kite {
 class SessionWriter {
 public:
     // How long the destructor waits for a write still running before it lets the worker go.
-    static constexpr std::chrono::milliseconds kStopWait{5000};
+    static constexpr std::chrono::milliseconds kStopWait = WorkerThread::kStopWait;
 
     // `maySave` false (SessionStore::MaySave said so): nothing is ever written, not even backups.
     // `now`: the clock backups are dated by (Unix seconds); tests pass their own. It runs on the
@@ -55,11 +58,21 @@ public:
 
     // Hands `snapshot` to the worker and returns at once.
     void Save(BrowserState snapshot);
+    // The same, then `then` on the worker's thread once the write that has this snapshot (or a
+    // newer one, which has everything this one has) is done, with its error (empty: written, or
+    // the file already held it). For files that must never be written without the session that
+    // names their spaces (Import from Arc's keybindings.json and LinkRouting.json): in order with
+    // every other write, and nothing on the caller's thread waits on the disk. `then` runs off the
+    // caller's thread, so it posts anything for the UI back to it; it's called even when this
+    // writer may not save (with why), and an exception from it is caught and dropped.
+    void SaveThen(BrowserState snapshot, std::function<void(const std::string& error)> then);
     // The session as found at launch, kept as a launch backup (the Mac's init backs up `found`).
     void BackUpLaunch(BrowserState found);
     // Waits, for `timeout` at most, until everything handed over is written. The last write's
     // error, empty when it went well (or nothing was written); a timeout is an error too.
     std::string Flush(std::chrono::milliseconds timeout = std::chrono::milliseconds::max());
+    // The same with a deadline shared with another store's wait (logoff, quitting).
+    std::string Flush(Deadline deadline);
     // The session didn't change, but the Mac would save it anyway (its auto-archive pass
     // always mutates): the hourly backup of what was last written is offered, on the worker,
     // with nothing copied or written. False when nothing has been written this run (the caller
@@ -71,7 +84,7 @@ public:
     // Runs when the destructor has to let a worker go that's still writing. The app ends the
     // process from it (without static destruction, which would tear the C library down under
     // the thread); without one the thread is detached.
-    void OnStuck(std::function<void()> stuck);
+    void OnStuck(std::function<void()> stuck) { worker_.OnStuck(std::move(stuck)); }
 
     struct Statistics {
         uint64_t handedOver = 0;  // Save calls
@@ -93,9 +106,7 @@ public:
 private:
     const bool maySave_;
     std::shared_ptr<Shared> shared_;
-    std::function<void()> onStuck_;
-    bool flushTimedOut_ = false;
-    std::thread worker_;
+    WorkerThread worker_;
 };
 
 }  // namespace kite

@@ -4,6 +4,7 @@
 
 #include "core/Sidebar.h"
 #include "core/Url.h"
+#include "shell/Handle.h"
 #include "shell/Text.h"
 
 #include <d2d1_1.h>
@@ -48,12 +49,7 @@ constexpr UINT kMaxFrameSide = 1024;
 constexpr size_t kMaxEntries = 500;
 constexpr size_t kMaxCacheBytes = 16 << 20;
 
-struct Handle {
-    HINTERNET value = nullptr;
-    ~Handle() {
-        if (value) WinHttpCloseHandle(value);
-    }
-};
+using Handle = UniqueHandle<HINTERNET, &WinHttpCloseHandle>;
 
 // The icon's bytes (whatever the status, as URLSession's data(from:) returns them: an error
 // page then fails to decode), or nothing on any failure.
@@ -76,11 +72,11 @@ std::optional<std::string> Fetch(HINTERNET session, const std::string& url) {
     path.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
     if (path.empty()) path = L"/";
     Handle connection{WinHttpConnect(session, host.c_str(), parts.nPort, 0)};
-    if (!connection.value) return std::nullopt;
-    Handle request{WinHttpOpenRequest(connection.value, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+    if (!connection) return std::nullopt;
+    Handle request{WinHttpOpenRequest(connection.Get(), L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                       parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0)};
-    if (!request.value || !WinHttpSendRequest(request.value, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
-        !WinHttpReceiveResponse(request.value, nullptr)) {
+    if (!request || !WinHttpSendRequest(request.Get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+        !WinHttpReceiveResponse(request.Get(), nullptr)) {
         return std::nullopt;
     }
     std::string bytes;
@@ -89,13 +85,13 @@ std::optional<std::string> Fetch(HINTERNET session, const std::string& url) {
         // whole body kDeadlineMs.
         if (GetTickCount64() > deadline) return std::nullopt;
         DWORD available = 0;
-        if (!WinHttpQueryDataAvailable(request.value, &available)) return std::nullopt;
+        if (!WinHttpQueryDataAvailable(request.Get(), &available)) return std::nullopt;
         if (available == 0) break;
         if (bytes.size() + available > kMaxBytes) return std::nullopt;
         const size_t at = bytes.size();
         bytes.resize(at + available);
         DWORD read = 0;
-        if (!WinHttpReadData(request.value, bytes.data() + at, available, &read)) return std::nullopt;
+        if (!WinHttpReadData(request.Get(), bytes.data() + at, available, &read)) return std::nullopt;
         bytes.resize(at + read);
     }
     return bytes;
@@ -233,6 +229,7 @@ struct Favicons::Shared {
     std::condition_variable wake;
     std::deque<Job> queue;
     std::deque<Result> done;
+    int busy = 0;  // jobs a worker has taken and not yet finished
     bool stopping = false;
     bool posted = false;
 };
@@ -249,16 +246,14 @@ void Work(const std::shared_ptr<Favicons::Shared>& shared) {
     D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory1), &options, reinterpret_cast<void**>(d2d.GetAddressOf()));
     // The system's proxy settings (automatic where Windows has it, 8.1 and later).
     Handle session{WinHttpOpen(L"Kite", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
-    if (!session.value) {
-        session.value = WinHttpOpen(L"Kite", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    }
-    if (session.value) {
-        WinHttpSetTimeouts(session.value, kTimeoutMs, kTimeoutMs, kTimeoutMs, kTimeoutMs);
+    if (!session) session.Reset(WinHttpOpen(L"Kite", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+    if (session) {
+        WinHttpSetTimeouts(session.Get(), kTimeoutMs, kTimeoutMs, kTimeoutMs, kTimeoutMs);
         // Redirects count against the fetch's time like the rest (a /favicon.ico often moves).
         DWORD redirects = 3;
-        WinHttpSetOption(session.value, WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS, &redirects, sizeof(redirects));
+        WinHttpSetOption(session.Get(), WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS, &redirects, sizeof(redirects));
         DWORD decompress = WINHTTP_DECOMPRESSION_FLAG_ALL;
-        WinHttpSetOption(session.value, WINHTTP_OPTION_DECOMPRESSION, &decompress, sizeof(decompress));
+        WinHttpSetOption(session.Get(), WINHTTP_OPTION_DECOMPRESSION, &decompress, sizeof(decompress));
     }
     for (;;) {
         Job job;
@@ -268,15 +263,17 @@ void Work(const std::shared_ptr<Favicons::Shared>& shared) {
             if (shared->stopping) break;
             job = std::move(shared->queue.front());
             shared->queue.pop_front();
+            ++shared->busy;
         }
         Result result{job.url, job.side, !job.bytes, job.bytes, std::nullopt};
         if (!result.bytes) {
-            if (auto bytes = Fetch(session.value, job.url); bytes && !bytes->empty()) {
+            if (auto bytes = Fetch(session.Get(), job.url); bytes && !bytes->empty()) {
                 result.bytes = std::make_shared<const std::string>(std::move(*bytes));
             }
         }
         if (result.bytes && wic) result.pixels = Decode(wic.Get(), d2d.Get(), *result.bytes, job.side);
         std::lock_guard lock(shared->mutex);
+        --shared->busy;
         if (shared->stopping) break;
         shared->done.push_back(std::move(result));
         // One wake for however many arrive before the window takes them.
@@ -284,10 +281,7 @@ void Work(const std::shared_ptr<Favicons::Shared>& shared) {
     }
     d2d.Reset();
     wic.Reset();
-    if (session.value) {
-        WinHttpCloseHandle(session.value);
-        session.value = nullptr;
-    }
+    session.Reset();
     if (SUCCEEDED(com)) CoUninitialize();
 }
 
@@ -337,6 +331,16 @@ const Pixels* Favicons::Get(const std::string& url, UINT side) {
     shared_->wake.notify_one();
     if (added) Evict(url);
     return nullptr;
+}
+
+bool Favicons::Idle() const {
+    std::lock_guard lock(shared_->mutex);
+    return shared_->queue.empty() && shared_->busy == 0;
+}
+
+bool Favicons::Failed(const std::string& url) const {
+    const auto found = entries_.find(url);
+    return found != entries_.end() && found->second.failed;
 }
 
 bool Favicons::TakeResults() {

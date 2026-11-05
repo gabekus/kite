@@ -11,8 +11,10 @@
 // each in its own small surface with an opacity. A space switch's slide relights the cells as the pages slide (SpaceSwipe::Highlight), as DirectComposition animations
 // of those opacities on the same spring as the strip's, so no frame of it draws; hovering and
 // scrolling move visuals and draw nothing. What a cell shows and what a press does are core's
-// (core/SpaceBar.h). Not yet: the Library and the + menu (the buttons draw, and take no clicks),
-// dragging a cell to reorder, the menu and the tip.
+// (core/SpaceBar.h). A cell dragged to a new place (BeginDrag) leaves a ghost following the
+// pointer, a visual sharing that cell's surfaces, while the others' visuals slide aside on
+// DirectComposition animations, so a drag draws nothing either. Not yet: the Library and the +
+// menu (the buttons draw, and take no clicks). SidebarView shows the tip and the space's menu.
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -31,6 +33,7 @@
 #include "core/SpaceBar.h"
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
+#include "shell/FadedLayer.h"
 #include "shell/SpaceIconPainter.h"
 
 namespace kite {
@@ -57,6 +60,10 @@ public:
     // SettleSegments), with the pages `built` around `selected`, `pageWidth` apart.
     void Slide(const std::vector<CubicSegment>& segments, double duration, double from, double to, double pageWidth,
                const std::vector<size_t>& built, size_t selected);
+    // The cells' light with the pages held `offset` points from rest (a swipe's frame:
+    // SpaceSwipe::Highlight), the pages `built` around `selected`, from the next draw. At 0 it's
+    // Land.
+    void Follow(double offset, double pageWidth, const std::vector<size_t>& built, size_t selected);
     // The pictures `names` arrived (or turned out unreadable): the cells showing them draw again.
     void InvalidatePictures(const std::set<std::string>& names);
     // At rest: each cell as it is (the slide's end, or a slide cut short), from the next draw.
@@ -68,6 +75,23 @@ public:
     // shows when the pointer comes onto a cell that isn't the space you're in, and stays until it
     // leaves.
     void SetHover(const std::optional<std::string>& spaceID);
+
+    // Dragging a cell to a new place (core's SpaceDrag, the Mac's cellDragged and cellDragEnded):
+    // from a press that has become a drag, the cell's icon leaves it and follows the pointer as a
+    // ghost with its backing, and the others slide aside (kReorderSlide on ease-in-ease-out, on
+    // the compositor) to open the slot it aims at. False when it can't start (one space). The
+    // hover's backing goes for the drag.
+    bool BeginDrag(const SpaceBarPress& press);
+    // The pointer at (x, y), bar points.
+    void MoveDrag(float x, float y);
+    // Let go at (x, y): the ghost settles into the slot it lands in (or back where it came
+    // from, off the strip) over kReorderSlide. That slot, which the caller moves the space to
+    // once it has settled, then calls EndDrag.
+    size_t DropDrag(float x, float y);
+    // The drag is over: the cells sit where the session puts them (a cancelled drag lands back
+    // in place at once).
+    void EndDrag();
+    const std::optional<SpaceDrag>& Drag() const { return drag_; }
 
     // What it shows and where, in the bar's points (core's, for hits and presses).
     const SpaceBarLayout& Geometry() const { return layout_; }
@@ -85,14 +109,9 @@ public:
 private:
     SpaceBarView() = default;
 
-    // One layer of a cell (the greyed icon, the coloured one, or the dot): its visual, surface
-    // and opacity.
-    struct Layer {
-        Microsoft::WRL::ComPtr<IDCompositionVisual> visual;
-        Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> surface;
-        Microsoft::WRL::ComPtr<IDCompositionEffectGroup> effect;
-        Pixels pixels;  // its last draw, read back, for a capture
-    };
+    // One layer of a cell (the greyed icon, the coloured one, or the dot), or the backing: its
+    // visual, surface and opacity.
+    using Layer = FadedLayer;
     struct CellGpu {
         Microsoft::WRL::ComPtr<IDCompositionVisual> visual;  // at the cell's place in the strip
         Layer grey, lit;  // a dot is `lit` alone
@@ -115,8 +134,15 @@ private:
     Microsoft::WRL::ComPtr<ID2D1CommandList> RecordIcon(const SpaceCell& cell, HRESULT& hr);
     void PlaceCells();
     void ShowBacking();
-    // The opacities each layer shows at rest, or along the slide.
+    // A drag's cells, sliding from where they are to their slots (animated), and its ghost.
+    void PlaceDragged(float scale);
+    void ShowGhost(float scale);
+    // Where a cell's visual is now along its slide, in points from the bar's left.
+    float CellX(size_t index) const;
+    // The opacities each layer shows at rest, along the slide, or held by a swipe.
     void ApplyOpacities();
+    // How lit cell `index` is with no slide: as the session has it, or as a swipe holds it.
+    double LitAtRest(size_t index) const;
     D2D1_COLOR_F Primary(float alpha) const;
     float Scale() const { return static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI; }
 
@@ -160,7 +186,37 @@ private:
         size_t selected;
     };
     std::optional<Relight> slide_;
+    struct Held {
+        double offset, pageWidth;
+        std::vector<size_t> built;
+        size_t selected;
+    };
+    std::optional<Held> follow_;
     bool opacitiesApplied_ = false;
+    // A drag: the cells' slides (each from x to x, points, since `start` on FrameClock::Now),
+    // and the ghost, a visual sharing the dragged cell's layers' surfaces and the backing's.
+    std::optional<SpaceDrag> drag_;
+    double ghostLit_ = 0;
+    struct Motion {
+        float from = 0, to = 0;
+        double start = 0;
+    };
+    std::vector<std::optional<Motion>> motions_;  // by cell
+    struct GhostMotion {
+        float fromX = 0, fromY = 0, toX = 0, toY = 0;
+        bool applied = false;  // its animations are on the visual
+    };
+    std::optional<GhostMotion> ghostMotion_;
+    std::vector<std::string> dragIDs_;        // the spaces' order as the drag began
+    std::vector<CubicSegment> dragCurve_;     // kReorderTiming over kReorderSlide, made once
+    bool ghostMoved_ = false;                  // the pointer moved within the open slot
+    struct GhostLayer {
+        Microsoft::WRL::ComPtr<IDCompositionVisual> visual;
+        Microsoft::WRL::ComPtr<IDCompositionEffectGroup> effect;
+    };
+    Microsoft::WRL::ComPtr<IDCompositionVisual> ghost_, ghostBacking_;
+    GhostLayer ghostGrey_, ghostIcon_;
+    bool ghostShown_ = false;
 };
 
 }  // namespace kite

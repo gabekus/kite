@@ -2,6 +2,8 @@
 
 #include "core/OKLab.h"
 
+#include "core/ColorSpaces.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -9,13 +11,9 @@ namespace kite {
 namespace oklab {
 namespace {
 
-// The Mac does these steps in Double; so do we, for identical results.
-float ToLinear(float c) { return c <= 0.04045f ? c / 12.92f : static_cast<float>(std::pow((static_cast<double>(c) + 0.055) / 1.055, 2.4)); }
-
-float ToGamma(float c) {
-    float x = std::clamp(c, 0.f, 1.f);
-    return x <= 0.0031308f ? 12.92f * x : static_cast<float>(1.055 * std::pow(static_cast<double>(x), 1 / 2.4) - 0.055);
-}
+// sRGB's transfer function, in Double as the Mac's (core/ColorSpaces.h).
+float ToLinear(float c) { return color::SrgbToLinear(c); }
+float ToGamma(float c) { return color::LinearToSrgb(c); }
 
 float Cbrt(float x) { return static_cast<float>(std::cbrt(static_cast<double>(x))); }
 
