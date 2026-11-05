@@ -85,7 +85,12 @@ public:
     // Starts Chromium with its profiles under `root` (the Mac's <support>/Chromium): the
     // default profile in root\Default, a space's other profile in root\<directory>.
     // AlreadyRunning: another Kite has this profile and has been told to come forward.
-    static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
+    // Pages are always made without activating their windows (SetAsPage in Chromium.cpp), so
+    // one made while Kite is behind another app leaves it there. `quiet`: a quiet run (main.cpp's
+    // `quiet`), which never comes to the front: the pages never take the focus or activate,
+    // and show no dialogs (file choosers cancelled, JavaScript and Leave Page dialogs answered,
+    // window.print() and Developer Tools skipped), each with a KITE_TEST_MODAL line.
+    static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events, bool quiet,
                              std::unique_ptr<Chromium>& out, std::wstring& error);
     // Shuts Chromium down (or does nothing if it already has); the destructor calls it too.
     ~Chromium();

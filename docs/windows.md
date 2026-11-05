@@ -626,6 +626,32 @@ windows\build\Release\Kite.exe
 Without `KITE_SUPPORT_PATH` the profile is `%LOCALAPPDATA%\Kite`. A
 `KITE_SUPPORT_PATH` that isn't an existing directory is refused.
 
+Every run, quiet or not, makes its pages without activating them. CEF shows a
+page's Chromium widget (`Chrome_WidgetWin_1`, the child of its `CefBrowserWindow`
+host) with views' `Widget::Show`, whose `HWNDMessageHandler::Activate` calls
+`SetForegroundWindow` on it, so a page made while Kite was behind another app (a
+quiet run's first page, a popup a background page opened) brought Kite in front
+whenever Windows let it (a process launched on an idle PC may). Kite makes the
+host window with `WS_EX_NOACTIVATE`, which CEF copies onto the widget for that
+show and takes off again (`CefBrowserPlatformDelegateNativeWin::CreateHostWindow`
+in CEF's `libcef/browser/native/browser_platform_delegate_native_win.cc`), and
+takes it off the host once the browser exists (`SetAsPage` and `OnAfterCreated`
+in `shell/Chromium.cpp`), so clicks activate a page as before.
+
+Quiet runs (decided in `main.cpp`, its `quiet`; `Options::quiet` everywhere
+else) never come to the front, as the Mac's `KITE_DIAGNOSTICS=1` runs (KiteCore's
+`WindowPresentation`). The window opens behind the others without activating,
+keeps `WS_EX_NOACTIVATE` (Windows doesn't hand it the foreground when the window
+in front closes) and answers `WM_MOUSEACTIVATE` with `MA_NOACTIVATE`; a relaunch
+doesn't bring it forward. Its pages never take the focus, and show no dialogs:
+file choosers are cancelled, JavaScript dialogs suppressed, Leave Page answered
+Leave, and `window.print()` and Developer Tools skipped, each with the Mac's
+`KITE_TEST_MODAL: <what>` line on stderr. Only a smoke test has pages for these
+to matter: a capture starts no Chromium. Both watch `EVENT_SYSTEM_FOREGROUND`
+for Kite's process (`shell/QuietRun.h`): `--smoke-test` fails if any of its
+windows became the foreground window, and a capture says so on stderr. Clicking
+a quiet run's taskbar button brings it forward, which fails a local smoke test.
+
 Off Windows, the model and its tests build natively, and MinGW cross-compiles the app:
 
 ```bash

@@ -214,12 +214,12 @@ std::wstring BrowserWindowController::Init() {
     actions.renameSpace = [this](const std::string& spaceID, const std::string& name) { RenameSpace(spaceID, name); };
     actions.beginRenaming = [this](const std::string& spaceID) { BeginRenaming(spaceID); };
     sidebar_->SetActions(std::move(actions));
-    if (options_.smokeTest || options_.capture) askToDelete_ = [](const SpaceDeletion&) { return false; };
+    if (options_.quiet) askToDelete_ = [](const SpaceDeletion&) { return false; };
     else askToDelete_ = [this](const SpaceDeletion& deletion) { return AskToDeleteSpace(window_.Handle(), deletion); };
 
     MakeCommands();
     // Every command the table can name does something: a test run fails on one that doesn't.
-    if (options_.smokeTest || options_.capture) {
+    if (options_.quiet) {
         for (const ShortcutCommand& command : ShortcutCommands()) {
             if (!commands_.contains(command.id)) return L"the shortcut command " + Widen(command.id) + L" does nothing";
         }
@@ -1014,10 +1014,15 @@ void BrowserWindowController::RunPending() {
 #endif
 }
 
-void BrowserWindowController::Show(int showCommand, bool behindOtherWindows) {
-    // Quiet runs open behind other windows without focus, and ignore a launcher's "start maximized".
-    if (behindOtherWindows) window_.ShowBehindOtherWindows();
-    else window_.Show(showCommand);
+void BrowserWindowController::Show(int showCommand) {
+    // Quiet runs open behind other windows and never activate, and ignore a launcher's "start
+    // maximized".
+    if (options_.quiet) {
+        window_.NeverActivate();
+        window_.ShowBehindOtherWindows();
+    } else {
+        window_.Show(showCommand);
+    }
 #ifdef KITE_HAS_CEF
     ShowFirstPage();
 #endif

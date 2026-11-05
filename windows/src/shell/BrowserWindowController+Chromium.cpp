@@ -137,11 +137,13 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         else commandBar_->ForwardKey(code, ctrl, shift);
     };
     events.relaunched = [this] {
-        // Kite was launched again: this one comes forward instead.
+        // Kite was launched again: this one comes forward instead (a quiet run stays behind;
+        // the other launch, a test on the same profile, fails).
+        if (options_.quiet) return;
         if (IsIconic(window_.Handle())) ShowWindow(window_.Handle(), SW_RESTORE);
         SetForegroundWindow(window_.Handle());
     };
-    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, std::move(events), chromium_, error);
+    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, std::move(events), options_.quiet, chromium_, error);
         started != Chromium::StartResult::Started) {
         return started;
     }
