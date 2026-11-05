@@ -739,6 +739,11 @@ Value Encode(const BrowserState& state) {
     Put(o, "archived", EncodeArray(state.archived));
     Put(o, "archiveAfter", state.archiveAfter);
     Put(o, "searchEngine", state.searchEngine);
+    // Written only when a profile has settings of its own, as the Mac does.
+    Object settings;
+    for (const auto& [key, value] : state.profileSettings) settings.emplace(key, Encode(value));
+    if (settings.empty()) o.erase("profileSettings");
+    else Put(o, "profileSettings", Value(std::move(settings)));
     return Value(std::move(o));
 }
 
@@ -792,8 +797,18 @@ std::optional<BrowserState> DecodeBrowserState(const Value& v) {
         if (!state.ArchiveAfterSeconds() && state.archiveAfter != "never") state.archiveAfter = "twelveHours";
     }
     if (auto engine = OptionalString(v, "searchEngine")) state.searchEngine = *engine;
+    if (const Value* settings = v.Find("profileSettings"); settings && !settings->IsNull()) {
+        // [String: ProfileSettings]: one that doesn't decode fails the session, as on the Mac.
+        if (!settings->AsObject()) return std::nullopt;
+        for (const auto& [key, value] : *settings->AsObject()) {
+            auto decoded = DecodeProfileSettings(value);
+            if (!decoded) return std::nullopt;
+            // Keyed by a UUID's text, kept as written (the Mac's keys are its own uuidString).
+            state.profileSettings.emplace(key, std::move(*decoded));
+        }
+    }
     state.extra = Extra(v, {"spaces", "selectedSpaceID", "favorites", "profileFavorites", "favoriteSplits", "recentlyClosed",
-                            "archived", "archiveAfter", "searchEngine"});
+                            "archived", "archiveAfter", "searchEngine", "profileSettings"});
     // Pinned tabs saved before Kite kept a pinned URL take the page they're on, as the Mac's
     // decoder does.
     state.SyncPinnedURLs();

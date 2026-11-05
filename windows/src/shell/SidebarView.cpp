@@ -959,6 +959,17 @@ bool SidebarView::Renames(const SidebarRow& row) const {
     return rename_ && renameTarget_.kind == row.kind && renameTarget_.id == row.id;
 }
 
+bool SidebarView::InRenamedRow(D2D1_POINT_2F q) const {
+    if (!rename_ || renameTarget_.kind == SidebarRow::Kind::Header || renamePage_ != model_.spaceID) return false;
+    if (!OverList(q)) return false;
+    for (const SidebarRow& row : model_.rows) {
+        if (row.kind != renameTarget_.kind || row.id != renameTarget_.id) continue;
+        const auto [pillTop, pillBottom] = PillSpan(listTop_ + row.top - scroll_);
+        return q.y >= pillTop && q.y < pillBottom;
+    }
+    return false;
+}
+
 std::pair<float, float> SidebarView::PillSpan(float top) const {
     const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
     auto snap = [scale](float points) { return std::round(points * scale) / scale; };
@@ -1364,6 +1375,13 @@ std::optional<POINT> SidebarView::RenameDoneCentre() const {
     return POINT{std::lround(((done.left + done.right) / 2 + PageOffset()) * scale), std::lround((done.top + done.bottom) / 2 * scale)};
 }
 
+std::optional<POINT> SidebarView::RenameFieldEnd() const {
+    if (!rename_) return std::nullopt;
+    const D2D1_RECT_F box = rename_->Box();
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    return POINT{std::lround((box.right + PageOffset()) * scale), std::lround((box.top + box.bottom) / 2 * scale)};
+}
+
 std::optional<POINT> SidebarView::HeaderNameCentre() {
     if (model_.rows.empty() || model_.rows.front().kind != SidebarRow::Kind::Header) return std::nullopt;
     const SidebarRow& header = model_.rows.front();
@@ -1629,8 +1647,11 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         lastClickTime_ = time;
         lastClickAt_ = at;
         pointer_ = at;
-        // While a space is renamed, a press in its field edits it, on Done commits it on release,
-        // and anywhere else ends it (keeping what was typed) and goes on as a press.
+        // While something is renamed, a press in its field edits it, on Done commits it on release.
+        // Elsewhere in a renamed tab's or folder's row it does nothing and the field keeps editing
+        // (the Mac's row isn't a responder, so its field editor stays, and tapped(at:) ignores a
+        // renaming row; its close and Back to Pinned URL are hidden). Anywhere else it ends the
+        // rename (keeping what was typed) and goes on as a press.
         if (rename_) {
             const D2D1_POINT_2F q = OnPage(p);
             if (rename_->Press(q.x, q.y, (wParam & MK_SHIFT) != 0)) {
@@ -1639,6 +1660,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
                 ScheduleDraw();
                 return true;
             }
+            if (InRenamedRow(q)) return true;
             EndRenaming(true);
         }
         // A top-row button (SymbolButton): it takes the click that brings the window forward too,

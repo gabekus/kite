@@ -165,11 +165,17 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         if (IsIconic(window_.Handle())) ShowWindow(window_.Handle(), SW_RESTORE);
         SetForegroundWindow(window_.Handle());
     };
+    events.downloadUpdated = [this](const DownloadUpdate& update) { DownloadUpdated(update); };
     if (const auto started = Chromium::Start(instance_, window_.Handle(), root, sandboxInfo, std::move(events), options_.quiet,
                                              options_.chromiumSwitches, chromium_, error);
         started != Chromium::StartResult::Started) {
         return started;
     }
+    // Each profile's download folder and Ask, as each download starts (read once: nothing on
+    // Windows changes them yet; Settings comes with W31a).
+    chromium_->SetDownloadLocations(DownloadLocations(), options_.downloadFolder);
+    if (options_.saveLog && options_.testAutomaticDownloads) chromium_->AllowAutomaticDownloads(*options_.testAutomaticDownloads);
+    if (options_.saveLog) chromium_->LogParkedPages();
     window_.onWake = [this] { chromium_->RunPending(); };
     window_.onMinimize = [this] {
         sidebar_->HideTip();
@@ -179,7 +185,7 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         sidebar_->HideTip();
         chromium_->WindowMoved();
     };
-    window_.mayClose = [this] { return chromium_->MayCloseWindow(); };
+    window_.mayClose = [this] { return MayQuit() && chromium_->MayCloseWindow(); };
     window_.onFocus = [this] {
         // The open bar keeps the keyboard in Kite's window.
         if (!commandBar_ || !commandBar_->IsOpen()) chromium_->Focus();
@@ -222,11 +228,13 @@ std::wstring BrowserWindowController::ShutDownChromium() {
     if (!rendererProblem_.empty()) return L"the first page's renderer isn't sandboxed: " + rendererProblem_;
     if (!helperProblem_.empty()) return L"a helper isn't sandboxed: " + helperProblem_;
     if (!chromium_->PagesCanBeHidden()) return L"a page had no Chromium widget window to hide: background tabs would keep drawing";
-    // Chromium's default would cap pages at 30 fps on a low battery (Chromium::SetEnergySaverEnabled).
+    // On, as in Chrome and on the Mac (Chromium::SetEnergySaverEnabled). That's Chromium's own
+    // default too, so only a profile whose Local State has it off (CI's smoke writes 0 first)
+    // shows that Kite set it.
     if (!energySaverRead_) return L"Chromium's Energy Saver preference was never read back";
-    if (!energySaverState_) return L"Chromium has no Energy Saver preference to turn off";
-    if (*energySaverState_ != 0) {
-        return L"Chromium's Energy Saver is " + std::to_wstring(*energySaverState_) + L", not off (0)";
+    if (!energySaverState_) return L"Chromium has no Energy Saver preference to turn on";
+    if (*energySaverState_ != 1) {
+        return L"Chromium's Energy Saver is " + std::to_wstring(*energySaverState_) + L", not on (1)";
     }
     // One WM_CLOSE must close the window (the browsers first); the 30 s timer's second one
     // would otherwise hide a close that hangs.
