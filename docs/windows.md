@@ -532,9 +532,13 @@ its journal, its log or `User Data\lockfile` (a probe that opens each for
 reading while denying writers, before and after the read: *Arc is writing it*),
 a hot journal or a `History-wal` that isn't empty with no writer (*Arc didn't
 finish its last write*), or the file changing during the read. A lockfile
-nobody holds is nothing. Merging costs the UI thread once, after the session
-is saved: about 45 ms for 20,000 pages, 65–135 ms into a full history, about
-50 ms more for each further profile. `kitecore import-arc` prints the history
+nobody holds (or one that can't be opened at all) is nothing; any other failure
+to open a file counts as a writer. Merging runs on the UI thread after the
+session is saved, one profile a message: about 45 ms for 20,000 pages, 65–135 ms
+into a full history (merging on the history worker from a snapshot is the
+follow-up). A window that closes with the writer's result in merges the rest at
+once; one that closes before it (the session still being written) keeps the
+spaces and side files, and Arc's history isn't merged. `kitecore import-arc` prints the history
 counts: rows found, pages imported and new, and what was left out by reason.
 
 Known differences from the Mac's history import:
@@ -548,9 +552,11 @@ Known differences from the Mac's history import:
   refuses.
 - A row over 4 MiB, or a URL over Chromium's 2 MB, is left out.
 - Rows tied on last visit at the 20,000th place go by row order (SQLite leaves
-  it unspecified); two rows that are one URL once normalized are one page.
+  it unspecified).
 - A history store whose file isn't read yet queues an import and merges it
   once it is, so its new pages aren't counted in the summary.
+- Two rows that are one URL once normalized are one page: the newer row's visit
+  and title (the older title when the newer has none) and the higher count.
 
 ## Refresh rate
 
