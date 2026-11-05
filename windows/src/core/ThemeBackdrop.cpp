@@ -45,8 +45,8 @@ F3 OklabToLinearSRGB(F3 c) {
             -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s};
 }
 
-// sRGB's transfer function from linear (core/ColorSpaces.h), clamped.
-float LinearToSRGB(float c) { return color::LinearToSrgb(c); }
+// sRGB's transfer function from linear in the shader's float (core/ColorSpaces.h), clamped.
+float LinearToSRGB(float c) { return color::LinearToSrgbShader(c); }
 
 // Where each colour sits, by palette size (kAnchors).
 constexpr F2 kAnchors[4][4] = {

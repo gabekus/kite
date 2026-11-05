@@ -64,6 +64,11 @@ float LinearToSrgb(float c) {
     return x <= 0.0031308f ? 12.92f * x : static_cast<float>(1.055 * std::pow(static_cast<double>(x), 1 / 2.4) - 0.055);
 }
 
+float LinearToSrgbShader(float c) {
+    c = std::clamp(c, 0.f, 1.f);
+    return c <= 0.0031308f ? 12.92f * c : 1.055f * std::pow(c, 1.f / 2.4f) - 0.055f;
+}
+
 Color BlendCalibrated(const Color& a, const Color& b, double fraction) {
     static const double kSrgb[3][2] = {{0.64, 0.33}, {0.30, 0.60}, {0.15, 0.06}};
     static const double kGeneric[3][2] = {{0.630, 0.340}, {0.295, 0.605}, {0.155, 0.077}};

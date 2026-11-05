@@ -10,6 +10,9 @@ namespace kite::color {
 float SrgbToLinear(float c);
 // The other way, from a linear value clamped to 0...1 first.
 float LinearToSrgb(float c);
+// The same in float throughout, as Kite.metal's (and Theme.hlsl's) shader computes it: what the
+// backdrop's CPU reference matches, to the bit (Tests/Fixtures/theme-backdrop.json).
+float LinearToSrgbShader(float c);
 
 // An sRGB colour with its alpha, components 0...1, not premultiplied.
 struct Color {
