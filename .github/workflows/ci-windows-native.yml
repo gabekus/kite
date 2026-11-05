@@ -147,6 +147,14 @@ jobs:
           & windows/build/Release/kitecore.exe --profile $profileDir state
           if ($LASTEXITCODE -ne 0) { throw "kitecore state exited with $LASTEXITCODE" }
 
+          # A Kite that opens where no one can see it (under the check's own cover, which never
+          # activates) ends with its page hidden and requestAnimationFrame stopped (P2), also when
+          # the page tries to keep itself drawing.
+          foreach ($attack in 'none', 'stopPropagation', 'spoofState', 'docOpen', 'docOpenStop', 'endlessOpen', 'iframeStorm') {
+            & windows/tests/CoveredLaunchCheck.ps1 -Kite windows/build/Release/Kite.exe -Cover -Attack $attack
+            if (-not $?) { throw "the covered-launch check ($attack) failed" }
+          }
+
           # A flag without its value is a usage error (exit 1), never a normal launch.
           $code = Run-Kite @('--capture')
           if ($code -ne 1) { throw "--capture without a path: expected exit 1, got $code" }
