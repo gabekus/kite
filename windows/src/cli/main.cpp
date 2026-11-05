@@ -20,6 +20,7 @@
 //   kitecore [--profile DIR] tab rename TAB_ID [NAME...]|pinned-url TAB_ID URL|reset-all
 //   kitecore [--profile DIR] folder new [SPACE_ID]|rename FOLDER NAME...|delete FOLDER|move TAB_ID FOLDER
 //   kitecore [--profile DIR] shown header|tab|folder|divider|newTab ID [SPACE_ID]
+//   kitecore [--profile DIR] menu tab|favorite TAB_ID|folder FOLDER [--pick TITLE...]
 //   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
 //   kitecore [--profile DIR] space swipe DX [SECONDS]
 //   kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...
@@ -60,6 +61,16 @@
 // is a middle click (pressed and let go at the point): on a tab's row it closes the tab as its close
 // button does (a Windows addition, not the Mac's), printing whether it went ("removed") or, pinned,
 // only unloaded; anywhere else, nothing. A close button's click prints the same `outcome`.
+// `click … --button right` is a right-click (or a Ctrl+click, the Mac's ⌃-click) there: it prints the
+// menu the window opens (`kind` space, tab, folder or favorite, its `id` and `line`, and `button`
+// on one of a row's own buttons, which a Ctrl+click presses instead), or `none`.
+// `menu` prints a tab's, folder's or favorite's menu as `space menu` prints the space's (each
+// item's title, enabled and submenu, a submenu's items too) and its `line`, as the Mac's
+// KITE_TEST_CONTEXT_MENU logs one; with --pick it runs the item of that title ("Submenu ▸ Item" for
+// one in a submenu) as the window does and prints what it did (exit 6 for a disabled or missing
+// one): Delete prints the question the window asks first and goes on as if Delete Folder was
+// pressed; Rename… and New Nested Folder… print that the window opens a rename; the Copy items
+// print what they'd copy.
 // The tab edits (Tabs and the command bar's commands, and the sidebar's buttons): `tab pin` is Pin
 // Tab / Unpin Tab (Ctrl+D) and prints where the tab is now (pinned or unpinned, or favorite);
 // `favorite` is Add to / Remove from Favorites, likewise; `rename` renames it (no NAME, or a blank
@@ -168,6 +179,7 @@
 #include "core/SessionStore.h"
 #include "core/SessionWriter.h"
 #include "core/Sidebar.h"
+#include "core/SidebarContextMenu.h"
 #include "core/SidebarTopRow.h"
 #include "core/SpaceBar.h"
 #include "core/SpaceEditing.h"
@@ -200,13 +212,14 @@ int Usage() {
         "       kitecore [--profile DIR] undo type:TEXT|back|paste:TEXT|move|undo|redo...\n"
         "       kitecore [--profile DIR] sidebar [SPACE_ID] [--page back,forward,loading] [--hidden]\n"
         "       kitecore [--profile DIR] collapse SPACE_ID\n"
-        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]] [--page back,forward,loading] [--double] [--button left|middle]\n"
+        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]] [--page back,forward,loading] [--double] [--button left|middle|right]\n"
         "       kitecore [--profile DIR] open TEXT... [--space ID] [--background]\n"
         "       kitecore [--profile DIR] select TAB_ID\n"
         "       kitecore [--profile DIR] tab next|prev|NUMBER\n"
         "       kitecore [--profile DIR] tab pin|favorite|duplicate|reset|separate|reveal|replace-pin TAB_ID\n"
         "       kitecore [--profile DIR] tab rename TAB_ID [NAME...]|pinned-url TAB_ID URL|reset-all\n"
         "       kitecore [--profile DIR] folder new [SPACE_ID]|rename FOLDER NAME...|delete FOLDER|move TAB_ID FOLDER\n"
+        "       kitecore [--profile DIR] menu tab|favorite TAB_ID|folder FOLDER [--pick TITLE...]\n"
         "       kitecore [--profile DIR] shown header|tab|folder|divider|newTab ID [SPACE_ID]\n"
         "       kitecore [--profile DIR] shortcuts\n"
         "       kitecore [--profile DIR] close TAB_ID\n"
@@ -368,6 +381,116 @@ std::optional<occlusion::Rect> ParseRect(const std::string& text) {
 
 // Ids typed in either case, like UUID(uuidString:).
 std::string Id(const std::string& text) { return NormalizeUuid(text).value_or(text); }
+
+// A menu's items for `menu` and `click --button right`: each title, whether it's enabled,
+// whether it's a submenu (with its items), separators as {"separator": true}.
+json::Value MenuItemsJson(const std::vector<SidebarMenuItem>& menu) {
+    json::Array items;
+    for (const SidebarMenuItem& item : menu) {
+        if (item.command == SidebarMenuItem::Command::Separator) {
+            items.emplace_back(json::Object{{"separator", true}});
+            continue;
+        }
+        json::Object entry{{"title", item.title}, {"enabled", item.enabled}, {"submenu", item.submenu}};
+        if (item.submenu) entry.emplace("items", MenuItemsJson(item.items));
+        items.emplace_back(std::move(entry));
+    }
+    return json::Value(std::move(items));
+}
+
+const char* OutcomeName(CloseOutcome outcome);
+
+// What the window does for a row menu's item (BrowserWindowController::RunRowMenuItem), on the
+// session: what it did goes in `out`. The items that need the window (a rename field, the
+// clipboard) say so and what they'd do. Empty on success.
+std::string RunMenuItem(BrowserState& state, const std::string& id, const SidebarMenuItem& item, json::Object& out) {
+    using C = SidebarMenuItem::Command;
+    using R = BrowserState::ArchiveTabsRelative;
+    const auto where = [&] {
+        const TabSection section = state.Location(id)->section;
+        return std::string(section == TabSection::Pinned ? "pinned" : section == TabSection::Unpinned ? "unpinned" : "favorite");
+    };
+    const auto ids = [](const std::vector<Tab>& tabs) {
+        json::Array list;
+        for (const Tab& tab : tabs) list.emplace_back(tab.id);
+        return json::Value(std::move(list));
+    };
+    switch (item.command) {
+    case C::AddToFavorites:
+    case C::RemoveFromFavorites:
+    case C::TogglePin:
+        if (item.command == C::TogglePin) state.TogglePin(id);
+        else state.ToggleFavorite(id);
+        out.emplace("now", where());
+        return {};
+    case C::BackToPinnedURL: {
+        const auto url = state.ResetTab(id);
+        if (!url) return "nothing to reset";
+        out.emplace("url", *url);
+        return {};
+    }
+    case C::SeparateFromPinnedTab: {
+        const auto made = state.SeparateFromPinnedTab(id);
+        if (!made) return "nothing to separate";
+        out.emplace("id", *made);
+        return {};
+    }
+    case C::ReplacePinnedURL:
+        if (!state.ReplacePinnedURLWithCurrent(id)) return "nothing to replace";
+        out.emplace("pinnedURL", *state.FindTabByID(id)->pinnedURL);
+        return {};
+    case C::CopyLink:
+        if (const Tab* tab = state.FindTabByID(id); tab->url) out.emplace("copy", *tab->url);
+        return {};
+    case C::CopyLinkAsMarkdown:
+        out.emplace("copy", MarkdownLink(*state.FindTabByID(id)).value_or(""));
+        return {};
+    case C::RenameTab:
+    case C::RenameFolder: out.emplace("window", std::string("rename")); return {};
+    case C::DuplicateTab: out.emplace("id", *state.Duplicate(id)); return {};
+    case C::CloseTab: out.emplace("outcome", std::string(OutcomeName(state.Close(id)))); return {};
+    case C::ArchiveOthers: out.emplace("archived", ids(state.ArchiveTabs(R::Others, id))); return {};
+    case C::ArchiveBelow: out.emplace("archived", ids(state.ArchiveTabs(R::Below, id))); return {};
+    case C::ArchiveAbove: out.emplace("archived", ids(state.ArchiveTabs(R::Above, id))); return {};
+    case C::DuplicateFolder: {
+        const auto copy = state.DuplicateFolder(id);
+        if (!copy) return "it can't be duplicated";
+        out.emplace("id", *copy);
+        return {};
+    }
+    case C::DeleteFolder:
+    case C::DeleteLiveFolder: {
+        // The window asks first; here it's as if its Delete Folder (or a live folder's Delete) was
+        // pressed. A folder's tabs are archived; a live folder's go unarchived.
+        const FolderDeletion deletion = FolderDeletionOf(state, id);
+        out.emplace("asks", json::Object{{"title", deletion.title}, {"message", deletion.message}, {"confirm", deletion.confirm}});
+        if (deletion.live) {
+            json::Array removed;
+            for (const std::string& tab : state.DeleteLiveFolder(id)) removed.emplace_back(tab);
+            out.emplace("removed", json::Value(std::move(removed)));
+        } else {
+            out.emplace("archived", ids(state.DeleteFolder(id)));
+        }
+        return {};
+    }
+    case C::NewNestedFolder: {
+        const auto nested = state.CreateNestedFolder(id);
+        if (!nested) return "no such folder";
+        out.emplace("id", *nested);
+        out.emplace("window", std::string("rename"));
+        return {};
+    }
+    case C::TurnFolderIntoSpace: {
+        const auto space = state.TurnFolderIntoSpace(id);
+        if (!space) return "it can't become a space";
+        out.emplace("space", *space);
+        return {};
+    }
+    case C::CopyAllLinks: out.emplace("copy", LinkList(TabsIn(state.FolderByID(id)->items))); return {};
+    case C::CopyAllLinksAsMarkdown: out.emplace("copy", MarkdownLinkList(TabsIn(state.FolderByID(id)->items))); return {};
+    default: return "it isn't ported yet";  // disabled, so never picked
+    }
+}
 
 // What closing a tab did, as `close` and a click's `outcome` print it.
 const char* OutcomeName(CloseOutcome outcome) {
@@ -792,7 +915,7 @@ int main(int argc, char** argv) {
     PageStatus page;
     bool hidden = false;
     int clicks = 1;
-    bool middle = false;
+    bool middle = false, right = false;
     if (args[0] == "sidebar" || args[0] == "click") {
         for (size_t i = 1; i < args.size(); ++i) {
             if (args[i] == "--hidden" && args[0] == "sidebar") {
@@ -801,6 +924,7 @@ int main(int argc, char** argv) {
                 clicks = 2;
             } else if (args[i] == "--button" && args[0] == "click" && i + 1 < args.size()) {
                 if (args[i + 1] == "middle") middle = true;
+                else if (args[i + 1] == "right") right = true;
                 else if (args[i + 1] != "left") return Usage();
                 args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
             } else if (args[i] == "--page" && i + 1 < args.size()) {
@@ -1184,7 +1308,43 @@ int main(int argc, char** argv) {
         const float listTop = SidebarListTop(tray);
         // The space bar along the bottom: a click on a space's cell selects it (pressed and let
         // go at the point, as the window's).
-        if (middle) {
+        if (right) {
+            // A right-click (or a Ctrl+click, the Mac's ⌃-click): the menu the window opens there,
+            // as the window asks (SidebarView::MenuTargetAt): a space's cell, a favorite's pane, then
+            // the page's header (the space's menu), a tab's row or a folder's. Nothing changes.
+            json::Object out{{"target", std::string("none")}};
+            const auto put = [&](const char* kind, const std::string& id, const std::string& line) {
+                out["target"] = json::Value(std::string("menu"));
+                out.emplace("kind", std::string(kind));
+                out.emplace("id", id);
+                out.emplace("line", line);
+            };
+            const float x = values[0], y = values[1];
+            if (x >= 0 && x < 240 && y >= SpaceBarTop(values[2]) && y < values[2]) {
+                const std::vector<SpaceCell> cells = SpaceCells(state);
+                const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
+                if (const auto press = SpaceBarPressAt(layout, cells, x, y - SpaceBarTop(values[2]))) {
+                    put("space", press->spaceID, SpaceMenuLine(SpaceMenu(state, press->spaceID)));
+                }
+            } else if (x >= 0 && x < 240 && InFavorites(tray, 240, x, y)) {
+                if (const auto pane = FavoritePressAt(tray, x, y); pane && pane->target == FavoritePress::Target::Pane) {
+                    put("favorite", pane->tabID, SidebarMenuLine(FavoriteMenu(state, pane->tabID)));
+                }
+            } else if (x >= 0 && x < 240 && !TopRowItemAt(topRow, x, y)) {
+                if (const auto target = SidebarMenuTargetAt(rows, 240, values[2], values[3], x, y, listTop)) {
+                    switch (target->kind) {
+                    case SidebarMenuTarget::Kind::Space: put("space", target->id, SpaceMenuLine(SpaceMenu(state, target->id))); break;
+                    case SidebarMenuTarget::Kind::Tab: put("tab", target->id, SidebarMenuLine(TabMenu(state, target->id))); break;
+                    case SidebarMenuTarget::Kind::Folder: put("folder", target->id, SidebarMenuLine(FolderMenu(state, target->id))); break;
+                    case SidebarMenuTarget::Kind::Favorite:
+                    case SidebarMenuTarget::Kind::None: break;  // New Tab: no menu
+                    }
+                    // On one of the row's buttons, which a Ctrl+click presses instead.
+                    if (target->button) out.emplace("button", true);
+                }
+            }
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (middle) {
             // A middle click (Windows' close-a-tab click): a tab's row closes as its close button
             // does; anything else (the top row, the bar, a favorite, a folder, the header) takes nothing.
             const auto press = values[0] >= 0 && values[0] < 240 && !TopRowItemAt(topRow, values[0], values[1]) &&
@@ -1381,6 +1541,37 @@ int main(int argc, char** argv) {
         } else {
             return Usage();
         }
+        changed = true;
+    } else if (command == "menu" && args.size() >= 3) {
+        // A row's menu as the window shows it (core/SidebarContextMenu.h), and with --pick an item
+        // of it run as the window runs it (the Mac's KITE_TEST_CONTEXT_MENU pick).
+        std::optional<std::string> pick;
+        if (args.size() >= 5 && args[3] == "--pick") pick = Join(args, 4);
+        else if (args.size() != 3) return Usage();
+        static const std::map<std::string, SidebarMenuKind> kinds{
+            {"tab", SidebarMenuKind::Tab}, {"folder", SidebarMenuKind::Folder}, {"favorite", SidebarMenuKind::Favorite}};
+        const auto kind = kinds.find(args[1]);
+        if (kind == kinds.end()) return Usage();
+        std::string id = Id(args[2]);
+        if (kind->second == SidebarMenuKind::Folder) {
+            const auto found = state.FolderMatching(args[2]);
+            if (!found) return kNotFound;
+            id = found->folder->id;
+        }
+        const std::vector<SidebarMenuItem> menu = SidebarMenu(state, kind->second, id);
+        if (menu.empty()) return kNotFound;
+        if (!pick) {
+            std::puts(json::Write(json::Object{{"items", MenuItemsJson(menu)}, {"line", SidebarMenuLine(menu)}}).c_str());
+            return kOk;
+        }
+        const SidebarMenuItem* item = PickSidebarMenuItem(menu, *pick);
+        if (!item) return kRefused;
+        json::Object out{{"picked", item->title}};
+        if (const std::string problem = RunMenuItem(state, id, *item, out); !problem.empty()) {
+            std::fprintf(stderr, "kitecore: %s\n", problem.c_str());
+            return kRefused;
+        }
+        std::puts(json::Write(json::Value(std::move(out))).c_str());
         changed = true;
     } else if (command == "shown" && (args.size() == 3 || args.size() == 4)) {
         static const std::map<std::string, SidebarRow::Kind> kinds{{"header", SidebarRow::Kind::Header},   {"tab", SidebarRow::Kind::Tab},

@@ -377,7 +377,7 @@ function(middle_click_checks)
   if(NOT bar2 STREQUAL bar)
     message(FATAL_ERROR "middle clicks on nothing changed the sidebar: ${bar2}")
   endif()
-  expect_exit_early(1 click 100 141 --button right)
+  expect_exit_early(1 click 100 141 --button side)
 
   # A favorite's pane (YouTube's, from 8,90, 50 by 47): nothing, and it's still a favorite.
   file(COPY_FILE "${CMAKE_CURRENT_LIST_DIR}/../helix/states/favorites-4.json" "${WORK}/session.json")
@@ -889,6 +889,179 @@ if(NOT inboxName STREQUAL "Inbox" OR NOT inFolder STREQUAL "yes" OR NOT folderSh
   message(FATAL_ERROR "shown gave ${inFolder}, ${folderShown}, ${favShown}")
 endif()
 file(REMOVE_RECURSE "${TABS}")
+
+# W17: the sidebar's row menus, on the folders session (a pinned tab, Reading with two tabs and
+# Old articles inside, Recipes, and a Today tab, selected): each menu as the window shows it, what a
+# right-click (or Ctrl+click) finds where, and items run as the window runs them (--pick).
+set(MENUS "${WORK}-menus")
+file(REMOVE_RECURSE "${MENUS}")
+file(MAKE_DIRECTORY "${MENUS}")
+file(COPY_FILE "${CMAKE_CURRENT_LIST_DIR}/../helix/states/folders.json" "${MENUS}/session.json")
+function(menus_kitecore out)
+  execute_process(COMMAND "${KITECORE}" --profile "${MENUS}" ${ARGN}
+                  RESULT_VARIABLE code OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr OUTPUT_STRIP_TRAILING_WHITESPACE ENCODING UTF8)
+  if(NOT code EQUAL 0)
+    message(FATAL_ERROR "kitecore ${ARGN} exited ${code}: ${stderr}")
+  endif()
+  set(${out} "${stdout}" PARENT_SCOPE)
+endfunction()
+function(menus_exit expected)
+  execute_process(COMMAND "${KITECORE}" --profile "${MENUS}" ${ARGN} RESULT_VARIABLE code OUTPUT_QUIET ERROR_QUIET)
+  if(NOT code EQUAL expected)
+    message(FATAL_ERROR "kitecore ${ARGN}: expected exit ${expected}, got ${code}")
+  endif()
+endfunction()
+set(menuPinned "A1B2C3D4-0001-4A00-8000-00000000A001")
+set(menuReading "A1B2C3D4-0002-4A00-8000-00000000F001")
+set(menuToday "A1B2C3D4-0009-4A00-8000-00000000A006")
+# A folder's menu: Arc's items, order and words, with a submenu-less list and its line.
+menus_kitecore(menu menu folder ${menuReading})
+string(JSON line GET "${menu}" line)
+string(JSON count LENGTH "${menu}" items)
+string(JSON first GET "${menu}" items 0 title)
+string(JSON separator GET "${menu}" items 1 separator)
+string(JSON turn GET "${menu}" items 5 title)
+string(JSON turnEnabled GET "${menu}" items 5 enabled)
+if(NOT line STREQUAL "Duplicate | --- | Delete | --- | New Nested Folder… | Turn “Reading” into Space | Copy All Links | Copy All Links as Markdown | --- | Rename…"
+   OR NOT count EQUAL 10 OR NOT first STREQUAL "Duplicate" OR NOT separator OR NOT turn STREQUAL "Turn “Reading” into Space" OR NOT turnEnabled)
+  message(FATAL_ERROR "the folder menu gave ${menu}")
+endif()
+# By name too, as `folder` takes it.
+menus_kitecore(byName menu folder reading)
+string(JSON byNameLine GET "${byName}" line)
+if(NOT byNameLine STREQUAL line)
+  message(FATAL_ERROR "the folder menu by name gave ${byName}")
+endif()
+# A Today tab's (the selected one: Add Split View, greyed out until split view; nothing else in
+# Today, so the archive items are greyed out too) and a pinned tab's (Unpin, Edit Pinned Page's
+# submenu, Unload; no archive items).
+menus_kitecore(menu menu tab ${menuToday})
+string(JSON todayLine GET "${menu}" line)
+menus_kitecore(menu menu tab ${menuPinned})
+string(JSON pinnedLine GET "${menu}" line)
+string(JSON editSubmenu GET "${menu}" items 2 submenu)
+string(JSON editFirst GET "${menu}" items 2 items 0 title)
+string(JSON editFirstEnabled GET "${menu}" items 2 items 0 enabled)
+if(NOT todayLine STREQUAL "Add to Favorites | Pin Tab | Copy Link | Copy link as Markdown | Rename… | --- | (Add Split View) | Duplicate | (Move to ▸ [(🏠 Personal)]) | --- | Close Tab | (Archive Other Tabs) | (Archive Tabs Below) | (Archive Tabs Above)"
+   OR NOT pinnedLine STREQUAL "Add to Favorites | Unpin Tab | Edit Pinned Page ▸ [(Edit…) / Replace Pinned URL with Current] | Copy Link | Copy link as Markdown | Rename… | --- | (Open in Split View) | Duplicate | (Move to ▸ [(🏠 Personal)]) | --- | Unload Tab"
+   OR NOT editSubmenu OR NOT editFirst STREQUAL "Edit…" OR editFirstEnabled)
+  message(FATAL_ERROR "the tab menus gave ${todayLine} and ${pinnedLine}")
+endif()
+# No such row: exit 5; a tab's id as a favorite's: exit 5.
+menus_exit(5 menu folder Nowhere)
+menus_exit(5 menu tab 00000000-0000-4000-8000-000000000000)
+menus_exit(5 menu favorite ${menuToday})
+menus_exit(1 menu row ${menuToday})
+# Where a right-click lands (157 is where the page starts, under the empty favorites): Reading's
+# row, the header (the space's menu), New Tab and the divider (none).
+menus_kitecore(onFolder click 100 257 --button right)
+string(JSON onFolderKind GET "${onFolder}" kind)
+string(JSON onFolderID GET "${onFolder}" id)
+string(JSON onFolderLine GET "${onFolder}" line)
+menus_kitecore(onHeader click 100 177 --button right)
+string(JSON onHeaderKind GET "${onHeader}" kind)
+string(JSON onHeaderLine GET "${onHeader}" line)
+menus_kitecore(onNewTab click 100 487 --button right)
+string(JSON onNewTabTarget GET "${onNewTab}" target)
+menus_kitecore(onDivider click 100 455 --button right)
+# A row's own buttons: the Today tab's close button (202 to 226 in its pill at 157 + 351) and the
+# header's chevron (205 to 231, 5pt down) pass a right-click's menu up to their row, marked as buttons
+# (a Ctrl+click presses them instead).
+menus_kitecore(onClose click 214 528 --button right)
+string(JSON onCloseKind GET "${onClose}" kind)
+string(JSON onCloseButton GET "${onClose}" button)
+menus_kitecore(onChevron click 220 167 --button right)
+string(JSON onChevronKind GET "${onChevron}" kind)
+string(JSON onChevronButton GET "${onChevron}" button)
+string(JSON onFolderButton ERROR_VARIABLE onFolderNoButton GET "${onFolder}" button)
+if(NOT onCloseKind STREQUAL "tab" OR NOT onCloseButton OR NOT onChevronKind STREQUAL "space" OR NOT onChevronButton OR NOT onFolderNoButton)
+  message(FATAL_ERROR "right-clicks on buttons gave ${onClose}, ${onChevron}; on the row ${onFolder}")
+endif()
+string(JSON onDividerTarget GET "${onDivider}" target)
+if(NOT onFolderKind STREQUAL "folder" OR NOT onFolderID STREQUAL menuReading OR NOT onFolderLine STREQUAL line
+   OR NOT onHeaderKind STREQUAL "space" OR NOT onHeaderLine MATCHES "^\\(?Change Space Icon…\\)? \\| Rename Space…"
+   OR NOT onNewTabTarget STREQUAL "none" OR NOT onDividerTarget STREQUAL "none")
+  message(FATAL_ERROR "right-clicks gave ${onFolder}, ${onHeader}, ${onNewTab}, ${onDivider}")
+endif()
+# Items run as the window runs them: the Copy items say what they'd copy; Rename… opens the row's
+# field in the window; New Nested Folder… makes a folder inside, open, and opens its rename.
+menus_kitecore(copied menu folder ${menuReading} --pick Copy All Links)
+string(JSON copiedText GET "${copied}" copy)
+menus_kitecore(renamed menu folder ${menuReading} --pick Rename…)
+string(JSON renamedWindow GET "${renamed}" window)
+menus_kitecore(nested menu folder ${menuReading} --pick New Nested Folder…)
+string(JSON nestedID GET "${nested}" id)
+menus_kitecore(nestedShown shown folder ${nestedID})
+if(NOT copiedText STREQUAL "https://example.net/\nhttps://example.com/elsewhere\nhttps://example.edu/" OR NOT renamedWindow STREQUAL "rename"
+   OR NOT nestedShown STREQUAL "yes")
+  message(FATAL_ERROR "the folder menu's items gave ${copied}, ${renamed}, ${nested}, ${nestedShown}")
+endif()
+# Duplicate: a copy right after it; Delete: the Mac's question, then its tabs archived.
+menus_kitecore(dupResult menu folder ${menuReading} --pick Duplicate)
+string(JSON copyID GET "${dupResult}" id)
+# The copy is right after Reading among the pinned items (the session's third).
+file(READ "${MENUS}/session.json" session)
+string(JSON afterReading GET "${session}" state spaces 0 pinnedItems 2 folder _0 id)
+menus_kitecore(deleted menu folder ${copyID} --pick Delete)
+string(JSON askTitle GET "${deleted}" asks title)
+string(JSON askConfirm GET "${deleted}" asks confirm)
+string(JSON archivedCount LENGTH "${deleted}" archived)
+menus_kitecore(copyShown shown folder ${copyID})
+if(NOT afterReading STREQUAL copyID OR NOT askTitle STREQUAL "Delete your “Reading” folder?" OR NOT askConfirm STREQUAL "Delete Folder"
+   OR NOT archivedCount EQUAL 3 OR NOT copyShown STREQUAL "no")
+  message(FATAL_ERROR "Duplicate and Delete gave ${dupResult} (then ${afterReading}), ${deleted}, ${copyShown}")
+endif()
+# A tab's Pin Tab pins it; Add to Favorites makes it a favorite, whose menu is the favorite's.
+menus_kitecore(pinResult menu tab ${menuToday} --pick Pin Tab)
+string(JSON pinnedNow GET "${pinResult}" now)
+menus_kitecore(faved menu tab ${menuToday} --pick Add to Favorites)
+string(JSON favedNow GET "${faved}" now)
+menus_kitecore(favMenu menu favorite ${menuToday})
+string(JSON favLine GET "${favMenu}" line)
+if(NOT pinnedNow STREQUAL "pinned" OR NOT favedNow STREQUAL "favorite"
+   OR NOT favLine STREQUAL "Remove from Favorites | Edit Pinned Page ▸ [(Edit…) / Replace Pinned URL with Current] | Copy Link | --- | Unload Tab")
+  message(FATAL_ERROR "Pin Tab and Add to Favorites gave ${pinResult}, ${faved}, ${favMenu}")
+endif()
+# A right-click on its pane, now in the grid at the top (8pt under the address field's 82).
+menus_kitecore(onPane click 30 100 --button right)
+string(JSON onPaneKind GET "${onPane}" kind)
+string(JSON onPaneID GET "${onPane}" id)
+# Disabled items and missing ones are refused (exit 6), and change nothing.
+menus_exit(6 menu tab ${menuPinned} --pick Open in Split View)
+menus_exit(6 menu tab ${menuPinned} --pick Edit Pinned Page ▸ Edit…)
+menus_exit(6 menu tab ${menuPinned} --pick Nothing)
+menus_kitecore(replaced menu tab ${menuPinned} --pick Edit Pinned Page ▸ Replace Pinned URL with Current)
+string(JSON replacedURL GET "${replaced}" pinnedURL)
+if(NOT onPaneKind STREQUAL "favorite" OR NOT onPaneID STREQUAL menuToday OR NOT replacedURL STREQUAL "https://example.org/")
+  message(FATAL_ERROR "the favorite's pane gave ${onPane}; Replace Pinned URL gave ${replaced}")
+endif()
+# Turn "Recipes" into Space: a new space after this one, selected, named after it.
+menus_kitecore(turned menu folder Recipes --pick Turn “Recipes” into Space)
+string(JSON turnedSpace GET "${turned}" space)
+menus_kitecore(state state)
+string(JSON spaceName GET "${state}" spaces 1 name)
+string(JSON selectedSpace GET "${state}" selectedSpaceID)
+if(NOT spaceName STREQUAL "Recipes" OR NOT selectedSpace STREQUAL turnedSpace)
+  message(FATAL_ERROR "Turn into Space gave ${turned}: ${state}")
+endif()
+# A live folder (one the Mac made: session.json is shared): Delete Live Folder asks Arc's question,
+# then removes it with its tab, unarchived, and turns its source off.
+file(READ "${MENUS}/session.json" session)
+string(JSON live SET "${session}" state spaces 0 pinnedItems 99
+       [=[{"folder":{"_0":{"id":"0F0F0F0F-0000-4000-8000-000000000001","name":"Pull Requests","isExpanded":true,"live":{"source":"github"},"items":[{"tab":{"_0":{"id":"0F0F0F0F-0000-4000-8000-0000000000A1","url":"https://github.com/a/b/pull/1","title":"A pull request","lastActiveAt":0}}}]}}}]=])
+file(WRITE "${MENUS}/session.json" "${live}")
+menus_kitecore(liveMenu menu folder 0F0F0F0F-0000-4000-8000-000000000001)
+string(JSON liveLine GET "${liveMenu}" line)
+menus_kitecore(liveGone menu folder 0F0F0F0F-0000-4000-8000-000000000001 --pick Delete Live Folder)
+string(JSON liveAsk GET "${liveGone}" asks title)
+string(JSON liveRemoved GET "${liveGone}" removed 0)
+file(READ "${MENUS}/session.json" liveState)
+string(JSON liveOff GET "${liveState}" state liveFoldersTurnedOff 0)
+if(NOT liveLine STREQUAL "(Refresh) | --- | Delete Live Folder" OR NOT liveAsk STREQUAL "Delete your GitHub Live Folder?"
+   OR NOT liveRemoved STREQUAL "0F0F0F0F-0000-4000-8000-0000000000A1" OR NOT liveOff STREQUAL "github")
+  message(FATAL_ERROR "Delete Live Folder gave ${liveMenu}, ${liveGone}: ${liveState}")
+endif()
+file(REMOVE_RECURSE "${MENUS}")
 
 if(NOT EXISTS "${WORK}/session.json")
   message(FATAL_ERROR "no session.json written")

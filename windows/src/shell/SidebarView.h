@@ -13,7 +13,8 @@
 // code or draws anything. It shows hover and takes
 // clicks and the wheel (HandleMouse); what a click does goes to Actions. Under the pages, the
 // space bar (shell/SpaceBarView), whose cells drag to new places, and the space's menu on a
-// right-click on a cell or the header (Actions::spaceMenu). While a space, a tab or a folder is
+// right-click on a cell or the header (Actions::spaceMenu), a tab's, a folder's or a favorite's on
+// a right-click on its row or pane (Actions::rowMenu), each also on a Ctrl+click. While a space, a tab or a folder is
 // renamed, its header or row shows the name field (shell/RenameField). A pinned tab off its
 // pinned page shows Back to Pinned URL on hover. Over the address field, the top row: the toggle,
 // back, forward and reload, each its own visual (shell/SidebarTopRowView). Under it, the space's
@@ -43,6 +44,7 @@
 #include "core/Favorites.h"
 #include "core/Models.h"
 #include "core/Sidebar.h"
+#include "core/SidebarContextMenu.h"
 #include "core/SidebarTopRow.h"
 #include "core/SpaceSwipe.h"
 #include "shell/Capture.h"
@@ -82,6 +84,9 @@ public:
         std::function<void(const std::string& spaceID, size_t index)> moveSpace;
         // A right-click on a space's cell or its header: its menu at `screen` (px).
         std::function<void(const std::string& spaceID, POINT screen)> spaceMenu;
+        // A right-click on a tab's or a folder's row, or a favorite's pane: its menu at `screen`
+        // (px). Both menus also open on a Ctrl+click there, as the Mac's ⌃-click does.
+        std::function<void(SidebarMenuKind kind, const std::string& id, POINT screen)> rowMenu;
         // The header's name field committed (Return, Done, or leaving it) with `name`.
         std::function<void(const std::string& spaceID, const std::string& name)> renameSpace;
         // A click on the current space's name: its rename field (the Mac's beginRenaming).
@@ -324,6 +329,14 @@ private:
     void RefreshHover();
     // A point in the sidebar as the space bar sees it, when it's over the bar.
     std::optional<D2D1_POINT_2F> BarPoint(D2D1_POINT_2F point) const;
+    // What a right-click (or a Ctrl+click) at a sidebar point lands on, as the Mac's views stack: a
+    // space's cell in the bar (the space's menu), a favorite's pane, then the page's header, tabs,
+    // folders and New Tab (core's SidebarMenuTargetAt, which marks a row's own buttons). None where
+    // nothing with a menu is: a Ctrl+press there is an ordinary press.
+    std::optional<SidebarMenuTarget> MenuTargetAt(D2D1_POINT_2F p) const;
+    // Opens its menu (Actions::spaceMenu or rowMenu), the pointer at `at` (client px); nothing for
+    // a row without one (Kind::None).
+    void OpenMenu(const SidebarMenuTarget& target, POINT at);
     // The drag of a cell, from the press that started it, to its drop and its landing.
     void DragSpaceTo(D2D1_POINT_2F barPoint);
     void DropSpace(D2D1_POINT_2F barPoint);
@@ -433,6 +446,9 @@ private:
     std::optional<TopRowButton> topPress_;   // a press on an enabled top-row button
     std::optional<FavoritePress> favoritePress_;  // a press on a favorite's pane
     std::optional<SidebarPress> middlePress_;     // a middle press on a tab's row (it closes on release)
+    // A Ctrl+left press on a row, pane or cell (not on one of its buttons): its menu opens when it's let
+    // go over the same one, as a right-click's does; on New Tab (no menu) it's spent.
+    std::optional<SidebarMenuTarget> menuPress_;
     bool activating_ = false;         // the next press brings the window forward
     int clicks_ = 0;
     DWORD lastClickTime_ = 0;

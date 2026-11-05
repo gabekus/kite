@@ -64,6 +64,12 @@
 //                            `sidebar` lists them) renamed in place, a tab's or folder's, its name
 //                            all selected; or with the pointer resting on it (a pinned tab off its
 //                            page shows Back to Pinned URL).
+//   Kite.exe --capture FILE.png --row-menu N | --favorite-menu N
+//                            the same with the menu of the selected space's Nth row (from 1, as
+//                            kitecore's `sidebar` lists them: a tab's or a folder's) or of the Nth
+//                            favorite's pane open, as a right-click on its middle opens it (Windows'
+//                            own menu, read back from its window); its line goes to stderr, as the
+//                            Mac's KITE_TEST_CONTEXT_MENU logs one.
 //   Kite.exe --capture FILE.png --run-command ID
 //                            the same after the command ID (pinTab, say) ran, as its shortcut runs it.
 //   Kite.exe --frame-log FILE
@@ -304,7 +310,7 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // value (core/CommandLine.h).
     kite::command_line::Spec spec;
     spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control", "--favicons", "--empty-favorites-hover"};
-    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log", "--rename-row", "--hover-row", "--run-command", "--find", "--find-result", "--occlusion-log"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log", "--rename-row", "--hover-row", "--row-menu", "--favorite-menu", "--run-command", "--find", "--find-result", "--occlusion-log"};
     // Its value is switches ("--a --b"), each checked against the allow-list below; Chromium's
     // raw read sees them too, so only allowed ones get this far.
     spec.switchValueOptions = {"--chromium-switches"};
@@ -466,9 +472,10 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     if (captureFavicons && !captureOption.present) return Fail(quiet, L"--favicons only goes with --capture", kUsage);
     const bool heldEmptyHover = HasFlag(args, L"--empty-favorites-hover");
     if (heldEmptyHover && !captureOption.present) return Fail(quiet, L"--empty-favorites-hover only goes with --capture", kUsage);
-    std::optional<size_t> heldFavoriteHover, heldFavoriteClick;
+    std::optional<size_t> heldFavoriteHover, heldFavoriteClick, heldFavoriteMenu;
     for (const auto& [flag, out] :
-         {std::pair<const wchar_t*, std::optional<size_t>*>{L"--favorite-hover", &heldFavoriteHover}, {L"--favorite-click", &heldFavoriteClick}}) {
+         {std::pair<const wchar_t*, std::optional<size_t>*>{L"--favorite-hover", &heldFavoriteHover}, {L"--favorite-click", &heldFavoriteClick},
+          {L"--favorite-menu", &heldFavoriteMenu}}) {
         const OptionValue option = Option(args, flag);
         if (!option.present) continue;
         *out = option.value ? place(*option.value) : std::nullopt;
@@ -478,9 +485,10 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // The sidebar's rows, for a capture: one renamed in place (a tab's or folder's, its place from
     // 1 as kitecore's `sidebar` lists the selected space's rows), one with the pointer resting on it,
     // and a command run by its id first (pinTab, say), as its shortcut would.
-    std::optional<size_t> heldRowRename, heldRowHover;
+    std::optional<size_t> heldRowRename, heldRowHover, heldRowMenu;
     for (const auto& [flag, out] :
-         {std::pair<const wchar_t*, std::optional<size_t>*>{L"--rename-row", &heldRowRename}, {L"--hover-row", &heldRowHover}}) {
+         {std::pair<const wchar_t*, std::optional<size_t>*>{L"--rename-row", &heldRowRename}, {L"--hover-row", &heldRowHover},
+          {L"--row-menu", &heldRowMenu}}) {
         const OptionValue option = Option(args, flag);
         if (!option.present) continue;
         *out = option.value ? place(*option.value) : std::nullopt;
@@ -853,6 +861,8 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         if (captureError.empty() && heldFavoriteClick) captureError = controller->ClickFavorite(*heldFavoriteClick);
         if (captureError.empty() && heldFavoriteHover) captureError = controller->HoldFavoriteHover(*heldFavoriteHover);
         if (captureError.empty() && heldEmptyHover) captureError = controller->HoldEmptyFavoritesHover();
+        if (captureError.empty() && heldRowMenu) captureError = controller->HoldRowMenu(*heldRowMenu);
+        if (captureError.empty() && heldFavoriteMenu) captureError = controller->HoldFavoriteMenu(*heldFavoriteMenu);
         // Last, so the favicons of whatever the states above show have come. Favorites whose icons
         // didn't load show the globe, as on the Mac; the run says which.
         if (captureError.empty() && captureFavicons) {

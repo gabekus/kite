@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -14,6 +15,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <variant>
 
 #include "Check.h"
 #include "core/Models.h"
@@ -746,11 +748,24 @@ TEST(aWorkerStillWritingAtTheEndIsHandedToOnStuck) {
         });
         writer.OnStuck([stuck] { ++*stuck; });
         writer.Save(b.State(1));
+        // session.json is written before the clock blocks the worker: wait for it (10 s at most), so
+        // the short Flush below times out on the stuck backup, not on a slow runner's write.
+        std::error_code ignored;
+        for (int i = 0; i < 1000 && !fs::exists(b.store.File(), ignored); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        CHECK(fs::exists(b.store.File(), ignored));
         CHECK(!writer.Flush(std::chrono::milliseconds(50)).empty());
         // The destructor doesn't wait again after the timed-out Flush: OnStuck runs at once.
     }
     CHECK(*stuck == 1);
-    CHECK(std::get<BrowserState>(b.store.Load(SessionStore::Unreadable::Leave)) == b.State(1));
+    // Checked, not std::get: a session that didn't read fails here with a message, rather than
+    // ending the run with an uncaught bad_variant_access (0xc0000409 and no output).
+    const auto loaded = b.store.Load(SessionStore::Unreadable::Leave);
+    if (!std::holds_alternative<BrowserState>(loaded)) {
+        std::fprintf(stderr, "aWorkerStillWritingAtTheEndIsHandedToOnStuck: session.json didn't load as a session\n");
+        CHECK(std::holds_alternative<BrowserState>(loaded));
+    } else {
+        CHECK(std::get<BrowserState>(loaded) == b.State(1));
+    }
     // The worker let go finishes on its own, with its own reference to the shared state.
     *gate = true;
     for (int i = 0; i < 500 && b.store.Backups().All().empty(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
