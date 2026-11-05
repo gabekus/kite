@@ -1,0 +1,2 @@
+star.fill bar: half-covered box 17.0x16.0 -> 16.5x16.0; edge-weighted 18.07x17.27 -> 17.58x17.04 (ratio 0.9731, 0.9867; expected 0.9767)
+star.fill header: half-covered box 20.5x20.0 -> 20.0x19.0; edge-weighted 21.01x20.24 -> 20.70x19.86 (ratio 0.9853, 0.9812; expected 0.9767)

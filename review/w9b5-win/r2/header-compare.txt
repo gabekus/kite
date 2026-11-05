@@ -1,0 +1,11 @@
+bookmark.fill                      mac [-5.   5.5 -8.   8.5] | W9b4 [-5.5  5.5 -8.   8.5] (max edge 0.50, 60 px) | now [-5.   5.5 -8.   8.5] (max edge 0.00, 32 px)
+pawprint.fill                      mac [-8.   8.  -7.5  8. ] | W9b4 [-8.   8.5 -8.   8. ] (max edge 0.50, 126 px) | now [-8.5  8.5 -7.5  8. ] (max edge 0.50, 74 px)
+bed.double.fill                    mac [-9.5  9.5 -6.5  6.5] | W9b4 [-9.5  9.5 -6.5  6.5] (max edge 0.00, 61 px) | now [-9.5  9.5 -6.5  6.5] (max edge 0.00, 61 px)
+fork.knife                         mac [-5.5  5.  -9.   8.5] | W9b4 [-5.5  5.5 -9.   8.5] (max edge 0.50, 114 px) | now [-5.5  5.  -9.   8.5] (max edge 0.00, 109 px)
+dumbbell.fill                      mac [-10.   10.   -5.5   6. ] | W9b4 [-10.5  10.5  -5.5   6. ] (max edge 0.50, 157 px) | now [-10.5  10.5  -5.5   6. ] (max edge 0.50, 157 px)
+bandage.fill                       mac [-7.5  8.  -7.5  8. ] | W9b4 [-8.   7.5 -7.5  8. ] (max edge 0.50, 152 px) | now [-7.5  8.  -7.5  8. ] (max edge 0.00, 136 px)
+baseball.fill                      mac [-7.5  7.5 -7.5  8. ] | W9b4 [-8.  8. -8.  8.] (max edge 0.50, 296 px) | now [-8.   8.  -7.5  8. ] (max edge 0.50, 289 px)
+takeoutbag.and.cup.and.straw.fill  mac [-9.5  9.5 -8.5  9. ] | W9b4 [-9.5  9.5 -8.5  9. ] (max edge 0.00, 131 px) | now [-9.5  9.5 -8.5  9. ] (max edge 0.00, 139 px)
+theatermasks.fill                  mac [-12.5  13.   -8.5   8.5] | W9b4 [-13.   12.5  -9.    8.5] (max edge 0.50, 400 px) | now [-13.   12.5  -9.    9. ] (max edge 0.50, 375 px)
+briefcase                          mac [-9.   8.5 -7.5  7.5] | glyph [-9.   9.  -8.5  8.5] | round 1 [-9.   8.5 -7.   8. ] | now [-9.   8.5 -7.5  7.5] (max edge 0.00, 92 of 469 px)
+worst edge, nine: W9b4 0.50 -> now 0.50

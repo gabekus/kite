@@ -1,0 +1,24 @@
+bar greyed, dark (three-spaces)
+  mac      x -7.50..+7.00 y -6.00..+6.50 (14.50x12.50) centre (-0.25,+0.25) ink [131. 131. 131.] on [28. 28. 28.]
+  cap-base x -7.50..+7.50 y -7.00..+7.00 (15.00x14.00) centre (+0.00,+0.00) ink [129. 129. 129.] on [24. 24. 24.]; px differing (>half covered) 255 of 344, mean |coverage diff| 0.067
+  cap-new  x -7.50..+7.00 y -6.00..+6.50 (14.50x12.50) centre (-0.25,+0.25) ink [129. 129. 129.] on [24. 24. 24.]; px differing (>half covered) 30 of 344, mean |coverage diff| 0.006
+  cap-r2   x -7.50..+7.00 y -6.00..+6.50 (14.50x12.50) centre (-0.25,+0.25) ink [129. 129. 129.] on [24. 24. 24.]; px differing (>half covered) 72 of 344, mean |coverage diff| 0.021
+bar greyed, dark (two-spaces Personal)
+  mac      x -7.50..+7.00 y -6.00..+6.50 (14.50x12.50) centre (-0.25,+0.25) ink [131. 131. 131.] on [28. 28. 28.]
+  cap-base x -7.50..+7.50 y -7.00..+7.00 (15.00x14.00) centre (+0.00,+0.00) ink [129. 129. 129.] on [24. 24. 24.]; px differing (>half covered) 250 of 339, mean |coverage diff| 0.067
+  cap-new  x -7.50..+7.00 y -6.00..+6.50 (14.50x12.50) centre (-0.25,+0.25) ink [129. 129. 129.] on [24. 24. 24.]; px differing (>half covered) 25 of 339, mean |coverage diff| 0.006
+  cap-r2   x -7.50..+7.00 y -6.00..+6.50 (14.50x12.50) centre (-0.25,+0.25) ink [129. 129. 129.] on [24. 24. 24.]; px differing (>half covered) 77 of 339, mean |coverage diff| 0.021
+bar greyed, dark (sidebar)
+  mac      x -7.50..+7.00 y -6.00..+6.50 (14.50x12.50) centre (-0.25,+0.25) ink [132. 132. 131.] on [30. 30. 28.]
+  cap-base x -7.50..+7.50 y -7.00..+7.00 (15.00x14.00) centre (+0.00,+0.00) ink [129. 129. 129.] on [24. 24. 24.]; px differing (>half covered) 250 of 337, mean |coverage diff| 0.067
+  cap-new  x -7.50..+7.00 y -6.00..+6.50 (14.50x12.50) centre (-0.25,+0.25) ink [129. 129. 129.] on [24. 24. 24.]; px differing (>half covered) 23 of 337, mean |coverage diff| 0.006
+  cap-r2   x -7.50..+7.00 y -6.00..+6.50 (14.50x12.50) centre (-0.25,+0.25) ink [129. 129. 129.] on [24. 24. 24.]; px differing (>half covered) 77 of 337, mean |coverage diff| 0.021
+bar lit, light (two-spaces Work)
+  mac      x -7.50..+7.00 y -6.00..+6.50 (14.50x12.50) centre (-0.25,+0.25) ink [214.  74. 133.] on [238. 180. 165.]
+  cap-base x -7.50..+7.50 y -7.00..+7.00 (15.00x14.00) centre (+0.00,+0.00) ink [215.  75. 134.] on [243. 185. 171.]; px differing (>half covered) 257 of 339, mean |coverage diff| 0.067
+  cap-new  x -7.50..+7.00 y -6.00..+6.50 (14.50x12.50) centre (-0.25,+0.25) ink [215.  75. 134.] on [243. 185. 171.]; px differing (>half covered) 14 of 339, mean |coverage diff| 0.011
+  cap-r2   x -7.50..+7.00 y -6.00..+6.50 (14.50x12.50) centre (-0.25,+0.25) ink [215.  75. 134.] on [243. 185. 171.]; px differing (>half covered) 73 of 339, mean |coverage diff| 0.025
+  mac      x -9.00..+8.50 y -7.50..+7.50 (17.50x15.00) centre (-0.25,+0.00) ink [213.  74. 133.] on [239.  184.5 160. ]
+  cap-base x -6.50..+6.50 y -14.00..-11.50 (13.00x2.50) centre (+0.00,-12.75) ink [115.  90.  78.] on [244. 189. 165.]; px differing (>half covered) 541 of 469, mean |coverage diff| 0.189
+  cap-new  x -6.50..+6.50 y -14.00..-11.50 (13.00x2.50) centre (+0.00,-12.75) ink [115.  90.  78.] on [244. 189. 165.]; px differing (>half covered) 541 of 469, mean |coverage diff| 0.189
+  cap-r2   x -6.50..+6.50 y -14.00..-11.50 (13.00x2.50) centre (+0.00,-12.75) ink [115.  90.  78.] on [244. 189. 165.]; px differing (>half covered) 541 of 469, mean |coverage diff| 0.189
