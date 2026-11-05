@@ -78,11 +78,20 @@ void FrameClock::SetBoost(bool boost) {
     boosted_ = boost;
 }
 
-void FrameClock::BoostWithoutFrames(bool boost) {
-    static bool boosted = false;
-    if (boost == boosted) return;
-    boosted = boost;
+void FrameClock::BoostWithoutFrames::Set(bool boost) {
+    if (boost == on_) return;
+    on_ = boost;
     Boost(boost);
+}
+
+int FrameClock::ProcessBoosts() { return boosts; }
+
+void FrameClock::SetManual(bool manual) {
+    {
+        std::lock_guard lock(mutex_);
+        manual_ = manual;
+    }
+    wake_.notify_one();
 }
 
 void FrameClock::Stop() {
@@ -120,13 +129,15 @@ void FrameClock::Run() {
     int tooSoon = 0;  // frames in a row that came too soon after the last
     std::unique_lock lock(mutex_);
     for (;;) {
-        wake_.wait(lock, [this] { return quit_ || running_; });
+        wake_.wait(lock, [this] { return quit_ || (running_ && !manual_); });
         if (quit_) return;
         lock.unlock();
         // One frame: the compositor's clock, or DWM's next composition. A 500 Hz display's
         // frames come every 2 ms, so only frames closer than any display's (0.25 ms, 4 kHz)
         // mean the wait returned without one (no display, a locked session): then a frame is
-        // Sleep's ~16 ms.
+        // Sleep's ~16 ms. With the display off, the compositor clock's wait fails at once
+        // (STATUS_GRAPHICS_PRESENT_OCCLUDED) and DwmFlush paces the frames at DWM's displayless
+        // 500 Hz, stalling now and then for a few hundred ms (measured, Windows 11 26200).
         if (!compositorClock || compositorClock(0, nullptr, 100) != WAIT_OBJECT_0) {
             // DwmFlush returns at once when DWM has nothing outstanding: no faster than a
             // millisecond, so the thread never spins.

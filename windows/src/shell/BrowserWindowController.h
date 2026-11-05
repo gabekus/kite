@@ -147,7 +147,8 @@ public:
     // The smoke test's checks of the window: the command bar opens and draws, the sidebar and
     // the caption buttons draw something, and the lost-GPU path rebuilds and draws. Empty on
     // success. Then the window closes once the first page has loaded (30 s at most), or after
-    // a second without Chromium.
+    // a second without Chromium. The frame clock's own thread is checked first; the rest steps
+    // the clock's frames itself (FrameClock::SetManual), so its checks don't hang on the display.
     std::wstring SmokeTest();
     // The window's frame as the screen shows it: the backdrop with the sidebar, the caption
     // buttons and (with `barText`) the command bar opened with that text, composed over it.
@@ -244,12 +245,15 @@ private:
     void SyncSpace();
     void SpaceChanged(size_t old, size_t now);
     void FinishSettling();
+    // The pages start or stop sliding on the compositor, the compositor clock boosted meanwhile.
+    void SetSliding(bool sliding);
     // Two fingers over the sidebar (the Mac's SpaceSwipeController): each touchpad event goes
     // through core's SpaceSwipeGesture, with the pointer `at` (client px) as it is then; a
     // swipe's pages, bar and theme follow it, and its release settles on a space, selected once
     // the pages are at rest (CommitLanding, which says how many pages the selection moved). A
-    // vertical gesture scrolls the list under the pointer; one off the sidebar before it's the
-    // swipe's goes back to the system, for whatever is under the pointer.
+    // vertical gesture decided over the list scrolls it to its end, wherever the pointer goes; one
+    // off the sidebar before it's decided goes back to the system, for whatever is under the
+    // pointer.
     SpaceSwipeGesture::Step SwipeInputArrived(const SwipeInput& input, POINT at);
     // Whether a point (client px) is over the sidebar with nothing over it: where a touchpad's
     // gesture is the sidebar's (the Mac's isOverSidebar).
@@ -289,6 +293,8 @@ private:
     std::wstring WaitForDrop();
     // The clock's frames and the slide's timer, until the theme and the pages are at rest.
     std::wstring RunToRest(const wchar_t* what);
+    // Kite's count of compositor boosts held matches this window's holders that are on.
+    bool BoostsBalance() const;
     // The clock's frames and the window's timers until `done` (or `seconds` go by): whether it was.
     bool RunUntil(const std::function<bool()>& done, double seconds);
     // A slide's first frame now: the pages' drawing and the strip's animation committed, so the
@@ -364,6 +370,8 @@ private:
     // The smoke test's top row: its buttons, the page's states, a hover that draws nothing, a press
     // on a disabled button, and hiding and showing the sidebar from the toggle and Ctrl+S's command.
     std::wstring SmokeTestTopRow();
+    // The smoke test's checks, the clock's frames stepped by RunUntil.
+    std::wstring SmokeTestWindow();
     void MakeCommands();
     // Import from Arc (BrowserWindowControllerArcImport.cpp, the Mac's ArcImportController):
     // Arc's files are read on a worker, which posts kArcReadMessage when they're in.
@@ -475,8 +483,9 @@ private:
     // its first commit.
     std::string shownSpaceID_;
     std::optional<std::string> pagesAnchor_;
-    bool sidebarSliding_ = false;
+    bool sidebarSliding_ = false;  // set by SetSliding, with its boost
     bool slideStarted_ = false;
+    FrameClock::BoostWithoutFrames slideBoost_;
     // The swipe's: the space a release landed on, selected when the pages come to rest, and
     // that selection under way.
     SpaceSwipeGesture swipe_;
@@ -489,6 +498,8 @@ private:
     std::optional<SpaceSwipe::Neighbours> swipeNeighbours_;
     bool selectingBySwipe_ = false;
     bool swipeMoved_ = false;  // since the clock's last frame drew
+    // A touchpad gesture decided vertical over the list: the rest of it scrolls the list.
+    bool listScrolling_ = false;
     std::unique_ptr<Compositor> compositor_;
     std::unique_ptr<Favicons> favicons_;
     std::unique_ptr<SidebarView> sidebar_;
@@ -496,6 +507,7 @@ private:
     // shows it), and its slide under way.
     bool sidebarShown_ = true;
     bool toggling_ = false;
+    FrameClock::BoostWithoutFrames toggleBoost_;
     // What each tab's page last reported (the Mac's BrowserStore.pages), gone with its page.
     std::map<std::string, PageStatus> pageStatus_;
     std::unique_ptr<CaptionButtonsView> caption_;
