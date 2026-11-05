@@ -591,6 +591,93 @@ logs each save and its UI-thread cost. Not yet: the Mac's `syncPinnedURLs` in
 its page-event path (a pinned tab that had no page adopting the first address
 it reports), which comes with pinning.
 
+## History
+
+Browsing history (W25a) is the Mac's: one entry per page (`url`, `title`,
+`lastVisit`, `visitCount`), web pages only, at most 20,000 (the oldest tenth
+goes past the cap), in `history.json` for the default profile and
+`Chromium\<dir>\Kite History.json` for another, in the Mac's format
+(`core/History`, `Tests/Fixtures/history-v1.json`, which both suites read). A
+page's main-frame address (CEF's `OnAddressChange`, as the Mac's
+`addressDidChange`: the URL a navigation commits, after its redirects, and a
+same-document change to a new URL, such as pushState or a fragment) is a visit
+when it isn't the address that tab's page last recorded, so a reload isn't one
+and a page closed for the live-page limit records again when it loads; the
+page's title goes to the address last recorded, and a repeat changes nothing.
+A URL is kept as the Mac's NSURL keeps it (`History::Normalized`): a path,
+query or fragment that holds what it may not, which Chromium sometimes leaves
+as typed (`|`, `^`, `` ` ``, `{`, `}`, `[`, `]`, `\`, a stray `%`), is taken as
+unescaped and percent-encoded whole, its `%` signs too; a valid part is left
+as it is.
+
+History saves 3 s after the last change and at least every 30 s while changes
+keep coming (`CappedDebounce`), at once for an import, and when the window
+closes; logoff and shutdown wait for it within the same 3 s as the session,
+and quitting within the same 10 s. `core/HistoryStore` reads each profile's
+file and writes it on a worker of its own (`core/WorkerThread`, the
+session writer's thread too), from a snapshot that costs the UI thread a few
+μs: the entries are kept in 256 shards that copies share and copy on write, a
+shard at a time. The files are read only once the launch is Kite's (after
+Chromium starts, or for a capture), so a second launch never opens the running
+Kite's history. Until a file has been read, its store keeps this run's visits
+and replays them over it. A file over 64 MB isn't read (and isn't written
+over); one over the cap is trimmed as it's read, on the worker. The command
+bar shows up to three pages from the current space's profile's history after
+the tabs, never one already shown as a tab, the page you're on or the Open
+row's URL; each entry keeps its title, URL and host lowercased and decomposed,
+so a keystroke's search is a byte search with Swift's Character rules checked
+only where it hits. `kitecore history` lists, searches, adds, merges, removes
+and clears; the `history-bench` executable measures it.
+
+Known differences from the Mac:
+
+- A file that's there but couldn't be read or moved aside (or is over 64 MB) is
+  never written over; the Mac's `try?` reads it as no file and overwrites it.
+- Only URLs Foundation reads back are recorded (`url::HasValidAuthority`), so
+  one entry can't make the Mac drop the whole file.
+- A page history doesn't keep (about:blank) saves nothing; the Mac's store
+  marks itself changed and saves anyway.
+- Ties in the ranking and the prune go to the later visit, then the lower URL;
+  the Mac leaves them in no set order.
+- A visit that takes the history past the cap while the writer holds a
+  snapshot doesn't prune; the next visit after the writer has let go does (the
+  Mac prunes at once, on a copy-on-write dictionary that copies everything).
+- Before a profile's file has been read, a search sees only this run's
+  visits; the Mac reads the file on its main thread, so it never waits.
+- One shell timer serves every profile's saves, armed for the store due first;
+  each store keeps its own debounce, so the timing is the Mac's.
+- The bar's history rows show the no-favicon globe, as its tab rows do; the
+  Mac fetches `host/favicon.ico`.
+- The tab rows above the history rows are still W7a's; the Mac's Arc order is
+  W7c.
+- An unreadable file moved aside when `<name>.corrupt-<unix time>.json` is
+  already there gets a `-N` suffix (up to 99); the Mac's `try? moveItem` fails
+  then, and its next save writes over the unreadable file.
+- `HistoryStore::Merge` before the profile's file has been read counts the new
+  pages against this run's history only (the import is replayed over the file
+  once it's in, so nothing is lost or doubled); the Mac's read is done first.
+- A file over 20,000 pages is trimmed to 20,000 as it's read; the Mac keeps it
+  as it is until the next new page, then cuts it to 18,000 (Windows' next new
+  page past the cap cuts to 18,000 too).
+- Kite for Mac's CEF bridge (`ToNSURL`, KCBrowser.mm:110) encodes a URL that
+  has both an escape and a raw invalid character in the same part twice over
+  (`?a=%2C&b=x|y` becomes `?a=%252C&b=x%7Cy`). Windows does the same, so both
+  apps key the page alike; it's a Mac bug, to be fixed on the Mac side (and
+  then here).
+- A raw Unicode host would be kept as typed, where NSURL IDNA-encodes it
+  (`xn--…`). Chromium reports hosts in punycode, so a visit never has one; a
+  hand-written or imported file could.
+
+URL keys (`History::Normalized`) follow NSURL's RFC 3986 parsing, which is
+macOS 14's and later (Kite for Mac's minimum). Both suites read the same
+raw-to-key pairs (`Tests/Fixtures/history-url-keys.json`); the Mac's checks
+them against NSURL itself, last on macOS 15.7.4 (24G517), Gabe's runner. macOS
+14 itself hasn't been checked.
+
+Not yet: the history page (`kite://history`, with the Mac's days and
+headings), Delete browsing data, Import from Arc (W33a), and the bar's
+favicons.
+
 ## Refresh rate
 
 Kite renders at whatever the display supports (60Hz, 120/144Hz laptops, 240 to

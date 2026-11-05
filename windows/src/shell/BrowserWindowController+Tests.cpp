@@ -429,6 +429,12 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
     if (problem.empty() && barText) {
         // The bar as Ctrl+T opens it, with the text typed in.
         if (!commandBar_) return L"Kite couldn't make the command bar";
+        // Its history rows are the profile's file's: read on history's worker, waited for here
+        // (a test run, before the first frame it saves).
+        if (history_) {
+            history_->ForProfile(state_.SelectedProfileDirectory());
+            if (!history_->WaitForLoads(std::chrono::seconds(10))) return L"history wasn't read within 10 s";
+        }
         commandBar_->Show(CommandBarMode::NewTab, "", BarLook());
         commandBar_->Type(*barText);
         Pixels bar;

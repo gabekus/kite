@@ -63,12 +63,14 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     // The Mac's mutatePage: a navigation saves as soon as a sidebar change, a title or favicon
     // later (SessionSaveDelay::PageEvent); a report that changes nothing saves nothing.
     events.addressChanged = [this](const std::string& id, const std::string& url) {
+        RecordAddress(id, url);
         Tab* tab = TabNamed(id);
         const bool changed = tab && !url.empty() && tab->url != url;
         if (changed) tab->url = url;
         StateChanged(changed ? std::optional(SessionSaveDelay::Soon) : std::nullopt);
     };
     events.titleChanged = [this](const std::string& id, const std::string& title) {
+        RecordTitle(id, title);
         // An empty title keeps the last one, as the Mac's BrowserStore does.
         Tab* tab = TabNamed(id);
         const bool changed = tab && !title.empty() && tab->title != title;
@@ -123,6 +125,7 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         const auto opener = popupOpeners_.extract(id);
         state_.PageClosedItself(id, opener ? std::optional<std::string>(opener.mapped()) : std::nullopt);
         std::erase_if(popupOpeners_, [&](const auto& entry) { return entry.second == id; });
+        ForgetRecorded(id);
         SelectionMoved();
     };
     // A popup and its opener keep their pages while both tabs exist; a page closed for the
@@ -133,6 +136,9 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         pageStatus_.erase(id);
         if (const Tab* tab = state_.SelectedTab(); tab && tab->id == id) ShowPageStatus();
         std::erase_if(popupOpeners_, [&](const auto& entry) { return entry.first == id || entry.second == id; });
+        // The Mac's clearPage: the page that loads again when the tab is next shown records its
+        // address as a new visit.
+        ForgetRecorded(id);
     };
     events.shortcuts = shortcuts_;
     events.command = [this](const std::string& command) { RunCommand(command); };

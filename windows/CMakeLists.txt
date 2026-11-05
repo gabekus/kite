@@ -37,6 +37,8 @@ endif()
 add_library(KiteCoreWin STATIC
   src/core/CommandBar.cpp
   src/core/CommandLine.cpp
+  src/core/History.cpp
+  src/core/HistoryStore.cpp
   src/core/Json.cpp
   src/core/KeyBindings.cpp
   src/core/Models.cpp
@@ -50,6 +52,7 @@ add_library(KiteCoreWin STATIC
   src/core/SpaceEditing.cpp
   src/core/SpaceIcon.cpp
   src/core/SymbolShape.cpp
+  src/core/TextMatch.cpp
   src/core/PictureLoads.cpp
   src/core/SpaceSwipe.cpp
   src/core/SpaceSwipeGesture.cpp
@@ -65,6 +68,7 @@ add_library(KiteCoreWin STATIC
   src/core/URLInput.cpp
   src/core/Url.cpp
   src/core/Uuid.cpp
+  src/core/WorkerThread.cpp
 )
 target_include_directories(KiteCoreWin PUBLIC src)
 # SessionWriter's worker is a std::thread (pthreads off Windows).
@@ -202,6 +206,7 @@ add_executable(KiteCoreTests
   tests/main.cpp
   tests/CommandBarTests.cpp
   tests/CommandLineTests.cpp
+  tests/HistoryTests.cpp
   tests/JsonTests.cpp
   tests/KeyBindingsTests.cpp
   tests/ModelTests.cpp
@@ -224,8 +229,16 @@ add_executable(KiteCoreTests
   tests/TitleBarTests.cpp
   tests/UnicodeTests.cpp
   tests/URLInputTests.cpp
+  tests/WorkerThreadTests.cpp
 )
 target_link_libraries(KiteCoreTests PRIVATE KiteCoreWin)
+# What history costs (tests/HistoryBench.cpp): its own executable, since it counts every
+# allocation with its own operator new. CTest runs a small one so it keeps building and running.
+add_executable(history-bench tests/HistoryBench.cpp)
+target_link_libraries(history-bench PRIVATE KiteCoreWin)
+if(WIN32)
+  target_link_libraries(history-bench PRIVATE psapi)
+endif()
 # Writes Tests/Fixtures/theme-backdrop.json (see the file); not run by the tests.
 add_executable(gen-theme-golden EXCLUDE_FROM_ALL tests/GenThemeGolden.cpp)
 target_link_libraries(gen-theme-golden PRIVATE KiteCoreWin)
@@ -235,6 +248,7 @@ target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURR
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)
 add_test(NAME chromium-ignores-kites-command-line
   COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/shell/Chromium.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ChromiumSettingsCheck.cmake)
+add_test(NAME history-bench COMMAND history-bench 300)
 add_test(NAME kitecore-cli
   COMMAND ${CMAKE_COMMAND} -DKITECORE=$<TARGET_FILE:kitecore> -DWORK=${CMAKE_CURRENT_BINARY_DIR}/kitecore-cli-test
           -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/KitecoreCliTest.cmake)
