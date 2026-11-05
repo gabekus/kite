@@ -221,14 +221,44 @@ TEST(sidebarLeftIsDrawnToTheMacsInk) {
 }
 
 TEST(theStandInsSitWhereTheMacsSymbolsInk) {
-    // Measured from the Mac's 2× render: arrows 13.5 × 11 half a point low and a quarter left of
-    // their buttons' centres, reload 13 × 16 on its centre; xmark not yet measured.
+    // Measured from the Mac's 2× render: the arrows 13.5 × 11, half a point low and a quarter left of
+    // their buttons' centres. Reload, the X and the toggle are shapes of Kite's own.
     const std::optional<SymbolInk> back = MacSymbolInk("arrow.left");
     CHECK(back && back->width == 13.5f && back->height == 11 && back->centerX == -0.25f && back->centerY == 0.5f);
     CHECK(MacSymbolInk("arrow.right").has_value());
-    const std::optional<SymbolInk> reload = MacSymbolInk("arrow.clockwise");
-    CHECK(reload && reload->width == 13 && reload->height == 16);
-    CHECK(!MacSymbolInk("xmark") && !MacSymbolInk("sidebar.left"));
+    CHECK(!MacSymbolInk("arrow.clockwise") && !MacSymbolInk("xmark") && !MacSymbolInk("sidebar.left"));
+    CHECK(TopRowShape("sidebar.left") == &SidebarToggleShape() && TopRowShape("arrow.clockwise") == &ReloadShape() &&
+          TopRowShape("xmark") == &StopShape() && !TopRowShape("arrow.left"));
+}
+
+TEST(arrowClockwiseIsDrawnToTheMacsInk) {
+    // The Mac's reload at 2× (review/w12-mac/rest.png, its button centred on 436, 47 px): ink from
+    // 423 to 448.8 across and 31.5 to 63 down, the ring open at the top right, the chevron at the
+    // top pointing right, its point at 441.3, 38.1.
+    const SymbolShape& shape = ReloadShape();
+    const ShapeBounds b = BoundsOf(shape);
+    const auto pt = [](float px, float centre) { return (px - centre) / 2; };
+    CHECK(Near(b.left, pt(423, 436), 0.1) && Near(b.right, pt(448.8f, 436), 0.1));
+    CHECK(Near(b.top, pt(31.5f, 47), 0.1) && Near(b.bottom, pt(63, 47), 0.1));
+    CHECK(Covers(shape, pt(424, 436), pt(50, 47)));         // the ring's left
+    CHECK(Covers(shape, pt(436, 436), pt(62, 47)));         // its bottom
+    CHECK(Covers(shape, pt(447.5f, 436), pt(50, 47)));      // its right end
+    CHECK(!Covers(shape, pt(447, 436), pt(42, 47)));        // the gap at the top right
+    CHECK(Covers(shape, pt(440.5f, 436), pt(38.3f, 47)));   // the chevron's point
+    CHECK(Covers(shape, pt(436.8f, 436), pt(33.5f, 47)));   // its upper leg
+    CHECK(Covers(shape, pt(435.8f, 436), pt(43.5f, 47)));   // its lower leg
+    CHECK(!Covers(shape, pt(436, 436), pt(50, 47)));        // the ring's middle
+    CHECK(!Covers(shape, pt(431, 436), pt(33, 47)));        // left of the chevron, above the ring
+}
+
+TEST(xmarkIsTwoCrossedStrokes) {
+    // Reload's stroke, 11pt across, a quarter point low: the middle and the four ends inked, the
+    // sides' middles not.
+    const SymbolShape& shape = StopShape();
+    const ShapeBounds b = BoundsOf(shape);
+    CHECK(Near(b.Width(), 11, 0.3) && Near(b.Height(), 11, 0.3) && Near((b.top + b.bottom) / 2, 0.25, 0.05));
+    CHECK(Covers(shape, 0, 0.25f) && Covers(shape, -4.5f, -4.25f) && Covers(shape, 4.5f, 4.75f));
+    CHECK(!Covers(shape, 0, -4.5f) && !Covers(shape, 4.5f, 0.25f));
 }
 
 TEST(theTopRowsButtonsAreCutOutOfTheWindowsDrag) {

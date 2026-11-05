@@ -2,6 +2,8 @@
 
 #include "core/SidebarTopRow.h"
 
+#include <cmath>
+
 #include "core/SpaceSwipe.h"
 
 namespace kite {
@@ -97,13 +99,13 @@ float SidebarSlideAt(float from, float to, double elapsed) {
 
 const SymbolShape& SidebarToggleShape() {
     // Measured from the Mac's toggle at 2× (its button 71...103, 7.5...39.5, centre 87, 23.5): the
-    // outline's outer edge 78.5...96.14 by 17.02...30.5 with a 1.15pt stroke and corners about 3.5;
+    // outline's outer edge 78.5...96.14 by 17.02...30.5 with a 1.15pt stroke and corners about 2.5;
     // the divider 84.08...85.23; three lines 80.83...82.9, 0.81 tall, centred on y 20.4, 22.41 and
     // 24.29.
     static const SymbolShape shape = [] {
         constexpr float cx = 87, cy = 23.5f;
         constexpr float left = 78.5f - cx, right = 96.14f - cx, top = 17.02f - cy, bottom = 30.5f - cy;
-        constexpr float stroke = 1.15f, radius = 3.5f;
+        constexpr float stroke = 1.15f, radius = 2.5f;
         ShapeBuilder b;
         b.RoundRect(left, top, right, bottom, radius);
         b.Cut().RoundRect(left + stroke, top + stroke, right - stroke, bottom - stroke, radius - stroke);
@@ -115,11 +117,75 @@ const SymbolShape& SidebarToggleShape() {
     return shape;
 }
 
+namespace {
+
+// A stroke from `a` to `p`, `half` its thickness either side, with round caps centred on its ends:
+// a rectangle reaching `half` past each end, its four corners rounded to `half`, which turns its
+// short ends into half circles.
+void Stroke(ShapeBuilder& b, ShapePoint a, ShapePoint p, float half) {
+    const float dx = p.x - a.x, dy = p.y - a.y, length = std::sqrt(dx * dx + dy * dy);
+    const float ux = dx / length * half, uy = dy / length * half;  // along it
+    const float nx = -uy, ny = ux;                                   // across it
+    a = ShapePoint{a.x - ux, a.y - uy};
+    p = ShapePoint{p.x + ux, p.y + uy};
+    b.RoundedPolygon({{a.x + nx, a.y + ny, half}, {p.x + nx, p.y + ny, half}, {p.x - nx, p.y - ny, half}, {a.x - nx, a.y - ny, half}});
+}
+
+// Reload's and the X's stroke: 2.36 px at 2× in the Mac's arrow.clockwise.
+constexpr float kStrokeHalf = 1.18f / 2;
+
+}  // namespace
+
+const SymbolShape& ReloadShape() {
+    // Measured from the Mac's reload at 2× (its button 404...468 by 15...79 px, centre 436, 47):
+    // the ring 423...448.8 across and down to 63, so centred on 435.9, 50.1 with its stroke's
+    // middle 11.72 px out; its right end just above three o'clock (the end's top at 48.3); the top
+    // running on, nearly level, to the chevron's point at 441.3, 38.1, whose legs run at 45° to their
+    // ends' centres at 435.9, 32.7 and 435, 44.4 (the lower a little longer, the chevron turned with
+    // the ring), all with round caps.
+    static const SymbolShape shape = [] {
+        constexpr float cx = -0.05f, cy = 1.55f, r = 5.86f, h = kStrokeHalf;
+        constexpr float start = -3, end = 270;  // degrees, clockwise on screen from +x
+        constexpr float pi = 3.14159265f;
+        ShapeBuilder b;
+        // The arc as a band: out along the outer edge, back along the inner one.
+        b.Arc(cx, cy, r + h, start, end).Arc(cx, cy, r - h, end, start).Close();
+        // Its round end at three o'clock.
+        b.Circle(cx + r * std::cos(start * pi / 180), cy + r * std::sin(start * pi / 180), h);
+        // The tail from the top to the chevron's point, and the chevron.
+        const ShapePoint top{cx, cy - r}, point{2.65f, -4.45f};
+        Stroke(b, top, point, h);
+        Stroke(b, ShapePoint{point.x - 2.71f, point.y - 2.71f}, point, h);
+        Stroke(b, ShapePoint{point.x - 3.16f, point.y + 3.16f}, point, h);
+        return b.Build();
+    }();
+    return shape;
+}
+
+const SymbolShape& StopShape() {
+    // An X 11pt across, a quarter point low (as SF's symbols sit, the arrows half a point), its
+    // strokes reload's.
+    static const SymbolShape shape = [] {
+        constexpr float reach = 5.5f - kStrokeHalf, y = 0.25f;
+        ShapeBuilder b;
+        Stroke(b, ShapePoint{-reach, y - reach}, ShapePoint{reach, y + reach}, kStrokeHalf);
+        Stroke(b, ShapePoint{-reach, y + reach}, ShapePoint{reach, y - reach}, kStrokeHalf);
+        return b.Build();
+    }();
+    return shape;
+}
+
+const SymbolShape* TopRowShape(const std::string& symbol) {
+    if (symbol == "sidebar.left") return &SidebarToggleShape();
+    if (symbol == "arrow.clockwise") return &ReloadShape();
+    if (symbol == "xmark") return &StopShape();
+    return nullptr;
+}
+
 std::optional<SymbolInk> MacSymbolInk(const std::string& symbol) {
     // The Mac's render at 2× (review/w9d-mac/rest.png): back 143...156.5 by 18.5...29.5 in a button
-    // centred on 150, 23.5, forward the same in 184's, reload 211.5...224.5 by 15.5...31.5 in 218's.
+    // centred on 150, 23.5, forward the same in 184's.
     if (symbol == "arrow.left" || symbol == "arrow.right") return SymbolInk{-0.25f, 0.5f, 13.5f, 11};
-    if (symbol == "arrow.clockwise") return SymbolInk{0, 0, 13, 16};
     return std::nullopt;
 }
 

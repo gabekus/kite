@@ -12,8 +12,9 @@
 // the buttons show no hover or press of their own. Hovering one shows its tooltip, Windows' own: a
 // comctl32 tooltip made on the first hover over a button (so comctl32 isn't loaded before), with a
 // tool for each button's rectangle and the window's mouse messages relayed to it (RelayMouse).
-// sidebar.left is Kite's own geometry (core's SidebarToggleShape); the others are Segoe Fluent
-// Icons' (Segoe MDL2 Assets' on Windows 10) stand-ins, scaled and placed to the Mac's ink.
+// sidebar.left, reload's arrow.clockwise and the X are Kite's own geometry (core's TopRowShape),
+// measured from the Mac's renders; back and forward are Segoe Fluent Icons' (Segoe MDL2 Assets' on
+// Windows 10) stand-ins, scaled and placed to the Mac's ink.
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -100,8 +101,9 @@ private:
     Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> iconFormat_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
-    Microsoft::WRL::ComPtr<ID2D1Geometry> toggleShape_;
-    bool toggleShapeTried_ = false;  // made once per device, kept even when it failed
+    // The drawn symbols' geometry, made once per device and kept even when it failed (null), as
+    // SpaceIconPainter's shapes.
+    std::map<const SymbolShape*, Microsoft::WRL::ComPtr<ID2D1Geometry>> shapes_;
     std::map<TopRowButton, ButtonGpu> gpu_;
     std::map<TopRowButton, float> opacities_;  // as last set on the visuals
     bool deviceLost_ = false;

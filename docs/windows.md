@@ -204,11 +204,14 @@ and goes with the page.
   traffic light does. The row's height and everything right of the toggle are the
   Mac's. `top_row_metrics::kToggleX` is the one number to change for another
   choice (the Mac's 71 is `kMacToggleX`).
-- **Symbols.** sidebar.left is Kite's own geometry (core's `SidebarToggleShape`),
-  measured from the Mac's 15pt render; back, forward, reload and the X are Segoe
-  Fluent Icons' (Segoe MDL2 Assets' on Windows 10) Back, Forward, Refresh and
-  Cancel, scaled to cover the Mac's measured ink and centred on it. The X isn't
-  measured yet (the Mac's references add it).
+- **Symbols.** sidebar.left, reload's arrow.clockwise and the X are Kite's own
+  geometry (core's `TopRowShape`), measured from the Mac's 15pt renders
+  (review/w9d-mac and review/w12-mac): Segoe's Refresh opens at one o'clock with
+  a corner arrowhead, where SF's opens at the top, its arc running into a chevron
+  there. The X is two crossed strokes of reload's weight, 11pt across, an
+  estimate until a Mac capture holds the loading state. Back and forward are
+  Segoe Fluent Icons' (Segoe MDL2 Assets' on Windows 10) Back and Forward, scaled
+  to cover the Mac's measured ink and centred on it.
 - **Each button is a `FadedLayer`** (shell/FadedLayer.h, shared with the space
   bar's icons): turning one on or off is an effect group's opacity, committed on
   the sidebar's next pass with nothing drawn; the X draws only reload's surface,
