@@ -48,16 +48,18 @@ enforce: [windows-architecture.md](windows-architecture.md). The plan:
 windows/
   CMakeLists.txt
   src/core/     the model (KiteCore's counterpart): JSON, BrowserState, session, URL input
-  src/shell/    Kite.exe: main.cpp (the command line, the session), BrowserWindowController
+  src/shell/    Kite.exe (with Chromium, Kite.dll under CEF's bootstrap): main.cpp (the command
+                line, the session), BrowserWindowController
                 (the window and what's in it: views, Chromium, shortcuts), composition, input
   src/cli/      kitecore: the model, headless
   tests/        unit tests (no test framework dependency)
   tools/perf/   kiteperf: the measurement harness, its session fixture and pages (never shipped)
   helix/        checkpoints.md and states/ (sessions for the UI gate)
   resources/    Kite.manifest (DPI, UTF-8 code page, long paths, Common Controls 6), Kite.ico (the
-                Mac's AppIcon.icns, from make-icon.py) and Kite.rc, which embeds them
+                Mac's AppIcon.icns, from make-icon.py), Kite.rc, which embeds them, and Version.rc
+  tools/build/  StampBootstrap.cpp: makes Kite.exe from CEF's bootstrap.exe (W6b)
   scripts/      fetch-cef.ps1, gen-unicode-tables.py, make-icon.py
-  cmake/        mingw-w64.cmake (cross-compile check off Windows)
+  cmake/        mingw-w64.cmake (cross-compile check off Windows), CopyCef.cmake
 ```
 
 ## Rendering
@@ -216,7 +218,74 @@ the Mac). The first page is made once the window is on
 screen and not minimized. `--smoke-test` loads
 `windows/helix/pages/smoke.html` in CI and fails unless one `WM_CLOSE`
 closes every browser in time. Not yet: the card's 6pt corners (a child window can't be clipped
-smoothly; W10), the sandbox (W6b), and the page in `--capture` (W10).
+smoothly; W10), and the page in `--capture` (W10).
+
+**Chromium's sandbox (W6b).** Every helper (renderer, GPU, utility) runs in
+Chromium's sandbox, as on the Mac, whose helpers enter it in KiteHelper/main.mm
+before the framework loads. CEF 156 does it on Windows only through its bootstrap
+(it no longer ships `cef_sandbox.lib` to link into a client), so `Kite.exe` is
+CEF's prebuilt `bootstrap.exe` and Kite's code is `Kite.dll` beside it. The
+bootstrap starts every process, puts a helper in the sandbox before any of Kite's
+code loads there, and calls `RunWinMain` in Kite.dll (`shell/main.cpp`), which
+checks the bootstrap's CEF version and hands its sandbox info to
+`CefExecuteProcess` and `CefInitialize`.
+
+- **Kite.exe** is made at build time by `windows/tools/build/StampBootstrap.cpp`
+  (the `KiteExe` target, run again only when one of its inputs changes). It's the
+  bootstrap with Kite's manifest (`resources/Kite.manifest`: per-monitor DPI v2,
+  the UTF-8 code page, long paths, and the common controls v6 the bootstrap's own
+  manifest asks for), Kite's version resource (`resources/Version.rc`, so Task
+  Manager says Kite rather than "CEF Bootstrap Application"), Kite's icon
+  (`resources/Kite.ico`, as its first icon group, in place of CEF's), and
+  chrome.exe's 8 MiB main-thread stack (the bootstrap reserves 1 MiB; Kite.exe
+  had 8). `stamp-bootstrap --check` verifies all of it in ctest's `kite-binaries`.
+- **The wrapper** is built for `CEF_API_VERSION_LAST` (`fetch-cef.ps1`'s
+  `USE_SANDBOX`), as Kite.dll is, and with Control Flow Guard (`/guard:cf`, which
+  CMake's defaults leave out), into `build-sandbox-cfg-release` and
+  `build-sandbox-cfg-debug`. The names change with how it's built, so a checkout
+  from before that shares the CEF folder keeps its own wrapper folders.
+- **Kite.dll** loads with only kernel32 and libcef.dll and delay-loads the rest:
+  every helper maps it, renderers under win32k lockdown, where user32 can't load.
+  A renderer now loads 21 DLLs where it loaded 28, none of user32, gdi32,
+  shell32, ole32 and imm32. Kite.dll and Kite.exe both have Control Flow Guard and
+  are CET compatible, as Chromium's binaries are, and every object of the
+  wrapper linked into Kite.dll is compiled with `/guard:cf`. `kite-binaries`
+  checks all of it.
+- **What runs where.** As in Chrome on Windows (Chrome 155 on the same PC shows
+  the same), renderers run at untrusted integrity with a restricted token and no
+  win32k, the GPU process at low integrity, the storage service untrusted, and
+  the network service unsandboxed at medium. Each renderer's main frame reports
+  its process (`kite.rendererPID`, sent in every run as the Mac's helper does for
+  its Task Manager). `--smoke-test` fails unless that renderer is below medium
+  integrity, restricted or in an AppContainer, and without win32k, and unless no
+  helper but the network service runs at medium (`shell/Sandbox.h`). It prints
+  each one's sandbox.
+- **The LPAC grant.** The build grants ALL RESTRICTED APPLICATION PACKAGES read
+  and execute on its output folder, as CEF's `SET_LPAC_ACLS` does, for a helper
+  Chromium runs as a less privileged AppContainer. Nothing at today's defaults
+  needs it: with the grant removed from the folder and its files, `--smoke-test`
+  passed and every helper ran as above (2026-11-04). Installing covers it anyway
+  (see Installing), for when one does.
+- **Absolute paths.** The bootstrap makes Kite.exe's folder the browser
+  process's working directory (so no helper inherits a handle to wherever Kite
+  was started). So every path Kite is given (`--capture`, `--frame-log`,
+  `KITE_SUPPORT_PATH`) must be absolute (`PathOption` in `shell/main.cpp`), and a
+  relative one is refused.
+
+CEF logs `Timeout of new browser info response for frame … (has_rfh=0)` at
+ERROR, sandboxed or not, every time Chromium's error page reloads itself (its
+NetErrorAutoReloader tries again after 1 s, 5 s, 30 s, 1 min, 5 min, 10 min and
+then every 30 min while the page is visible). Each try makes a speculative main
+frame in a renderer, which asks the browser process for its browser over a
+synchronous IPC; the try fails again, Chromium discards the frame, and CEF's
+browser side, which only answers frames it has attached, never answers or cancels
+the request, so it times out after 2 s and logs (CEF's `browser_info_manager.cc`).
+The renderer whose frame is gone waits those 2 s; nothing on screen does. The Mac
+runs the same CEF with the same settings, so it logs the same. Hiding it would
+take a log level above ERROR or turning off the error page's auto-reload, which
+the Mac has, so Kite leaves it to a fix in CEF (cancel the request when the frame
+is deleted). Popups were said to log it too; one that opens from a click wasn't
+reproduced here, since that needs a real click.
 
 ## Shortcuts
 
@@ -723,9 +792,9 @@ For a PR (docs/windows-architecture.md, Performance), build main and the branch,
 back:
 
 ```powershell
-windows\build\Release\kiteperf.exe --kite <main>\Kite.exe --phases idle,hover --runs 3 --label main --out main.json
-windows\build\Release\kiteperf.exe --kite <branch>\Kite.exe --phases idle,hover --runs 3 --label branch --out branch.json
-windows\build\Release\kiteperf.exe --compare main.json branch.json   # the markdown table for the PR
+windows\build\tools\Release\kiteperf.exe --kite <main>\Kite.exe --phases idle,hover --runs 3 --label main --out main.json
+windows\build\tools\Release\kiteperf.exe --kite <branch>\Kite.exe --phases idle,hover --runs 3 --label branch --out branch.json
+windows\build\tools\Release\kiteperf.exe --compare main.json branch.json   # the markdown table for the PR
 ```
 
 `--compare` warns when the two differ in scenario, phases, run count, frame statistics, GPU
@@ -766,7 +835,7 @@ The checkpoint list in windows/helix/checkpoints.md is the detailed plan. In sho
 2. The model core and session file with their tests and a shared fixture (in
    review, #260).
 3. CEF: `windows/scripts/fetch-cef.ps1`, one browser per tab, windowed first
-   so pages load (W6), then the sandbox (W6b) and the off-screen spike: D3D11
+   so pages load (W6), then the sandbox (W6b, done) and the off-screen spike: D3D11
    shared texture, frame time, input latency (W10).
 4. DirectComposition tree and the chrome (sidebar, command bar, spaces), matched
    to measurements of Kite for Mac. HLSL shaders with a golden-image test.
@@ -785,7 +854,38 @@ windows\build\Release\Kite.exe
 ```
 
 Without `KITE_SUPPORT_PATH` the profile is `%LOCALAPPDATA%\Kite`. A
-`KITE_SUPPORT_PATH` that isn't an existing directory is refused.
+`KITE_SUPPORT_PATH` that isn't an existing directory, or isn't an absolute path,
+is refused. With Chromium the build makes `Kite.dll` and `Kite.exe` (CEF's
+bootstrap, see "Chromium's sandbox") in `windows/build/<config>`, the folder
+that ships, with kitecore.exe and Chromium's runtime; the import libraries go to
+`lib/<config>`, the tests to `tests/<config>` and the build tools to
+`tools/<config>`. The runtime is copied when Kite.exe is made again (Kite.dll,
+the manifest, the icon or the bootstrap changed); a runtime file deleted from
+the folder by hand comes back only with that, or a clean build. CMake stops until `fetch-cef.ps1` has built the sandboxed
+wrapper (`build-sandbox-*`).
+
+## Installing
+
+What ships is `windows/build/Release` without `*.lib`, `*.pdb` and `*.exp`
+(CI's `kite-windows-x64` artifact). Two things a copy of it
+needs that a plain copy doesn't give:
+
+- **The LPAC grant**, once, on the install folder, inheritable so that files
+  copied in later get it too (robocopy and a zip don't carry the build folder's):
+
+  ```
+  icacls "%LOCALAPPDATA%\Programs\Kite" /grant "*S-1-15-2-2:(OI)(CI)(RX)"
+  ```
+
+  Today's helpers run without it (see "Chromium's sandbox"); a helper Chromium
+  puts in an LPAC AppContainer can't load Kite.dll or libcef.dll without it.
+- **Signing covers Kite.exe, Kite.dll and libcef.dll with the same
+  certificate**, and chrome_elf.dll with them. Once Kite.exe is signed, the
+  bootstrap requires the DLL it loads and chrome_elf.dll to carry valid
+  signatures with the same primary certificate, or it stops (CEF's
+  `bootstrap_win.cc`, `CheckDllCodeSigning`). libcef.dll is signed with them so
+  the whole set is one publisher's. An unsigned build passes because all of them
+  are unsigned.
 
 Every run, quiet or not, makes its pages without activating them. CEF shows a
 page's Chromium widget (`Chrome_WidgetWin_1`, the child of its `CefBrowserWindow`
