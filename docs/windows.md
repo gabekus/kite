@@ -444,7 +444,8 @@ or the command bar opened), and a contact that rests past 10 s, are released
 (`ReleaseContact`), so the rest is the system's wheel messages for whatever is under
 the pointer. Core's `TouchpadPhases` turns the viewport's statuses and content
 reports into the Mac's phases and sends the viewport back over its content's middle
-after a gesture that moved it, the next gesture counting from there however late DirectManipulation applies it (its tests replay the sequences:
+after a gesture that moved it, the next gesture counting from there however late
+DirectManipulation applies it (its tests replay the sequences:
 momentum, fingers down mid-momentum, the system taking the viewport, the reset's own
 pass). `--capture FILE --swipe DX` holds a swipe DX points in, and the smoke test
 feeds the same handler a vertical gesture, one whose pointer has moved over the page
