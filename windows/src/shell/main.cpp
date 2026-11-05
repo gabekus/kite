@@ -5,7 +5,8 @@
 //                            Chromium: until the selected tab's page has loaded, at most
 //                            30 s, then one WM_CLOSE must close every browser in time),
 //                            saves the session and exits 0 (CI). Errors go to the exit
-//                            code, never a dialog.
+//                            code, never a dialog. Fails if any window of Kite's (Chromium's
+//                            too) became the foreground window: a quiet run stays behind.
 //   Kite.exe --capture FILE.png [--window-size W,H] [--capture-scale N]
 //                            opens the window at W×H points (client area), saves the frame
 //                            it presents as a PNG and exits: the Helix UI gate
@@ -87,12 +88,14 @@
 #endif
 #include "shell/Capture.h"
 #include "shell/MainWindow.h"
+#include "shell/QuietRun.h"
 #include "shell/Text.h"
 
 namespace {
 
 using kite::Narrow;
 using kite::Widen;
+using kite::WriteUtf8;
 
 // How long Kite waits, once its window is gone, for the session's last write.
 constexpr std::chrono::milliseconds kQuitFlush{10'000};
@@ -152,19 +155,6 @@ std::optional<std::pair<int, int>> ParseSize(std::wstring_view text) {
     if (!w || !h) return std::nullopt;
     if (*w < kite::MainWindow::kMinimumWidth || *h < kite::MainWindow::kMinimumHeight || *w > 8192 || *h > 8192) return std::nullopt;
     return std::make_pair(*w, *h);
-}
-
-// Writes `text` as UTF-8 to a standard handle, if the launcher gave us one (a GUI process
-// has no console, but a launcher that redirects stdout or stderr, like CI, gets the text).
-void WriteUtf8(DWORD which, const std::wstring& text) {
-    HANDLE handle = GetStdHandle(which);
-    if (!handle || handle == INVALID_HANDLE_VALUE || text.empty()) return;
-    const int bytes = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-    if (bytes <= 0) return;
-    std::string utf8(static_cast<size_t>(bytes), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), utf8.data(), bytes, nullptr, nullptr);
-    DWORD written = 0;
-    WriteFile(handle, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
 }
 
 // The user's shortcut changes (keybindings.json, the Mac's KeyBindingsStore): none when the
@@ -239,7 +229,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const OptionValue sizeOption = Option(args, L"--window-size");
     const std::optional<std::wstring>& capture = captureOption.value;
     const OptionValue saveLogOption = Option(args, L"--save-log");
+    // A quiet run: the one place that decides it (everything else reads Options::quiet). It
+    // never comes to the front, takes the focus or shows a dialog (shell/QuietRun.h, the Mac's
+    // KITE_DIAGNOSTICS test-safe mode): watched from here on, and --smoke-test fails if it did.
+    // A capture and a save log are watched too, and say so on stderr.
     const bool quiet = smokeTest || captureOption.present || saveLogOption.present;
+    std::optional<kite::ForegroundWatch> foreground;
+    if (quiet) foreground.emplace();
     if (saveLogOption.present && !saveLogOption.value) return Fail(quiet, L"--save-log takes a file", kUsage);
     if (captureOption.present && !capture) return Fail(quiet, L"--capture takes a PNG path", kUsage);
     const OptionValue scaleOption = Option(args, L"--capture-scale");
@@ -462,6 +458,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     options.smokeTest = smokeTest;
     options.frameLog = frameLogOption.present;
     options.saveLog = saveLogOption.present;
+    options.quiet = quiet;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
     auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
@@ -519,7 +516,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 #endif
     if (found) writer.BackUpLaunch(std::move(*found));
 
-    controller->Show(showCommand, quiet);
+    controller->Show(showCommand);
     if (capture && !window.HasClientSize(size->first, size->second)) {
         // A capture is compared pixel for pixel with the Mac's, so a window Windows resized
         // (maximized by the launcher, clamped to 32767 px) would compare the wrong thing.
@@ -566,6 +563,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (saveLogOption.value) {
         if (problem = controller->SaveSaveLog(*saveLogOption.value); !problem.empty()) {
             return Fail(quiet, L"Couldn't write the save log: " + problem, kSaveFailed);
+        }
+    }
+    if (foreground) {
+        if (problem = foreground->Problem(); !problem.empty()) {
+            if (smokeTest) return Fail(quiet, problem, kWindowFailed);
+            WriteUtf8(STD_ERROR_HANDLE, L"Kite: " + problem + L"\n");
         }
     }
     if (!maySave) {

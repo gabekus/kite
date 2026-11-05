@@ -128,6 +128,7 @@ if(WIN32)
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
     src/shell/MemoryPressure.cpp
+    src/shell/QuietRun.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
