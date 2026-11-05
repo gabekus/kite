@@ -207,6 +207,13 @@ What works with Kite in the background (checked on a test build behind other win
   `KITE_TEST_INSTANT_LINKS_SEARCH_URL='http://127.0.0.1:PORT/results?q=%s'` makes the hidden reader load that page
   instead of Google (it takes the first `#search a` that holds an `h3`), and `KITE_CLAUDE_BIN` names a stub that
   prints the plan JSON. A slow fixture keeps the "Searching the web for you" row up long enough to capture.
+- The find bar (⌘F) without keys: on a test-safe run, `KITE_TEST_FIND_OPEN=1` opens the main window's find bar
+  once its selected tab's page has finished loading, as ⌘F does (`showFind`), and `KITE_TEST_FIND=text` also sets
+  its query the way the field takes a keystroke: the field's string value, then the search its text-change
+  delegate runs (`FindBar.setQuery`). No key events and no input method; Return is never pressed, so Ask on Page
+  never asks. It writes `KITE_TEST_FIND: ready: open, empty`, or `KITE_TEST_FIND: ready: "text", found, 2
+  matches, active 1, counter "1/2"` for each find result (WebKit reports found or not, no counts), and gives up
+  with a line after 30 s without a load. A real profile ignores both (`FindTestHook`).
 - `menu`: AppKit ignores fn when matching a key against the menu bar, so a system item on fn E (Emoji &
   Symbols) or fn F (Enter Full Screen) fires on a plain "e" or "f" that reaches the menu bar, and is flagged.
 

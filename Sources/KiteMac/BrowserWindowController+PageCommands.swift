@@ -28,6 +28,39 @@ extension BrowserWindowController {
         bar.focus()
     }
 
+    /// `FindTestHook`, test-safe runs only (FindTestHookRunner calls it once the shown page has loaded): ⌘F's own
+    /// `showFind`, then the query set the way the field takes a keystroke, through `FindBar.setQuery` (the field's
+    /// string value, then the search `controlTextDidChange` runs). No key events, so no input method; no menu.
+    func applyFindTestHook(_ hook: FindTestHook) {
+        guard WindowPresenter.testSafe, shownPage != nil else { return }
+        for step in hook.steps {
+            switch step {
+            case .showFind:
+                showFind(nil)
+                // The field editor's own text checking could underline the query or show a correction panel.
+                if let editor = findBar?.field.currentEditor() as? NSTextView {
+                    editor.isAutomaticSpellingCorrectionEnabled = false
+                    editor.isAutomaticTextReplacementEnabled = false
+                    editor.isAutomaticTextCompletionEnabled = false
+                    editor.isContinuousSpellCheckingEnabled = false
+                    editor.inlinePredictionType = .no
+                }
+            case .setQuery(let text):
+                guard let bar = findBar else { return }
+                bar.onResult = { result, counter in
+                    FindTestHookRunner.log(FindTestHook.resultLine(query: text, found: result.found, matches: result.matches,
+                                                                   activeMatch: result.activeMatch, counter: counter))
+                }
+                bar.setQuery(text)
+                // As after typing it: the caret after the last character, nothing selected.
+                if let editor = bar.field.currentEditor() as? NSTextView {
+                    editor.setSelectedRange(NSRange(location: (bar.field.stringValue as NSString).length, length: 0))
+                }
+            }
+        }
+        if hook == .open, findBar?.isHidden == false { FindTestHookRunner.log(FindTestHook.openLine) }
+    }
+
     @objc func findNext(_ sender: Any?) { stepFind(forward: true) }
     @objc func findPrevious(_ sender: Any?) { stepFind(forward: false) }
 
