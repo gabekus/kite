@@ -116,13 +116,24 @@ std::vector<CubicSegment> SidebarSlideSegments(float from, float to);
 // Where that slide is `elapsed` seconds in.
 float SidebarSlideAt(float from, float to, double elapsed);
 
-// sidebar.left, which neither Segoe icon font has: a rounded rectangle with the sidebar's divider
-// and three short lines in its pane, simple original geometry measured from the Mac's 15pt render
-// (review/w9d-mac/rest.png at 2×), in points about the button's centre.
+// The symbols drawn as Kite's own geometry (simple original shapes sized and placed to the ink the
+// Mac's 15pt symbol makes in its 32pt button, measured from its renders at 2×), in points about the
+// button's centre. Nothing here is Apple's outline.
+// sidebar.left (neither Segoe font has it): a rounded rectangle with the sidebar's divider and
+// three short lines in its pane (review/w9d-mac/rest.png).
 const SymbolShape& SidebarToggleShape();
+// arrow.clockwise (Segoe's Refresh opens at one o'clock with a corner arrowhead; the Mac's opens at
+// the top, its arc running into a chevron there): an arc from just above three o'clock round to the
+// top, a short tail to the chevron's point, and the chevron's two legs (review/w12-mac/rest.png).
+const SymbolShape& ReloadShape();
+// xmark, the X while the page loads: two crossed strokes, as thick as reload's, with round ends.
+// Its size is an estimate until a Mac capture holds the loading state (review/w12-mac's didn't).
+const SymbolShape& StopShape();
+// The shape for one of the top row's symbols, or none for those drawn with Segoe stand-ins.
+const SymbolShape* TopRowShape(const std::string& symbol);
 // The ink box the Mac's 15pt symbol fills in its 32pt button, relative to the button's centre
-// (measured from the same render), for the symbols drawn with Segoe stand-ins; none where the Mac's
-// hasn't been measured yet (xmark, which the Mac's references add).
+// (measured from review/w9d-mac/rest.png), for the symbols drawn with Segoe stand-ins (back and
+// forward).
 struct SymbolInk {
     float centerX = 0, centerY = 0, width = 0, height = 0;
 };

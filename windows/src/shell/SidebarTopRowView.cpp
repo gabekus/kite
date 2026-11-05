@@ -30,8 +30,6 @@ constexpr float kGlyphInk = 0.9f;
 wchar_t GlyphOf(const std::string& symbol) {
     if (symbol == "arrow.left") return 0xE72B;       // Back
     if (symbol == "arrow.right") return 0xE72A;      // Forward
-    if (symbol == "arrow.clockwise") return 0xE72C;  // Refresh
-    if (symbol == "xmark") return 0xE711;            // Cancel
     return 0;
 }
 
@@ -80,8 +78,7 @@ void SidebarTopRowView::ReleaseGpu() {
     gpu_.clear();
     opacities_.clear();
     brush_.Reset();
-    toggleShape_.Reset();
-    toggleShapeTried_ = false;
+    shapes_.clear();
     placed_ = false;
 }
 
@@ -213,12 +210,18 @@ bool SidebarTopRowView::Place() {
 
 void SidebarTopRowView::DrawSymbol(ID2D1DeviceContext* context, const std::string& symbol, D2D1_POINT_2F centre) {
     brush_->SetColor(D2D1_COLOR_F{dark_ ? 1.0f : 0.0f, dark_ ? 1.0f : 0.0f, dark_ ? 1.0f : 0.0f, kLabelAlpha});
-    if (symbol == "sidebar.left") {
-        if (!toggleShape_) return;  // its geometry couldn't be made on this device
+    if (const SymbolShape* shape = TopRowShape(symbol)) {
+        auto made = shapes_.find(shape);
+        if (made == shapes_.end()) {
+            ComPtr<ID2D1Factory> factory;
+            context->GetFactory(factory.GetAddressOf());
+            made = shapes_.emplace(shape, MakeShapeGeometry(factory.Get(), *shape)).first;
+        }
+        if (!made->second) return;  // its geometry couldn't be made on this device
         D2D1_MATRIX_3X2_F transform{};
         context->GetTransform(&transform);
         context->SetTransform(D2D1::Matrix3x2F::Translation(centre.x, centre.y) * transform);
-        context->FillGeometry(toggleShape_.Get(), brush_.Get());
+        context->FillGeometry(made->second.Get(), brush_.Get());
         context->SetTransform(transform);
         return;
     }
@@ -290,13 +293,6 @@ std::wstring SidebarTopRowView::Draw(bool readBack) {
     if (!brush_ && FAILED(hr = compositor_->D2D()->CreateSolidColorBrush(D2D1_COLOR_F{0, 0, 0, 1}, brush_.GetAddressOf()))) {
         deviceLost_ = IsDeviceLost(hr);
         return HResultMessage(L"creating the top row's brush", hr);
-    }
-    if (!toggleShapeTried_) {
-        // Once per device, as SpaceIconPainter's shapes: a failure isn't retried every draw.
-        toggleShapeTried_ = true;
-        ComPtr<ID2D1Factory> factory;
-        compositor_->D2D()->GetFactory(factory.GetAddressOf());
-        toggleShape_ = MakeShapeGeometry(factory.Get(), SidebarToggleShape());
     }
     for (const TopRowItem& item : items_) {
         ButtonGpu& gpu = gpu_[item.button];
