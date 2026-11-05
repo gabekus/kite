@@ -43,12 +43,13 @@ public static class KiteCheck {
   [DllImport("user32.dll")] static extern int GetWindowThreadProcessId(IntPtr h, out int pid);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, int m, IntPtr w, IntPtr l);
   static WndProc proc = (h, m, w, l) => m == 0x21 ? (IntPtr)3 : DefWindowProcW(h, m, w, l);  // WM_MOUSEACTIVATE: MA_NOACTIVATE
-  // An opaque, captioned-less, unowned app window over every monitor that never activates: what
-  // Kite's occlusion counts as covering it (a tool window or an owned popup wouldn't).
+  // An opaque, captionless, unowned app window over every monitor that never activates: what
+  // Kite's occlusion counts as covering it (a tool window or an owned popup wouldn't). Topmost,
+  // so it stays over Kite even if Kite came forward (CI's desktop has no one to keep it back).
   public static IntPtr MakeCover() {
     var c = new WNDCLASS { proc = proc, instance = GetModuleHandleW(IntPtr.Zero), background = GetStockObject(4), name = "KiteCoveredLaunchCheck" };
     RegisterClassW(ref c);
-    IntPtr h = CreateWindowExW(0x08000000, "KiteCoveredLaunchCheck", "Kite covered-launch check", 0x80000000,
+    IntPtr h = CreateWindowExW(0x08000008, "KiteCoveredLaunchCheck", "Kite covered-launch check", 0x80000000,
         GetSystemMetrics(76), GetSystemMetrics(77), GetSystemMetrics(78), GetSystemMetrics(79), IntPtr.Zero, IntPtr.Zero, c.instance, IntPtr.Zero);
     ShowWindow(h, 4);  // SW_SHOWNOACTIVATE
     return h;
@@ -120,6 +121,7 @@ setInterval(() => { log += 'F' + Date.now() + ':' + frames + ' '; document.title
   if ($session -notmatch '"title":"vis:([^"]*)"') { throw 'the page logged nothing into its title' }
   $log = $Matches[1]
   Write-Host "Kite's verdicts: $($verdicts -join ', ')"
+  Get-Content $occlusionLog -TotalCount 3 | ForEach-Object { Write-Host "  occlusion log: $_" }
   Write-Host "page: $log"
   if ($verdicts.Count -eq 0 -or $verdicts[0] -eq 'visible') {
     throw "Kite wasn't covered from the start (verdicts: $($verdicts -join ', ')): nothing to check; run with -Cover"
