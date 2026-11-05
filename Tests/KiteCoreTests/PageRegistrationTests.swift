@@ -16,26 +16,60 @@ struct PageRegistrationTests {
         #expect(PageRegistration.loadingToRecord(pageIsLoading: true, recorded: true) == nil)
     }
 
-    @Test func thePoolRecordsItRightAfterRegisteringANewPage() throws {
-        // KiteMac isn't a test target: read PagePool.makePage(for:) from its source.
+    private static let pool: String = {
+        // KiteMac isn't a test target: PagePool is read from its source.
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent("Sources/KiteMac/Engine/PagePool.swift"), encoding: .utf8)
+        return ((try? String(contentsOf: root.appendingPathComponent("Sources/KiteMac/Engine/PagePool.swift"), encoding: .utf8)) ?? "")
             .replacingOccurrences(of: "\r\n", with: "\n")
-        let start = try #require(source.range(of: "private func makePage(for tab: BrowserTab) -> WebPage {"))
+    }()
+
+    /// From `signature` to the end of that member (the next line closing at four spaces' indent).
+    private func body(_ signature: String) throws -> Substring {
+        let source = Self.pool
+        let start = try #require(source.range(of: signature), "no \(signature)")
         let end = try #require(source.range(of: "\n    }\n", range: start.upperBound..<source.endIndex))
-        let body = String(source[start.upperBound..<end.lowerBound])
-        let made = try #require(body.range(of: "let page = engine.makePage(url: url, restoring: restoring)\n        register(page, id: tab.id)\n"))
-        let check = try #require(body.range(of: "if PageRegistration.loadingToRecord(pageIsLoading: page.isLoading, recorded: store.pages[tab.id]?.isLoading) == true {"))
-        // Straight after register (comments between), before anything else touches the page.
-        let between = body[made.upperBound..<check.lowerBound]
-        #expect(between.split(separator: "\n").allSatisfy {
+        return source[start.upperBound..<end.lowerBound]
+    }
+
+    /// Only blank lines and comments between `first` and `then` in `code`.
+    private func straightAfter(_ first: String, _ then: String, in code: Substring) throws -> Bool {
+        let a = try #require(code.range(of: first), "no \(first)")
+        let b = try #require(code.range(of: then, range: a.upperBound..<code.endIndex), "no \(then) after \(first)")
+        return code[a.upperBound..<b.lowerBound].split(separator: "\n").allSatisfy {
             let line = $0.trimmingCharacters(in: .whitespaces)
             return line.isEmpty || line.hasPrefix("//")
-        })
-        let recorded = body[check.upperBound...]
-        #expect(recorded.hasPrefix("\n            store.updatePage(tab.id) { $0.isLoading = true }\n            onLoadingChanged?(tab.id, page, true)\n        }"))
+        }
+    }
+
+    @Test func thePoolRecordsItRightAfterRegisteringANewPage() throws {
+        let makePage = try body("private func makePage(for tab: BrowserTab) -> WebPage {")
+        #expect(try straightAfter("let page = engine.makePage(url: url, restoring: restoring)\n        register(page, id: tab.id)\n",
+                                  "recordLoadingAtRegistration(page, id: tab.id)", in: makePage))
         // The engine API is unchanged: makePage still takes the URL and starts the load itself.
-        #expect(source.contains("let page = engine.makePage(url: url, restoring: restoring)"))
+        #expect(makePage.contains("let page = engine.makePage(url: url, restoring: restoring)"))
+        let record = try body("private func recordLoadingAtRegistration(_ page: WebPage, id: UUID) {")
+        #expect(record.contains("guard PageRegistration.loadingToRecord(pageIsLoading: page.isLoading, recorded: store.pages[id]?.isLoading) == true else { return }"))
+        #expect(record.contains("store.updatePage(id) { $0.isLoading = true }"))
+        #expect(record.contains("onLoadingChanged?(id, page, true)"))
+    }
+
+    @Test func pagesMadeElsewhereAreRecordedToo() throws {
+        // A Peek's page, a popup and Little Kite's page were made (and may be loading) before this pool listened.
+        let existing = try body("func register(existing page: WebPage, id: UUID, profileDirectory: String?) {")
+        #expect(existing.contains("recordLoadingAtRegistration(page, id: id)"))
+        let adopt = try body("func adopt(_ page: WebPage, profileDirectory: String? = nil) -> UUID {")
+        #expect(adopt.contains("recordLoadingAtRegistration(page, id: id)"))
+        let openTab = try body("func openTab(with page: WebPage, url: URL? = nil, opener: UUID? = nil, source: UUID? = nil, profileDirectory: String? = nil) {")
+        // After the tab exists in the store.
+        let added = try #require(openTab.range(of: "store.mutateWithoutUndo { state in"))
+        let recorded = try #require(openTab.range(of: "recordLoadingAtRegistration(page, id: newID)"))
+        #expect(added.upperBound <= recorded.lowerBound)
+    }
+
+    @Test func aSaveWithNoStateRemovesTheOldFile() throws {
+        // A page with nothing committed has no state (PageRestore): an older file must not restore what's gone.
+        let save = try body("private func saveHistory(of id: UUID) {")
+        #expect(save.contains("guard let state = page.hibernationState() as? Data else {\n            historyFiles?.remove(tab: id)\n            return\n        }"))
     }
 }

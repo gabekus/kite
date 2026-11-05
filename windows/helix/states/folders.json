@@ -1,0 +1,143 @@
+{
+  "state": {
+    "adblockAllowedHosts": [],
+    "allowsJavaScriptFromAppleEvents": false,
+    "archiveAfter": "never",
+    "archived": [],
+    "blocksAds": true,
+    "darkPageHosts": [],
+    "darkPages": "matchSystem",
+    "devModeReloadState": "reload",
+    "developerModeEnabledForHosts": [],
+    "favorites": [],
+    "hasSeenLiveFolderIntro": false,
+    "liveFoldersTurnedOff": [],
+    "pageAppearance": "automatic",
+    "recentlyClosed": [],
+    "searchEngine": "duckDuckGo",
+    "selectedSpaceID": "5F0C9A2B-1D3E-4F6A-9B8C-7D6E5F4A3B21",
+    "showsToolbar": false,
+    "siteSearchDefaultsSeeded": 1,
+    "siteSearches": [],
+    "spaces": [
+      {
+        "icon": "🏠",
+        "id": "5F0C9A2B-1D3E-4F6A-9B8C-7D6E5F4A3B21",
+        "name": "Personal",
+        "pinnedItems": [
+          {
+            "tab": {
+              "_0": {
+                "id": "A1B2C3D4-0001-4A00-8000-00000000A001",
+                "lastActiveAt": 782999000,
+                "pinnedURL": "https://example.org/",
+                "title": "Example Domain",
+                "url": "https://example.org/"
+              }
+            }
+          },
+          {
+            "folder": {
+              "_0": {
+                "id": "A1B2C3D4-0002-4A00-8000-00000000F001",
+                "isExpanded": true,
+                "items": [
+                  {
+                    "tab": {
+                      "_0": {
+                        "id": "A1B2C3D4-0003-4A00-8000-00000000A002",
+                        "lastActiveAt": 782998000,
+                        "pinnedURL": "https://example.net/",
+                        "title": "Example Domain",
+                        "url": "https://example.net/"
+                      }
+                    }
+                  },
+                  {
+                    "tab": {
+                      "_0": {
+                        "id": "A1B2C3D4-0004-4A00-8000-00000000A003",
+                        "lastActiveAt": 782997000,
+                        "pinnedURL": "https://example.com/elsewhere",
+                        "title": "Elsewhere",
+                        "url": "https://example.com/elsewhere"
+                      }
+                    }
+                  },
+                  {
+                    "folder": {
+                      "_0": {
+                        "id": "A1B2C3D4-0005-4A00-8000-00000000F002",
+                        "isExpanded": false,
+                        "items": [
+                          {
+                            "tab": {
+                              "_0": {
+                                "id": "A1B2C3D4-0006-4A00-8000-00000000A004",
+                                "lastActiveAt": 782996000,
+                                "pinnedURL": "https://example.edu/",
+                                "title": "Example Domain",
+                                "url": "https://example.edu/"
+                              }
+                            }
+                          }
+                        ],
+                        "name": "Old articles"
+                      }
+                    }
+                  }
+                ],
+                "name": "Reading"
+              }
+            }
+          },
+          {
+            "folder": {
+              "_0": {
+                "id": "A1B2C3D4-0007-4A00-8000-00000000F003",
+                "isExpanded": false,
+                "items": [
+                  {
+                    "tab": {
+                      "_0": {
+                        "id": "A1B2C3D4-0008-4A00-8000-00000000A005",
+                        "lastActiveAt": 782995000,
+                        "pinnedURL": "https://example.org/recipes",
+                        "title": "Recipes",
+                        "url": "https://example.org/recipes"
+                      }
+                    }
+                  }
+                ],
+                "name": "Recipes"
+              }
+            }
+          }
+        ],
+        "selectedTabID": "A1B2C3D4-0009-4A00-8000-00000000A006",
+        "tabs": [
+          {
+            "id": "A1B2C3D4-0009-4A00-8000-00000000A006",
+            "lastActiveAt": 783000000,
+            "title": "Example Domain",
+            "url": "https://example.com/"
+          }
+        ],
+        "theme": {
+          "colors": [
+            {
+              "b": 0.1,
+              "g": 0.1,
+              "r": 0.1
+            }
+          ],
+          "grain": 0,
+          "tint": 0.44
+        }
+      }
+    ],
+    "spacesWithCollapsedPinnedSections": [],
+    "warnsBeforeQuitting": false
+  },
+  "version": 1
+}

@@ -4,7 +4,8 @@
 // shortcuts, wired to the session (core/Models.h). main.cpp parses the command line, loads the
 // session, and runs one of these. Like the Mac's BrowserWindowController+*.swift, its parts have
 // files of their own: +Spaces.cpp (editing spaces: the space menu, renaming, deleting,
-// reordering), +Chromium.cpp (the pages) and +Tests.cpp (--smoke-test and --capture).
+// reordering), +Tabs.cpp (pinning, renaming tabs and folders, New Folder, Duplicate, Back to Pinned
+// URL, Reset), +Chromium.cpp (the pages) and +Tests.cpp (--smoke-test and --capture).
 //
 // Everything here is on Kite's UI thread. The session is the caller's, borrowed for the
 // window's life. The window changes it and saves it as it changes, as the Mac's BrowserStore
@@ -213,6 +214,13 @@ public:
     std::wstring ClickFavorite(size_t index);
     // For a capture: the pointer resting on the favorites' empty state, its close button showing.
     std::wstring HoldEmptyFavoritesHover();
+    // For a capture: row `index` (from 0, as kitecore's `sidebar` lists the selected space's rows)
+    // renamed in place, a tab's or a folder's, with `text` typed over its name when given and drawn
+    // with the keyboard when `focused`; the pointer resting on row `index`; and a command run by its
+    // id as its shortcut runs it (Pin Tab on the selected tab, say).
+    std::wstring HoldRowRename(size_t index, const std::optional<std::string>& text, bool focused = false);
+    std::wstring HoldRowHover(size_t index);
+    std::wstring RunCommandForCapture(const std::string& command);
     // For a --favicons capture: the sidebar's favicons (and the 16px icons the favorites' colours
     // come from) fetched and decoded, drawing as they come, for at most `seconds`. `failed` gets
     // the favorites' favicons that didn't load (they show the globe, as the Mac's do).
@@ -467,11 +475,47 @@ private:
     // The smoke test's top row: its buttons, the page's states, a hover that draws nothing, a press
     // on a disabled button, and hiding and showing the sidebar from the toggle and Ctrl+S's command.
     std::wstring SmokeTestTopRow();
+    // The smoke test's tab edits: Pin Tab and back, a tab renamed from its row's double-click (a
+    // keystroke drawing only the field) and from Rename Current Tab…, a folder renamed, New Folder,
+    // Duplicate, Back to Pinned URL from its button and Reset all tabs, all undone after.
+    std::wstring SmokeTestTabEditing();
+    // Back to Pinned URL on the shown (live) page: the selected tab pinned, its page sent elsewhere,
+    // then reset, waiting for the page to report it's home; unpinned again after.
+    std::wstring SmokeTestLiveReset();
     std::wstring SmokeTestFavorites();
     std::wstring SmokeTestEmptyFavorites();
     std::wstring SmokeTestFavoritesScroll();
     // The smoke test's checks, the clock's frames stepped by RunUntil.
     std::wstring SmokeTestWindow();
+    // MARK: Tabs (BrowserWindowController+Tabs.cpp)
+    // Every tab edit a command or a click makes: the change, then the window shows it (with
+    // `selectionMoved`, the newly selected tab's page too). RecordEdit is the change alone, where
+    // W16's undo records the step, as the Mac's BrowserStore.mutate registers one for every change
+    // (a rename that ends inside StateChanged's update goes through it alone).
+    void EditState(const std::function<void()>& change, bool selectionMoved = false);
+    void RecordEdit(const std::function<void()>& change);
+    // The keyboard for a rename field opening (a space's, a tab's or a folder's): the one place
+    // W21's GiveKeyboard(KeyboardField::Rename) goes.
+    void TakeKeyboardForRename();
+    // The Tabs menu's and the command bar's tab commands, by the Mac's ids.
+    void MakeTabCommands();
+    // Their validateMenuItem: whether `command` would do anything now; none when it isn't one of them.
+    std::optional<bool> TabCommandEnabled(const std::string& command) const;
+    // The Mac's renameTab(_:): in its row, where the tab has one shown (not a favorite or a split's
+    // pane) and the sidebar is; else a beep, until W19's ArcDialog brings Rename Tab… (but a
+    // double-click on a split pane's row does nothing, as the Mac's SplitRowCell has no doubleTapped).
+    void BeginRenamingTab(const std::string& tabID, bool fromDoubleClick);
+    // The Mac's renameFolder(_:) (the folder menu's Rename…, W17): the sidebar shown, its row's field.
+    void BeginRenamingFolder(const std::string& folderID);
+    void RenameTab(const std::string& tabID, const std::string& name);
+    void RenameFolder(const std::string& folderID, const std::string& name);
+    // A pinned tab's Back to Pinned URL, and Tabs › Reset all tabs in this Space.
+    void BackToPinnedURL(const std::string& tabID);
+    void ResetAllTabsInSpace();
+    // Whether an open rename still has its header (its space shown) or row (listed by the
+    // selected space's page); and what one ending renames, in the session only.
+    bool RenameStillShown(const SidebarView::RenameTarget& target) const;
+    void ApplyRename(const SidebarView::RenameTarget& target, const std::string& text);
     void MakeCommands();
     // Import from Arc (BrowserWindowControllerArcImport.cpp, the Mac's ArcImportController):
     // Arc's files are read on a worker, which posts kArcReadMessage when they're in.
@@ -691,6 +735,9 @@ private:
     // Each open popup's tab and the tab that opened it (the Mac's PagePool.popupOpeners).
     std::map<std::string, std::string> popupOpeners_;
     bool firstPageMade_ = false;
+    // The smoke test's tab edits select tabs of their own: the page shown stays, so no page is made
+    // (and loaded) for them, and the first page's load still ends the test. Only under --smoke-test.
+    bool holdPages_ = false;
     bool pageLoading_ = false, pageLoaded_ = false;
     // A smoke test's check of the first page's renderer (shell/Sandbox.h): whether one reported
     // in, what was wrong with its sandbox and the helpers' (empty when nothing was), and what

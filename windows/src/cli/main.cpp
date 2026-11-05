@@ -9,6 +9,10 @@
 //   kitecore [--profile DIR] collapse SPACE_ID
 //   kitecore [--profile DIR] open TEXT... [--space ID] [--background]
 //   kitecore [--profile DIR] select TAB_ID
+//   kitecore [--profile DIR] tab pin|favorite|duplicate|reset|separate|reveal|replace-pin TAB_ID
+//   kitecore [--profile DIR] tab rename TAB_ID [NAME...]|pinned-url TAB_ID URL|reset-all
+//   kitecore [--profile DIR] folder new [SPACE_ID]|rename FOLDER NAME...|delete FOLDER|move TAB_ID FOLDER
+//   kitecore [--profile DIR] shown header|tab|folder|divider|newTab ID [SPACE_ID]
 //   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
 //   kitecore [--profile DIR] space swipe DX [SECONDS]
 //   kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...
@@ -44,7 +48,22 @@
 // `click` in the bar's 50pt along the bottom selects the space whose cell it hits; on a favorite's
 // pane, it selects that favorite (in the space you're in); on the empty state's close button, it
 // dismisses it (the one-shot flag, written to the profile).
-// `collapse` is View → Collapse / Expand Pinned Tabs for a space.
+// `collapse` is View → Collapse / Expand Pinned Tabs for a space. `click … --double` is the
+// second press of a double-click there (a tab's row renames, in the window).
+// The tab edits (Tabs and the command bar's commands, and the sidebar's buttons): `tab pin` is Pin
+// Tab / Unpin Tab (Ctrl+D) and prints where the tab is now (pinned or unpinned, or favorite);
+// `favorite` is Add to / Remove from Favorites, likewise; `rename` renames it (no NAME, or a blank
+// one, goes back to the page's title) and prints what its row shows; `duplicate` prints the copy's
+// id; `reset` is Back to Pinned URL and prints the URL it goes to (exit 6 when it hasn't left its
+// pinned page); `reset-all` is Reset all tabs in this Space, a line "ID URL" for each (exit 6 for
+// none); `separate` is Separate From Pinned Tab and prints the new tab's id; `reveal` is Reveal Tab
+// in Sidebar and prints its row's id; `pinned-url` is Edit Pinned Page › Edit… and `replace-pin` is
+// Replace Pin with Current Page, each printing the pinned URL (exit 6 when refused). `folder new`
+// is New Folder (in the selected space, or SPACE_ID's) and prints its id; FOLDER is a folder's id or
+// name (any case, the selected space's first); `rename` prints its name (a blank one keeps it);
+// `delete` archives what's in it and prints those tabs' ids; `move` puts a tab at the end of a
+// folder (pinning it; exit 6 for a favorite). `shown` says whether a space's page (the selected
+// one's by default) lists that row now: "yes" or "no".
 // `space swipe` is two fingers sideways over the sidebar: the content dragged DX points (positive
 // towards the previous space) at a steady pace over SECONDS (default 0.25), an event every
 // 1/60 s, then let go. It prints where the pages were at the release (offset, the theme's
@@ -166,10 +185,14 @@ int Usage() {
         "       kitecore [--profile DIR] suggest TEXT... [--current]\n"
         "       kitecore [--profile DIR] sidebar [SPACE_ID] [--page back,forward,loading] [--hidden]\n"
         "       kitecore [--profile DIR] collapse SPACE_ID\n"
-        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]] [--page back,forward,loading]\n"
+        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]] [--page back,forward,loading] [--double]\n"
         "       kitecore [--profile DIR] open TEXT... [--space ID] [--background]\n"
         "       kitecore [--profile DIR] select TAB_ID\n"
         "       kitecore [--profile DIR] tab next|prev|NUMBER\n"
+        "       kitecore [--profile DIR] tab pin|favorite|duplicate|reset|separate|reveal|replace-pin TAB_ID\n"
+        "       kitecore [--profile DIR] tab rename TAB_ID [NAME...]|pinned-url TAB_ID URL|reset-all\n"
+        "       kitecore [--profile DIR] folder new [SPACE_ID]|rename FOLDER NAME...|delete FOLDER|move TAB_ID FOLDER\n"
+        "       kitecore [--profile DIR] shown header|tab|folder|divider|newTab ID [SPACE_ID]\n"
         "       kitecore [--profile DIR] shortcuts\n"
         "       kitecore [--profile DIR] close TAB_ID\n"
         "       kitecore [--profile DIR] reopen [TAB_ID]\n"
@@ -743,10 +766,13 @@ int main(int argc, char** argv) {
     // doesn't keep): where the card's edge is.
     PageStatus page;
     bool hidden = false;
+    int clicks = 1;
     if (args[0] == "sidebar" || args[0] == "click") {
         for (size_t i = 1; i < args.size(); ++i) {
             if (args[i] == "--hidden" && args[0] == "sidebar") {
                 hidden = true;
+            } else if (args[i] == "--double" && args[0] == "click") {
+                clicks = 2;
             } else if (args[i] == "--page" && i + 1 < args.size()) {
                 std::string_view rest = args[i + 1];
                 while (!rest.empty()) {
@@ -922,6 +948,9 @@ int main(int argc, char** argv) {
                 o.emplace("depth", row.depth);
                 o.emplace("pinned", row.pinned);
                 o.emplace("selected", row.selected);
+                // Back to Pinned URL on hover: a pinned tab off its pinned page.
+                o.emplace("canReset", row.canReset);
+                if (row.renamed) o.emplace("renamed", true);
                 if (row.favicon.url) o.emplace("favicon", *row.favicon.url);
                 break;
             case SidebarRow::Kind::Folder:
@@ -1093,13 +1122,16 @@ int main(int argc, char** argv) {
             }
             std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else {
-            const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], 1, false, listTop);
-            static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron", "closeButton"};
-            static constexpr const char* kActions[] = {"none",      "editAddress", "togglePinnedSection", "selectTab", "setFolderExpanded",
-                                                       "newTab",    "closeTab"};
+            const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], clicks, false, listTop);
+            static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron", "closeButton", "resetButton"};
+            static constexpr const char* kActions[] = {"none",   "editAddress", "togglePinnedSection", "selectTab", "setFolderExpanded",
+                                                       "newTab", "closeTab",    "resetTab"};
             json::Object out{{"target", std::string(kTargets[static_cast<int>(press ? press->target : SidebarHit::Target::None)])}};
             if (press) {
                 if (!press->id.empty()) out.emplace("id", press->id);
+                // The second press of a double-click on a tab's row opens its rename field as it goes
+                // down (the window's); its release taps nothing.
+                if (SidebarRenameOnPress(*press)) out.emplace("pressed", std::string("renameTab"));
                 const SidebarTap tap = SidebarRelease(*press, rows, 240, values[2], values[3], values[0], values[1], listTop);
                 out.emplace("action", std::string(kActions[static_cast<int>(tap.action)]));
                 switch (tap.action) {
@@ -1107,6 +1139,10 @@ int main(int argc, char** argv) {
                 case SidebarTap::Action::SetFolderExpanded: state.SetFolderExpanded(tap.id, tap.expanded); changed = true; break;
                 case SidebarTap::Action::TogglePinnedSection: TogglePinnedSection(state, tap.id); changed = true; break;
                 case SidebarTap::Action::CloseTab: state.Close(tap.id); changed = true; break;
+                case SidebarTap::Action::ResetTab:
+                    if (const auto url = state.ResetTab(tap.id)) out.emplace("url", *url);
+                    changed = true;
+                    break;
                 default: break;  // the command bar's, in the window
                 }
             }
@@ -1136,6 +1172,95 @@ int main(int argc, char** argv) {
         if (!state.Location(id)) return kNotFound;
         state.Select(id);
         changed = true;
+    } else if (command == "tab" && args.size() >= 2 && !(args.size() == 2 && (args[1] == "next" || args[1] == "prev" ||
+                                                                          (args[1].size() == 1 && args[1][0] >= '1' && args[1][0] <= '9')))) {
+        // The tab edits (see the top of this file).
+        const std::string& action = args[1];
+        if (action == "reset-all" && args.size() == 2) {
+            const auto reset = state.ResetPinnedTabs();
+            if (reset.empty()) return kRefused;
+            for (const auto& [id, url] : reset) std::printf("%s %s\n", id.c_str(), url.c_str());
+        } else {
+            if (args.size() < 3) return Usage();
+            const std::string id = Id(args[2]);
+            if (!state.Location(id)) return kNotFound;
+            const auto where = [&] {
+                const TabSection section = state.Location(id)->section;
+                return section == TabSection::Pinned ? "pinned" : section == TabSection::Unpinned ? "unpinned" : "favorite";
+            };
+            if (action == "pin" && args.size() == 3) {
+                state.TogglePin(id);
+                std::puts(where());
+            } else if (action == "favorite" && args.size() == 3) {
+                state.ToggleFavorite(id);
+                std::puts(where());
+            } else if (action == "rename") {
+                state.RenameTab(id, Join(args, 3));
+                std::puts(state.FindTabByID(id)->DisplayTitle().c_str());
+            } else if (action == "duplicate" && args.size() == 3) {
+                std::puts(state.Duplicate(id)->c_str());
+            } else if (action == "reset" && args.size() == 3) {
+                const auto url = state.ResetTab(id);
+                if (!url) return kRefused;
+                std::puts(url->c_str());
+            } else if (action == "separate" && args.size() == 3) {
+                const auto made = state.SeparateFromPinnedTab(id);
+                if (!made) return kRefused;
+                std::puts(made->c_str());
+            } else if (action == "reveal" && args.size() == 3) {
+                const auto row = state.RevealTab(id);
+                if (!row) return kRefused;
+                std::puts(row->c_str());
+            } else if (action == "pinned-url" && args.size() >= 4) {
+                if (!state.EditPinnedURL(id, Join(args, 3))) return kRefused;
+                std::puts(state.FindTabByID(id)->pinnedURL->c_str());
+            } else if (action == "replace-pin" && args.size() == 3) {
+                if (!state.ReplacePinnedURLWithCurrent(id)) return kRefused;
+                std::puts(state.FindTabByID(id)->pinnedURL->c_str());
+            } else {
+                return Usage();
+            }
+        }
+        changed = true;
+    } else if (command == "folder" && args.size() >= 2) {
+        const std::string& action = args[1];
+        if (action == "new" && args.size() <= 3) {
+            const auto space = args.size() == 3 ? state.SpaceIndex(Id(args[2])) : std::optional<size_t>(state.SelectedSpaceIndex());
+            if (!space) return kNotFound;
+            std::puts(state.CreateNewFolder(*space).c_str());
+        } else if (action == "rename" && args.size() >= 4) {
+            const auto found = state.FolderMatching(args[2]);
+            if (!found) return kNotFound;
+            const std::string id = found->folder->id;
+            state.RenameFolder(id, Join(args, 3));
+            std::puts(state.FolderByID(id)->name.c_str());
+        } else if (action == "delete" && args.size() == 3) {
+            const auto found = state.FolderMatching(args[2]);
+            if (!found) return kNotFound;
+            const std::string id = found->folder->id;
+            for (const Tab& tab : state.DeleteFolder(id)) std::puts(tab.id.c_str());
+        } else if (action == "move" && args.size() == 4) {
+            const std::string tab = Id(args[2]);
+            const auto location = state.Location(tab);
+            const auto found = state.FolderMatching(args[3]);
+            if (!location || !found) return kNotFound;
+            // Favorites stay where they are (moveTab(_:toFolder:)).
+            if (location->section == TabSection::Favorite) return kRefused;
+            if (!state.MoveTabToFolder(tab, std::string(found->folder->id))) return kNotFound;
+        } else {
+            return Usage();
+        }
+        changed = true;
+    } else if (command == "shown" && (args.size() == 3 || args.size() == 4)) {
+        static const std::map<std::string, SidebarRow::Kind> kinds{{"header", SidebarRow::Kind::Header},   {"tab", SidebarRow::Kind::Tab},
+                                                                   {"folder", SidebarRow::Kind::Folder},   {"divider", SidebarRow::Kind::Divider},
+                                                                   {"newTab", SidebarRow::Kind::NewTab}};
+        const auto kind = kinds.find(args[1]);
+        if (kind == kinds.end()) return Usage();
+        const auto space = args.size() == 4 ? state.SpaceIndex(Id(args[3])) : std::optional<size_t>(state.SelectedSpaceIndex());
+        if (!space) return kNotFound;
+        std::puts(SidebarShowsRow(state, *space, kind->second, Id(args[2])) ? "yes" : "no");
+        return kOk;
     } else if (command == "tab" && args.size() == 2) {
         // Ctrl+Alt+Down/Up and Ctrl+1–9 in the selected space: prints the tab now selected.
         if (args[1] == "next" || args[1] == "prev") {
@@ -1434,6 +1559,9 @@ int main(int argc, char** argv) {
     }
 
     if (changed) {
+        // A tab pinned by any path (a move into a folder too) remembers its page, as the Mac's
+        // BrowserStore.mutate syncs after every change.
+        state.SyncPinnedURLs();
         if (std::string error = store.Save(state); !error.empty()) {
             std::fprintf(stderr, "kitecore: %s\n", error.c_str());
             return kSaveFailed;
