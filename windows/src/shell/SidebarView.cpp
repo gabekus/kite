@@ -1269,6 +1269,45 @@ std::optional<D2D1_POINT_2F> SidebarView::BarPoint(D2D1_POINT_2F p) const {
     return b;
 }
 
+std::optional<SidebarView::MenuTarget> SidebarView::MenuTargetAt(D2D1_POINT_2F p, bool cellsOnly) const {
+    if (p.x < 0 || p.x >= width_) return std::nullopt;
+    // The bar is over the favorites (SidebarColumnView's subviews), and both over the page.
+    if (const auto b = BarPoint(p)) {
+        if (const std::optional<std::string> space = bar_->SpaceAt(b->x, b->y)) return MenuTarget{true, SidebarMenuKind::Tab, *space};
+        return std::nullopt;
+    }
+    if (cellsOnly) return std::nullopt;
+    // The tray takes the whole band: a pane has the favorite's menu, the rest none.
+    if (InFavorites(favorites_->Tray(), width_, p.x, p.y)) {
+        const std::optional<FavoritePress> pane = FavoritePressAt(favorites_->Tray(), p.x, p.y);
+        if (!pane || pane->target != FavoritePress::Target::Pane) return std::nullopt;
+        return MenuTarget{false, SidebarMenuKind::Favorite, pane->tabID};
+    }
+    if (TopRowItemAt(topRow_->Items(), p.x, p.y)) return std::nullopt;
+    const D2D1_POINT_2F q = OnPage(p);
+    const std::optional<SidebarMenuTarget> row = SidebarMenuTargetAt(model_.rows, width_, Height(), scroll_, q.x, q.y, listTop_);
+    if (!row) return std::nullopt;
+    switch (row->kind) {
+    case SidebarMenuTarget::Kind::Space: return MenuTarget{true, SidebarMenuKind::Tab, row->id};
+    case SidebarMenuTarget::Kind::Tab: return MenuTarget{false, SidebarMenuKind::Tab, row->id};
+    case SidebarMenuTarget::Kind::Folder: return MenuTarget{false, SidebarMenuKind::Folder, row->id};
+    }
+    return std::nullopt;
+}
+
+void SidebarView::OpenMenu(const MenuTarget& target, POINT at) {
+    HideTip();
+    POINT screen = at;
+    ClientToScreen(window_, &screen);
+    // The menu's loop holds the pointer: the hover it leaves is the menu's to clear (RefreshHover
+    // on the next move).
+    if (target.space) {
+        if (actions_.spaceMenu) actions_.spaceMenu(target.id, screen);
+    } else if (actions_.rowMenu) {
+        actions_.rowMenu(target.kind, target.id, screen);
+    }
+}
+
 void SidebarView::ForgetActivation() {
     activating_ = false;
 }
@@ -1491,7 +1530,8 @@ void SidebarView::ClearHover() {
     if (barDragging_) DropSpace(D2D1_POINT_2F{-1, -1});
     renamePressed_ = false;
     // A press it drops lets go of the mouse too.
-    if ((press_ || barPress_ || topPress_ || favoritePress_ || middlePress_) && GetCapture() == window_) {
+    if ((press_ || barPress_ || topPress_ || favoritePress_ || middlePress_ || menuPress_) && GetCapture() == window_) {
+        menuPress_ = false;
         press_.reset();
         barPress_.reset();
         topPress_.reset();
@@ -1652,6 +1692,12 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         // (the Mac's row isn't a responder, so its field editor stays, and tapped(at:) ignores a
         // renaming row; its close and Back to Pinned URL are hidden). Anywhere else it ends the
         // rename (keeping what was typed) and goes on as a press.
+        // A Ctrl+press on something with a menu is a right-click there (the Mac's rows, panes and
+        // cells: "⌃-click is a right-click"), its menu opening on release as a right-click's does;
+        // the rows and panes don't take it as the click that brings the window forward. In an open
+        // rename field it's the field's (the Mac's field editor has the press first).
+        menuPress_ = false;
+        const bool toMenu = (wParam & MK_CONTROL) != 0 && MenuTargetAt(p, activating).has_value();
         if (rename_) {
             const D2D1_POINT_2F q = OnPage(p);
             if (rename_->Press(q.x, q.y, (wParam & MK_SHIFT) != 0)) {
@@ -1660,8 +1706,14 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
                 ScheduleDraw();
                 return true;
             }
-            if (InRenamedRow(q)) return true;
-            EndRenaming(true);
+            if (InRenamedRow(q) && !toMenu) return true;
+            // A menu ends the rename itself as it opens (keeping what was typed).
+            if (!toMenu) EndRenaming(true);
+        }
+        if (toMenu) {
+            menuPress_ = true;
+            SetCapture(window_);
+            return true;
         }
         // A top-row button (SymbolButton): it takes the click that brings the window forward too,
         // and acts on release over it; a disabled one takes the press and does nothing.
@@ -1704,6 +1756,17 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         return true;
     }
     case WM_LBUTTONUP: {
+        if (menuPress_) {
+            // A Ctrl+click's menu: what's under the release, as a right-click's.
+            menuPress_ = false;
+            if (GetCapture() == window_) ReleaseCapture();
+            const POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            const D2D1_POINT_2F p = PointOf(at);
+            if (p.x >= 0 && p.x < width_) {
+                if (const std::optional<MenuTarget> target = MenuTargetAt(p)) OpenMenu(*target, at);
+            }
+            return true;
+        }
         if (topPress_) {
             const TopRowButton pressed = *topPress_;
             topPress_.reset();
@@ -1786,6 +1849,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         // The mouse went elsewhere mid-drag (another window took it): the cell goes back.
         if (barDragging_) DropSpace(D2D1_POINT_2F{-1, -1});
         renamePressed_ = false;
+        menuPress_ = false;
         topPress_.reset();
         middlePress_.reset();
         if (press_ || barPress_ || favoritePress_) {
@@ -1800,25 +1864,14 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         return p.x >= 0 && p.x < width_ && !press_ && !barPress_;
     }
     case WM_RBUTTONUP: {
-        // The space's menu, from its cell in the bar or its header (menu(for:) and the header's
-        // contextMenu(at:)), on release as Windows' context menus open. A favorite's menu comes
-        // with W17.
-        if (press_ || barPress_ || favoritePress_) return true;
+        // A menu, on release as Windows' context menus open: the space's from its cell in the bar
+        // or its header (menu(for:) and the header's contextMenu(at:)), a favorite's from its pane
+        // (FavoritePaneView's menu(for:)), a tab's or a folder's from its row (contextMenu(at:)).
+        if (press_ || barPress_ || favoritePress_ || menuPress_) return true;
         const POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         const D2D1_POINT_2F p = PointOf(at);
         if (p.x < 0 || p.x >= width_) return false;
-        std::optional<std::string> space;
-        if (const auto b = BarPoint(p)) {
-            space = bar_->SpaceAt(b->x, b->y);
-        } else if (const SidebarHit hit = HitAt(p); hit.target == SidebarHit::Target::Row && hit.row < model_.rows.size() &&
-                                                  model_.rows[hit.row].kind == SidebarRow::Kind::Header) {
-            space = model_.rows[hit.row].id;
-        }
-        if (!space || !actions_.spaceMenu) return true;
-        HideTip();
-        POINT screen = at;
-        ClientToScreen(window_, &screen);
-        actions_.spaceMenu(*space, screen);
+        if (const std::optional<MenuTarget> target = MenuTargetAt(p)) OpenMenu(*target, at);
         return true;
     }
     case WM_MBUTTONDOWN: {

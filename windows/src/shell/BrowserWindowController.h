@@ -5,7 +5,8 @@
 // session, and runs one of these. Like the Mac's BrowserWindowController+*.swift, its parts have
 // files of their own: +Spaces.cpp (editing spaces: the space menu, renaming, deleting,
 // reordering), +Tabs.cpp (pinning, renaming tabs and folders, New Folder, Duplicate, Back to Pinned
-// URL, Reset), +Chromium.cpp (the pages) and +Tests.cpp (--smoke-test and --capture).
+// URL, Reset), +SidebarMenus.cpp (the rows' and favorites' menus), +Chromium.cpp (the pages) and
+// +Tests.cpp (--smoke-test and --capture).
 //
 // Everything here is on Kite's UI thread. The session is the caller's, borrowed for the
 // window's life. The window changes it and saves it as it changes, as the Mac's BrowserStore
@@ -55,6 +56,7 @@
 #include "core/OneShotFlags.h"
 #include "core/SessionSaveDelay.h"
 #include "core/SessionWriter.h"
+#include "core/SidebarContextMenu.h"
 #include "core/SidebarTopRow.h"
 #include "core/SpaceEditing.h"
 #include "core/SpaceSwipe.h"
@@ -207,6 +209,14 @@ public:
     // For a capture: what Capture composes over the frame next, space `index`'s menu opened
     // over its cell in the bar (Windows' own menu, read back as it shows).
     void HoldSpaceMenu(size_t index) { heldMenu_ = index; }
+    // For a capture: row `index`'s menu (from 0, as kitecore's `sidebar` lists the selected space's
+    // rows: a tab's, a folder's, or the header's, which is the space's), or favorite pane `index`'s
+    // (in the grid's order), opened as a right-click on it opens it. Its line goes to stderr, as the
+    // Mac's KITE_TEST_CONTEXT_MENU logs one.
+    std::wstring HoldRowMenu(size_t index);
+    std::wstring HoldFavoriteMenu(size_t index);
+    // Capture's part: the held row menu read back and composed over `pixels`.
+    std::wstring RenderHeldRowMenu(Pixels& pixels);
     // For a capture (which has no pages): the selected tab's page reporting `page`, as Chromium
     // would (back and forward, loading).
     void HoldPageStatus(const PageStatus& page);
@@ -537,6 +547,25 @@ private:
     // A pinned tab's Back to Pinned URL, and Tabs › Reset all tabs in this Space.
     void BackToPinnedURL(const std::string& tabID);
     void ResetAllTabsInSpace();
+    // MARK: The sidebar's row menus (BrowserWindowController+SidebarMenus.cpp, W17)
+    // A right-click (or Ctrl+click) on a tab's or folder's row or a favorite's pane: its menu at
+    // `screen` (px), then what it chose. The menu is built as it opens (a rename open ends first,
+    // as for the space's menu); nothing is kept while it's closed.
+    void ShowRowMenu(SidebarMenuKind kind, const std::string& id, POINT screen);
+    std::vector<SidebarMenuItem> OpenRowMenu(SidebarMenuKind kind, const std::string& id);
+    void RunRowMenuItem(SidebarMenuKind kind, const std::string& id, const SidebarMenuItem& item);
+    // The items' actions that need the window (the Mac's SidebarActions): Separate From Pinned Tab,
+    // Archive Other Tabs / Below / Above, a folder's Delete (asking first), New Nested Folder…
+    // (then its rename), Turn into Space, and the Copy items.
+    void SeparateFromPinnedTab(const std::string& tabID);
+    void ArchiveTabs(BrowserState::ArchiveTabsRelative which, const std::string& tabID);
+    void DeleteFolder(const std::string& folderID);
+    void NewNestedFolder(const std::string& folderID);
+    void TurnFolderIntoSpace(const std::string& folderID);
+    void CopyToClipboard(const std::optional<std::string>& text);
+    // The smoke test's row menus: each kind's menu read as a right-click and a Ctrl+click open it,
+    // Pin Tab from a tab's, a folder's Rename… opening its rename, New Nested Folder… and Delete.
+    std::wstring SmokeTestRowMenus();
     // Whether an open rename still has its header (its space shown) or row (listed by the
     // selected space's page); and what one ending renames, in the session only.
     bool RenameStillShown(const SidebarView::RenameTarget& target) const;
@@ -738,6 +767,19 @@ private:
 
     // A capture's space menu, composed over the frame (HoldSpaceMenu).
     std::optional<size_t> heldMenu_;
+    // A capture's row or favorite menu (HoldRowMenu, HoldFavoriteMenu): what it's for, where the
+    // right-click was (client px).
+    struct HeldRowMenu {
+        SidebarMenuKind kind;
+        std::string id;
+        POINT at;
+    };
+    std::optional<HeldRowMenu> heldRowMenu_;
+    // How a row's menu is shown and answered: Windows' (ShowSidebarMenu), or the smoke test's,
+    // which reads it and picks an item as the Mac's KITE_TEST_CONTEXT_MENU does (a real menu is
+    // modal). And a folder's Delete question (AskToDeleteFolder; a quiet run answers Cancel).
+    std::function<std::optional<SidebarMenuItem>(const std::vector<SidebarMenuItem>&, POINT)> showRowMenu_;
+    std::function<bool(const FolderDeletion&)> askToDeleteFolder_;
     // Delete Space's question for a space with tabs: the task dialog; never a dialog in a test
     // run (it answers Cancel, unless the smoke test answers).
     std::function<bool(const SpaceDeletion&)> askToDelete_;

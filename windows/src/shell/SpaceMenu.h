@@ -1,14 +1,8 @@
 #pragma once
 // The space's menu and Delete Space's question, as Windows' own: the Mac's are AppKit's (an
 // NSMenu from SpaceContextMenus.menu and an NSAlert sheet), so these are a Win32 popup menu
-// (TrackPopupMenuEx) and a task dialog. What they hold is core's (core/SpaceEditing.h).
-//
-// Win32 menus draw light unless the process asks uxtheme for dark ones, which only its
-// unnamed exports do (SetPreferredAppMode and FlushMenuThemes, ordinals 135 and 136, as Explorer
-// and Notepad use them). They're called only on Windows 10 1903 (build 18362) and later, only
-// while a menu is open (the mode is process-wide: it goes back to the default as the menu
-// closes), and without them a dark space's menu is light (docs/windows-architecture.md). The
-// task dialog is always light.
+// (TrackPopupMenuEx) and a task dialog, through shell/ContextMenu (which says how a dark space's
+// menu is dark). What they hold is core's (core/SpaceEditing.h). The task dialog is always light.
 
 #include <windows.h>
 
