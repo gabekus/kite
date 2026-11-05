@@ -5,6 +5,13 @@
 //   kitecore [--profile DIR] state
 //   kitecore [--profile DIR] resolve TEXT...
 //   kitecore [--profile DIR] suggest TEXT... [--current]
+//   kitecore [--profile DIR] find TEXT... [--result ACTIVE/TOTAL] [--width W] [--ask [--conversation]]
+//                                       the find bar with TEXT typed: what it asks the page, its
+//                                       counter for that report, Ask on Page's mode, and its
+//                                       frame (core/FindBar.h)
+//   kitecore [--profile DIR] undo STEP...
+//                                       a field's undo grouping (core/TextUndo.h): type:TEXT,
+//                                       back, paste:TEXT, move, undo, redo
 //   kitecore [--profile DIR] sidebar [SPACE_ID]
 //   kitecore [--profile DIR] collapse SPACE_ID
 //   kitecore [--profile DIR] open TEXT... [--space ID] [--background]
@@ -49,7 +56,10 @@
 // pane, it selects that favorite (in the space you're in); on the empty state's close button, it
 // dismisses it (the one-shot flag, written to the profile).
 // `collapse` is View → Collapse / Expand Pinned Tabs for a space. `click … --double` is the
-// second press of a double-click there (a tab's row renames, in the window).
+// second press of a double-click there (a tab's row renames, in the window). `click … --button middle`
+// is a middle click (pressed and let go at the point): on a tab's row it closes the tab as its close
+// button does (a Windows addition, not the Mac's), printing whether it went ("removed") or, pinned,
+// only unloaded; anywhere else, nothing. A close button's click prints the same `outcome`.
 // The tab edits (Tabs and the command bar's commands, and the sidebar's buttons): `tab pin` is Pin
 // Tab / Unpin Tab (Ctrl+D) and prints where the tab is now (pinned or unpinned, or favorite);
 // `favorite` is Add to / Remove from Favorites, likewise; `rename` renames it (no NAME, or a blank
@@ -144,6 +154,8 @@
 #include "core/Favorites.h"
 #include "core/History.h"
 #include "core/HistoryStore.h"
+#include "core/FindBar.h"
+#include "core/TextUndo.h"
 #include "core/KeyBindings.h"
 #include "core/ProfileSettings.h"
 #include "core/StoreFile.h"
@@ -163,6 +175,7 @@
 #include "core/StoreFile.h"
 #include "core/SupportDirectory.h"
 #include "core/ThemeBackdrop.h"
+#include "core/TitleBar.h"
 #include "core/URLInput.h"
 #include "core/Unicode.h"
 #include "core/Uuid.h"
@@ -183,9 +196,11 @@ int Usage() {
         "usage: kitecore [--profile DIR] state\n"
         "       kitecore [--profile DIR] resolve TEXT...\n"
         "       kitecore [--profile DIR] suggest TEXT... [--current]\n"
+        "       kitecore [--profile DIR] find TEXT... [--result ACTIVE/TOTAL] [--width W] [--ask [--conversation]]\n"
+        "       kitecore [--profile DIR] undo type:TEXT|back|paste:TEXT|move|undo|redo...\n"
         "       kitecore [--profile DIR] sidebar [SPACE_ID] [--page back,forward,loading] [--hidden]\n"
         "       kitecore [--profile DIR] collapse SPACE_ID\n"
-        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]] [--page back,forward,loading] [--double]\n"
+        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]] [--page back,forward,loading] [--double] [--button left|middle]\n"
         "       kitecore [--profile DIR] open TEXT... [--space ID] [--background]\n"
         "       kitecore [--profile DIR] select TAB_ID\n"
         "       kitecore [--profile DIR] tab next|prev|NUMBER\n"
@@ -353,6 +368,16 @@ std::optional<occlusion::Rect> ParseRect(const std::string& text) {
 
 // Ids typed in either case, like UUID(uuidString:).
 std::string Id(const std::string& text) { return NormalizeUuid(text).value_or(text); }
+
+// What closing a tab did, as `close` and a click's `outcome` print it.
+const char* OutcomeName(CloseOutcome outcome) {
+    switch (outcome) {
+    case CloseOutcome::Removed: return "removed";
+    case CloseOutcome::Unloaded: return "unloaded";
+    case CloseOutcome::NotFound: return "notFound";
+    }
+    return "notFound";
+}
 
 std::optional<double> ParseSeconds(const std::string& text) {
     double value = 0;
@@ -767,12 +792,17 @@ int main(int argc, char** argv) {
     PageStatus page;
     bool hidden = false;
     int clicks = 1;
+    bool middle = false;
     if (args[0] == "sidebar" || args[0] == "click") {
         for (size_t i = 1; i < args.size(); ++i) {
             if (args[i] == "--hidden" && args[0] == "sidebar") {
                 hidden = true;
             } else if (args[i] == "--double" && args[0] == "click") {
                 clicks = 2;
+            } else if (args[i] == "--button" && args[0] == "click" && i + 1 < args.size()) {
+                if (args[i + 1] == "middle") middle = true;
+                else if (args[i + 1] != "left") return Usage();
+                args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
             } else if (args[i] == "--page" && i + 1 < args.size()) {
                 std::string_view rest = args[i + 1];
                 while (!rest.empty()) {
@@ -898,6 +928,85 @@ int main(int argc, char** argv) {
         auto url = url_input::Resolve(Join(args, 1), engine);
         if (!url) return kNotFound;
         std::puts(url->c_str());
+        return kOk;
+    } else if (command == "find") {
+        // The find bar (Ctrl+F) with TEXT typed: its placeholder, the search it asks the page for,
+        // the counter for a page report ACTIVE/TOTAL (0/0 for none, as Kite.exe's --find-result),
+        // whether Return would ask instead (Ask on Page, --ask, in a conversation with
+        // --conversation; Windows has no Ask on Page yet), and its frame in a window WIDTH points wide.
+        std::vector<std::string> words;
+        std::optional<FindResult> result;
+        double width = 1280;
+        bool ask = false, conversation = false;
+        const auto whole = [](std::string_view text, auto& value) {
+            const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+            return !text.empty() && error == std::errc() && end == text.data() + text.size();
+        };
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--result" && i + 1 < args.size()) {
+                const std::string_view report = args[++i];
+                const size_t slash = report.find('/');
+                int active = -1, total = -1;
+                if (slash == std::string_view::npos || !whole(report.substr(0, slash), active) || !whole(report.substr(slash + 1), total) ||
+                    active < 0 || total < active || (total > 0 && active < 1)) {
+                    return Usage();
+                }
+                result = FindResult{total > 0, total, active};
+            } else if (args[i] == "--width" && i + 1 < args.size()) {
+                if (!whole(args[++i], width) || !(width >= 1 && width <= 8192)) return Usage();
+            } else if (args[i] == "--ask") {
+                ask = true;
+            } else if (args[i] == "--conversation") {
+                conversation = true;
+            } else {
+                words.push_back(args[i]);
+            }
+        }
+        FindQuery query;
+        query.askEnabled = ask;
+        const FindQuery::Search search = query.TextChanged(Join(words, 0));
+        if (result) query.Show(*result);
+        const FindBarFrame frame = FindBarFrameIn(title_bar::kSidebarWidth, title_bar::kContentTop, width - sidebar_toggle::kContentInset,
+                                                  find_bar_style::ForAskEnabled(ask));
+        json::Object o{{"placeholder", ask_on_page::Placeholder(ask, conversation)},
+                       {"search", json::Object{{"text", search.text}, {"forward", search.forward}, {"findNext", search.findNext}}},
+                       {"label", query.Label()},
+                       {"notFound", query.LabelIsNotFound()},
+                       {"askMode", ask_on_page::IsAskMode(ask, query.Query(), query.Matches(), conversation)},
+                       {"frame", json::Object{{"left", frame.left}, {"top", frame.top}, {"width", frame.width}, {"height", frame.height}}}};
+        std::puts(json::Write(json::Value(std::move(o))).c_str());
+        return kOk;
+    } else if (command == "undo") {
+        // A text field's undo (core/TextUndo, as Kite's fields group it): STEP is type:TEXT (a
+        // keystroke a character), back (Backspace), paste:TEXT, move (the caret moved), undo or
+        // redo; prints the text after each step.
+        TextUndo<std::string> history;
+        std::string text;
+        json::Array texts;
+        for (size_t i = 1; i < args.size(); ++i) {
+            const std::string_view step = args[i];
+            if (step.starts_with("type:")) {
+                for (const std::u32string& character : unicode::Characters(step.substr(5))) {
+                    history.Record(text, TextUndo<std::string>::Kind::Typing);
+                    text += unicode::Encode(character);
+                }
+            } else if (step == "back") {
+                if (text.empty()) continue;
+                history.Record(text, TextUndo<std::string>::Kind::Typing);
+                text.resize(text.size() - unicode::Encode(unicode::Characters(text).back()).size());
+            } else if (step.starts_with("paste:")) {
+                history.Record(text, TextUndo<std::string>::Kind::Other);
+                text += step.substr(6);
+            } else if (step == "move") {
+                history.BreakTyping();
+            } else if (step == "undo" || step == "redo") {
+                if (auto to = step == "undo" ? history.Undo(text) : history.Redo(text)) text = *to;
+            } else {
+                return Usage();
+            }
+            texts.emplace_back(text);
+        }
+        std::puts(json::Write(json::Value(std::move(texts))).c_str());
         return kOk;
     } else if (command == "suggest") {
         CommandBarMode mode = CommandBarMode::NewTab;
@@ -1075,7 +1184,26 @@ int main(int argc, char** argv) {
         const float listTop = SidebarListTop(tray);
         // The space bar along the bottom: a click on a space's cell selects it (pressed and let
         // go at the point, as the window's).
-        if (const auto button = values[0] >= 0 && values[0] < 240 ? TopRowItemAt(topRow, values[0], values[1]) : std::nullopt) {
+        if (middle) {
+            // A middle click (Windows' close-a-tab click): a tab's row closes as its close button
+            // does; anything else (the top row, the bar, a favorite, a folder, the header) takes nothing.
+            const auto press = values[0] >= 0 && values[0] < 240 && !TopRowItemAt(topRow, values[0], values[1]) &&
+                                       !(values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) &&
+                                       !InFavorites(tray, 240, values[0], values[1])
+                                   ? SidebarMiddlePressAt(rows, 240, values[2], values[3], values[0], values[1], listTop)
+                                   : std::nullopt;
+            json::Object out{{"target", std::string(press ? "row" : "none")}};
+            if (press) {
+                out.emplace("id", press->id);
+                const SidebarTap tap = SidebarMiddleRelease(*press, rows, 240, values[2], values[3], values[0], values[1], listTop);
+                out.emplace("action", std::string(tap.action == SidebarTap::Action::CloseTab ? "closeTab" : "none"));
+                if (tap.action == SidebarTap::Action::CloseTab) {
+                    out.emplace("outcome", std::string(OutcomeName(state.Close(tap.id))));
+                    changed = true;
+                }
+            }
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (const auto button = values[0] >= 0 && values[0] < 240 ? TopRowItemAt(topRow, values[0], values[1]) : std::nullopt) {
             // A top-row button: the command the window runs (nothing for a disabled one). Toggle
             // Sidebar and the page's commands are the window's, so nothing here changes.
             const TopRowItem& item = topRow[*button];
@@ -1138,7 +1266,10 @@ int main(int argc, char** argv) {
                 case SidebarTap::Action::SelectTab: state.Select(tap.id); changed = true; break;
                 case SidebarTap::Action::SetFolderExpanded: state.SetFolderExpanded(tap.id, tap.expanded); changed = true; break;
                 case SidebarTap::Action::TogglePinnedSection: TogglePinnedSection(state, tap.id); changed = true; break;
-                case SidebarTap::Action::CloseTab: state.Close(tap.id); changed = true; break;
+                case SidebarTap::Action::CloseTab:
+                    out.emplace("outcome", std::string(OutcomeName(state.Close(tap.id))));
+                    changed = true;
+                    break;
                 case SidebarTap::Action::ResetTab:
                     if (const auto url = state.ResetTab(tap.id)) out.emplace("url", *url);
                     changed = true;
@@ -1279,7 +1410,7 @@ int main(int argc, char** argv) {
         // Ctrl+W on a tab: prints whether it was removed (and archived) or only unloaded.
         const CloseOutcome outcome = state.Close(Id(args[1]));
         if (outcome == CloseOutcome::NotFound) return kNotFound;
-        std::puts(outcome == CloseOutcome::Removed ? "removed" : "unloaded");
+        std::puts(OutcomeName(outcome));
         changed = true;
     } else if (command == "reopen" && args.size() <= 2) {
         // Ctrl+Shift+T, or Undo Archive Tab for one tab: prints the tab that came back.

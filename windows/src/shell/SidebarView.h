@@ -104,6 +104,8 @@ public:
     // and releases over the sidebar, and the wheel over its list. True when it took `message`.
     // As on the Mac, the click that brings the window forward doesn't tap a row (rows don't
     // accept first mouse); it does press the address field, the chevron and a close button.
+    // A middle click on a tab's row closes it as its close button does (Windows', not the Mac's:
+    // core's SidebarMiddlePressAt).
     bool HandleMouse(UINT message, WPARAM wParam, LPARAM lParam);
     // Forgets the pointer and any press (the command bar opened over the window).
     void ClearHover();
@@ -430,6 +432,7 @@ private:
     std::optional<SpaceBarPress> barPress_;  // a press on a space's cell (core's)
     std::optional<TopRowButton> topPress_;   // a press on an enabled top-row button
     std::optional<FavoritePress> favoritePress_;  // a press on a favorite's pane
+    std::optional<SidebarPress> middlePress_;     // a middle press on a tab's row (it closes on release)
     bool activating_ = false;         // the next press brings the window forward
     int clicks_ = 0;
     DWORD lastClickTime_ = 0;

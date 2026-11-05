@@ -1,0 +1,155 @@
+{
+  "state": {
+    "adblockAllowedHosts": [
+      "news.example.com"
+    ],
+    "allowsJavaScriptFromAppleEvents": false,
+    "archiveAfter": "never",
+    "archived": [],
+    "blocksAds": true,
+    "darkPageHosts": [],
+    "darkPages": "matchSystem",
+    "devModeReloadState": "reload",
+    "developerModeEnabledForHosts": [],
+    "favorites": [],
+    "hasSeenLiveFolderIntro": false,
+    "liveFoldersTurnedOff": [],
+    "pageAppearance": "light",
+    "recentlyClosed": [],
+    "searchEngine": "duckDuckGo",
+    "selectedSpaceID": "5F0C9A2B-1D3E-4F6A-9B8C-7D6E5F4A3B21",
+    "showsToolbar": false,
+    "siteSearchDefaultsSeeded": 1,
+    "siteSearches": [],
+    "spaces": [
+      {
+        "icon": "🏠",
+        "id": "5F0C9A2B-1D3E-4F6A-9B8C-7D6E5F4A3B21",
+        "name": "Personal",
+        "pinnedItems": [
+          {
+            "tab": {
+              "_0": {
+                "id": "9C8B7A6D-5E4F-4A3B-8C2D-1E0F9A8B7C6D",
+                "lastActiveAt": 782999000,
+                "pinnedURL": "https://docs.example.com",
+                "title": "Docs",
+                "url": "https://docs.example.com/page"
+              }
+            }
+          },
+          {
+            "folder": {
+              "_0": {
+                "id": "2A3B4C5D-6E7F-4801-9A2B-3C4D5E6F7A8B",
+                "isExpanded": true,
+                "items": [
+                  {
+                    "tab": {
+                      "_0": {
+                        "customTitle": "Renamed",
+                        "id": "7F6E5D4C-3B2A-4190-8F7E-6D5C4B3A2918",
+                        "lastActiveAt": 782998000,
+                        "pinnedURL": "https://shop.example.com",
+                        "title": "Shop",
+                        "url": "https://shop.example.com"
+                      }
+                    }
+                  },
+                  {
+                    "folder": {
+                      "_0": {
+                        "id": "3B4C5D6E-7F80-4912-AB3C-4D5E6F7A8B9C",
+                        "isExpanded": false,
+                        "items": [
+                          {
+                            "tab": {
+                              "_0": {
+                                "id": "8A7B6C5D-4E3F-4A2B-9C1D-0E9F8A7B6C5D",
+                                "lastActiveAt": 782997000,
+                                "pinnedURL": "https://wiki.example.com",
+                                "title": "Wiki",
+                                "url": "https://wiki.example.com"
+                              }
+                            }
+                          }
+                        ],
+                        "name": "Old projects"
+                      }
+                    }
+                  }
+                ],
+                "name": "Work stuff"
+              }
+            }
+          }
+        ],
+        "selectedTabID": "C1D2E3F4-A5B6-4C7D-8E9F-0A1B2C3D4E5F",
+        "tabs": [
+          {
+            "id": "C1D2E3F4-A5B6-4C7D-8E9F-0A1B2C3D4E5F",
+            "lastActiveAt": 783000000,
+            "title": "Example Domain",
+            "url": "https://example.com/"
+          },
+          {
+            "id": "D2E3F4A5-B6C7-4D8E-9F0A-1B2C3D4E5F60",
+            "lastActiveAt": 782990000,
+            "title": "A very long article title that runs past the end of the sidebar",
+            "url": "https://news.example.com/a-very-long-article-title"
+          },
+          {
+            "id": "E3F4A5B6-C7D8-4E9F-0A1B-2C3D4E5F6071",
+            "lastActiveAt": 782980000,
+            "title": "Inbox (3)",
+            "url": "https://mail.example.com/inbox"
+          }
+        ],
+        "theme": {
+          "colors": [
+            {
+              "b": 0.1,
+              "g": 0.1,
+              "r": 0.1
+            }
+          ],
+          "grain": 0,
+          "tint": 0.44
+        }
+      },
+      {
+        "about": "Komado: orders and suppliers",
+        "icon": "symbol:briefcase",
+        "id": "6A1D2F0C-3E4B-4B8A-8F21-2C9D0E7A5B33",
+        "name": "Work",
+        "pinned": [
+          {
+            "id": "3D4E5F60-7182-4A93-B4C5-D6E7F8091A2B",
+            "lastActiveAt": 782000000,
+            "title": "Old pinned",
+            "url": "https://legacy.example.com"
+          }
+        ],
+        "tabs": [],
+        "theme": {
+          "colors": [
+            {
+              "b": 0.4235294,
+              "g": 0.6039216,
+              "r": 1
+            },
+            {
+              "b": 0.60784316,
+              "g": 0.38431373,
+              "r": 0.9411765
+            }
+          ],
+          "grain": 0.35
+        }
+      }
+    ],
+    "spacesWithCollapsedPinnedSections": [],
+    "warnsBeforeQuitting": false
+  },
+  "version": 1
+}

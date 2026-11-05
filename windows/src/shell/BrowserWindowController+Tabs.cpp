@@ -31,9 +31,10 @@ void BrowserWindowController::EditState(const std::function<void()>& change, boo
 }
 
 void BrowserWindowController::TakeKeyboardForRename() {
-    // The one seam W21 fills: GiveKeyboard(KeyboardField::Rename) first, so the find field's caret
-    // goes before the rename's. Then the keyboard, when Kite is the window in front (a quiet test run
-    // never activates).
+    // Every rename (a space's, a tab's, a folder's) takes the keyboard from the find field first, so
+    // its caret goes before the rename's (W21's one owner). Then the keyboard, when Kite is the
+    // window in front (a quiet test run never activates).
+    GiveKeyboard(KeyboardField::Rename);
     if (GetForegroundWindow() == window_.Handle()) SetFocus(window_.Handle());
 }
 

@@ -56,6 +56,57 @@ if(NOT count EQUAL 2)
   message(FATAL_ERROR "suggest --current gave ${rows}")
 endif()
 
+# Find in page (W21): typing searches at once from the first match; the page's report fills the
+# counter, "Not Found" for none; the bar sits 10pt in from the card's top-right corner, and a
+# 500pt window's card (240 to 490) narrows it to 230.
+kitecore(find find domain --result 1/2)
+string(JSON text GET "${find}" search text)
+string(JSON next GET "${find}" search findNext)
+string(JSON label GET "${find}" label)
+string(JSON left GET "${find}" frame left)
+string(JSON top GET "${find}" frame top)
+string(JSON placeholder GET "${find}" placeholder)
+if(NOT text STREQUAL "domain" OR next OR NOT label STREQUAL "1/2" OR NOT left EQUAL 960 OR NOT top EQUAL 42
+   OR NOT placeholder STREQUAL "Find in page…")
+  message(FATAL_ERROR "find gave ${find}")
+endif()
+kitecore(find find zqxj --result 0/0 --width 500)
+string(JSON label GET "${find}" label)
+string(JSON notFound GET "${find}" notFound)
+string(JSON width GET "${find}" frame width)
+if(NOT label STREQUAL "Not Found" OR NOT notFound OR NOT width EQUAL 230)
+  message(FATAL_ERROR "find with no match gave ${find}")
+endif()
+# Ask on Page (the Mac's; Windows has no card yet): "No matches", and Return asks once the page
+# has none; the card is 400pt, 20pt in.
+kitecore(find find why is the sky blue --result 0/0 --ask)
+string(JSON label GET "${find}" label)
+string(JSON askMode GET "${find}" askMode)
+string(JSON placeholder GET "${find}" placeholder)
+string(JSON width GET "${find}" frame width)
+if(NOT label STREQUAL "No matches" OR NOT askMode OR NOT placeholder STREQUAL "Find or ask…" OR NOT width EQUAL 400)
+  message(FATAL_ERROR "find --ask gave ${find}")
+endif()
+kitecore(find find sky --result 2/3)
+string(JSON askMode GET "${find}" askMode)
+if(askMode)
+  message(FATAL_ERROR "find without Ask on Page would ask: ${find}")
+endif()
+# A report with matches has an active one, as Kite.exe's --find-result; widths are numbers.
+expect_exit_early(1 find sky --result 0/5)
+expect_exit_early(1 find sky --result 2/1)
+expect_exit_early(1 find sky --width wide)
+expect_exit_early(1 find sky --width 0)
+
+# A field's undo: a run of typing is one undo, a caret move starts another, a paste is its own.
+kitecore(texts undo type:sky back move type:z paste:ab undo undo undo redo)
+string(JSON last GET "${texts}" 8)
+string(JSON afterUndos GET "${texts}" 7)
+string(JSON afterPasteUndo GET "${texts}" 5)
+if(NOT afterPasteUndo STREQUAL "skz" OR NOT afterUndos STREQUAL "" OR NOT last STREQUAL "sk")
+  message(FATAL_ERROR "undo gave ${texts}")
+endif()
+
 # The sidebar: the address shows the selected tab's host, and the space page lists the header,
 # the divider, New Tab and today's tabs, 41pt apart under the 39pt header and 25pt divider.
 kitecore(bar sidebar)
@@ -263,6 +314,82 @@ endif()
 expect_exit_early(1 occlusion)
 expect_exit_early(1 occlusion 0,0,10)
 expect_exit_early(1 occlusion 0,0,10,10 --monitor)
+
+# A middle click (Windows' close-a-tab click, not the Mac's): on a tab's row it closes the tab as
+# its close button does, today's going and a pinned one (in a folder too) only unloading; on a
+# folder, the header, the top row, the space bar or a favorite, nothing. On the UI gate's sidebar
+# session (page from 82 once its empty state is dismissed), then favorites-4's.
+function(middle_click_checks)
+  set(WORK "${WORK}-middle")
+  file(REMOVE_RECURSE "${WORK}")
+  file(MAKE_DIRECTORY "${WORK}")
+  file(COPY_FILE "${CMAKE_CURRENT_LIST_DIR}/../helix/states/sidebar.json" "${WORK}/session.json")
+  kitecore(ignored click 219 109)
+  kitecore(bar sidebar)
+  string(JSON before LENGTH "${bar}" rows)
+  string(JSON docs GET "${bar}" rows 1 id)
+  string(JSON renamed GET "${bar}" rows 3 id)
+  string(JSON example GET "${bar}" rows 7 id)
+  string(JSON exampleTop GET "${bar}" rows 7 top)
+  math(EXPR exampleY "82 + ${exampleTop} + 20")
+  # Example Domain, in Today: it goes, archived.
+  kitecore(hit click 100 ${exampleY} --button middle)
+  string(JSON target GET "${hit}" target)
+  string(JSON action GET "${hit}" action)
+  string(JSON outcome GET "${hit}" outcome)
+  string(JSON hitID GET "${hit}" id)
+  kitecore(bar sidebar)
+  string(JSON after LENGTH "${bar}" rows)
+  kitecore(state state)
+  string(JSON archivedID GET "${state}" archived 0 id)
+  math(EXPR gone "${before} - ${after}")
+  if(NOT target STREQUAL "row" OR NOT action STREQUAL "closeTab" OR NOT outcome STREQUAL "removed" OR NOT hitID STREQUAL example
+     OR NOT gone EQUAL 1 OR NOT archivedID STREQUAL example)
+    message(FATAL_ERROR "a middle click on Example Domain gave ${hit}, then ${bar}")
+  endif()
+  # Docs (pinned) and Renamed (in Work stuff) unload, as their close buttons do: their rows stay.
+  kitecore(pinned click 100 141 --button middle)
+  kitecore(inFolder click 100 223 --button middle)
+  string(JSON pinnedOutcome GET "${pinned}" outcome)
+  string(JSON pinnedID GET "${pinned}" id)
+  string(JSON folderOutcome GET "${inFolder}" outcome)
+  string(JSON folderID GET "${inFolder}" id)
+  kitecore(bar sidebar)
+  string(JSON kept LENGTH "${bar}" rows)
+  string(JSON docsKept GET "${bar}" rows 1 id)
+  string(JSON renamedKept GET "${bar}" rows 3 id)
+  if(NOT pinnedOutcome STREQUAL "unloaded" OR NOT pinnedID STREQUAL docs OR NOT folderOutcome STREQUAL "unloaded" OR NOT folderID STREQUAL renamed
+     OR NOT kept EQUAL after OR NOT docsKept STREQUAL docs OR NOT renamedKept STREQUAL renamed)
+    message(FATAL_ERROR "a middle click on a pinned tab gave ${pinned} and ${inFolder}, then ${bar}")
+  endif()
+  # The Work stuff folder, the header, the field, the top row's reload and Personal's cell: nothing.
+  foreach(at "100;182" "40;95" "100;60" "150;23" "85;795")
+    list(GET at 0 x)
+    list(GET at 1 y)
+    kitecore(miss click ${x} ${y} --button middle)
+    string(JSON target GET "${miss}" target)
+    string(JSON hasAction ERROR_VARIABLE noAction GET "${miss}" action)
+    if(NOT target STREQUAL "none" OR NOT noAction)
+      message(FATAL_ERROR "a middle click at ${x},${y} gave ${miss}")
+    endif()
+  endforeach()
+  kitecore(bar2 sidebar)
+  if(NOT bar2 STREQUAL bar)
+    message(FATAL_ERROR "middle clicks on nothing changed the sidebar: ${bar2}")
+  endif()
+  expect_exit_early(1 click 100 141 --button right)
+
+  # A favorite's pane (YouTube's, from 8,90, 50 by 47): nothing, and it's still a favorite.
+  file(COPY_FILE "${CMAKE_CURRENT_LIST_DIR}/../helix/states/favorites-4.json" "${WORK}/session.json")
+  kitecore(before state)
+  kitecore(favorite click 33 113 --button middle)
+  string(JSON target GET "${favorite}" target)
+  kitecore(after state)
+  if(NOT target STREQUAL "none" OR NOT before STREQUAL after)
+    message(FATAL_ERROR "a middle click on a favorite gave ${favorite}, then ${after}")
+  endif()
+endfunction()
+middle_click_checks()
 
 # Folders and the pinned section, on the UI gate's sidebar session (Personal: pinned Docs,
 # the Work stuff folder holding Renamed and the closed Old projects, then today's tabs).

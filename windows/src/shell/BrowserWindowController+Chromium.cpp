@@ -1,6 +1,7 @@
 // The window controller's Chromium wiring (the Mac's engine side of BrowserWindowController and
-// its +*.swift extensions): the content card's bounds, the selected tab's page, the pages'
-// reports, and Chromium's start and shutdown. See BrowserWindowController.h.
+// its +*.swift extensions): the selected tab's page, the pages' reports, and Chromium's start and
+// shutdown. See BrowserWindowController.h. (The content card's bounds are in
+// BrowserWindowController.cpp: the find bar needs them in a capture, which has no Chromium.)
 
 #include "shell/BrowserWindowController.h"
 
@@ -17,23 +18,9 @@
 
 namespace kite {
 
-RECT BrowserWindowController::ContentBounds() const {
-    RECT client{};
-    GetClientRect(window_.Handle(), &client);
-    const int dpi = static_cast<int>(window_.Dpi());
-    auto px = [dpi](int points) { return MulDiv(points, dpi, USER_DEFAULT_SCREEN_DPI); };
-    // Its top under the caption buttons; its leading edge the sidebar's, or the inset once the
-    // sidebar is hidden (not while it's still sliding off: a tab switch or a resize then would put
-    // the page over it).
-    const int left = static_cast<int>(CardLeft(sidebarShown_ || toggling_, static_cast<float>(kSidebarWidth)));
-    const int inset = static_cast<int>(sidebar_toggle::kContentInset);
-    RECT card{px(left), px(static_cast<int>(title_bar::kContentTop)), client.right - px(inset), client.bottom - px(inset)};
-    card.right = std::max(card.right, card.left + 1);
-    card.bottom = std::max(card.bottom, card.top + 1);
-    return card;
-}
-
 void BrowserWindowController::ShowSelectedTab() {
+    // Before the page changes: the find bar closes and its search ends in the page it ran in.
+    FindBarFollowsSelection();
     const Tab* tab = state_.SelectedTab();
     // No tab: the card shows through (the Mac's "Press ⌘T to open a tab" comes later).
     if (!tab) return chromium_->ShowNothing();
@@ -94,6 +81,9 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
             pageLoading_ = true;
         } else if (pageLoading_ && !pageLoaded_) {
             pageLoaded_ = true;
+            // Find in the page first (its reports come as findResult); the window closes once
+            // that and the rest are done.
+            if (options_.smokeTest && smokeFind_ == SmokeFind::Idle) StartSmokeFind();
             CloseWhenSmokeTestIsDone();
         }
     };
@@ -146,6 +136,12 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         // address as a new visit.
         ForgetRecorded(id);
     };
+    events.findResult = [this](const std::string& id, int count, int activeMatch, bool final) {
+        if (findBar_ && findBar_->IsOpen() && id == findTabID_) {
+            findBar_->ShowResult(FindResult{count > 0, count, activeMatch});
+        }
+        if (options_.smokeTest) SmokeTestFind(count, activeMatch, final);
+    };
     events.shortcuts = shortcuts_;
     events.command = [this](const std::string& command) { RunCommand(command); };
     events.newTab = [this] {
@@ -189,8 +185,9 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     };
     window_.mayClose = [this] { return MayQuit() && chromium_->MayCloseWindow(); };
     window_.onFocus = [this] {
-        // The open bar keeps the keyboard in Kite's window.
-        if (!commandBar_ || !commandBar_->IsOpen()) chromium_->Focus();
+        // A field of Kite's with the keyboard (the command bar's, a rename, the find bar's)
+        // keeps it in Kite's window; otherwise it goes on to the page.
+        if (KeyboardOwner() == KeyboardField::None) chromium_->Focus();
     };
     return Chromium::StartResult::Started;
 }
@@ -200,6 +197,8 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
 // context, which a page loading has but may report after the load).
 void BrowserWindowController::CloseWhenSmokeTestIsDone() {
     if (!options_.smokeTest || !pageLoaded_ || !rendererChecked_ || closeAskedAt_) return;
+    // And find in the page (StartSmokeFind), once it has run.
+    if (findBar_ && smokeFind_ != SmokeFind::Done) return;
     // Every helper by now (GPU, network, storage, renderers): none but the network service
     // may run at medium integrity.
     std::wstring error;
@@ -230,6 +229,8 @@ std::wstring BrowserWindowController::ShutDownChromium() {
     if (!rendererProblem_.empty()) return L"the first page's renderer isn't sandboxed: " + rendererProblem_;
     if (!helperProblem_.empty()) return L"a helper isn't sandboxed: " + helperProblem_;
     if (!chromium_->PagesCanBeHidden()) return L"a page had no Chromium widget window to hide: background tabs would keep drawing";
+    if (!smokeFindProblem_.empty()) return L"find in page: " + smokeFindProblem_;
+    if (findBar_ && smokeFind_ != SmokeFind::Done) return L"find in page: the page's search never finished";
     // On, as in Chrome and on the Mac (Chromium::SetEnergySaverEnabled). That's Chromium's own
     // default too, so only a profile whose Local State has it off (CI's smoke writes 0 first)
     // shows that Kite set it.
