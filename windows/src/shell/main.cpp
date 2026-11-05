@@ -5,7 +5,8 @@
 //                            Chromium: until the selected tab's page has loaded, at most
 //                            30 s, then one WM_CLOSE must close every browser in time),
 //                            saves the session and exits 0 (CI). Errors go to the exit
-//                            code, never a dialog.
+//                            code, never a dialog. Fails if any window of Kite's (Chromium's
+//                            too) became the foreground window: a quiet run stays behind.
 //   Kite.exe --capture FILE.png [--window-size W,H] [--capture-scale N]
 //                            opens the window at W×H points (client area), saves the frame
 //                            it presents as a PNG and exits: the Helix UI gate
@@ -20,10 +21,30 @@
 //   Kite.exe --capture FILE.png --space-tip N
 //                            the same with space N's tip (1-based) over its cell, at rest (the
 //                            cell's hover backing isn't drawn: no pointer is on it).
+//   Kite.exe --capture FILE.png --swipe DX
+//                            the same with two fingers on a touchpad holding the sidebar's
+//                            content dragged DX points sideways (positive towards the previous
+//                            space): the pages, the bar's light and the theme as they follow.
+//   Kite.exe --capture FILE.png --space-drag N,X | --space-drop N,X
+//                            the same with space N's cell in the bar (from 1) pressed and dragged
+//                            to X points along the bar and held there (the ghost and the open
+//                            slot), or let go there and settled (the space moved).
+//   Kite.exe --capture FILE.png --space-menu N
+//                            the same with space N's menu open over its cell, as a right-click
+//                            there opens it (Windows' own menu, read back from its window).
+//   Kite.exe --capture FILE.png --rename-space N
+//                            the same with space N's header renaming it (Rename Space…), its name
+//                            all selected.
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
 //                            closes: one JSON object a line, `t`, `offset` and `theme`.
+//   Kite.exe --save-log FILE  a quiet window (behind other windows, no dialogs) on a test profile
+//                            that stays open until it's closed, then writes each session save
+//                            it made (when, and its cost on the UI thread) and the writer's
+//                            statistics to FILE as JSON: the live check of saving as it changes.
+//                            KITE_TEST_SLOW_BACKUP_MS=N makes each backup take N ms more
+//                            (the live check of a relaunch while Kite quits).
 //   Kite.exe --perf-log FILE [--perf-control] [--chromium-switches "--a --b=c"]
 //                            a normal window on a test profile, for windows/tools/perf/kiteperf:
 //                            FILE gets JSON lines of QPC marks, present/commit/surface-draw
@@ -44,9 +65,12 @@
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -59,6 +83,7 @@
 #include "core/CommandLine.h"
 #include "core/KeyBindings.h"
 #include "core/SessionStore.h"
+#include "core/SessionWriter.h"
 #include "core/SupportDirectory.h"
 #include "shell/BackdropTest.h"
 #include "shell/BrowserWindowController.h"
@@ -68,12 +93,17 @@
 #include "shell/Capture.h"
 #include "shell/MainWindow.h"
 #include "shell/PerfLog.h"
+#include "shell/QuietRun.h"
 #include "shell/Text.h"
 
 namespace {
 
 using kite::Narrow;
 using kite::Widen;
+using kite::WriteUtf8;
+
+// How long Kite waits, once its window is gone, for the session's last write.
+constexpr std::chrono::milliseconds kQuitFlush{10'000};
 
 enum ExitCode : int { kOk = 0, kUsage = 1, kBadSupportDirectory = 2, kWindowFailed = 3, kSaveFailed = 4, kCaptureFailed = 5 };
 
@@ -132,19 +162,6 @@ std::optional<std::pair<int, int>> ParseSize(std::wstring_view text) {
     return std::make_pair(*w, *h);
 }
 
-// Writes `text` as UTF-8 to a standard handle, if the launcher gave us one (a GUI process
-// has no console, but a launcher that redirects stdout or stderr, like CI, gets the text).
-void WriteUtf8(DWORD which, const std::wstring& text) {
-    HANDLE handle = GetStdHandle(which);
-    if (!handle || handle == INVALID_HANDLE_VALUE || text.empty()) return;
-    const int bytes = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-    if (bytes <= 0) return;
-    std::string utf8(static_cast<size_t>(bytes), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), utf8.data(), bytes, nullptr, nullptr);
-    DWORD written = 0;
-    WriteFile(handle, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
-}
-
 // The user's shortcut changes (keybindings.json, the Mac's KeyBindingsStore): none when the
 // file isn't there, or can't be read (the defaults then, as the Mac does).
 kite::KeyBindings LoadKeyBindings(const std::filesystem::path& file) {
@@ -197,7 +214,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // value (core/CommandLine.h).
     kite::command_line::Spec spec;
     spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control"};
-    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--perf-log"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--save-log", "--perf-log"};
     // Its value is switches ("--a --b"), each checked against the allow-list below; Chromium's
     // raw read sees them too, so only allowed ones get this far.
     spec.switchValueOptions = {"--chromium-switches"};
@@ -219,11 +236,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const OptionValue captureOption = Option(args, L"--capture");
     const OptionValue sizeOption = Option(args, L"--window-size");
     const std::optional<std::wstring>& capture = captureOption.value;
+    const OptionValue saveLogOption = Option(args, L"--save-log");
     const OptionValue perfLogOption = Option(args, L"--perf-log");
     const bool perfControl = HasFlag(args, L"--perf-control");
     const OptionValue switchesOption = Option(args, L"--chromium-switches");
-    // A measured run never shows a dialog or takes the focus (kiteperf runs beside other work).
-    const bool quiet = smokeTest || captureOption.present || perfLogOption.present || perfControl || switchesOption.present;
+    // A quiet run: the one place that decides it (everything else reads Options::quiet). It
+    // never comes to the front, takes the focus or shows a dialog (shell/QuietRun.h, the Mac's
+    // KITE_DIAGNOSTICS test-safe mode): watched from here on, and --smoke-test fails if it did.
+    // A capture, a save log and a measured run (kiteperf runs beside other work) are watched
+    // too, and say so on stderr.
+    const bool quiet = smokeTest || captureOption.present || saveLogOption.present || perfLogOption.present || perfControl ||
+                       switchesOption.present;
+    std::optional<kite::ForegroundWatch> foreground;
+    if (quiet) foreground.emplace();
+    if (saveLogOption.present && !saveLogOption.value) return Fail(quiet, L"--save-log takes a file", kUsage);
     if (captureOption.present && !capture) return Fail(quiet, L"--capture takes a PNG path", kUsage);
     const OptionValue scaleOption = Option(args, L"--capture-scale");
     int captureScale = 0;
@@ -253,6 +279,56 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         tipIndex = static_cast<size_t>(std::stoi(*tipOption.value) - 1);
     }
     if (tipOption.present && !captureOption.present) return Fail(quiet, L"--space-tip only goes with --capture", kUsage);
+    const OptionValue swipeOption = Option(args, L"--swipe");
+    std::optional<double> swipe;
+    if (swipeOption.present) {
+        const std::string text = swipeOption.value ? Narrow(*swipeOption.value) : std::string();
+        double dx = 0;
+        auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), dx);
+        if (text.empty() || error != std::errc() || end != text.data() + text.size() || dx == 0 || !(std::abs(dx) <= 10000)) {
+            return Fail(quiet, L"--swipe takes the points the fingers dragged, -10000 to 10000 and not 0", kUsage);
+        }
+        swipe = dx;
+    }
+    if (swipeOption.present && !captureOption.present) return Fail(quiet, L"--swipe only goes with --capture", kUsage);
+    // The space bar's and the header's editing states: a space's place (from 1), and for a drag
+    // the points along the bar it's dragged to.
+    const auto place = [](const std::wstring& text) -> std::optional<size_t> {
+        if (text.empty() || text.size() > 3 || !std::all_of(text.begin(), text.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; })) {
+            return std::nullopt;
+        }
+        const int n = std::stoi(text);
+        return n >= 1 ? std::optional<size_t>(static_cast<size_t>(n - 1)) : std::nullopt;
+    };
+    struct HeldDrag {
+        size_t index;
+        float x;
+        bool drop;
+    };
+    std::optional<HeldDrag> heldDrag;
+    for (const wchar_t* flag : {L"--space-drag", L"--space-drop"}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        const std::string text = option.value ? Narrow(*option.value) : std::string();
+        const size_t comma = text.find(',');
+        float x = 0;
+        const char* begin = comma == std::string::npos ? nullptr : text.data() + comma + 1;
+        const auto [end, failed] = begin ? std::from_chars(begin, text.data() + text.size(), x) : std::from_chars_result{nullptr, std::errc::invalid_argument};
+        const std::optional<size_t> index = comma == std::string::npos ? std::nullopt : place(Widen(text.substr(0, comma)));
+        if (!index || failed != std::errc() || end != text.data() + text.size() || !(std::abs(x) <= 10000) || heldDrag) {
+            return Fail(quiet, std::wstring(flag) + L" takes a space's place from 1 and the points along the bar, N,X (one of --space-drag and --space-drop)", kUsage);
+        }
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+        heldDrag = HeldDrag{*index, x, std::wstring(flag) == L"--space-drop"};
+    }
+    std::optional<size_t> heldMenu, heldRename;
+    for (const auto& [flag, out] : {std::pair<const wchar_t*, std::optional<size_t>*>{L"--space-menu", &heldMenu}, {L"--rename-space", &heldRename}}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        *out = option.value ? place(*option.value) : std::nullopt;
+        if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a space's place, from 1", kUsage);
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+    }
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
     if (perfLogOption.present && !perfLogOption.value) return Fail(quiet, L"--perf-log takes a file", kUsage);
@@ -272,11 +348,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // Test flags only run on a test profile, like the Mac's KITE_WINDOW_SIZE: a smoke test or
     // capture loads and re-saves the session, which must never be the user's own.
     if ((smokeTest || captureOption.present || sizeOption.present || scaleOption.present || frameLogOption.present ||
-         perfLogOption.present || perfControl || switchesOption.present) &&
+         saveLogOption.present || perfLogOption.present || perfControl || switchesOption.present) &&
         !supportOverride) {
         return Fail(quiet,
-                    L"--smoke-test, --capture, --window-size, --capture-scale, --frame-log, --perf-log, --perf-control and "
-                    L"--chromium-switches need KITE_SUPPORT_PATH set to a test profile",
+                    L"--smoke-test, --capture, --window-size, --capture-scale, --frame-log, --save-log, --perf-log, --perf-control "
+                    L"and --chromium-switches need KITE_SUPPORT_PATH set to a test profile",
                     kUsage);
     }
     auto resolved = kite::ResolveSupportDirectory(supportOverride, kite::EnvironmentPath("LOCALAPPDATA"));
@@ -367,11 +443,22 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     std::filesystem::create_directories(supportDirectory, ignored);
 
     // The session: the Mac's session.json format (core/SessionStore.h). Loaded before the
-    // window exists and saved as it closes, the two places the UI thread may touch it
-    // (docs/windows-architecture.md).
+    // window exists (the one read the UI thread may make, docs/windows-architecture.md); an
+    // unreadable one is moved aside and the newest backup that reads stands in for it.
     kite::SessionStore session(supportDirectory / L"session.json");
     kite::BrowserState state;
-    auto loaded = session.Load();
+    std::optional<kite::SessionBackups::Backup> recoveredFrom;
+    auto loaded = session.Load(kite::SessionStore::Unreadable::MoveAside, &recoveredFrom);
+    if (recoveredFrom) {
+        // The Mac says so in a toast ("Kite restored your tabs from a backup made <date>"); until
+        // Windows has toasts, the debugger hears it, and so does a quiet run's stderr.
+        const std::string stamp = kite::SessionBackups::Stamp(recoveredFrom->date);
+        const std::wstring message = L"Kite restored your tabs from a backup made " + Widen(stamp.substr(0, 10)) + L" " +
+                                     Widen(stamp.substr(11, 2)) + L":" + Widen(stamp.substr(14, 2)) + L" UTC (" +
+                                     recoveredFrom->file.filename().wstring() + L"): session.json couldn't be read and was moved aside\n";
+        OutputDebugStringW((L"Kite: " + message).c_str());
+        if (quiet) WriteUtf8(STD_ERROR_HANDLE, L"Kite: " + message);
+    }
     // Kite's shortcuts (core/KeyBindings.h): each command's default, after the user's
     // keybindings.json, read with the session before the window exists. Read once, as nothing
     // changes them yet (Settings → Shortcuts comes later).
@@ -388,18 +475,52 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         }
         state = kite::BrowserState::MakeDefault();
     }
+    // The session is written as it changes, on the writer's thread (core/SessionWriter.h); it
+    // outlives the window, whose close saves once more, and Kite waits for that write once the
+    // window is gone. Never when the file is still there unread.
+    // The live check of a relaunch while Kite quits: a --save-log run (a test profile) with
+    // KITE_TEST_SLOW_BACKUP_MS set takes that long over each backup (the clock the writer dates
+    // them by), so the wait at quit lasts long enough for a relaunch to land in it.
+    std::function<double()> clock = kite::SessionBackups::Now;
+    if (const DWORD slowMs = saveLogOption.present ? GetEnvironmentVariableW(L"KITE_TEST_SLOW_BACKUP_MS", nullptr, 0) : 0; slowMs) {
+        std::wstring value(slowMs, L'\0');
+        value.resize(GetEnvironmentVariableW(L"KITE_TEST_SLOW_BACKUP_MS", value.data(), slowMs));
+        if (auto ms = ParseInt(value); ms && *ms <= 60'000) {
+            clock = [ms = *ms] {
+                Sleep(static_cast<DWORD>(ms));
+                return kite::SessionBackups::Now();
+            };
+        }
+    }
+    kite::SessionWriter writer(session, maySave, std::move(clock));
+    // A write still stuck as Kite ends (a disk that hangs past kQuitFlush): the process ends
+    // there, without the C++ library's teardown running under the writer's thread. The file is
+    // the old one or the new one (the write is atomic); the run is a failed save.
+    const auto endStuck = [quiet] {
+        const std::wstring message = L"Kite: the session's last write didn't finish; Kite ended without waiting for it\n";
+        OutputDebugStringW(message.c_str());
+        if (quiet) WriteUtf8(STD_ERROR_HANDLE, message);
+        TerminateProcess(GetCurrentProcess(), kSaveFailed);
+    };
+    writer.OnStuck(endStuck);
+    // As the Mac does once per launch, the session as found (read, recovered or a fresh one, as
+    // BrowserStore.init) is kept as a launch backup: before the auto-archive, as the Mac's is
+    // before its first pass, but handed over only once this launch is Kite's (not a second one
+    // that hands over to the running Kite, which the Mac never even starts).
+    std::optional<kite::BrowserState> found;
+    if (!std::holds_alternative<kite::SessionStore::Error>(loaded)) found = state;
     // A test run must show the session it was given, never a default in its place.
     if (quiet && std::holds_alternative<kite::SessionStore::Error>(loaded)) {
         return Fail(quiet, L"couldn't read the session: " + Widen(std::get<kite::SessionStore::Error>(loaded).message), kSaveFailed);
     }
-    std::string saveError;
     std::wstring loadError;
     if (auto* error = std::get_if<kite::SessionStore::Error>(&loaded); error && !maySave) loadError = Widen(error->message);
     // Unpinned tabs left unused past Archive Tabs After go to the archive as Kite starts, as
     // the Mac's applicationDidFinishLaunching does (and every 15 minutes, below). A capture
     // shows its session as given.
+    bool archivedAtLaunch = false;
     if (!capture) {
-        if (auto interval = state.ArchiveAfterSeconds()) state.ArchiveStaleTabs(*interval);
+        if (auto interval = state.ArchiveAfterSeconds()) archivedAtLaunch = !state.ArchiveStaleTabs(*interval).empty();
     }
 
     // The window and everything in it (shell/BrowserWindowController.h).
@@ -410,15 +531,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     options.frameLog = frameLogOption.present;
     options.perfControl = perfControl;
     options.chromiumSwitches = std::move(chromiumSwitches);
+    options.saveLog = saveLogOption.present;
+    options.quiet = quiet;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
-    // Closing the window, and logoff or shutdown (which skip WM_CLOSE), both save.
-    auto save = [&] {
-        if (maySave) saveError = session.Save(state);
-    };
-    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, save, problem);
+    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
     kite::perf::Mark("window-created");
     if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar: " + controller->CommandBarError(), kWindowFailed);
+    if (archivedAtLaunch) controller->SessionChanged();
     kite::MainWindow& window = controller->Window();
 
     // Sized after the swap chain exists, so a capture also goes through a resize, as a real
@@ -470,8 +590,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         }
     }
 #endif
+    if (found) writer.BackUpLaunch(std::move(*found));
 
-    controller->Show(showCommand, quiet);
+    controller->Show(showCommand);
     kite::perf::Mark("shown");
     if (capture && !window.HasClientSize(size->first, size->second)) {
         // A capture is compared pixel for pixel with the Mac's, so a window Windows resized
@@ -488,13 +609,25 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         kite::Pixels pixels;
         const std::optional<std::string> barText =
             commandBarOption.present ? std::optional<std::string>(Narrow(*commandBarOption.value)) : std::nullopt;
-        captureError = controller->Capture(pixels, barText, tipIndex);
+        if (swipe) captureError = controller->HoldSwipe(*swipe);
+        if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
+        if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
+        if (heldMenu) controller->HoldSpaceMenu(*heldMenu);
+        if (captureError.empty()) captureError = controller->Capture(pixels, barText, tipIndex);
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);
         PostMessageW(window.Handle(), WM_CLOSE, 0, 0);
     }
 
     controller->RunMessageLoop();
     kite::perf::Mark("loop-end");
+    // The window's close handed over the last save; wait for it now that the window is gone (no
+    // frozen window), for kQuitFlush at most (the atomic write leaves the old file or the new
+    // one). Before Chromium shuts down: until then this Kite holds the profile, so a launch in
+    // the meantime hands over to it rather than read a session.json about to be replaced.
+    const std::string saveError = writer.Flush(kQuitFlush);
+    // Still writing after that: end here, before Chromium's shutdown or a dialog, while the
+    // stuck write may yet rename (no other Kite can have the profile until this one is gone).
+    if (writer.Writing()) endStuck();
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
     if (frameLogOption.value) {
         if (problem = controller->SaveFrameLog(*frameLogOption.value); !problem.empty()) {
@@ -504,10 +637,23 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 #ifdef KITE_HAS_CEF
     if (problem = controller->ShutDownChromium(); !problem.empty()) return Fail(quiet, problem, kWindowFailed);
 #endif
+    if (saveLogOption.value) {
+        if (problem = controller->SaveSaveLog(*saveLogOption.value); !problem.empty()) {
+            return Fail(quiet, L"Couldn't write the save log: " + problem, kSaveFailed);
+        }
+    }
+    if (foreground) {
+        if (problem = foreground->Problem(); !problem.empty()) {
+            if (smokeTest) return Fail(quiet, problem, kWindowFailed);
+            WriteUtf8(STD_ERROR_HANDLE, L"Kite: " + problem + L"\n");
+        }
+    }
     if (!maySave) {
         return Fail(quiet, L"Kite couldn't read your session (" + loadError + L"), so it left the file as it was and didn't save this run's tabs.",
                     kSaveFailed);
     }
-    if (!saveError.empty()) return Fail(quiet, L"Couldn't save the session: " + Widen(saveError), kSaveFailed);
+    if (!saveError.empty()) {
+        return Fail(quiet, L"Couldn't save the session: " + Widen(saveError), kSaveFailed);
+    }
     return kOk;
 }

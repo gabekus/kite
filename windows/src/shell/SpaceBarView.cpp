@@ -8,7 +8,9 @@
 #include <cmath>
 #include <set>
 
+#include "core/SymbolShape.h"
 #include "shell/Errors.h"
+#include "shell/FrameClock.h"
 #include "shell/Text.h"
 
 using Microsoft::WRL::ComPtr;
@@ -35,6 +37,8 @@ constexpr float kPlusLength = 12;
 // the bar); Segoe UI Emoji's 🏠 inks 12.75pt at 12.5 (the PC's capture), so it's set larger to
 // ink the same.
 constexpr float kEmojiFontSize = space_bar_metrics::kIconFontSize * 14.5f / 12.75f;
+// The drawn symbols are designed at the bar's size, so they draw there as they are.
+static_assert(space_bar_metrics::kIconFontSize == kSymbolShapeSize);
 // The saturation effect's D2D1_SATURATION_PROP_SATURATION (MinGW's headers don't name it).
 constexpr UINT32 kSaturationProperty = 0;
 
@@ -135,6 +139,14 @@ void SpaceBarView::ReleaseGpu() {
     }
     // An animation is the old device's: the cells land where they rest.
     slide_.reset();
+    if (ghost_ && visual_ && ghostShown_) visual_->RemoveVisual(ghost_.Get());
+    ghost_.Reset();
+    ghostBacking_.Reset();
+    ghostGrey_ = GhostLayer{};
+    ghostIcon_ = GhostLayer{};
+    ghostShown_ = false;
+    motions_.assign(motions_.size(), std::nullopt);
+    if (ghostMotion_) ghostMotion_->applied = true;
     cellsClip_.Reset();
     visual_.Reset();
     surface_.Reset();
@@ -149,6 +161,11 @@ void SpaceBarView::ReleaseGpu() {
 void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark) {
     if (cells == cells_ && dark == dark_) return;
     const bool reshaped = cells.size() != cells_.size();
+    // The same spaces in another order (a drop, a move) also stops a slide's relighting, whose
+    // indices were the old order's.
+    const bool reordered = reshaped || !std::equal(cells.begin(), cells.end(), cells_.begin(), [](const SpaceCell& a, const SpaceCell& b) {
+        return a.spaceID == b.spaceID;
+    });
     // A cell that shows something else draws again; one whose light alone changed only fades.
     for (size_t i = 0; i < cells.size() && i < cellGpu_.size(); ++i) {
         if (i >= cells_.size() || cells[i].look != cells_[i].look || dark != dark_) cellGpu_[i].dirty = true;
@@ -173,8 +190,13 @@ void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark) {
         layout_ = LayOutSpaceBar(width_, cells_.size(), layout_.scroll, Scale());
         placed_ = false;
     }
-    // A slide that's under way keeps its animation unless the spaces changed under it.
-    if (reshaped) slide_.reset();
+    // A slide that's under way keeps its animation unless the spaces changed under it, in number
+    // or order; a drag ends then too (its slots are the old order's).
+    if (reordered) {
+        slide_.reset();
+        follow_.reset();
+    }
+    if (drag_ && reordered) EndDrag();
     if (relit) opacitiesApplied_ = false;
 }
 
@@ -188,14 +210,18 @@ void SpaceBarView::Layout(float width, UINT dpi) {
     placed_ = false;
     if (rescaled) backingDirty_ = true;
     for (CellGpu& cell : cellGpu_) cell.dirty = true;
-    // An animation in the old scale's pixels lands (opacities have no scale, but its cells move).
+    // An animation in the old scale's pixels lands (opacities have no scale, but its cells move),
+    // and so do a drag's slides.
     slide_.reset();
     opacitiesApplied_ = false;
+    motions_.assign(motions_.size(), std::nullopt);
+    if (ghostMotion_) ghostMotion_->applied = true;
 }
 
 void SpaceBarView::Slide(const std::vector<CubicSegment>& segments, double duration, double from, double to, double pageWidth,
                          const std::vector<size_t>& built, size_t selected) {
     slide_ = Relight{segments, duration, from, to, pageWidth, built, selected};
+    follow_.reset();
     if (segments.empty() || duration <= 0) slide_.reset();
     opacitiesApplied_ = false;
     // The cells' new light comes with the strip's commit.
@@ -208,9 +234,31 @@ void SpaceBarView::InvalidatePictures(const std::set<std::string>& names) {
     }
 }
 
-void SpaceBarView::Land() {
-    if (!slide_) return;
+void SpaceBarView::Follow(double offset, double pageWidth, const std::vector<size_t>& built, size_t selected) {
+    if (offset == 0) return Land();
+    if (!slide_ && follow_ && follow_->offset == offset && follow_->pageWidth == pageWidth && follow_->selected == selected &&
+        follow_->built == built) {
+        return;
+    }
     slide_.reset();
+    // In place: a swipe's frames reuse the indices' storage.
+    if (!follow_) follow_.emplace();
+    follow_->offset = offset;
+    follow_->pageWidth = pageWidth;
+    follow_->built.assign(built.begin(), built.end());
+    follow_->selected = selected;
+    opacitiesApplied_ = false;
+}
+
+double SpaceBarView::LitAtRest(size_t index) const {
+    if (!follow_) return cells_[index].lit;
+    return SpaceSwipe::Highlight(index, follow_->selected, follow_->built, follow_->offset, follow_->pageWidth);
+}
+
+void SpaceBarView::Land() {
+    if (!slide_ && !follow_) return;
+    slide_.reset();
+    follow_.reset();
     // Applied by the next draw, so a commit carries it.
     opacitiesApplied_ = false;
 }
@@ -231,10 +279,194 @@ bool SpaceBarView::Scroll(float by) {
 void SpaceBarView::SetHover(const std::optional<std::string>& spaceID) {
     if (spaceID == hover_) return;
     hover_ = spaceID;
+    // No backing while a cell is dragged (setDragging).
+    if (drag_) return;
     // The Mac's updateBacking on mouseEntered and mouseExited.
     const auto cell = std::find_if(cells_.begin(), cells_.end(), [&](const SpaceCell& c) { return spaceID && c.spaceID == *spaceID; });
     backingFor_ = cell != cells_.end() && !cell->selected ? spaceID : std::nullopt;
     placed_ = false;
+}
+
+bool SpaceBarView::BeginDrag(const SpaceBarPress& press) {
+    if (drag_) return false;  // landing: a new drag waits (the Mac's reorder?.landing guard)
+    drag_ = BeginSpaceDrag(layout_, cells_, press);
+    if (!drag_) return false;
+    // What the cell showed as it was picked up (copy(from:)'s icon.alphaValue).
+    ghostLit_ = LitAtRest(drag_->from);
+    // setDragging: no hover backing while a cell is dragged.
+    backingFor_.reset();
+    motions_.assign(cells_.size(), std::nullopt);
+    ghostMotion_.reset();
+    // What every move would otherwise make again: the spaces' order and the slide's curve.
+    dragIDs_.clear();
+    for (const SpaceCell& cell : cells_) dragIDs_.push_back(cell.spaceID);
+    if (dragCurve_.empty()) {
+        dragCurve_ =
+            TimingCurveSegments(M::kReorderTiming[0], M::kReorderTiming[1], M::kReorderTiming[2], M::kReorderTiming[3], M::kReorderSlide);
+    }
+    placed_ = false;
+    opacitiesApplied_ = false;  // the dragged cell's layers leave it at once
+    return true;
+}
+
+void SpaceBarView::MoveDrag(float x, float y) {
+    if (!drag_ || drag_->landing) return;
+    // The ghost follows; the cells slide only when the open slot moved.
+    if (MoveSpaceDrag(*drag_, layout_, cells_.size(), x, y)) placed_ = false;
+    else ghostMoved_ = true;
+}
+
+size_t SpaceBarView::DropDrag(float x, float y) {
+    if (!drag_) return 0;
+    if (drag_->landing) return drag_->target.value_or(drag_->from);
+    const BarRect from = SpaceDragGhost(layout_, *drag_);
+    const size_t slot = DropSpaceDrag(*drag_, layout_, cells_.size(), x, y);
+    const BarRect to = SpaceDragGhost(layout_, *drag_);
+    ghostMotion_ = GhostMotion{from.left, from.top, to.left, to.top, false};
+    placed_ = false;
+    return slot;
+}
+
+void SpaceBarView::EndDrag() {
+    if (!drag_) return;
+    drag_.reset();
+    motions_.clear();
+    ghostMotion_.reset();
+    // Back on the layout's places, at once (the Mac's placeCells(animated: false)), and the
+    // backing back under a cell the pointer is on (setDragging(false)'s updateBacking).
+    placed_ = false;
+    opacitiesApplied_ = false;
+    const std::optional<std::string> hover = hover_;
+    hover_.reset();
+    SetHover(hover);
+}
+
+float SpaceBarView::CellX(size_t index) const {
+    if (index < motions_.size() && motions_[index]) {
+        const Motion& m = *motions_[index];
+        const double t = (FrameClock::Now() - m.start) / M::kReorderSlide;
+        if (t >= 1) return m.to;
+        const double p = TimingCurveAt(M::kReorderTiming[0], M::kReorderTiming[1], M::kReorderTiming[2], M::kReorderTiming[3], std::max(t, 0.0));
+        return static_cast<float>(m.from + (m.to - m.from) * p);
+    }
+    return index < layout_.cells.size() ? layout_.cells[index].left : 0;
+}
+
+void SpaceBarView::PlaceDragged(float scale) {
+    const std::vector<BarRect> slots = SpaceDragCells(layout_, dragIDs_, *drag_);
+    motions_.resize(cells_.size());
+    const double now = FrameClock::Now();
+    const std::vector<CubicSegment>& curve = dragCurve_;
+    for (size_t i = 0; i < cellGpu_.size() && i < slots.size(); ++i) {
+        IDCompositionVisual* visual = cellGpu_[i].visual.Get();
+        if (!visual) continue;
+        visual->SetOffsetY(std::round(slots[i].top * scale));
+        const float to = slots[i].left;
+        std::optional<Motion>& motion = motions_[i];
+        if (motion && motion->to == to) continue;  // already on its way there
+        const float at = CellX(i);
+        if (at == to) {
+            motion.reset();
+            visual->SetOffsetX(std::round(to * scale));
+            continue;
+        }
+        // From wherever it is now, as an animator() frame change starts from the presented one.
+        motion = Motion{at, to, now};
+        ComPtr<IDCompositionAnimation> slide;
+        HRESULT hr = compositor_->Device()->CreateAnimation(slide.GetAddressOf());
+        for (const CubicSegment& s : MapSegments(curve, (to - at) * scale, at * scale)) {
+            if (FAILED(hr)) break;
+            hr = slide->AddCubic(s.begin, static_cast<float>(s.constant), static_cast<float>(s.linear), static_cast<float>(s.quadratic),
+                                 static_cast<float>(s.cubic));
+        }
+        if (SUCCEEDED(hr)) hr = slide->End(M::kReorderSlide, std::round(to * scale));
+        if (SUCCEEDED(hr)) {
+            visual->SetOffsetX(slide.Get());
+        } else {
+            motion.reset();
+            visual->SetOffsetX(std::round(to * scale));
+        }
+    }
+}
+
+void SpaceBarView::ShowGhost(float scale) {
+    const bool want = drag_ && drag_->from < cellGpu_.size() && cellGpu_[drag_->from].lit.surface && backing_.surface;
+    if (!want) {
+        if (ghostShown_) visual_->RemoveVisual(ghost_.Get());
+        ghostShown_ = false;
+        return;
+    }
+    IDCompositionDevice* device = compositor_->Device();
+    HRESULT hr = S_OK;
+    if (!ghost_) {
+        const auto layer = [&](GhostLayer& out) {
+            if (SUCCEEDED(hr)) hr = device->CreateVisual(out.visual.GetAddressOf());
+            if (SUCCEEDED(hr)) hr = device->CreateEffectGroup(out.effect.GetAddressOf());
+            if (SUCCEEDED(hr)) hr = out.visual->SetEffect(out.effect.Get());
+        };
+        if (SUCCEEDED(hr)) hr = device->CreateVisual(ghost_.GetAddressOf());
+        if (SUCCEEDED(hr)) hr = device->CreateVisual(ghostBacking_.GetAddressOf());
+        layer(ghostGrey_);
+        layer(ghostIcon_);
+        // The backing under the icon, as the ghost's isGhost shows it; greyed under coloured.
+        if (SUCCEEDED(hr)) hr = ghost_->AddVisual(ghostBacking_.Get(), TRUE, nullptr);
+        if (SUCCEEDED(hr)) hr = ghost_->AddVisual(ghostGrey_.visual.Get(), TRUE, nullptr);
+        if (SUCCEEDED(hr)) hr = ghost_->AddVisual(ghostIcon_.visual.Get(), TRUE, nullptr);
+        if (FAILED(hr)) {
+            ghost_.Reset();
+            ghostBacking_.Reset();
+            ghostGrey_ = GhostLayer{};
+            ghostIcon_ = GhostLayer{};
+            deviceLost_ = IsDeviceLost(hr);
+            return;
+        }
+    }
+    // The dragged cell's own surfaces and the backing's, shared: the ghost draws nothing itself.
+    const CellGpu& cell = cellGpu_[drag_->from];
+    ghostBacking_->SetContent(backing_.surface.Get());
+    ghostBacking_->SetOffsetX(std::round((M::kCellWidth - M::kButtonSize) / 2 * scale));
+    ghostBacking_->SetOffsetY(std::round((M::kCellHeight - M::kButtonSize) / 2 * scale));
+    ghostGrey_.visual->SetContent(cell.grey.surface.Get());
+    ghostIcon_.visual->SetContent(cell.lit.surface.Get());
+    const CellOpacity opacity = CellOpacityAt(cells_[drag_->from].Dot(), ghostLit_);
+    ghostGrey_.effect->SetOpacity(static_cast<float>(opacity.grey));
+    ghostIcon_.effect->SetOpacity(static_cast<float>(opacity.lit));
+    if (ghostMotion_ && !ghostMotion_->applied) {
+        // Settling into its slot from where it was let go; placed again meanwhile (a scroll, a
+        // new scale), it's there at once.
+        ghostMotion_->applied = true;
+        const std::vector<CubicSegment>& curve = dragCurve_;
+        const auto animate = [&](float from, float to) -> ComPtr<IDCompositionAnimation> {
+            ComPtr<IDCompositionAnimation> a;
+            if (FAILED(device->CreateAnimation(a.GetAddressOf()))) return nullptr;
+            for (const CubicSegment& s : MapSegments(curve, (to - from) * scale, from * scale)) {
+                if (FAILED(a->AddCubic(s.begin, static_cast<float>(s.constant), static_cast<float>(s.linear), static_cast<float>(s.quadratic),
+                                       static_cast<float>(s.cubic)))) {
+                    return nullptr;
+                }
+            }
+            if (FAILED(a->End(M::kReorderSlide, std::round(to * scale)))) return nullptr;
+            return a;
+        };
+        const ComPtr<IDCompositionAnimation> x = animate(ghostMotion_->fromX, ghostMotion_->toX);
+        const ComPtr<IDCompositionAnimation> y = animate(ghostMotion_->fromY, ghostMotion_->toY);
+        if (x && y) {
+            ghost_->SetOffsetX(x.Get());
+            ghost_->SetOffsetY(y.Get());
+        } else {
+            ghost_->SetOffsetX(std::round(ghostMotion_->toX * scale));
+            ghost_->SetOffsetY(std::round(ghostMotion_->toY * scale));
+        }
+    } else if (ghostMotion_) {
+        ghost_->SetOffsetX(std::round(ghostMotion_->toX * scale));
+        ghost_->SetOffsetY(std::round(ghostMotion_->toY * scale));
+    } else {
+        const BarRect at = SpaceDragGhost(layout_, *drag_);
+        ghost_->SetOffsetX(std::round(at.left * scale));
+        ghost_->SetOffsetY(std::round(at.top * scale));
+    }
+    if (!ghostShown_) visual_->AddVisual(ghost_.Get(), TRUE, nullptr);
+    ghostShown_ = true;
 }
 
 std::optional<std::string> SpaceBarView::SpaceAt(float x, float y) const {
@@ -244,7 +476,8 @@ std::optional<std::string> SpaceBarView::SpaceAt(float x, float y) const {
 }
 
 bool SpaceBarView::NeedsDraw() const {
-    return dirty_ || !placed_ || !opacitiesApplied_ || (backingFor_ && backingDirty_) || cellGpu_.size() != cells_.size() ||
+    return dirty_ || !placed_ || ghostMoved_ || !opacitiesApplied_ || ((backingFor_ || drag_) && backingDirty_) ||
+           cellGpu_.size() != cells_.size() ||
            std::any_of(cellGpu_.begin(), cellGpu_.end(), [](const CellGpu& cell) { return cell.dirty; });
 }
 
@@ -453,12 +686,17 @@ void SpaceBarView::PlaceCells() {
     const BarRect& view = layout_.viewport;
     cellsClip_->SetClip(D2D_RECT_F{std::round(view.left * scale), std::round(view.top * scale), std::round(view.right * scale),
                                    std::round(view.bottom * scale)});
-    for (size_t i = 0; i < cellGpu_.size() && i < layout_.cells.size(); ++i) {
-        if (!cellGpu_[i].visual) continue;
-        cellGpu_[i].visual->SetOffsetX(std::round(layout_.cells[i].left * scale));
-        cellGpu_[i].visual->SetOffsetY(std::round(layout_.cells[i].top * scale));
+    if (drag_) {
+        PlaceDragged(scale);
+    } else {
+        for (size_t i = 0; i < cellGpu_.size() && i < layout_.cells.size(); ++i) {
+            if (!cellGpu_[i].visual) continue;
+            cellGpu_[i].visual->SetOffsetX(std::round(layout_.cells[i].left * scale));
+            cellGpu_[i].visual->SetOffsetY(std::round(layout_.cells[i].top * scale));
+        }
     }
     ShowBacking();
+    ShowGhost(scale);
     placed_ = true;
 }
 
@@ -490,6 +728,12 @@ void SpaceBarView::ApplyOpacities() {
         CellGpu& gpu = cellGpu_[i];
         if (!gpu.lit.effect) continue;
         const SpaceCell& cell = cells_[i];
+        if (drag_ && i == drag_->from) {
+            // Its icon is the ghost's while it's dragged: the cell it left shows nothing.
+            gpu.lit.effect->SetOpacity(0.0f);
+            if (gpu.grey.effect) gpu.grey.effect->SetOpacity(0.0f);
+            continue;
+        }
         bool animated = false;
         if (slide_) {
             const CellOpacityAlong along = CellOpacityAlongSettle(
@@ -512,7 +756,7 @@ void SpaceBarView::ApplyOpacities() {
             }
         }
         if (!animated) {
-            const CellOpacity rest = CellOpacityAt(cell.Dot(), cell.lit);
+            const CellOpacity rest = CellOpacityAt(cell.Dot(), LitAtRest(i));
             gpu.lit.effect->SetOpacity(static_cast<float>(rest.lit));
             if (gpu.grey.effect) gpu.grey.effect->SetOpacity(static_cast<float>(rest.grey));
         }
@@ -563,7 +807,9 @@ std::wstring SpaceBarView::Draw(UINT clientHeight, Pixels* readBack) {
         }
         dirty_ = false;
     }
-    if ((backingFor_ && backingDirty_) || (readBack && backingFor_)) {
+    // The ghost shows the backing too.
+    const bool backed = backingFor_ || drag_;
+    if ((backed && backingDirty_) || (readBack && backed)) {
         if (error = DrawBacking(readBack != nullptr); !error.empty()) return error;
         placed_ = false;
     }
@@ -584,11 +830,13 @@ std::wstring SpaceBarView::Draw(UINT clientHeight, Pixels* readBack) {
         if (fresh) opacitiesApplied_ = false;
     }
     if (!placed_) PlaceCells();
+    else if (ghostMoved_) ShowGhost(scale);  // a move within the same slot: the ghost alone
+    ghostMoved_ = false;
     if (!opacitiesApplied_) ApplyOpacities();
 
     if (readBack) {
-        // At rest, as the screen shows it: the bar, then the backing and each cell's layers at
-        // their opacity inside the strip's viewport.
+        // At rest (or held by a swipe), as the screen shows it: the bar, then the backing and
+        // each cell's layers at their opacity inside the strip's viewport.
         *readBack = barPixels_;
         const BarRect& view = layout_.viewport;
         const RECT clip{std::lround(view.left * scale), std::lround(view.top * scale), std::lround(view.right * scale),
@@ -602,11 +850,29 @@ std::wstring SpaceBarView::Draw(UINT clientHeight, Pixels* readBack) {
                 ComposeOver(*readBack, backing_.pixels, at, 1, &clip);
             }
         }
-        for (size_t i = 0; i < cellGpu_.size() && i < cells_.size(); ++i) {
-            const POINT at{std::lround(layout_.cells[i].left * scale), std::lround(layout_.cells[i].top * scale)};
-            const CellOpacity opacity = CellOpacityAt(cells_[i].Dot(), cells_[i].lit);
+        // A drag at rest: the cells in their slots, the one dragged left empty, then the ghost.
+        std::vector<BarRect> places = layout_.cells;
+        if (drag_) {
+            std::vector<std::string> ids;
+            for (const SpaceCell& cell : cells_) ids.push_back(cell.spaceID);
+            places = SpaceDragCells(layout_, ids, *drag_);
+        }
+        for (size_t i = 0; i < cellGpu_.size() && i < cells_.size() && i < places.size(); ++i) {
+            if (drag_ && i == drag_->from) continue;
+            const POINT at{std::lround(places[i].left * scale), std::lround(places[i].top * scale)};
+            const CellOpacity opacity = CellOpacityAt(cells_[i].Dot(), LitAtRest(i));
             if (!cells_[i].Dot()) ComposeOver(*readBack, cellGpu_[i].grey.pixels, at, static_cast<float>(opacity.grey), &clip);
             ComposeOver(*readBack, cellGpu_[i].lit.pixels, at, static_cast<float>(opacity.lit), &clip);
+        }
+        if (drag_ && drag_->from < cellGpu_.size()) {
+            const BarRect ghost = SpaceDragGhost(layout_, *drag_);
+            const POINT at{std::lround(ghost.left * scale), std::lround(ghost.top * scale)};
+            const POINT backing{at.x + std::lround((M::kCellWidth - M::kButtonSize) / 2 * scale),
+                                at.y + std::lround((M::kCellHeight - M::kButtonSize) / 2 * scale)};
+            ComposeOver(*readBack, backing_.pixels, backing);
+            const CellOpacity opacity = CellOpacityAt(cells_[drag_->from].Dot(), ghostLit_);
+            if (!cells_[drag_->from].Dot()) ComposeOver(*readBack, cellGpu_[drag_->from].grey.pixels, at, static_cast<float>(opacity.grey));
+            ComposeOver(*readBack, cellGpu_[drag_->from].lit.pixels, at, static_cast<float>(opacity.lit));
         }
     }
     return {};

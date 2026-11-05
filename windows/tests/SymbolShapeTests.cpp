@@ -71,6 +71,10 @@ TEST(eachDrawnSymbolInksTheMacsBoxWithItsWeight) {
         {"baseball.fill", -6.5f, 6.5f, -6.5f, 6.5f, 101.6f},
         {"takeoutbag.and.cup.and.straw.fill", -8, 8, -7.0f, 7.59f, 165.9f},
         {"theatermasks.fill", -11.0f, 10.6f, -7.5f, 7.0f, 183.6f},
+        // review/w9d-mac rest.png and w9b-mac two-spaces.png (the same box lit and greyed); the
+        // area from the dark one, where no grain adds to it. Kite's own case: only the box, the
+        // area, the centre and the stroke weight are the Mac's.
+        {"briefcase", -7.5f, 7.0f, -6.0f, 6.5f, 87.1f},
     };
     CHECK(DrawnSymbols().size() == std::size(mac));
     if (DrawnSymbols().size() != std::size(mac)) return;
@@ -126,6 +130,51 @@ TEST(aDrawnSymbolsHolesAndGapsShowThrough) {
     CHECK(pinned("fork.knife", -3.25f, -5.5f, -3.25f, -3.0f));
     CHECK(pinned("pawprint.fill", 0.25f, -4.4f, -1.75f, -4.4f) && Covers(*SymbolShapeFor("pawprint.fill"), -4.95f, -0.7f));
     CHECK(!Covers(*SymbolShapeFor("pawprint.fill"), -1.75f, -2.0f));  // between a toe and the pad
+}
+
+TEST(eachDrawnSymbolInksTheMacsBoxInTheHeader) {
+    // The Mac's page header at 15pt (2x): each symbol's ink box from its 26pt slot's centre, the
+    // ink more than half covered, so to the 2x render's half point (review/w9b4-mac's slot crops;
+    // the briefcase from review/w9b-mac two-spaces.png, its slot [13,150 26x26]). The painter
+    // draws a shape scaled and moved by PlaceDrawnSymbol; that inks the Mac's box to within that
+    // half point's rounding (0.35pt; scaling the bar's place instead puts five of them 0.4 to
+    // 0.63pt off). The slot clips the masks' sides, so only their height is here.
+    struct Mac {
+        const char* name;
+        float left, right, top, bottom;
+    };
+    const Mac mac[] = {
+        {"bookmark.fill", -5.0f, 5.5f, -8.0f, 8.5f},
+        {"pawprint.fill", -8.0f, 8.0f, -7.5f, 8.0f},
+        {"bed.double.fill", -9.5f, 9.5f, -6.5f, 6.5f},
+        {"fork.knife", -5.5f, 5.0f, -9.0f, 8.5f},
+        {"dumbbell.fill", -10.0f, 10.0f, -5.5f, 6.0f},
+        {"bandage.fill", -7.5f, 8.0f, -7.5f, 8.0f},
+        {"baseball.fill", -7.5f, 7.5f, -7.5f, 8.0f},
+        {"takeoutbag.and.cup.and.straw.fill", -9.5f, 9.5f, -8.5f, 9.0f},
+        {"theatermasks.fill", 0, 0, -8.5f, 8.5f},
+        {"briefcase", -9.0f, 8.5f, -7.5f, 7.5f},
+    };
+    CHECK(std::size(mac) == DrawnSymbols().size());
+    for (const Mac& m : mac) {
+        const auto place = PlaceDrawnSymbol(m.name, kHeaderSymbolSize);
+        CHECK(place && Near(place->scale, 1.2f, 1e-6f));
+        if (!place) continue;
+        CHECK(place->shape == SymbolShapeFor(m.name));
+        const ShapeBounds b = BoundsOf(*place->shape);
+        const float left = b.left * place->scale + place->dx, right = b.right * place->scale + place->dx;
+        const float top = b.top * place->scale + place->dy, bottom = b.bottom * place->scale + place->dy;
+        const bool across = m.left == m.right || (Near(left, m.left, 0.35f) && Near(right, m.right, 0.35f));
+        const bool down = Near(top, m.top, 0.35f) && Near(bottom, m.bottom, 0.35f);
+        if (!across || !down) std::fprintf(stderr, "%s header: %.2f %.2f %.2f %.2f\n", m.name, left, right, top, bottom);
+        CHECK(across && down);
+    }
+    // The bar's 12.5 is the shape as it is; any other size scales it about the icon's centre.
+    const auto bar = PlaceDrawnSymbol("briefcase", kSymbolShapeSize);
+    CHECK(bar && bar->scale == 1 && bar->dx == 0 && bar->dy == 0);
+    const auto other = PlaceDrawnSymbol("briefcase", 25);
+    CHECK(other && other->scale == 2 && other->dx == 0 && other->dy == 0);
+    CHECK(!PlaceDrawnSymbol("star.fill", kHeaderSymbolSize));
 }
 
 TEST(aRoundedPolygonsRepeatedCornerCountsOnce) {

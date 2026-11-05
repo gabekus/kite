@@ -157,29 +157,104 @@ public struct History: Codable, Sendable, Equatable {
     /// Best matches first: how well the title, host or URL matches, then how
     /// often and how recently the page was visited.
     public func search(_ query: String, limit: Int = 4, now: Date = Date()) -> [HistoryEntry] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return [] }
-        let scored = entries.values.compactMap { entry -> (HistoryEntry, Double)? in
-            guard let match = Self.score(q, entry) else { return nil }
+        Self.search(query, in: entries.values.lazy.map(HistorySearchItem.init), limit: limit, now: now)
+    }
+
+    /// `search` over entries made ready beforehand (HistoryStore keeps them between keystrokes).
+    public static func search(_ query: String, in items: some Sequence<HistorySearchItem>, limit: Int = 4,
+                              now: Date = Date()) -> [HistoryEntry] {
+        let lowered = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !lowered.isEmpty, limit > 0 else { return [] }
+        let q = HistorySearchItem.Needle(lowered)
+        // The best `limit`, best first, kept as they come: a short query matches most of history.
+        var best: [(entry: HistoryEntry, score: Double)] = []
+        func ranks(_ a: (entry: HistoryEntry, score: Double), above b: (entry: HistoryEntry, score: Double)) -> Bool {
+            a.score != b.score ? a.score > b.score : a.entry.lastVisit > b.entry.lastVisit
+        }
+        for item in items {
+            guard let match = item.score(q) else { continue }
+            let entry = item.entry
             let days = max(0, now.timeIntervalSince(entry.lastVisit)) / 86_400
             let frecency = log2(Double(entry.visitCount) + 1) * 8 - min(days, 90) / 3
-            return (entry, Double(match) + frecency)
+            let scored = (entry: entry, score: Double(match) + frecency)
+            if best.count == limit {
+                guard ranks(scored, above: best[limit - 1]) else { continue }
+                best.removeLast()
+            }
+            best.insert(scored, at: best.firstIndex { ranks(scored, above: $0) } ?? best.endIndex)
         }
-        return scored
-            .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.lastVisit > $1.0.lastVisit }
-            .prefix(limit)
-            .map(\.0)
+        return best.map(\.entry)
     }
 
     static func score(_ q: String, _ entry: HistoryEntry) -> Int? {
-        let title = entry.title.lowercased()
-        let host = (entry.url.host() ?? "").lowercased().replacingOccurrences(of: "www.", with: "")
-        let url = entry.url.absoluteString.lowercased()
-        if host.hasPrefix(q) { return 100 }
-        if title.hasPrefix(q) { return 90 }
-        if title.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains(where: { $0.hasPrefix(q) }) { return 75 }
-        if title.contains(q) { return 55 }
-        if url.contains(q) { return 40 }
-        return nil
+        HistorySearchItem(entry).score(HistorySearchItem.Needle(q))
+    }
+}
+
+/// A history entry as `History.search` compares it: lowercased once, in NFC, as UTF-8, so that each
+/// keystroke compares bytes rather than lowercasing every title and URL in history again (with 20,000
+/// entries that was over 150 ms a keystroke on the main thread).
+public struct HistorySearchItem: Sendable {
+    public let entry: HistoryEntry
+    private let title: [UInt8]
+    private let host: [UInt8]
+    private let url: [UInt8]
+    /// For the word starts, which go by Character.
+    private let lowercasedTitle: String
+
+    public init(_ entry: HistoryEntry) {
+        self.entry = entry
+        lowercasedTitle = entry.title.lowercased()
+        title = Self.bytes(lowercasedTitle)
+        host = Self.bytes((entry.url.host() ?? "").lowercased().replacingOccurrences(of: "www.", with: ""))
+        url = Self.bytes(entry.url.absoluteString.lowercased())
+    }
+
+    /// A lowercased query, ready to compare.
+    struct Needle {
+        let string: String
+        let bytes: [UInt8]
+        init(_ lowercased: String) {
+            string = lowercased
+            bytes = HistorySearchItem.bytes(lowercased)
+        }
+    }
+
+    /// NFC on both sides makes canonically equivalent text (a precomposed or a combining accent) the same bytes.
+    private static func bytes(_ string: String) -> [UInt8] {
+        Array(string.precomposedStringWithCanonicalMapping.utf8)
+    }
+
+    /// The host (without www.) starting with the query, then the title, a word in the title, the title
+    /// containing it, the URL containing it; nil for no match. Each of these needs the query somewhere in
+    /// the title or the URL (the host is part of it), which is checked first.
+    func score(_ q: Needle) -> Int? {
+        let inTitle = Self.contains(title, q.bytes)
+        guard inTitle || Self.contains(url, q.bytes) else { return nil }
+        if host.starts(with: q.bytes) { return 100 }
+        guard inTitle else { return 40 }
+        if title.starts(with: q.bytes) { return 90 }
+        if lowercasedTitle.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains(where: { $0.hasPrefix(q.string) }) {
+            return 75
+        }
+        return 55
+    }
+
+    private static func contains(_ haystack: [UInt8], _ needle: [UInt8]) -> Bool {
+        guard !needle.isEmpty else { return true }
+        guard haystack.count >= needle.count else { return false }
+        #if canImport(Darwin)
+        return haystack.withUnsafeBufferPointer { h in
+            needle.withUnsafeBufferPointer { n in memmem(h.baseAddress, h.count, n.baseAddress, n.count) != nil }
+        }
+        #else
+        let first = needle[0], last = haystack.count - needle.count
+        var i = 0
+        while i <= last {
+            if haystack[i] == first, haystack[i..<i + needle.count].elementsEqual(needle) { return true }
+            i += 1
+        }
+        return false
+        #endif
     }
 }

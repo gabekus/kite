@@ -70,6 +70,8 @@ final class FindBar: NSView, NSTextFieldDelegate {
     var onClose: (() -> Void)?
     /// Return on a question (Ask on Page).
     var onAsk: ((String) -> Void)?
+    /// A search came back, with what the counter now shows (`FindTestHook` logs it).
+    var onResult: ((FindResult, _ counter: String) -> Void)?
     /// The style changed (the controller moves the bar to its inset).
     var onStyleChange: ((FindBarStyle) -> Void)? {
         didSet { onStyleChange?(style) }
@@ -431,6 +433,7 @@ final class FindBar: NSView, NSTextFieldDelegate {
                                                       activeMatch: result.activeMatch, askEnabled: askEnabled)
         updateCountColor()
         updateAskButton()
+        onResult?(result, countLabel.stringValue)
     }
 
     /// The query field is being typed in (Arc's `CommandFTextField` takes ⌘F only then).
