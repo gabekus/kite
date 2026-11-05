@@ -15,9 +15,11 @@
 // space bar (shell/SpaceBarView), whose cells drag to new places, and the space's menu on a
 // right-click on a cell or the header (Actions::spaceMenu). While a space is renamed its header
 // shows the name field (shell/SpaceRenameField). Over the address field, the top row: the toggle,
-// back, forward and reload, each its own visual (shell/SidebarTopRowView). Everything sits in one
-// root visual, which hiding and showing the sidebar slides on the compositor (SetShown, the Mac's
-// updateSidebar). Not yet: favorites.
+// back, forward and reload, each its own visual (shell/SidebarTopRowView). Under it, the space's
+// profile's favorites, each pane its own visuals (shell/FavoritesView), which stay put while the
+// pages slide; the page starts under them (core's SidebarListTop). Everything sits in one root
+// visual, which hiding and showing the sidebar slides on the compositor (SetShown, the Mac's
+// updateSidebar).
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -37,6 +39,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/Favorites.h"
 #include "core/Models.h"
 #include "core/Sidebar.h"
 #include "core/SidebarTopRow.h"
@@ -44,6 +47,7 @@
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
 #include "shell/Favicons.h"
+#include "shell/FavoritesView.h"
 #include "shell/SidebarTopRowView.h"
 #include "shell/SpaceBarView.h"
 #include "shell/SpaceIconPainter.h"
@@ -83,6 +87,8 @@ public:
         std::function<void(const std::string& spaceID)> beginRenaming;
         // A click on an enabled top-row button (the toggle, back, forward, reload).
         std::function<void(TopRowButton button)> topRow;
+        // The favorites' empty state's close button (its Dismiss): a one-shot flag.
+        std::function<void()> dismissFavoritesEmptyState;
     };
     void SetActions(Actions actions) { actions_ = std::move(actions); }
 
@@ -148,6 +154,20 @@ public:
     std::optional<POINT> TopRowCentre(TopRowButton button) const;
     size_t TopRowSurfaceDraws() const { return topRow_->SurfaceDraws(); }
     bool TopRowHasTooltips() const { return topRow_->HasTooltips(); }
+    // The favorites grid as it's laid out, where pane `index`'s centre is in client px, each pane's
+    // look now, and how many of their layers have drawn (for kitecore's and the tests' sake).
+    const FavoritesTray& Favorites() const { return favorites_->Tray(); }
+    std::optional<POINT> FavoriteCentre(size_t index) const { return favorites_->PaneCentre(index, Left()); }
+    std::vector<FavoriteLook> FavoriteLooks() const { return favorites_->Looks(); }
+    size_t FavoriteSurfaceDraws() const { return favorites_->SurfaceDraws(); }
+    bool FavoritesHaveTooltips() const { return favorites_->HasTooltips(); }
+    // Where the space's page starts, in points: under the favorites.
+    float ListTop() const { return listTop_; }
+    bool FavoritesCloseShown() const { return favorites_->CloseShown(); }
+    bool FavoritesEmptyStateDrawn() const { return favorites_->EmptyStateDrawn(); }
+    // The favorites' empty state was dismissed (the one-shot flag, OneShotFlags.h): the tray shows
+    // only with favorites in it.
+    void SetFavoritesEmptyStateDismissed(bool dismissed);
     // A compositor property changed (a top-row button turned on or off) that the next pass
     // commits, and how many commits its own passes have made (for the smoke test).
     bool CommitPending() const { return commitPending_; }
@@ -188,7 +208,9 @@ public:
     // copying the sidebar (premultiplied BGRA, at the window's top-left) there for --capture.
     // The caller commits the compositor. Empty on success.
     std::wstring Draw(Pixels* readBack = nullptr);
-    bool DeviceLost() const { return deviceLost_ || (bar_ && bar_->DeviceLost()) || (topRow_ && topRow_->DeviceLost()); }
+    bool DeviceLost() const {
+        return deviceLost_ || (bar_ && bar_->DeviceLost()) || (topRow_ && topRow_->DeviceLost()) || (favorites_ && favorites_->DeviceLost());
+    }
 
     // The window's messages: its posted redraw, and the space tip's timer. True when it handled
     // `message`; if the GPU was lost meanwhile, DeviceLost says so and the window rebuilds.
@@ -228,6 +250,7 @@ private:
         std::string spaceID;
         size_t index = 0;  // the selected space's
         std::vector<PageModel> pages;  // in the session's order, the selected one among them
+        std::vector<FavoriteTile> favorites;  // the selected space's grid, not yet placed
         bool hasTab = false;  // the top row's reload
         bool operator==(const Model&) const = default;
     };
@@ -253,6 +276,8 @@ private:
     std::wstring DrawPageSurface(const PageModel& page, Page& surfaces, Pixels* readBack);
     void PlacePages();
     void PlaceStrip();
+    // The favorites laid out for the width, and the page under them.
+    void PlaceFavorites();
     // What has to draw again; ScheduleDraw draws it on the message loop's next pass.
     void InvalidateSelectedPage();
     void ScheduleDraw();
@@ -280,7 +305,8 @@ private:
     void DrawText(ID2D1DeviceContext* context, const std::string& text, IDWriteTextFormat* format, float x, float baseline,
                   float maxWidth, D2D1_COLOR_F color);
     void DrawGlyph(ID2D1DeviceContext* context, wchar_t glyph, float size, D2D1_RECT_F box, D2D1_COLOR_F color);
-    void DrawFavicon(ID2D1DeviceContext* context, const SidebarRow& row, D2D1_RECT_F box);
+    // True when it drew the icon (not the globe or a symbol).
+    bool DrawFavicon(ID2D1DeviceContext* context, const FaviconSource& favicon, D2D1_RECT_F box);
     float Baseline(IDWriteTextFormat* format);
     D2D1_COLOR_F Primary(float alpha) const;
 
@@ -329,6 +355,10 @@ private:
     size_t commits_ = 0;
     std::unique_ptr<SpaceBarView> bar_;
     std::unique_ptr<SidebarTopRowView> topRow_;
+    std::unique_ptr<FavoritesView> favorites_;
+    FavoritesView::DrawIcon drawIcon_;  // the favorites' icons, drawn as the rows'
+    bool emptyStateDismissed_ = false;
+    float listTop_ = sidebar_metrics::kHeaderAreaHeight;  // where the page starts, under the favorites
     PageStatus page_;
     // Hidden or shown, and the slide there: from and to (points, the leading edge), since when.
     bool shown_ = true;
@@ -357,6 +387,7 @@ private:
     std::optional<SidebarPress> press_;
     std::optional<SpaceBarPress> barPress_;  // a press on a space's cell (core's)
     std::optional<TopRowButton> topPress_;   // a press on an enabled top-row button
+    std::optional<FavoritePress> favoritePress_;  // a press on a favorite's pane
     bool activating_ = false;         // the next press brings the window forward
     int clicks_ = 0;
     DWORD lastClickTime_ = 0;

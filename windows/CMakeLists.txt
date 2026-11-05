@@ -40,8 +40,10 @@ add_library(KiteCoreWin STATIC
   src/core/ArcImport.cpp
   src/core/ArcImportController.cpp
   src/core/ArcImportFiles.cpp
+  src/core/ColorSpaces.cpp
   src/core/CommandBar.cpp
   src/core/CommandLine.cpp
+  src/core/Favorites.cpp
   src/core/Files.cpp
   src/core/History.cpp
   src/core/HistoryStore.cpp
@@ -49,6 +51,7 @@ add_library(KiteCoreWin STATIC
   src/core/KeyBindings.cpp
   src/core/Models.cpp
   src/core/OKLab.cpp
+  src/core/OneShotFlags.cpp
   src/core/SessionBackups.cpp
   src/core/SessionSaveDelay.cpp
   src/core/SessionStore.cpp
@@ -145,6 +148,7 @@ if(WIN32)
     src/shell/Compositor.cpp
     src/shell/FadedLayer.cpp
     src/shell/Favicons.cpp
+    src/shell/FavoritesView.cpp
     src/shell/FrameClock.cpp
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
@@ -152,6 +156,7 @@ if(WIN32)
     src/shell/Occlusion.cpp
     src/shell/PerfLog.cpp
     src/shell/QuietRun.cpp
+    src/shell/RelayedTooltips.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarTopRowView.cpp
     src/shell/SidebarView.cpp
@@ -325,6 +330,7 @@ add_executable(KiteCoreTests
   tests/ArcImportFilesTests.cpp
   tests/CommandBarTests.cpp
   tests/CommandLineTests.cpp
+  tests/FavoritesTests.cpp
   tests/HistoryTests.cpp
   tests/JsonTests.cpp
   tests/KeyBindingsTests.cpp

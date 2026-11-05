@@ -2,8 +2,6 @@
 
 #include "shell/SidebarTopRowView.h"
 
-#include <commctrl.h>
-
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -36,9 +34,8 @@ wchar_t GlyphOf(const std::string& symbol) {
 }  // namespace
 
 std::unique_ptr<SidebarTopRowView> SidebarTopRowView::Create(HWND window, IDWriteFactory* dwrite, bool tooltips, std::wstring& error) {
-    std::unique_ptr<SidebarTopRowView> view(new SidebarTopRowView(window));
+    std::unique_ptr<SidebarTopRowView> view(new SidebarTopRowView(window, tooltips));
     view->dwrite_ = dwrite;
-    view->tooltipsAllowed_ = tooltips;
     ComPtr<IDWriteFontCollection> fonts;
     dwrite->GetSystemFontCollection(fonts.GetAddressOf());
     UINT32 index = 0;
@@ -53,12 +50,12 @@ std::unique_ptr<SidebarTopRowView> SidebarTopRowView::Create(HWND window, IDWrit
         return nullptr;
     }
     view->items_ = LayOutTopRow(view->width_, view->model_);
+    view->UpdateTooltips();
     return view;
 }
 
 SidebarTopRowView::~SidebarTopRowView() {
     ReleaseGpu();
-    if (tooltip_) DestroyWindow(tooltip_);
 }
 
 void SidebarTopRowView::UseCompositor(Compositor* compositor, IDCompositionVisual* parent) {
@@ -105,76 +102,19 @@ void SidebarTopRowView::Layout(float width, UINT dpi) {
     UpdateTooltips();
 }
 
-void SidebarTopRowView::SetTooltipsActive(bool active) {
-    if (active == tooltipsActive_) return;
-    tooltipsActive_ = active;
-    if (tooltip_ && !active) SendMessageW(tooltip_, TTM_POP, 0, 0);
-    UpdateTooltips();
-}
+void SidebarTopRowView::SetTooltipsActive(bool active) { tooltips_.SetActive(active); }
 
-void SidebarTopRowView::MakeTooltips() {
-    // Windows' own tooltips, as the Mac's toolTip is AppKit's: comctl32 loads with the first.
-    INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_BAR_CLASSES};
-    InitCommonControlsEx(&controls);
-    tooltip_ = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_NOPREFIX, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-                               CW_USEDEFAULT, window_, nullptr, GetModuleHandleW(nullptr), nullptr);
-    // No tooltip isn't a failure (the buttons still work), and it isn't tried again.
-    if (!tooltip_) {
-        OutputDebugStringW(L"Kite: the top row has no tooltips\n");
-        tooltipsAllowed_ = false;
-        return;
-    }
-    UpdateTooltips();
-}
-
-void SidebarTopRowView::RelayMouse(UINT message, WPARAM wParam, LPARAM lParam) {
-    if (!tooltipsActive_ || !tooltipsAllowed_) return;
-    if (!tooltip_) {
-        // The first move over a button makes them.
-        if (message != WM_MOUSEMOVE) return;
-        const float scale = Scale();
-        const float x = static_cast<float>(static_cast<short>(LOWORD(lParam))) / scale;
-        const float y = static_cast<float>(static_cast<short>(HIWORD(lParam))) / scale;
-        if (!TopRowButtonAt(width_, x, y)) return;
-        MakeTooltips();
-        if (!tooltip_) return;
-    }
-    // The pointer left the window: no more moves come to take the tip down.
-    if (message == WM_MOUSELEAVE) {
-        SendMessageW(tooltip_, TTM_POP, 0, 0);
-        return;
-    }
-    MSG msg{window_, message, wParam, lParam, static_cast<DWORD>(GetMessageTime()), {}};
-    const DWORD pos = GetMessagePos();
-    msg.pt = POINT{static_cast<short>(LOWORD(pos)), static_cast<short>(HIWORD(pos))};
-    SendMessageW(tooltip_, TTM_RELAYEVENT, 0, reinterpret_cast<LPARAM>(&msg));
-}
+void SidebarTopRowView::RelayMouse(UINT message, WPARAM wParam, LPARAM lParam) { tooltips_.Relay(message, wParam, lParam); }
 
 void SidebarTopRowView::UpdateTooltips() {
-    if (!tooltip_) return;
-    // The tools again, from the buttons as they are now (a rare change: the width, the scale, or
-    // the sidebar hiding or showing).
-    for (UINT_PTR id : tools_) {
-        TOOLINFOW tool{};
-        tool.cbSize = sizeof(tool);
-        tool.hwnd = window_;
-        tool.uId = id;
-        SendMessageW(tooltip_, TTM_DELTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
-    }
-    tools_.clear();
-    if (!tooltipsActive_) return;
     const float scale = Scale();
+    std::vector<RelayedTooltips::Tool> tools;
     for (const TopRowItem& item : items_) {
-        const std::wstring text = Widen(item.tooltip);
-        TOOLINFOW tool{};
-        tool.cbSize = sizeof(tool);
-        tool.hwnd = window_;  // relayed messages (TTM_RELAYEVENT), not a subclass of the window
-        tool.uId = static_cast<UINT_PTR>(item.button) + 1;
-        tool.rect = RECT{std::lround(item.frame.left * scale), std::lround(item.frame.top * scale), std::lround(item.frame.right * scale),
-                         std::lround(item.frame.bottom * scale)};
-        tool.lpszText = const_cast<wchar_t*>(text.c_str());  // copied by the control
-        if (SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool))) tools_.push_back(tool.uId);
+        tools.push_back({RECT{std::lround(item.frame.left * scale), std::lround(item.frame.top * scale), std::lround(item.frame.right * scale),
+                              std::lround(item.frame.bottom * scale)},
+                         Widen(item.tooltip)});
     }
+    tooltips_.SetTools(std::move(tools));
 }
 
 bool SidebarTopRowView::NeedsDraw() const {
@@ -269,13 +209,8 @@ std::wstring SidebarTopRowView::DrawButton(const TopRowItem& item, ButtonGpu& gp
         // A new visual: into the sidebar, and its opacity set again by Place.
         opacities_.erase(item.button);
         placed_ = false;
-        if (!error.empty()) {
-            gpu.layer = FadedLayer{};  // made again, and added, by the next draw
-        } else if (FAILED(hr = parent_->AddVisual(gpu.layer.visual.Get(), TRUE, nullptr))) {
-            gpu.layer = FadedLayer{};
-            error = HResultMessage(L"adding a top-row button's visual", hr);
-        }
     }
+    error = AttachFadedLayer(gpu.layer, fresh, std::move(error), parent_, TRUE, nullptr, hr);
     if (!error.empty()) {
         deviceLost_ = IsDeviceLost(hr);
         return L"a top-row button: " + error;
