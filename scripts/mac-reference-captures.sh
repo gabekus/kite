@@ -26,7 +26,8 @@
 #     "name": "drag",                               NAME.png; [a-z0-9._-]
 #     "holds": "what the capture should show",
 #     "session": {"ref": …, "path": …} | {"inline": {…session.json…}},           default: the top-level one
-#     "env": {"KITE_TEST_CONTEXT_MENU": "1"},       only the hooks in HOOKS below; the find bar's:
+#     "env": {"KITE_TEST_CONTEXT_MENU": "1"},       only the hooks in HOOKS below (exactly "1" for a right-click on
+#                                                   a RIGHT_CLICK_TARGETS row); the find bar's:
 #            {"KITE_TEST_FIND": "domain"}           the bar open searching for this ([A-Za-z0-9 ._-]{1,40}, as text), or
 #            {"KITE_TEST_FIND_OPEN": "1"}           the bar open and empty; one of the two, on a base with FIND_FLOOR,
 #                                                   and the capture waits for Kite's "KITE_TEST_FIND: ready" line
@@ -52,7 +53,11 @@
 # - Sessions: URLs must be public http(s) (or about:), no path-like values, profileSettings cut to its includesSearchSuggestions booleans, and every
 #   profile's WebKit dataStoreID replaced with a fresh one whose store is deleted afterwards.
 # - STEPS: clicks and drag starts must land on a visible view in SAFE_TARGETS (from the tree, just before the step);
-#   right- and ⌃-clicks also need a non-empty KITE_TEST_CONTEXT_MENU. No keys or modifier flags. Text only as
+#   right- and ⌃-clicks also need a non-empty KITE_TEST_CONTEXT_MENU. A right-click (and nothing else: no left click,
+#   ⌃-click, double click or drag) may also land on a RIGHT_CLICK_TARGETS row, only with KITE_TEST_CONTEXT_MENU
+#   exactly "1" and no test-context-menu-pick file (so the menu is logged and nothing in it runs), without modifiers,
+#   as the state's first step (waits aside), and only on a point where everything inside the row is in
+#   RIGHT_CLICK_INSIDE (checked against the row's own tree just before the step). No keys or modifier flags. Text only as
 #   [A-Za-z0-9 ._-]{1,40}, straight after ⌘T (the only key chord allowed) or a click on a COMMAND_BAR_OPENERS view,
 #   into a visible CommandBarField
 #   (Kite's own command bar, which acts only on Return, and Return can't be sent), and only on a base that has
@@ -107,6 +112,33 @@ SAFE_TARGETS="SpaceCellView NewTabRowCell"
 # The subset whose left click opens Kite's own command bar (NewTabRowCell.tapped: showCommandBar(.newTab)), the
 # only place a text step may type. The sidebar's address field opens it too; add its tree class after checking it.
 COMMAND_BAR_OPENERS="NewTabRowCell"
+
+# Sidebar rows that take a right-click only, and only to log their menu: a right-click (button right, no modifiers,
+# the state's first step) in a state whose env has KITE_TEST_CONTEXT_MENU exactly "1" and whose profile has no
+# test-context-menu-pick file. Left clicks (TabRowCell and FavoritePaneView select a tab, which loads its page;
+# FolderRowCell opens or closes the folder), ⌃-clicks, double clicks (rename) and drags (moves) stay refused.
+# Read in the Mac source, unchanged from SAFE_FLOOR to main edbbdc3 (so no floor of its own):
+# - SidebarListCells.swift:149-158: TabRowCell's and FolderRowCell's rightMouseDown only builds menu(for:) (inside
+#   the pill, acceptsPress) and calls showSidebarMenu; selecting, toggling and renaming are mouseDown/mouseUp (left)
+#   only (113-147, tapped 615 and 937). SidebarFavorites.swift:483-500: FavoritePaneView's rightMouseDown the same;
+#   it selects only on a left mouseUp (471-475). No Kite view overrides rightMouseUp.
+# - SidebarKit.swift:658-680: showSidebarMenu returns before NSMenu.popUpContextMenu whenever
+#   PageContextMenuItems.testMode is set (KITE_TEST_CONTEXT_MENU non-empty on a KITE_SUPPORT_PATH profile), logs the
+#   items, and runs one only when PageContextMenuItems.testPick() (PageContextMenuItems.swift:134-142) names one:
+#   the profile's test-context-menu-pick file, or the hook's value when it isn't "1". Hence exactly "1", no file.
+# - Building the menus (contextMenu(at:) 627 and 948, menu(for:) 488) makes ClosureMenuItems (SidebarKit.swift:346)
+#   from the store's state; their handlers (pasteboard, store changes, Claude) run only when picked.
+# - UIInputSender.swift:55-64, 304-318: the right-click's down goes to Kite's window by window.sendEvent and its up
+#   by NSApp.postEvent to the same windowNumber; nothing reaches the window server, so no hover (mouseEntered, a
+#   favorite's preview) or activation follows (UIPointerProbe.swift:52), and a direct sendEvent skips the local
+#   monitors (BrowserWindowController.swift:258-263). BrowserWindow.sendEvent intercepts left mouse events only.
+RIGHT_CLICK_TARGETS="TabRowCell FolderRowCell FavoritePaneView"
+# What may lie under a row's right-click inside the row: views that hit-test to nothing (FillView, SidebarLabel,
+# SidebarImageView, FaviconImageView, DotView, PeekBadgeView, ClaudeRingView, ClaudeMarkView, SidebarRingView) or
+# that pass a right-click up to the row, having no menu of their own (SymbolButton, and the pass-through containers
+# SidebarPassthroughView and GroupHeaderView). Not here, so refused: the rename field (RenameField, an NSTextField
+# whose field editor has a real menu) and SwiftUI islands (Island<…>, the speaker), or any view added later.
+RIGHT_CLICK_INSIDE="SidebarPassthroughView GroupHeaderView FillView SidebarLabel SidebarImageView FaviconImageView SymbolButton DotView PeekBadgeView ClaudeRingView ClaudeMarkView SidebarRingView"
 
 [[ $# == 2 ]] || { echo "usage: $0 REQUEST.json OUTDIR" >&2; exit 2; }
 REQUEST="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
@@ -462,8 +494,9 @@ def has_find_fix():
     if not _find_fix:
         _find_fix.append(git("merge-base", "--is-ancestor", find_floor, "HEAD", lazy=False).returncode == 0)
     return _find_fix[0]
-def check_step(action, args, menu_hook, where, previous):
-    """Returns what must be true when the step runs: points on SAFE_TARGETS views, or (text) the command bar open."""
+def check_step(action, args, menu_hook, where, previous, row_menu):
+    """Returns what must be true when the step runs: points on SAFE_TARGETS views, or (text) the command bar open.
+    row_menu is None when a right-click here may also land on a RIGHT_CLICK_TARGETS row, else why not."""
     if action == "trace" and "keys" in args:
         fail(f"{where}: trace keys aren't allowed (keys aren't reviewed for headless safety)")
     if action != "input":
@@ -503,7 +536,16 @@ def check_step(action, args, menu_hook, where, previous):
         mods = modifier_tokens(args.get("modifiers", ""), where)
         if (button == "right" or mods & CONTROL) and not menu_hook:
             fail(f"{where}: a right- or ⌃-click needs KITE_TEST_CONTEXT_MENU in env (a real menu needs a real screen)")
-        return [{"point": at, "what": f"{button} click", "click": True}]
+        check = {"point": at, "what": f"{button} click", "click": True}
+        # Rows (RIGHT_CLICK_TARGETS) take a plain right-click that only logs their menu; anything else is checked
+        # against SAFE_TARGETS alone, so a row refuses it. The runner sees "rows" and nothing else.
+        if button == "right":
+            why = row_menu or ("it has modifiers" if mods else None)
+            if why:
+                check["rows_refused"] = why
+            else:
+                check["rows"] = True
+        return [check]
     if "from" in args:
         start = point(args["from"], where)
         point(args.get("to"), where)
@@ -607,6 +649,13 @@ for i, state in enumerate(request["states"]):
     lines, shown = [], []
     previous = None
     menu_hook = bool(str(env.get("KITE_TEST_CONTEXT_MENU", "")).strip())
+    # A row's right-click only logs its menu when nothing names an item to run (PageContextMenuItems.testPick).
+    if env.get("KITE_TEST_CONTEXT_MENU") != "1":
+        row_menu = "KITE_TEST_CONTEXT_MENU isn't exactly 1 (any other value picks a menu item)"
+    elif "test-context-menu-pick" in files:
+        row_menu = "the profile's test-context-menu-pick file picks a menu item"
+    else:
+        row_menu = None
     for j, step in enumerate(steps):
         if not isinstance(step, dict):
             fail(f"{where}: steps[{j}] is an object")
@@ -623,7 +672,11 @@ for i, state in enumerate(request["states"]):
             fail(f"{where}: steps[{j}] is {{\"ui\": ACTION, \"args\": {{…}}}} (not capture) or {{\"wait\": s}}")
         if not isinstance(args, dict) or "action" in args or "save" in args:
             fail(f"{where}: steps[{j}].args is the action's JSON object, without action or save")
-        checks = check_step(action, args, menu_hook, f"{where} steps[{j}]", previous)
+        # Rows only for the state's first step (waits aside): nothing an earlier step opened (the command bar, a
+        # popover) can be over the row, and the row is as the session laid it out.
+        first = row_menu if row_menu else ("a step comes before it (a row's right-click is the state's first step)"
+                                           if any(not line.startswith("wait\t") for line in lines) else None)
+        checks = check_step(action, args, menu_hook, f"{where} steps[{j}]", previous, first)
         previous = (action, args)
         encoded = json.dumps(args, ensure_ascii=False, separators=(",", ":"))
         lines.append(f"ui\t{action}\t{encoded}\t{json.dumps(checks, separators=(',', ':')) if checks else ''}")
@@ -677,22 +730,23 @@ PY
 TREE_MATCH="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["tree_match"] or "")' "$WORK/plan/request.json")"
 match_json() { python3 -I -c 'import json,sys; print(json.dumps({"match": sys.argv[1]}))' "$1"; }
 
-# on_safe_target CHECKS TREEFILE CLASSES: prints "hit CLASS" when the check's point lands on a visible view of one of
-# CLASSES (or, for a check without a point, when one is visible at all), else why not.
+# on_safe_target CHECKS TREEFILE CLASSES [PATHFILE]: prints "hit CLASS" when the check's point lands on a visible view
+# of one of CLASSES (or, for a check without a point, when one is visible at all), else why not. With PATHFILE, the
+# hit view's tree path is written there.
 on_safe_target() {
-    python3 -I - "$1" "$2" "$3" <<'PY'
+    python3 -I - "$1" "$2" "$3" "${4:-}" <<'PY'
 import json, re, sys
 checks, tree, safe = json.loads(sys.argv[1]), open(sys.argv[2], encoding="utf-8", errors="replace").read(), sys.argv[3].split()
 # A tree line (UINode.line): path, class, then optional #identifier and "quoted label" (\" and \\ escaped, so a
 # label can't fake a frame), then [x,y w×h] and attributes.
-LINE = re.compile(r'\S+ (?P<cls>\S+)(?: #\S+)?(?: "(?:[^"\\]|\\.)*")? '
+LINE = re.compile(r'(?P<path>\S+) (?P<cls>\S+)(?: #\S+)?(?: "(?:[^"\\]|\\.)*")? '
                   r'\[(?P<x>-?[\d.]+),(?P<y>-?[\d.]+) (?P<w>[\d.]+)×(?P<h>[\d.]+)\](?P<rest>.*)')
 frames = []
 for line in tree.splitlines():
     m = LINE.fullmatch(line.strip())
     if m and m["cls"] in safe and not re.search(r"\b(hidden=true|alpha=0|opacity=0)(\s|\Z)", m["rest"]):
-        frames.append((m["cls"], [float(m[k]) for k in ("x", "y", "w", "h")]))
-hit = None
+        frames.append((m["cls"], [float(m[k]) for k in ("x", "y", "w", "h")], m["path"]))
+hit, path = None, ""
 for check in checks:
     if "point" not in check:
         hit = frames[0][0] if frames else None
@@ -701,11 +755,63 @@ for check in checks:
             sys.exit()
         continue
     x, y = check["point"]
-    hit = next((c for c, (fx, fy, fw, fh) in frames if fx <= x < fx + fw and fy <= y < fy + fh), None)
-    if not hit:
-        print(f"the {check['what']} at {x:g},{y:g} isn't on a visible {' or '.join(safe)}")
+    hits = [(c, p) for c, (fx, fy, fw, fh), p in frames if fx <= x < fx + fw and fy <= y < fy + fh]
+    hit, path = hits[0] if hits else (None, "")
+    if check.get("rows") and len(hits) > 1:
+        # A row in a hidden list (another space's) can share a visible one's frame: which one AppKit hits is unclear.
+        print(f"the {check['what']} at {x:g},{y:g} is on {len(hits)} views ({', '.join(f'{c} {p}' for c, p in hits)})")
         sys.exit()
+    if not hit:
+        why = f" (not a row: {check['rows_refused']})" if check.get("rows_refused") else ""
+        print(f"the {check['what']} at {x:g},{y:g} isn't on a visible {' or '.join(safe)}{why}")
+        sys.exit()
+if sys.argv[4]:
+    open(sys.argv[4], "w", encoding="utf-8").write(path)
 print(f"hit {hit}")
+PY
+}
+
+# inside_row CHECKS ROWTREE CLASS ALLOWED: for a right-click on a RIGHT_CLICK_TARGETS row, prints "ok" when the row's
+# own tree (kite ui tree {"root": its path}) is that CLASS, contains the point, and every view in it under the point
+# that isn't hidden is one of ALLOWED, which can't take the click from the row; else why not. A tree it can't read
+# whole (a line it can't parse, a cut-short subtree) is refused.
+inside_row() {
+    python3 -I - "$1" "$2" "$3" "$4" <<'PY'
+import json, re, sys
+checks, tree, row_class, allowed = (json.loads(sys.argv[1]), open(sys.argv[2], encoding="utf-8", errors="replace").read(),
+                                    sys.argv[3], set(sys.argv[4].split()))
+LINE = re.compile(r'(?P<path>\d+(?:\.\d+)*) (?P<cls>\S+)(?: #\S+)?(?: "(?:[^"\\]|\\.)*")? '
+                  r'\[(?P<x>-?[\d.]+),(?P<y>-?[\d.]+) (?P<w>[\d.]+)×(?P<h>[\d.]+)\](?P<rest>.*)')
+x, y = next(c["point"] for c in checks if "point" in c)
+nodes = []
+for line in tree.splitlines():
+    text = line.strip()
+    if text.startswith("…"):
+        print(f"the {row_class}'s tree was cut short ({text[:60]})")
+        sys.exit()
+    if not re.match(r"\d+(\.\d+)* ", text):
+        continue   # the header and the untrusted-content markers
+    m = LINE.fullmatch(text)
+    if not m:
+        print(f"couldn't read a line of the {row_class}'s tree: {text[:80]}")
+        sys.exit()
+    nodes.append(m)
+if not nodes or nodes[0]["cls"] != row_class:
+    print(f"the tree at the hit {row_class}'s path isn't that {row_class} any more")
+    sys.exit()
+def under(m):
+    fx, fy, fw, fh = (float(m[k]) for k in ("x", "y", "w", "h"))
+    return fx <= x < fx + fw and fy <= y < fy + fh
+if not under(nodes[0]):
+    print(f"the right click at {x:g},{y:g} isn't on the {row_class} any more")
+    sys.exit()
+for m in nodes[1:]:
+    if re.search(r"\bhidden=true(\s|\Z)", m["rest"]) or not under(m):
+        continue
+    if m["cls"] not in allowed:
+        print(f"the right click at {x:g},{y:g} lands on a {m['cls']} inside the {row_class}, which isn't in RIGHT_CLICK_INSIDE")
+        sys.exit()
+print("ok")
 PY
 }
 
@@ -825,12 +931,33 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
         elif [[ "$checks" == *'"opens":"command bar"'* ]]; then
             last_hit="cmd+t"   # the planner allowed exactly {"keys":"cmd+t"} here, on a base with TEXT_FLOOR
         elif [[ -n "$checks" ]]; then
+            # The planner marks a plain right-click, as the state's first step with KITE_TEST_CONTEXT_MENU exactly 1
+            # and no pick file, with "rows": only that one may also land on a RIGHT_CLICK_TARGETS row.
+            classes="$SAFE_TARGETS"
+            if [[ "$checks" == *'"rows":true'* ]]; then classes="$SAFE_TARGETS $RIGHT_CLICK_TARGETS"; fi
             : >"$folder/targets.txt"
-            for target in $SAFE_TARGETS; do
+            for target in $classes; do
                 tmo 60 "$CLI" ui tree "$(match_json "$target")" >>"$folder/targets.txt" 2>&1 || true
             done
-            result="$(on_safe_target "$checks" "$folder/targets.txt" "$SAFE_TARGETS")"
-            if [[ "$result" == "hit "* ]]; then last_hit="${result#hit }"; else refused="$result"; fi
+            : >"$folder/hit-path"
+            result="$(on_safe_target "$checks" "$folder/targets.txt" "$classes" "$folder/hit-path")"
+            if [[ "$result" == "hit "* ]]; then
+                last_hit="${result#hit }"
+                if [[ " $RIGHT_CLICK_TARGETS " == *" $last_hit "* ]]; then
+                    # On a row: what's under the point inside it must pass the right-click up to it.
+                    row_path="$(cat "$folder/hit-path")"
+                    if [[ "$row_path" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+                        tmo 60 "$CLI" ui tree "$(python3 -I -c 'import json,sys; print(json.dumps({"root": sys.argv[1], "depth": 30, "max_nodes": 5000}))' "$row_path")" \
+                            >"$folder/row-tree.txt" 2>&1 || true
+                        inside="$(inside_row "$checks" "$folder/row-tree.txt" "$last_hit" "$RIGHT_CLICK_INSIDE")"
+                    else
+                        inside="no tree path for the hit $last_hit"
+                    fi
+                    if [[ "$inside" != ok ]]; then refused="$inside"; fi
+                fi
+            else
+                refused="$result"
+            fi
         else
             last_hit=""
         fi
