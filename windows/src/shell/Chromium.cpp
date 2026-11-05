@@ -1000,7 +1000,8 @@ public:
         shared_->ReportDownload(std::move(update));
     }
 
-    // CefDialogHandler, CefJSDialogHandler: a quiet run's pages only
+    // CefDialogHandler (a quiet run's pages only) and CefJSDialogHandler (every page: a quiet
+    // run's and a parked page's dialogs are answered here, the rest go on to Chromium's own)
 
     // No file chooser: cancelled, as if dismissed.
     bool OnFileDialog(CefRefPtr<CefBrowser>, FileDialogMode mode, const CefString& title, const CefString&,
@@ -1011,7 +1012,8 @@ public:
         return true;
     }
 
-    // alert, confirm and prompt are suppressed: they return at once, as a dismissed one does.
+    // alert, confirm and prompt from a parked page or in a quiet run are suppressed: they return
+    // at once, as a dismissed one does. Any other page's are Chromium's own.
     bool OnJSDialog(CefRefPtr<CefBrowser> browser, const CefString&, JSDialogType type, const CefString& message, const CefString&,
                     CefRefPtr<CefJSDialogCallback>, bool& suppressMessage) override {
         // A parked page's tab has closed: nothing it says is shown.
@@ -1026,9 +1028,9 @@ public:
         return false;
     }
 
-    // Leave Page? Left, as the Mac's forced close and quit answer it (KCBrowser.mm's
-    // OnBeforeUnloadDialog), and like it on a later turn of CEF's thread: answering inside this
-    // call slowed Chromium's teardown there.
+    // Leave Page, from a parked page or in a quiet run: Left, as the Mac's forced close and quit
+    // answer it (KCBrowser.mm's OnBeforeUnloadDialog), and like it on a later turn of CEF's thread:
+    // answering inside this call slowed Chromium's teardown there. Any other page's is Chromium's.
     bool OnBeforeUnloadDialog(CefRefPtr<CefBrowser> browser, const CefString&, bool isReload, CefRefPtr<CefJSDialogCallback> callback) override {
         // A parked page leaves, as the Mac's closed pages do (KCBrowser.mm's OnBeforeUnloadDialog):
         // its tab is gone, so there's no one to ask, and Stay would keep it running on its page.
@@ -1620,7 +1622,8 @@ void Chromium::AllowAutomaticDownloads(const std::string& origin) {
 
 bool Chromium::HandleTimer(UINT_PTR id) {
     if (id != kStallTimer) return false;
-    shared_->CancelStalled();
+    // A tick already queued when the timer stopped: nothing is parked, so nothing to look at.
+    if (shared_->stallCheck.running) shared_->CancelStalled();
     return true;
 }
 

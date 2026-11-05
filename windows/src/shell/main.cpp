@@ -400,7 +400,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (const DWORD length = testSwitches ? GetEnvironmentVariableW(L"KITE_TEST_AUTOMATIC_DOWNLOADS", nullptr, 0) : 0; length) {
         std::wstring value(length, L'\0');
         value.resize(GetEnvironmentVariableW(L"KITE_TEST_AUTOMATIC_DOWNLOADS", value.data(), length));
-        if (value.starts_with(L"http://127.0.0.1:") && value.find_first_of(L"/?#", 17) == std::wstring::npos) {
+        // Exactly http://127.0.0.1:PORT, the port 1 to 5 digits: no user info, path or anything else.
+        const std::wstring_view prefix = L"http://127.0.0.1:";
+        const std::wstring_view port = std::wstring_view(value).substr(std::min(value.size(), prefix.size()));
+        if (value.starts_with(prefix) && !port.empty() && port.size() <= 5 &&
+            std::all_of(port.begin(), port.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; })) {
             options.testAutomaticDownloads = Narrow(value);
         }
     }

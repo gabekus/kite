@@ -691,7 +691,11 @@ std::u32string FoldedPath(const std::filesystem::path& path) {
 DownloadReservations::DownloadReservations(SamePath same) : same_(std::move(same)) {}
 
 bool DownloadReservations::Same(const std::filesystem::path& a, const std::filesystem::path& b) const {
-    return same_ ? same_(a, b) : FoldedPath(a) == FoldedPath(b);
+    // One spelling of each path first: on Windows "C:/x\a.pdf" and "C:\x\a.pdf" name one file.
+    std::filesystem::path left = a.lexically_normal(), right = b.lexically_normal();
+    left.make_preferred();
+    right.make_preferred();
+    return same_ ? same_(left, right) : FoldedPath(left) == FoldedPath(right);
 }
 
 std::optional<std::filesystem::path> DownloadReservations::Reserve(const std::string& owner, std::string_view name,

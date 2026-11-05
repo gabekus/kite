@@ -617,9 +617,23 @@ TEST(reservedNamesCompareAsTheShellSays) {
     DownloadReservations folded;
     CHECK(folded.Reserve("a", "Report.pdf", folder, never) == folder / "Report.pdf");
     CHECK(folded.Reserve("b", "REPORT.PDF", folder, never) == folder / "REPORT 2.PDF");
-    DownloadReservations exact([](const fs::path& a, const fs::path& b) { return a == b; });
+    DownloadReservations exact([](const fs::path& a, const fs::path& b) { return a.native() == b.native(); });
     CHECK(exact.Reserve("a", "Report.pdf", folder, never) == folder / "Report.pdf");
     CHECK(exact.Reserve("b", "REPORT.PDF", folder, never) == folder / "REPORT.PDF");
+    // Dot segments, and on Windows mixed slashes, spell one path before any comparison sees it.
+    exact.Hold("c", fs::path("D:/x/y/./a.pdf"));
+    CHECK(exact.Held(fs::path("D:/x/y/a.pdf")) && exact.Held(fs::path("D:/x/z/../y/a.pdf")));
+#ifdef _WIN32
+    exact.Hold("d", fs::path("D:/w\\v/b.pdf"));
+    CHECK(exact.Held(fs::path("D:\\w\\v\\b.pdf")) && exact.Held(fs::path("D:/w/v/b.pdf")));
+    folded.Hold("c", fs::path("D:/x\\y/A.pdf"));
+    CHECK(folded.Held(fs::path("D:\\x/y\\a.pdf")));
+    DownloadReservations ntfsSlashes([](const fs::path& a, const fs::path& b) {
+        return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_EQUAL;
+    });
+    ntfsSlashes.Hold("e", fs::path("C:/x\\a.pdf"));
+    CHECK(ntfsSlashes.Held(fs::path("C:\\x\\A.pdf")));
+#endif
 #ifdef _WIN32
     // The shell's comparison (CompareStringOrdinal, ignoring case) says what the disk says: a file
     // made under one name is or isn't found under the other. Checked for plain case and for the
