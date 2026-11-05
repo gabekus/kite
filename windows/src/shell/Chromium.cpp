@@ -7,6 +7,7 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string_view>
 #include <utility>
@@ -18,6 +19,7 @@
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_focus_handler.h"
 #include "include/cef_keyboard_handler.h"
+#include "include/cef_preference.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_handler.h"
 #include "include/cef_task.h"
@@ -34,6 +36,10 @@ namespace {
 // The Mac's KCPageBackdropColor: what a page shows before it first paints. A page that sets
 // no background of its own still gets white (the DevTools override in OnAfterCreated).
 constexpr cef_color_t kPageBackdrop = 0xFF323232;
+
+// The Mac's kEnergySaverPref. Chromium's BatterySaverModeState: 0 = disabled, 1 = on battery
+// below 20% (Chrome's default).
+constexpr char kEnergySaverPref[] = "performance_tuning.battery_saver_mode.state";
 
 // How long closing the window waits for the browsers before it goes ahead anyway.
 constexpr UINT kCloseDeadlineMs = 5'000;
@@ -83,6 +89,8 @@ struct Chromium::Shared {
     std::atomic<bool> keysToKite{false};
     // Use Both's "second press" bookkeeping, on CEF's UI thread only (OnPreKeyEvent, OnKeyEvent).
     ShortcutPriorityGate gate;
+    // The Mac's gEnergySaverEnabled: off unless the user turns it on (SetEnergySaverEnabled).
+    std::atomic<bool> energySaverEnabled{false};
 
     // Both threads, under the mutex.
     std::mutex mutex;
@@ -216,6 +224,7 @@ struct Chromium::Shared {
         CefRefPtr<CefBrowser> browser = it->second.browser;
         const HWND hwnd = it->second.hwnd;
         if (shown == it->first) shown.clear();
+        pressurePicks.erase(it->first);
         pages.erase(it);
         retiring.push_back(browser);
         RunOnCefUIThread([browser, hwnd] {
@@ -231,6 +240,12 @@ struct Chromium::Shared {
     // pages close, unless one is tied to a popup, using the camera or microphone, or playing
     // sound (asked of the page first, on CEF's thread; Discard gets the answer).
     void Evict();
+    // The Mac's watchMemoryPressure: every page not on screen is asked whether it's busy, and
+    // closes unless it is, or has been shown since (LiveTabPolicy::StillHibernates).
+    void DiscardUnderPressure();
+    // Tabs picked under memory pressure, with when each was last shown then, until their busy
+    // check answers (Kite's UI thread only).
+    std::map<std::string, Timestamp> pressurePicks;
     // The pages that count, with when each was last shown: not one whose tab already closed
     // (closeWhenMade), which goes on its own once made.
     std::map<std::string, Timestamp> LivePages() const {
@@ -247,14 +262,21 @@ struct Chromium::Shared {
     }
     void Discard(const std::string& tabID, const CefRefPtr<CefBrowser>& browser, bool busy) {
         auto it = pages.find(tabID);
+        std::optional<Timestamp> pickedUnderPressure;
+        if (auto pick = pressurePicks.extract(tabID)) pickedUnderPressure = pick.mapped();
         if (busy || closing || tabID == shown || it == pages.end() || !it->second.browser || !it->second.browser->IsSame(browser) ||
             it->second.mediaInUse || (events.keepAlive && events.keepAlive(tabID))) {
             return;
         }
-        // Still over the limit, and still among the least recently shown: a tab closed, or
-        // this one was shown again, while the page was being asked.
-        const std::vector<std::string> over = OverTheLimit();
-        if (std::find(over.begin(), over.end(), tabID) == over.end()) return;
+        if (pickedUnderPressure) {
+            // Under memory pressure any hidden page goes, unless it was shown while it was asked.
+            if (!LiveTabPolicy::StillHibernates(pickedUnderPressure, it->second.lastShown, true, tabID == shown)) return;
+        } else {
+            // Still over the limit, and still among the least recently shown: a tab closed, or
+            // this one was shown again, while the page was being asked.
+            const std::vector<std::string> over = OverTheLimit();
+            if (std::find(over.begin(), over.end(), tabID) == over.end()) return;
+        }
         ClosePage(it);
         if (events.pageDiscarded) events.pageDiscarded(tabID);
     }
@@ -290,12 +312,36 @@ struct Chromium::Shared {
 
 namespace {
 
+// The Mac's ApplyEnergySaver, on CEF's UI thread. Energy Saver is a local-state preference, one
+// for all profiles: only the global preferences have it, as on the Mac, and no request
+// context's (a space's own profile) does.
+void ApplyEnergySaver(const Chromium::Shared& shared) {
+    CefRefPtr<CefPreferenceManager> prefs = CefPreferenceManager::GetGlobalPreferenceManager();
+    if (!prefs) return;
+    if (!prefs->HasPreference(kEnergySaverPref)) {
+        OutputDebugStringW(L"Kite: Chromium has no Energy Saver preference; left as is\n");
+        return;
+    }
+    CefRefPtr<CefValue> value = CefValue::Create();
+    value->SetInt(shared.energySaverEnabled ? 1 : 0);
+    CefString error;
+    if (!prefs->SetPreference(kEnergySaverPref, value, error)) {
+        OutputDebugStringW((L"Kite: couldn't set Energy Saver: " + error.ToWString() + L"\n").c_str());
+    }
+}
+
 // Kite's CefApp in the browser process: one Kite per profile, as Chromium allows. A second
 // launch hands over to this one instead of opening a Chrome window of its own.
 class KiteApp : public CefApp, public CefBrowserProcessHandler {
 public:
     explicit KiteApp(std::shared_ptr<Chromium::Shared> shared) : shared_(std::move(shared)) {}
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
+
+    // Where the Mac applies Energy Saver after CefInitialize, and again at its first browser in
+    // case the context wasn't ready: here the global preferences exist, and no browser does
+    // yet, so one try covers both, and the browsers Chromium makes itself (the Mac's
+    // KCDefaultClient) too.
+    void OnContextInitialized() override { ApplyEnergySaver(*shared_); }
 
     bool OnAlreadyRunningAppRelaunch(CefRefPtr<CefCommandLine>, const CefString&) override {
         shared_->Post([shared = shared_] {
@@ -688,6 +734,23 @@ void Chromium::Shared::Evict() {
     }
 }
 
+void Chromium::Shared::DiscardUnderPressure() {
+    if (closing) return;
+    std::set<std::string> keep;
+    if (!shown.empty()) keep.insert(shown);
+    for (const std::string& id : TabsToDiscardUnderPressure(LivePages(), keep)) {
+        const Page& page = pages.at(id);
+        if (!page.browser || page.mediaInUse || (events.keepAlive && events.keepAlive(id))) continue;
+        pressurePicks[id] = page.lastShown;
+        RunOnCefUIThread([browser = page.browser] {
+            CefRefPtr<CefClient> client = browser->GetHost()->GetClient();
+            if (client) static_cast<PageClient*>(client.get())->CheckBusy(browser);
+        });
+    }
+}
+
+void Chromium::DiscardHiddenPages() { shared_->DiscardUnderPressure(); }
+
 int RunChromiumSubprocess(HINSTANCE instance) {
     CefMainArgs args(instance);
     return CefExecuteProcess(args, nullptr, nullptr);
@@ -986,6 +1049,21 @@ bool Chromium::MayCloseWindow() {
 }
 
 bool Chromium::PagesCanBeHidden() const { return !shared_->widgetMissing; }
+
+void Chromium::SetEnergySaverEnabled(bool enabled) {
+    shared_->energySaverEnabled = enabled;
+    RunOnCefUIThread([shared = shared_] { ApplyEnergySaver(*shared); });
+}
+
+void Chromium::ReadEnergySaver(std::function<void(std::optional<int> state)> done) {
+    RunOnCefUIThread([shared = shared_, done = std::move(done)]() mutable {
+        std::optional<int> state;
+        CefRefPtr<CefPreferenceManager> prefs = CefPreferenceManager::GetGlobalPreferenceManager();
+        CefRefPtr<CefValue> value = prefs ? prefs->GetPreference(kEnergySaverPref) : nullptr;
+        if (value && value->GetType() == VTYPE_INT) state = value->GetInt();
+        shared->Post([done = std::move(done), state] { done(state); });
+    });
+}
 
 void Chromium::RunPending() {
     std::deque<std::function<void()>> work;

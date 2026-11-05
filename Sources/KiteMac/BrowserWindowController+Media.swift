@@ -56,7 +56,8 @@ extension BrowserWindowController {
     func tabsChangedOnScreen(left: [UUID], arrived: [UUID]) {
         store.tabsLeftScreen(left)
         let defaults = UserDefaults.standard
-        let disabled = defaults.bool(forKey: Self.autoPictureInPictureDisabledKey)
+        // A test-safe run never pops a video out: picture in picture would float over the user's apps.
+        let disabled = defaults.bool(forKey: Self.autoPictureInPictureDisabledKey) || WindowPresenter.testSafe
         let hosts = Set((defaults.stringArray(forKey: Self.autoPictureInPictureDisabledHostsKey) ?? []).map { $0.lowercased() })
         for id in left {
             let media = store.pages[id]?.media?.state

@@ -24,7 +24,10 @@ else()
   # No fused multiply-adds: the theme backdrop's grain hash ends in a fract() of values near
   # 1e4, so contracting it (clang's default, and every arm64 build) moves the reference off
   # the golden fixture the Mac shares. MSVC doesn't contract without /fp:contract.
-  add_compile_options(-Wall -Wextra -Werror -ffp-contract=off)
+  # KITE_WERROR=OFF is for the sanitizer build: -Werror from here comes after CMAKE_CXX_FLAGS,
+  # so a -Wno-error there can't undo it, and the plain build already gates warnings.
+  option(KITE_WERROR "Treat warnings as errors" ON)
+  add_compile_options(-Wall -Wextra -ffp-contract=off $<$<BOOL:${KITE_WERROR}>:-Werror>)
 endif()
 if(WIN32)
   add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
@@ -38,7 +41,11 @@ add_library(KiteCoreWin STATIC
   src/core/KeyBindings.cpp
   src/core/Models.cpp
   src/core/OKLab.cpp
+  src/core/SessionBackups.cpp
+  src/core/SessionSaveDelay.cpp
   src/core/SessionStore.cpp
+  src/core/SessionWriter.cpp
+  src/core/StoreFile.cpp
   src/core/SpaceBar.cpp
   src/core/SpaceIcon.cpp
   src/core/SymbolShape.cpp
@@ -56,6 +63,9 @@ add_library(KiteCoreWin STATIC
   src/core/Uuid.cpp
 )
 target_include_directories(KiteCoreWin PUBLIC src)
+# SessionWriter's worker is a std::thread (pthreads off Windows).
+find_package(Threads REQUIRED)
+target_link_libraries(KiteCoreWin PUBLIC Threads::Threads)
 
 # Headless model CLI (the behaviour gate in docs/helix.md).
 add_executable(kitecore src/cli/main.cpp)
@@ -110,6 +120,7 @@ if(WIN32)
     src/shell/FrameClock.cpp
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
+    src/shell/MemoryPressure.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
@@ -175,6 +186,7 @@ add_executable(KiteCoreTests
   tests/KeyBindingsTests.cpp
   tests/ModelTests.cpp
   tests/LiveTabPolicyTests.cpp
+  tests/SessionSaveTests.cpp
   tests/SidebarTests.cpp
   tests/SpaceBarTests.cpp
   tests/SpaceIconTests.cpp

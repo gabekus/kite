@@ -66,6 +66,7 @@ extension BrowserWindowController {
         let app = Bundle.main.bundleURL
         // macOS's confirmation comes to the front.
         guard !WindowPresenter.testSafe else { return WindowPresenter.logSkipped("set as default browser") }
+        guard Self.canBeDefaultBrowser else { return NSSound.beep() }
         for scheme in ["http", "https"] {
             // macOS asks the user to confirm the change.
             NSWorkspace.shared.setDefaultApplication(at: app, toOpenURLsWithScheme: scheme) { error in
@@ -73,6 +74,10 @@ extension BrowserWindowController {
             }
         }
     }
+
+    /// Only the installed Kite (dev.gabek.Kite). Debug bundles are dev.gabek.Kite.dev (bundle-app.sh), and as the
+    /// default browser every link would open in whichever of the many debug builds macOS picks, with its own empty profile.
+    static let canBeDefaultBrowser = Bundle.main.bundleIdentifier == "dev.gabek.Kite"
 
     static var isDefaultBrowser: Bool {
         guard let handler = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!) else {
