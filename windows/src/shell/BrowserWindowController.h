@@ -5,8 +5,8 @@
 // session, and runs one of these. Like the Mac's BrowserWindowController+*.swift, its parts have
 // files of their own: +Spaces.cpp (editing spaces: the space menu, renaming, deleting,
 // reordering), +Tabs.cpp (pinning, renaming tabs and folders, New Folder, Duplicate, Back to Pinned
-// URL, Reset), +SidebarMenus.cpp (the rows' and favorites' menus), +Chromium.cpp (the pages) and
-// +Tests.cpp (--smoke-test and --capture).
+// URL, Reset), +SidebarMenus.cpp (the rows' and favorites' menus), +Chromium.cpp (the pages)
+// and +Tests.cpp (--smoke-test and --capture).
 //
 // Everything here is on Kite's UI thread. The session is the caller's, borrowed for the
 // window's life. The window changes it and saves it as it changes, as the Mac's BrowserStore
@@ -210,9 +210,9 @@ public:
     // over its cell in the bar (Windows' own menu, read back as it shows).
     void HoldSpaceMenu(size_t index) { heldMenu_ = index; }
     // For a capture: row `index`'s menu (from 0, as kitecore's `sidebar` lists the selected space's
-    // rows: a tab's, a folder's, or the header's, which is the space's), or favorite pane `index`'s
-    // (in the grid's order), opened as a right-click on it opens it. Its line goes to stderr, as the
-    // Mac's KITE_TEST_CONTEXT_MENU logs one.
+    // rows; a tab's or a folder's: the header's is the space's, which HoldSpaceMenu holds), or
+    // favorite pane `index`'s (in the grid's order), opened as a right-click on its middle opens it.
+    // Its line goes to stderr, as the Mac's KITE_TEST_CONTEXT_MENU logs one.
     std::wstring HoldRowMenu(size_t index);
     std::wstring HoldFavoriteMenu(size_t index);
     // Capture's part: the held row menu read back and composed over `pixels`.

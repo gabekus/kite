@@ -426,11 +426,11 @@ TEST(claudesFolderIsNeitherCopiedNorTurnedIntoASpace) {
           "Delete | --- | New Nested Folder\xE2\x80\xA6 | (Copy All Links) | (Copy All Links as Markdown) | --- | Rename\xE2\x80\xA6");
 }
 
-TEST(aLiveFoldersMenuIsDisabledUntilLiveFoldersArePorted) {
+TEST(aLiveFoldersMenuDeletesButDoesntRefresh) {
     Folders f = MakeFolders();
     const Folder live = LiveFolder("GitHub");
     f.state.spaces[0].pinnedItems.push_back(PinnedItem{live});
-    CHECK(SidebarMenuLine(FolderMenu(f.state, live.id)) == "(Refresh) | --- | (Delete Live Folder)");
+    CHECK(SidebarMenuLine(FolderMenu(f.state, live.id)) == "(Refresh) | --- | Delete Live Folder");
     CHECK(FolderMenu(f.state, "00000000-0000-4000-8000-0000000000AA").empty());
 }
 
@@ -479,13 +479,18 @@ TEST(aRightClickFindsTheRowsMenu) {
         return SidebarMenuTargetAt(rows, 240, 800, 0, x, sidebar_metrics::kHeaderAreaHeight + rows[row].top + rows[row].height / 2);
     };
     using K = SidebarMenuTarget::Kind;
-    CHECK(at(0) == (SidebarMenuTarget{K::Space, f.state.spaces[0].id}));
-    CHECK(at(1) == (SidebarMenuTarget{K::Folder, f.folder}));
-    CHECK(!at(3));  // the divider
-    CHECK(!at(4));  // New Tab
-    CHECK(at(5) == (SidebarMenuTarget{K::Tab, today}));
-    // Its close button passes the menu up to the row.
-    CHECK(at(5, 220) == (SidebarMenuTarget{K::Tab, today}));
+    CHECK(at(0) == (SidebarMenuTarget{K::Space, f.state.spaces[0].id, false}));
+    CHECK(at(1) == (SidebarMenuTarget{K::Folder, f.folder, false}));
+    CHECK(!at(3));  // the divider takes nothing
+    // New Tab is a row with no menu: a right-click opens nothing, a Ctrl+click is spent.
+    CHECK(at(4) == (SidebarMenuTarget{K::None, f.state.spaces[0].id, false}));
+    CHECK(at(5) == (SidebarMenuTarget{K::Tab, today, false}));
+    // Its close button (202 to 226) passes a right-click's menu up to the row, but it's a button: a
+    // Ctrl+click presses it (SymbolButton's controlClickShowsMenu is false).
+    CHECK(at(5, 220) == (SidebarMenuTarget{K::Tab, today, true}));
+    // The header's chevron (205 to 231, 5pt down; the space has pinned items) likewise.
+    const float headerTop = sidebar_metrics::kHeaderAreaHeight + rows[0].top;
+    CHECK(SidebarMenuTargetAt(rows, 240, 800, 0, 220, headerTop + 10) == (SidebarMenuTarget{K::Space, f.state.spaces[0].id, true}));
     // The address field and the gap between pills have none.
     CHECK(!SidebarMenuTargetAt(rows, 240, 800, 0, 100, 60));
     CHECK(!SidebarMenuTargetAt(rows, 240, 800, 0, 100, sidebar_metrics::kHeaderAreaHeight + rows[1].top + 1));
@@ -494,10 +499,100 @@ TEST(aRightClickFindsTheRowsMenu) {
 TEST(deletingAFolderAsksInArcsWords) {
     Folders f = MakeFolders();
     CHECK(FolderDeletionOf(f.state, f.folder) ==
-          (FolderDeletion{true, "Delete your \xE2\x80\x9CReading\xE2\x80\x9D folder?", "Deleting this folder will archive the tabs inside it.",
-                          "Delete Folder"}));
+          (FolderDeletion{true, false, "Delete your \xE2\x80\x9CReading\xE2\x80\x9D folder?",
+                          "Deleting this folder will archive the tabs inside it.", "Delete Folder"}));
     CHECK(FolderDeletionOf(f.state, "00000000-0000-4000-8000-0000000000AA") == FolderDeletion{});
     const Folder live = LiveFolder("GitHub");
     f.state.spaces[0].pinnedItems.push_back(PinnedItem{live});
-    CHECK(FolderDeletionOf(f.state, live.id) == FolderDeletion{});
+    // A live folder's is deleteLiveFolder's question.
+    CHECK(FolderDeletionOf(f.state, live.id) == (FolderDeletion{true, true, "Delete your GitHub Live Folder?",
+                                                                "You can restore this folder at any time by right-clicking the sidebar.", "Delete"}));
+}
+
+// LiveFolders.swift's deleteLiveFolder: the folder and its tabs go unarchived, its source is turned
+// off (once), and a selected tab in it hands the selection to the space's first tab.
+TEST(deletingALiveFolderTurnsItsSourceOff) {
+    Folders f = MakeFolders();
+    Folder live = LiveFolder("GitHub");
+    Tab pull;
+    pull.id = "0F0F0F0F-0000-4000-8000-0000000000A1";
+    pull.url = "https://github.com/a/b/pull/1";
+    pull.title = "A pull request";
+    live.items.push_back(PinnedItem{pull});
+    f.state.spaces[0].pinnedItems.push_back(PinnedItem{live});
+    f.state.spaces[0].selectedTabID = pull.id;
+    const size_t archived = f.state.archived.size();
+    CHECK(f.state.DeleteLiveFolder(live.id) == std::vector<std::string>{pull.id});
+    CHECK(!f.state.FolderByID(live.id) && !f.state.FindTabByID(pull.id));
+    CHECK(f.state.archived.size() == archived);
+    CHECK(f.state.spaces[0].selectedTabID == f.tabs[0]);
+    const auto off = f.state.extra.find("liveFoldersTurnedOff");
+    CHECK(off != f.state.extra.end() && off->second.AsArray() && off->second.AsArray()->size() == 1 &&
+          *(*off->second.AsArray())[0].AsString() == "github");
+    // Another GitHub folder deleted later doesn't list the source twice; a plain folder isn't one.
+    Folder again = LiveFolder("GitHub");
+    again.id = "0F0F0F0F-0000-4000-8000-000000000002";
+    f.state.spaces[0].pinnedItems.push_back(PinnedItem{again});
+    f.state.DeleteLiveFolder(again.id);
+    CHECK(f.state.extra.find("liveFoldersTurnedOff")->second.AsArray()->size() == 1);
+    CHECK(f.state.DeleteLiveFolder(f.folder).empty() && f.state.FolderByID(f.folder));
+}
+
+// showSidebarMenu logs an empty submenu as "Title ▸ []".
+TEST(anEmptySubmenusLineHasEmptyBrackets) {
+    SidebarMenuItem empty;
+    empty.command = SidebarMenuItem::Command::MoveTo;
+    empty.title = "Move to";
+    empty.submenu = true;
+    empty.enabled = false;
+    CHECK(SidebarMenuLine({empty}) == "(Move to \xE2\x96\xB8 [])");
+}
+
+TEST(copyAllLinksIsOneAddressALine) {
+    Tab a;
+    a.url = "https://a.example/";
+    Tab none;
+    Tab b;
+    b.url = "https://b.example/x";
+    CHECK(LinkList({&a, &none, &b}) == "https://a.example/\nhttps://b.example/x");
+    CHECK(LinkList({&none}).empty());
+}
+
+// Turn into Space with a split moving (both panes in the folder), a split staying (one pane outside),
+// a nested folder going along, and the selected tab outside the folder (it stays selected there).
+TEST(turningAFolderIntoASpaceTakesItsSplitsAndNestedFolders) {
+    Folders f = MakeFolders();
+    const std::string space = f.state.spaces[0].id;
+    const std::string c = f.state.OpenTab(std::string("https://c.example"), space, false);
+    const std::string outside = f.state.OpenTab(std::string("https://d.example"), space, false);
+    f.state.MoveTabToFolder(c, f.inner);
+    f.state.MoveTabToFolder(outside, f.state.CreateFolder("Elsewhere", 0));
+    f.state.spaces[0].splits = {
+        SplitView{"5E5E5E5E-0000-4000-8000-000000000011", {f.tabs[1], c}, {0.5, 0.5}, "horizontal", std::nullopt, {}},
+        SplitView{"5E5E5E5E-0000-4000-8000-000000000012", {f.tabs[0], outside}, {0.5, 0.5}, "horizontal", std::nullopt, {}}};
+    f.state.spaces[0].selectedTabID = outside;
+    const auto turned = f.state.TurnFolderIntoSpace(f.folder);
+    CHECK(turned.has_value());
+    if (!turned || f.state.spaces.size() != 2) return;
+    const Space& made = f.state.spaces[1];
+    CHECK(Ids(made.AllTabs()) == (std::vector<std::string>{f.tabs[0], f.tabs[1], c}));
+    CHECK(f.state.FolderByID(f.inner) != nullptr && made.pinnedItems.size() == 2);
+    CHECK(made.splits.size() == 1 && made.splits[0].tabIDs == (std::vector<std::string>{f.tabs[1], c}));
+    // The split with a pane left behind is no split in either space.
+    CHECK(f.state.spaces[0].splits.empty());
+    // The selection outside the folder stays; the new space selects its first tab.
+    CHECK(f.state.spaces[0].selectedTabID == outside && made.selectedTabID == f.tabs[0]);
+}
+
+// Titles keep a folder's or space's own `&` (the shell doubles it for Win32's mnemonics).
+TEST(menuTitlesKeepAnAmpersand) {
+    Folders f = MakeFolders();
+    f.state.RenameFolder(f.folder, "Tom & Jerry");
+    f.state.spaces[0].name = "R&D";
+    const std::string tab = f.state.OpenTab(std::string("https://a.example"), f.state.spaces[0].id, false);
+    const auto folder = FolderMenu(f.state, f.folder);
+    CHECK(folder.size() > 5 && folder[5].title == "Turn \xE2\x80\x9CTom & Jerry\xE2\x80\x9D into Space");
+    const auto menu = TabMenu(f.state, tab);
+    const auto moveTo = std::find_if(menu.begin(), menu.end(), [](const SidebarMenuItem& item) { return item.command == SidebarMenuItem::Command::MoveTo; });
+    CHECK(moveTo != menu.end() && moveTo->items.size() == 1 && moveTo->items[0].title == "\xF0\x9F\x8F\xA0 R&D");
 }

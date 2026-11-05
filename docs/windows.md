@@ -1155,9 +1155,17 @@ SidebarFavorites.swift) with their items, order, words, separators and enabled s
 (`core/SidebarContextMenu.h`, which also has SidebarContextMenu.swift's edits: Archive Other Tabs /
 Below / Above, a folder's Duplicate, New Nested Folder…, Turn “Name” into Space, and LinkFormat's
 Markdown links). As on the Mac, a Ctrl+click is a right-click there (and on a space's cell or its
-header, the space's menu); the empty sidebar, New Tab, the divider and the address field have none,
-and the gaps between pills take nothing. A press on a tab's close or Back to Pinned URL button
-passes the menu up to its row, as AppKit's buttons pass rightMouseDown on.
+header, the space's menu), opening the menu when it's let go over the row it pressed; the empty
+sidebar, the divider and the address field have none, and the gaps between pills take nothing. New
+Tab has no menu: a right-click there opens nothing and a Ctrl+click is spent (the Mac's mouseDown
+hands it to rightMouseDown, which finds no menu), never opening the command bar. A right-click on
+one of a row's own buttons (a tab's close or Back to Pinned URL, the header's chevron and, with W9e,
+its icon) passes the menu up to the row, as AppKit's buttons pass rightMouseDown on; a Ctrl+click
+presses the button instead, as the Mac's SymbolButtons (controlClickShowsMenu false) and the
+header's icon button do. Rows and panes don't take a Ctrl+click that brings the window forward (they
+don't accept first mouse); the space bar's cells do. Known trade-off: Ctrl+click as the Mac's
+Control-click spends the gesture a ⌘-click's Windows counterpart would use for selecting several
+rows, which Kite doesn't have; if multi-select comes, it needs another gesture (Shift+click, say).
 
 - **A tab's:** Add to Favorites, Pin Tab or Unpin Tab, Back to Pinned URL and Separate From
   Pinned Tab (a pinned tab off its page), Edit Pinned Page ▸ (Edit…, Replace Pinned URL with
@@ -1171,9 +1179,13 @@ passes the menu up to its row, as AppKit's buttons pass rightMouseDown on.
   named Claude), Copy All Links and Copy All Links as Markdown (greyed out with no links), Rename….
   Delete asks first in Arc's words ("Delete your “Name” folder?", "Deleting this folder will
   archive the tabs inside it.", Delete Folder and Cancel; a task dialog, always light, as Delete
-  Space's), then archives the tabs inside, their pages closing. A live folder's menu is Refresh
-  and Delete Live Folder, both disabled until live folders are ported (its status line, filters and
-  Repositories ▸ aren't built).
+  Space's), then archives the tabs inside, their pages closing (the selection, if it was there,
+  goes to the space's first tab). A live folder's menu is Refresh (disabled: live folders don't
+  refresh on Windows yet; its status line, filters and Repositories ▸ aren't built) and Delete Live
+  Folder, which works as the Mac's does without its refresher: it asks Arc's question ("Delete your
+  GitHub Live Folder?", "You can restore this folder at any time by right-clicking the sidebar.",
+  Delete and Cancel), then removes the folder and its tabs unarchived and records the source in the
+  session's `liveFoldersTurnedOff`, so a live folder the Mac made isn't stuck on Windows.
 - **A favorite's:** Remove from Favorites, Edit Pinned Page ▸ (with a pinned URL), Copy Link (always
   enabled, as the Mac's), Unload Tab.
 
@@ -1183,7 +1195,7 @@ in a dark space through uxtheme's ordinals 135 and 136 as the space's menu is. I
 opens, from the session as it is then, and nothing is kept while it's closed; a rename open ends
 first, keeping what was typed. Disabled until their checkpoints: Edit Pinned Page › Edit… (Arc's
 dialog, W19), Add Split View and Open in Split View (W36), Move to ▸ and its spaces (moving between
-spaces, with Arc's cross-profile warning), and the live folder's items. Never shown, as on a Mac
+spaces and profiles, with Arc's cross-profile warning: W18b), and a live folder's Refresh. Never shown, as on a Mac
 where nothing plays and Claude drives no tab: Stop Claude, Mute Tab / Unmute Tab (Windows doesn't
 follow pages' sound yet) and the Peek badge. Not yet: the split row's menu (Windows shows no split
 rows), Tidy Tabs' Remove header, the "Archived N tabs" and "Folder deleted" toasts (W16), Undo

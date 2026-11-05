@@ -1,7 +1,7 @@
 // The sidebar's row menus and the edits only they make: SidebarContextMenu.swift (tabsToArchive,
 // archiveTabs, canDuplicateFolder, duplicateFolder, createNestedFolder, canTurnFolderIntoSpace,
 // turnFolderIntoSpace), LinkFormat.swift (markdown), BrowserState+Automation.swift
-// (claudeMayCreateSpace), SplitView.swift ([PinnedItem].insertItem(_:after:)), and the menus of
+// (claudeMayCreateSpace, removeFolder), LiveFolders.swift (deleteLiveFolder), SplitView.swift ([PinnedItem].insertItem(_:after:)), and the menus of
 // SidebarListCells.swift (TabRowCell, FolderRowCell, addLiveFolderItems, addCopyLinkItems,
 // addArchiveTabsItems, addEditPinnedPage) and SidebarFavorites.swift (FavoritePaneView). See
 // SidebarContextMenu.h.
@@ -58,31 +58,39 @@ bool Plain(const Folder& folder) {
     });
 }
 
-// duplicateFolder's copy: fresh ids, not loaded (lastActiveAt now), live folders left out.
-std::optional<PinnedItem> Copy(const PinnedItem& item, Timestamp now) {
-    if (const auto* tab = std::get_if<Tab>(&item.value)) {
-        Tab copy;
-        copy.id = NewUuid();
-        copy.url = tab->url;
-        copy.title = tab->title;
-        copy.faviconURL = tab->faviconURL;
-        copy.lastActiveAt = now;
-        copy.pinnedURL = tab->pinnedURL;
-        copy.customTitle = tab->customTitle;
-        return PinnedItem{std::move(copy)};
-    }
-    const Folder& folder = std::get<Folder>(item.value);
-    if (folder.live) return std::nullopt;
+// duplicateFolder's copy: fresh ids, not loaded (lastActiveAt now), live folders inside left out.
+Folder CopyFolder(const Folder& folder, Timestamp now) {
     Folder copy;
     copy.id = NewUuid();
     copy.name = folder.name;
     copy.isExpanded = folder.isExpanded;
     copy.ephemeral = folder.ephemeral;
     for (const PinnedItem& inner : folder.items) {
-        if (auto copied = Copy(inner, now)) copy.items.push_back(std::move(*copied));
+        if (const auto* tab = std::get_if<Tab>(&inner.value)) {
+            Tab t;
+            t.id = NewUuid();
+            t.url = tab->url;
+            t.title = tab->title;
+            t.faviconURL = tab->faviconURL;
+            t.lastActiveAt = now;
+            t.pinnedURL = tab->pinnedURL;
+            t.customTitle = tab->customTitle;
+            copy.items.push_back(PinnedItem{std::move(t)});
+        } else if (const Folder& nested = std::get<Folder>(inner.value); !nested.live) {
+            copy.items.push_back(PinnedItem{CopyFolder(nested, now)});
+        }
     }
-    return PinnedItem{std::move(copy)};
+    return copy;
 }
+
+// A live folder's source (LiveFolder.Source's raw value, "github"), and its name in Arc's alert.
+std::string LiveSource(const Folder& folder) {
+    if (!folder.live) return {};
+    const json::Object* live = folder.live->AsObject();
+    const auto source = live ? live->find("source") : json::Object::const_iterator{};
+    return live && source != live->end() && source->second.AsString() ? *source->second.AsString() : std::string();
+}
+std::string LiveSourceName(const std::string& source) { return source == "github" ? "GitHub" : source; }
 
 // Space.labelWithIcon: "🏠 Personal", or just the name when the icon isn't an emoji.
 std::string LabelWithIcon(const Space& space) {
@@ -135,6 +143,16 @@ std::string MarkdownLink(std::string_view title, std::string_view url) {
 std::optional<std::string> MarkdownLink(const Tab& tab) {
     if (!tab.url) return std::nullopt;
     return MarkdownLink(tab.DisplayTitle(), *tab.url);
+}
+
+std::string LinkList(const std::vector<const Tab*>& tabs) {
+    std::string out;
+    for (const Tab* tab : tabs) {
+        if (!tab->url) continue;
+        if (!out.empty()) out += '\n';
+        out += *tab->url;
+    }
+    return out;
 }
 
 std::string MarkdownLinkList(const std::vector<const Tab*>& tabs) {
@@ -220,10 +238,9 @@ bool BrowserState::CanDuplicateFolder(const std::string& id) const {
 std::optional<std::string> BrowserState::DuplicateFolder(const std::string& id, Timestamp now) {
     if (!CanDuplicateFolder(id)) return std::nullopt;
     const auto found = FindFolderInSpaces(*this, id);
-    std::optional<PinnedItem> copy = Copy(PinnedItem{*found->second}, now);
-    if (!copy) return std::nullopt;
-    std::string copyID = copy->Id();
-    if (!InsertAfter(spaces[found->first].pinnedItems, *copy, id)) return std::nullopt;
+    PinnedItem copy{CopyFolder(*found->second, now)};
+    std::string copyID = copy.Id();
+    if (!InsertAfter(spaces[found->first].pinnedItems, copy, id)) return std::nullopt;
     return copyID;
 }
 
@@ -254,7 +271,7 @@ std::optional<std::string> BrowserState::TurnFolderIntoSpace(const std::string& 
     if (!folder) return std::nullopt;
     std::set<std::string> moved;
     for (const Tab* tab : TabsIn(folder->items)) moved.insert(tab->id);
-    const Space source = spaces[s];
+    const Space& source = spaces[s];
     // insertSpace(name:icon:theme:profile:at:): right after the folder's space, selected, with no
     // icon and the source's own `profile` (not the one it falls back to).
     Space space{NewUuid(), folder->name, "", source.theme, {}, {}, std::nullopt, {}, {}};
@@ -262,6 +279,7 @@ std::optional<std::string> BrowserState::TurnFolderIntoSpace(const std::string& 
         space.extra.emplace("profile", *profile->second.AsString());
     }
     std::string spaceID = space.id;
+    // Splits made only of the folder's tabs go along (the source keeps none of them: NormalizeSplits).
     for (const SplitView& split : source.splits) {
         if (std::all_of(split.tabIDs.begin(), split.tabIDs.end(), [&](const std::string& tab) { return moved.contains(tab); })) {
             space.splits.push_back(split);
@@ -345,9 +363,9 @@ std::vector<SidebarMenuItem> FolderMenu(const BrowserState& state, const std::st
     const Folder& folder = *found->second;
     if (folder.live) {
         // addLiveFolderItems, with what Windows can show: live folders don't refresh here yet, so
-        // their status line, filters and Repositories ▸ aren't built, and Refresh and Delete Live
-        // Folder are disabled.
-        return {Item(C::RefreshLiveFolder, "Refresh", false), kSeparator, Item(C::DeleteLiveFolder, "Delete Live Folder", false)};
+        // their status line, filters and Repositories ▸ aren't built and Refresh is disabled. Delete
+        // Live Folder works without the refresher, as the Mac's does (deleteLiveFolder's fallback).
+        return {Item(C::RefreshLiveFolder, "Refresh", false), kSeparator, Item(C::DeleteLiveFolder, "Delete Live Folder")};
     }
     std::vector<SidebarMenuItem> menu;
     // (Stop Claude and a separator while Claude works in it: no automation on Windows.) Claude's
@@ -410,15 +428,13 @@ std::string SidebarMenuLine(const std::vector<SidebarMenuItem>& items) {
             line += entry(item);
             continue;
         }
-        std::string title = item.title + " \xE2\x96\xB8";  // ▸
-        if (!item.items.empty()) {
-            std::string inner;
-            for (const SidebarMenuItem& sub : item.items) {
-                if (!inner.empty()) inner += " / ";
-                inner += entry(sub);
-            }
-            title += " [" + inner + "]";
+        // showSidebarMenu's "Title ▸ [a / b]", "[]" with nothing in it.
+        std::string inner;
+        for (const SidebarMenuItem& sub : item.items) {
+            if (!inner.empty()) inner += " / ";
+            inner += entry(sub);
         }
+        const std::string title = item.title + " \xE2\x96\xB8 [" + inner + "]";  // ▸
         line += item.enabled ? title : "(" + title + ")";
     }
     return line;
@@ -443,29 +459,63 @@ const SidebarMenuItem* PickSidebarMenuItem(const std::vector<SidebarMenuItem>& i
 
 std::optional<SidebarMenuTarget> SidebarMenuTargetAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll,
                                                      float x, float y, float listTop) {
+    using K = SidebarMenuTarget::Kind;
     const SidebarHit hit = SidebarHitTest(rows, width, height, scroll, x, y, listTop);
-    switch (hit.target) {
-    case SidebarHit::Target::Row:
-    case SidebarHit::Target::PinnedChevron:
-    case SidebarHit::Target::CloseButton:
-    case SidebarHit::Target::ResetButton: break;
-    default: return std::nullopt;
+    // Anything on a row but the row itself is one of its buttons (the header's icon included).
+    if (hit.target == SidebarHit::Target::None || hit.target == SidebarHit::Target::AddressField || hit.row >= rows.size()) {
+        return std::nullopt;
     }
-    if (hit.row >= rows.size()) return std::nullopt;
     const SidebarRow& row = rows[hit.row];
+    const bool button = hit.target != SidebarHit::Target::Row;
     switch (row.kind) {
-    case SidebarRow::Kind::Header: return SidebarMenuTarget{SidebarMenuTarget::Kind::Space, row.id};
-    case SidebarRow::Kind::Tab: return SidebarMenuTarget{SidebarMenuTarget::Kind::Tab, row.id};
-    case SidebarRow::Kind::Folder: return SidebarMenuTarget{SidebarMenuTarget::Kind::Folder, row.id};
-    default: return std::nullopt;  // New Tab and the divider build no menu
+    case SidebarRow::Kind::Header: return SidebarMenuTarget{K::Space, row.id, button};
+    case SidebarRow::Kind::Tab: return SidebarMenuTarget{K::Tab, row.id, button};
+    case SidebarRow::Kind::Folder: return SidebarMenuTarget{K::Folder, row.id, button};
+    case SidebarRow::Kind::NewTab:
+    case SidebarRow::Kind::Divider: return SidebarMenuTarget{K::None, row.id, button};  // build no menu
     }
+    return std::nullopt;
 }
 
 FolderDeletion FolderDeletionOf(const BrowserState& state, const std::string& folderID) {
     const Folder* folder = state.FolderByID(folderID);
-    if (!folder || folder->live) return {};
-    return {true, "Delete your \xE2\x80\x9C" + folder->name + "\xE2\x80\x9D folder?", "Deleting this folder will archive the tabs inside it.",
-            "Delete Folder"};
+    if (!folder) return {};
+    if (folder->live) {
+        return {true, true, "Delete your " + LiveSourceName(LiveSource(*folder)) + " Live Folder?",
+                "You can restore this folder at any time by right-clicking the sidebar.", "Delete"};
+    }
+    return {true, false, "Delete your \xE2\x80\x9C" + folder->name + "\xE2\x80\x9D folder?",
+            "Deleting this folder will archive the tabs inside it.", "Delete Folder"};
+}
+
+std::vector<std::string> BrowserState::DeleteLiveFolder(const std::string& folderID) {
+    // LiveFolders.swift's deleteLiveFolder: its source is turned off (the Mac's refresher won't
+    // bring it back), then removeFolder: the tabs go unarchived, and a selected one hands the
+    // selection to the space's first tab.
+    const Folder* found = FolderByID(folderID);
+    if (!found || !found->live) return {};
+    if (const std::string source = LiveSource(*found); !source.empty()) {
+        json::Value& list = extra["liveFoldersTurnedOff"];
+        if (!list.AsArray()) list = json::Value(json::Array{});
+        json::Array& sources = *list.AsArray();
+        if (std::none_of(sources.begin(), sources.end(), [&](const json::Value& v) { return v.AsString() && *v.AsString() == source; })) {
+            sources.emplace_back(source);
+        }
+    }
+    for (Space& space : spaces) {
+        std::optional<Folder> folder = pinned_tree::RemoveFolder(space.pinnedItems, folderID);
+        if (!folder) continue;
+        std::vector<std::string> removed;
+        for (const Tab* tab : TabsIn(folder->items)) removed.push_back(tab->id);
+        if (folder->ephemeral == true) pinned_tree::DropEmptyEphemeralFolders(space.pinnedItems);
+        if (space.selectedTabID && std::find(removed.begin(), removed.end(), *space.selectedTabID) != removed.end()) {
+            const std::vector<const Tab*> left = space.AllTabs();
+            space.selectedTabID = left.empty() ? std::nullopt : std::optional(left.front()->id);
+        }
+        NormalizeSplits();
+        return removed;
+    }
+    return {};
 }
 
 }  // namespace kite

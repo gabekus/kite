@@ -329,18 +329,14 @@ private:
     void RefreshHover();
     // A point in the sidebar as the space bar sees it, when it's over the bar.
     std::optional<D2D1_POINT_2F> BarPoint(D2D1_POINT_2F point) const;
-    // What a right-click (or a Ctrl+click) at a sidebar point opens a menu for, as the Mac's views
-    // stack: a space's cell in the bar, a favorite's pane, then the page's header, tabs and folders
-    // (core's SidebarMenuTargetAt). `cellsOnly` asks only the bar, whose cells take the click that
-    // brings the window forward (the Mac's acceptsFirstMouse); rows and panes don't.
-    struct MenuTarget {
-        bool space = false;  // a space's menu, else a row's of `kind`
-        SidebarMenuKind kind = SidebarMenuKind::Tab;
-        std::string id;
-    };
-    std::optional<MenuTarget> MenuTargetAt(D2D1_POINT_2F p, bool cellsOnly = false) const;
-    // Opens its menu (Actions::spaceMenu or rowMenu), the pointer at `at` (client px).
-    void OpenMenu(const MenuTarget& target, POINT at);
+    // What a right-click (or a Ctrl+click) at a sidebar point lands on, as the Mac's views stack: a
+    // space's cell in the bar (the space's menu), a favorite's pane, then the page's header, tabs,
+    // folders and New Tab (core's SidebarMenuTargetAt, which marks a row's own buttons). None where
+    // nothing with a menu is: a Ctrl+press there is an ordinary press.
+    std::optional<SidebarMenuTarget> MenuTargetAt(D2D1_POINT_2F p) const;
+    // Opens its menu (Actions::spaceMenu or rowMenu), the pointer at `at` (client px); nothing for
+    // a row without one (Kind::None).
+    void OpenMenu(const SidebarMenuTarget& target, POINT at);
     // The drag of a cell, from the press that started it, to its drop and its landing.
     void DragSpaceTo(D2D1_POINT_2F barPoint);
     void DropSpace(D2D1_POINT_2F barPoint);
@@ -450,7 +446,9 @@ private:
     std::optional<TopRowButton> topPress_;   // a press on an enabled top-row button
     std::optional<FavoritePress> favoritePress_;  // a press on a favorite's pane
     std::optional<SidebarPress> middlePress_;     // a middle press on a tab's row (it closes on release)
-    bool menuPress_ = false;  // a Ctrl+left press on something with a menu: the menu opens on release
+    // A Ctrl+left press on a row, pane or cell (not on one of its buttons): its menu opens when it's let
+    // go over the same one, as a right-click's does; on New Tab (no menu) it's spent.
+    std::optional<SidebarMenuTarget> menuPress_;
     bool activating_ = false;         // the next press brings the window forward
     int clicks_ = 0;
     DWORD lastClickTime_ = 0;

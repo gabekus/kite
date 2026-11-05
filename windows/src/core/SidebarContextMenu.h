@@ -30,6 +30,9 @@ std::string MarkdownLink(std::string_view title, std::string_view url);
 std::optional<std::string> MarkdownLink(const Tab& tab);
 // Copy All Links as Markdown: one `[title](url)` a line, in sidebar order, tabs with no URL left out.
 std::string MarkdownLinkList(const std::vector<const Tab*>& tabs);
+// Copy All Links: each address a line, likewise. Lines end in LF here, as on the Mac (the clipboard
+// gets CRLF, at the Win32 call).
+std::string LinkList(const std::vector<const Tab*>& tabs);
 
 // BrowserState.claudeMayCreateSpace: Kite never makes a space named Claude (any case, spaces and
 // tabs around it ignored).
@@ -54,7 +57,7 @@ struct SidebarMenuItem {
         AddSplitView,           // "Add Split View" on the tab on screen (split view, W36)
         OpenInSplitView,        // "Open in Split View" on one that isn't (likewise)
         DuplicateTab,           // "Duplicate"
-        MoveTo,                 // "Move to ▸": a submenu of the spaces (moving between spaces isn't ported)
+        MoveTo,                 // "Move to ▸": a submenu of the spaces (moving between spaces: W18b)
         MoveToSpace,            //   one space (`target` is its id)
         CloseTab,               // "Close Tab", or "Unload Tab" for a pinned tab or favorite
         ArchiveOthers,          // "Archive Other Tabs", a Today tab's
@@ -68,9 +71,9 @@ struct SidebarMenuItem {
         CopyAllLinks,            // "Copy All Links"
         CopyAllLinksAsMarkdown,  // "Copy All Links as Markdown"
         RenameFolder,            // "Rename…": the row's field
-        // A live folder's (live folders aren't ported: their items are there, disabled).
+        // A live folder's (live folders don't refresh on Windows yet: Refresh is disabled).
         RefreshLiveFolder,  // "Refresh"
-        DeleteLiveFolder,   // "Delete Live Folder"
+        DeleteLiveFolder,   // "Delete Live Folder": asks first (FolderDeletionOf), then DeleteLiveFolder
     };
     Command command = Command::Separator;
     std::string title;  // empty for a separator
@@ -96,22 +99,27 @@ std::vector<SidebarMenuItem> SidebarMenu(const BrowserState& state, SidebarMenuK
 
 // A menu's line, as the Mac's KITE_TEST_CONTEXT_MENU logs one (showSidebarMenu) and
 // SpaceMenuLine writes the space's: items joined by " | ", "---" for a separator, a disabled
-// item's title in brackets, a submenu's as "Title ▸ [a / b]" (just "Title ▸" with nothing in it).
+// item's title in brackets, a submenu's as "Title ▸ [a / b]" ("Title ▸ []" with nothing in it).
 std::string SidebarMenuLine(const std::vector<SidebarMenuItem>& items);
 // The enabled item a test picks by its title, or "Submenu ▸ Item" for one in a submenu (the Mac's
 // testPick). Null when there's none, or it's disabled.
 const SidebarMenuItem* PickSidebarMenuItem(const std::vector<SidebarMenuItem>& items, std::string_view pick);
 
-// Where a right-click (or a Ctrl+click, the Mac's ⌃-click) on space `space`'s page opens a menu,
-// for a sidebar `width`×`height` points scrolled `scroll`, its page from `listTop`: the header's
-// cell (its chevron too) is the space's menu (core/SpaceEditing.h), a tab's pill (its buttons too:
-// a click on them passes the menu up to the row) the tab's, a folder's the folder's. The address
-// field, New Tab, the divider and the gaps between pills have none. The space bar and the
-// favorites are asked first, by the caller (SpaceBarPressAt, FavoritePressAt).
+// What a right-click (or a Ctrl+click, the Mac's ⌃-click) on a space's page lands on, for a sidebar
+// `width`×`height` points scrolled `scroll`, its page from `listTop`: the header's cell is the
+// space's menu (core/SpaceEditing.h), a tab's pill the tab's, a folder's the folder's. On one of a
+// row's own buttons (a tab's close or Back to Pinned URL, the header's chevron or icon) `button` is
+// set: a right-click there passes the menu up to the row, as AppKit's buttons pass rightMouseDown
+// on, but a Ctrl+click presses the button (SymbolButton and the header's icon button don't show a
+// menu on ⌃-click). New Tab's row is `None`: a row with no menu, which a right-click opens nothing
+// on and a Ctrl+click is spent on (the Mac's mouseDown hands it to rightMouseDown, which finds no
+// menu). The address field, the divider and the gaps between pills are nothing at all. The space bar
+// and the favorites are asked first, by the caller (SpaceBarPressAt, FavoritePressAt: `Favorite`).
 struct SidebarMenuTarget {
-    enum class Kind { Space, Tab, Folder };
-    Kind kind = Kind::Tab;
+    enum class Kind { None, Space, Tab, Folder, Favorite };
+    Kind kind = Kind::None;
     std::string id;
+    bool button = false;
     bool operator==(const SidebarMenuTarget&) const = default;
 };
 std::optional<SidebarMenuTarget> SidebarMenuTargetAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll,
@@ -119,9 +127,12 @@ std::optional<SidebarMenuTarget> SidebarMenuTargetAt(const std::vector<SidebarRo
 
 // What a folder's Delete does (BrowserWindowController+TabCommands.swift's deleteFolder): asks
 // first, in Arc's words, with Delete Folder (the default) and Cancel, then archives the tabs
-// inside. Nothing for no such folder.
+// inside. A live folder's Delete Live Folder asks Arc's other question (deleteLiveFolder: Delete
+// and Cancel), then removes it with its tabs, unarchived (BrowserState::DeleteLiveFolder). Nothing
+// for no such folder.
 struct FolderDeletion {
     bool ask = false;
+    bool live = false;
     std::string title, message, confirm;
     bool operator==(const FolderDeletion&) const = default;
 };

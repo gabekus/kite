@@ -75,12 +75,7 @@ void Append(HMENU menu, const std::vector<ContextMenuEntry>& entries, size_t& ne
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
             continue;
         }
-        // Menu text treats & as a mnemonic's mark; the Mac's titles have none.
-        std::wstring title;
-        for (wchar_t c : Widen(entry.title)) {
-            if (c == L'&') title += L'&';
-            title += c;
-        }
+        const std::wstring title = ContextMenuText(entry.title);
         const UINT state = entry.enabled ? MF_ENABLED : MF_GRAYED;
         if (entry.submenu) {
             // A submenu with nothing in it yet (one whose items come with their checkpoint) is
@@ -201,10 +196,13 @@ Pixels Scaled(const Pixels& in, double factor) {
 
 }  // namespace
 
-size_t ContextMenuSize(const std::vector<ContextMenuEntry>& entries) {
-    size_t size = 0;
-    for (const ContextMenuEntry& entry : entries) size += 1 + (entry.submenu ? ContextMenuSize(entry.entries) : 0);
-    return size;
+std::wstring ContextMenuText(std::string_view title) {
+    std::wstring text;
+    for (wchar_t c : Widen(title)) {
+        if (c == L'&') text += L'&';
+        text += c;
+    }
+    return text;
 }
 
 std::optional<size_t> ShowContextMenu(HWND window, const std::vector<ContextMenuEntry>& entries, POINT screen, bool dark) {

@@ -61,7 +61,8 @@
 // button does (a Windows addition, not the Mac's), printing whether it went ("removed") or, pinned,
 // only unloaded; anywhere else, nothing. A close button's click prints the same `outcome`.
 // `click … --button right` is a right-click (or a Ctrl+click, the Mac's ⌃-click) there: it prints the
-// menu the window opens (`kind` space, tab, folder or favorite, its `id` and `line`), or `none`.
+// menu the window opens (`kind` space, tab, folder or favorite, its `id` and `line`, and `button`
+// on one of a row's own buttons, which a Ctrl+click presses instead), or `none`.
 // `menu` prints a tab's, folder's or favorite's menu as `space menu` prints the space's (each
 // item's title, enabled and submenu, a submenu's items too) and its `line`, as the Mac's
 // KITE_TEST_CONTEXT_MENU logs one; with --pick it runs the item of that title ("Submenu ▸ Item" for
@@ -384,7 +385,7 @@ const char* OutcomeName(CloseOutcome outcome);
 // What the window does for a row menu's item (BrowserWindowController::RunRowMenuItem), on the
 // session: what it did goes in `out`. The items that need the window (a rename field, the
 // clipboard) say so and what they'd do. Empty on success.
-std::string RunMenuItem(BrowserState& state, SidebarMenuKind kind, const std::string& id, const SidebarMenuItem& item, json::Object& out) {
+std::string RunMenuItem(BrowserState& state, const std::string& id, const SidebarMenuItem& item, json::Object& out) {
     using C = SidebarMenuItem::Command;
     using R = BrowserState::ArchiveTabsRelative;
     const auto where = [&] {
@@ -396,7 +397,6 @@ std::string RunMenuItem(BrowserState& state, SidebarMenuKind kind, const std::st
         for (const Tab& tab : tabs) list.emplace_back(tab.id);
         return json::Value(std::move(list));
     };
-    (void)kind;
     switch (item.command) {
     case C::AddToFavorites:
     case C::RemoveFromFavorites:
@@ -440,11 +440,19 @@ std::string RunMenuItem(BrowserState& state, SidebarMenuKind kind, const std::st
         out.emplace("id", *copy);
         return {};
     }
-    case C::DeleteFolder: {
-        // The window asks first; here it's as if Delete Folder was pressed.
+    case C::DeleteFolder:
+    case C::DeleteLiveFolder: {
+        // The window asks first; here it's as if its Delete Folder (or a live folder's Delete) was
+        // pressed. A folder's tabs are archived; a live folder's go unarchived.
         const FolderDeletion deletion = FolderDeletionOf(state, id);
         out.emplace("asks", json::Object{{"title", deletion.title}, {"message", deletion.message}, {"confirm", deletion.confirm}});
-        out.emplace("archived", ids(state.DeleteFolder(id)));
+        if (deletion.live) {
+            json::Array removed;
+            for (const std::string& tab : state.DeleteLiveFolder(id)) removed.emplace_back(tab);
+            out.emplace("removed", json::Value(std::move(removed)));
+        } else {
+            out.emplace("archived", ids(state.DeleteFolder(id)));
+        }
         return {};
     }
     case C::NewNestedFolder: {
@@ -460,22 +468,8 @@ std::string RunMenuItem(BrowserState& state, SidebarMenuKind kind, const std::st
         out.emplace("space", *space);
         return {};
     }
-    case C::CopyAllLinks:
-    case C::CopyAllLinksAsMarkdown: {
-        const std::vector<const Tab*> tabs = TabsIn(state.FolderByID(id)->items);
-        if (item.command == C::CopyAllLinksAsMarkdown) {
-            out.emplace("copy", MarkdownLinkList(tabs));
-            return {};
-        }
-        std::string links;
-        for (const Tab* tab : tabs) {
-            if (!tab->url) continue;
-            if (!links.empty()) links += '\n';
-            links += *tab->url;
-        }
-        out.emplace("copy", links);
-        return {};
-    }
+    case C::CopyAllLinks: out.emplace("copy", LinkList(TabsIn(state.FolderByID(id)->items))); return {};
+    case C::CopyAllLinksAsMarkdown: out.emplace("copy", MarkdownLinkList(TabsIn(state.FolderByID(id)->items))); return {};
     default: return "it isn't ported yet";  // disabled, so never picked
     }
 }
@@ -1305,7 +1299,11 @@ int main(int argc, char** argv) {
                     case SidebarMenuTarget::Kind::Space: put("space", target->id, SpaceMenuLine(SpaceMenu(state, target->id))); break;
                     case SidebarMenuTarget::Kind::Tab: put("tab", target->id, SidebarMenuLine(TabMenu(state, target->id))); break;
                     case SidebarMenuTarget::Kind::Folder: put("folder", target->id, SidebarMenuLine(FolderMenu(state, target->id))); break;
+                    case SidebarMenuTarget::Kind::Favorite:
+                    case SidebarMenuTarget::Kind::None: break;  // New Tab: no menu
                     }
+                    // On one of the row's buttons, which a Ctrl+click presses instead.
+                    if (target->button) out.emplace("button", true);
                 }
             }
             std::puts(json::Write(json::Value(std::move(out))).c_str());
@@ -1532,7 +1530,7 @@ int main(int argc, char** argv) {
         const SidebarMenuItem* item = PickSidebarMenuItem(menu, *pick);
         if (!item) return kRefused;
         json::Object out{{"picked", item->title}};
-        if (const std::string problem = RunMenuItem(state, kind->second, id, *item, out); !problem.empty()) {
+        if (const std::string problem = RunMenuItem(state, id, *item, out); !problem.empty()) {
             std::fprintf(stderr, "kitecore: %s\n", problem.c_str());
             return kRefused;
         }

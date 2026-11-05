@@ -367,6 +367,11 @@ struct BrowserState {
     // folder's items as its pinned tabs, the old space's theme and profile, no icon, selected.
     // Splits made only of the folder's tabs go along. The new space's id.
     std::optional<std::string> TurnFolderIntoSpace(const std::string& id);
+    // Delete Live Folder (LiveFolders.swift's deleteLiveFolder): its source goes into
+    // liveFoldersTurnedOff (kept in `extra`, as the Mac writes it), and the folder goes with its tabs,
+    // unarchived (the Mac's next refresh would bring them back). A selected tab among them hands the
+    // selection to the space's first tab. The tabs that went; none for a folder that isn't live.
+    std::vector<std::string> DeleteLiveFolder(const std::string& id);
 
     // MARK: Closing, archiving and reopening (TabClosing.cpp, BrowserState.swift)
     // The mutators take the id by value: a caller's id is often the tab's own (SelectedTab()->id),

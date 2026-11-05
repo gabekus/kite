@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "shell/ContextMenu.h"
 #include "shell/SidebarMenus.h"
 #include "shell/Text.h"
 #include "shell/TextEditing.h"
@@ -61,22 +62,9 @@ void BrowserWindowController::RunRowMenuItem(SidebarMenuKind kind, const std::st
     case C::DeleteFolder: DeleteFolder(id); break;
     case C::NewNestedFolder: NewNestedFolder(id); break;
     case C::TurnFolderIntoSpace: TurnFolderIntoSpace(id); break;
-    case C::CopyAllLinks:
-    case C::CopyAllLinksAsMarkdown: {
-        const std::vector<const Tab*> tabs = TabsIn(state_.FolderByID(id)->items);
-        if (item.command == C::CopyAllLinksAsMarkdown) {
-            CopyToClipboard(MarkdownLinkList(tabs));
-            break;
-        }
-        std::string links;
-        for (const Tab* tab : tabs) {
-            if (!tab->url) continue;
-            if (!links.empty()) links += '\n';
-            links += *tab->url;
-        }
-        CopyToClipboard(links);
-        break;
-    }
+    case C::CopyAllLinks: CopyToClipboard(LinkList(TabsIn(state_.FolderByID(id)->items))); break;
+    case C::CopyAllLinksAsMarkdown: CopyToClipboard(MarkdownLinkList(TabsIn(state_.FolderByID(id)->items))); break;
+    case C::DeleteLiveFolder: DeleteFolder(id); break;
     case C::RenameFolder: BeginRenamingFolder(id); break;
     // Disabled on Windows until their checkpoints (core's TabMenu and FolderMenu); the submenus'
     // parents aren't chosen.
@@ -87,7 +75,6 @@ void BrowserWindowController::RunRowMenuItem(SidebarMenuKind kind, const std::st
     case C::MoveTo:
     case C::MoveToSpace:
     case C::RefreshLiveFolder:
-    case C::DeleteLiveFolder:
     case C::Separator: break;
     }
 }
@@ -113,13 +100,20 @@ void BrowserWindowController::ArchiveTabs(BrowserState::ArchiveTabsRelative whic
 
 void BrowserWindowController::DeleteFolder(const std::string& folderID) {
     // deleteFolder(_:): asks first, in Arc's words, then archives the tabs inside (its "Folder
-    // deleted" toast comes with W16).
+    // deleted" toast comes with W16); a live folder's (deleteLiveFolder) asks its own question, then
+    // its tabs go unarchived.
     const FolderDeletion deletion = FolderDeletionOf(state_, folderID);
     if (!deletion.ask || !askToDeleteFolder_ || !askToDeleteFolder_(deletion)) return;
     if (!state_.FolderByID(folderID)) return;  // gone while the question was up
-    std::vector<Tab> archived;
-    EditState([&] { archived = state_.DeleteFolder(folderID); }, true);
-    for (const Tab& tab : archived) PageGone(tab.id);
+    std::vector<std::string> gone;
+    EditState([&] {
+        if (deletion.live) {
+            gone = state_.DeleteLiveFolder(folderID);
+            return;
+        }
+        for (const Tab& tab : state_.DeleteFolder(folderID)) gone.push_back(tab.id);
+    }, true);
+    for (const std::string& tab : gone) PageGone(tab);
 }
 
 void BrowserWindowController::NewNestedFolder(const std::string& folderID) {
@@ -135,8 +129,15 @@ void BrowserWindowController::TurnFolderIntoSpace(const std::string& folderID) {
 }
 
 void BrowserWindowController::CopyToClipboard(const std::optional<std::string>& text) {
-    // copyToPasteboard; nothing to copy (a favorite with no page) copies nothing.
-    if (text && !CopyText(window_.Handle(), Widen(*text))) MessageBeep(MB_OK);
+    // copyToPasteboard; nothing to copy (a favorite with no page) copies nothing. Core's lines end
+    // in LF, as the Mac's; Windows' clipboard text ends them in CRLF.
+    if (!text) return;
+    std::wstring windows;
+    for (wchar_t c : Widen(*text)) {
+        if (c == L'\n') windows += L'\r';
+        windows += c;
+    }
+    if (!CopyText(window_.Handle(), windows)) MessageBeep(MB_OK);
 }
 
 // MARK: Captures
@@ -287,6 +288,56 @@ std::wstring BrowserWindowController::SmokeTestRowMenus() {
     if (!pinned || pinned->section != TabSection::Pinned) return done(L"the tab menu's Pin Tab didn't pin the tab");
     if (!state_.SelectedTab() || state_.SelectedTab()->id != tab) return done(L"a Ctrl+click on a tab's row selected it");
     if (GetCapture() == window) return done(L"a Ctrl+click kept the mouse");
+    // Pressed on one row and let go over another: nothing (a click let go elsewhere).
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    tabAt = rowOf(SidebarRow::Kind::Tab, tab);
+    const std::optional<POINT> movedAt = rowOf(SidebarRow::Kind::Tab, other);
+    if (!tabAt || !movedAt) return done(L"the menu test's tabs aren't in view");
+    const size_t opened = lines.size();
+    pick.clear();
+    Mouse(window, WM_LBUTTONDOWN, *tabAt, MK_LBUTTON | MK_CONTROL);
+    Mouse(window, WM_MOUSEMOVE, *movedAt, MK_LBUTTON | MK_CONTROL);
+    Mouse(window, WM_LBUTTONUP, *movedAt, MK_CONTROL);
+    if (lines.size() != opened || GetCapture() == window) return done(L"a Ctrl+press let go over another row opened a menu");
+    // A Ctrl+click on New Tab is spent: no menu, and no command bar (the Mac's ⌃-click finds no menu).
+    controlClick(*newTabAt, "");
+    if (lines.size() != opened || (commandBar_ && commandBar_->IsOpen())) return done(L"a Ctrl+click on New Tab did something");
+    // On a row's own button it's an ordinary press, as on the Mac's SymbolButtons: the header's
+    // chevron collapses the pinned tabs (and back), the Today tab's close button closes it.
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    const auto px = [&](float points) { return static_cast<LONG>(std::lround(points * scale)); };
+    const std::optional<POINT> headerAt = rowOf(SidebarRow::Kind::Header, spaceID);
+    if (!headerAt) return done(L"the menu test's header isn't in view");
+    // The chevron's 26pt button ends 1pt in from the row's end (core's SidebarHitTest).
+    const POINT chevron{px(240 - sidebar_metrics::kIconInset - 13), headerAt->y};
+    const bool collapsed = IsPinnedSectionCollapsed(state_, spaceID);
+    controlClick(chevron, "");
+    if (lines.size() != opened || IsPinnedSectionCollapsed(state_, spaceID) == collapsed) {
+        return done(L"a Ctrl+click on the header's chevron didn't press it");
+    }
+    controlClick(chevron, "");
+    if (IsPinnedSectionCollapsed(state_, spaceID) != collapsed) return done(L"a second Ctrl+click on the chevron didn't press it");
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    const std::string closing = state_.OpenTab("https://closing.example/", spaceID, false);
+    StateChanged();
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    std::optional<size_t> closingRow;
+    for (size_t r = 0; r < sidebar_->Rows().size(); ++r) {
+        if (sidebar_->Rows()[r].kind == SidebarRow::Kind::Tab && sidebar_->Rows()[r].id == closing) closingRow = r;
+    }
+    const std::optional<POINT> closingAt = closingRow ? sidebar_->RowCentre(*closingRow) : std::nullopt;
+    const TabRowTrailing trailing = closingRow ? TabRowTrailingOf(sidebar_->Rows()[*closingRow], 240, true) : TabRowTrailing{};
+    if (!closingAt || !trailing.close) return done(L"the menu test's closing tab isn't in view");
+    controlClick(POINT{px((trailing.close->first + trailing.close->second) / 2), closingAt->y}, "");
+    if (lines.size() != opened || state_.FindTabByID(closing)) return done(L"a Ctrl+click on a tab's close button didn't close it");
+    // A right-click there passes the menu up to the row: the tab's.
+    // (Checked on the pinned tab's below, by its row's middle; the button itself is core's SidebarMenuTargetAt's.)
+
+    // The & in a title is Win32's mnemonic mark: the menu shows it doubled, as the Mac's titles have none.
+    if (ContextMenuText("Turn \xE2\x80\x9CTom & Jerry\xE2\x80\x9D into Space") != L"Turn \x201CTom && Jerry\x201D into Space") {
+        return done(L"a menu title's & isn't doubled for Win32");
+    }
+
     // Its menu now says Unpin Tab, and offers Edit Pinned Page.
     if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
     const std::optional<POINT> pinnedAt = rowOf(SidebarRow::Kind::Tab, other);
@@ -305,7 +356,6 @@ std::wstring BrowserWindowController::SmokeTestRowMenus() {
     // A Ctrl+click on the folder's icon mid-rename (outside the field, which takes its own presses):
     // the menu, which ends the rename keeping what was typed.
     sidebar_->TypeInRename("Menus 2");
-    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
     controlClick(POINT{std::lround((sidebar_metrics::kPadding + sidebar_metrics::kIconInset + 4) * scale), folderAt->y}, "");
     if (lines.back() != SidebarMenuLine(FolderMenu(state_, folder))) return done(L"a Ctrl+click on a renamed folder's icon didn't open its menu");
     if (sidebar_->Renaming() || !state_.FolderByID(folder) || state_.FolderByID(folder)->name != "Menus 2") {
@@ -333,8 +383,17 @@ std::wstring BrowserWindowController::SmokeTestRowMenus() {
     if (asked.size() != 1 || asked.back() != FolderDeletionOf(state_, folder) || !state_.FolderByID(folder)) {
         return done(L"the folder menu's Delete didn't ask, or Cancel didn't keep the folder");
     }
+    // With the folder's tab selected: the selection goes to the space's first tab, and the page with it.
+    EditState([&] { state_.Select(inFolder); }, true);
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    folderAt = rowOf(SidebarRow::Kind::Folder, folder);
+    if (!folderAt) return done(L"the menu test's folder isn't in view");
     answer = true;
     rightClick(*folderAt, "Delete");
+    if (!state_.SelectedTab() || state_.SelectedTab()->id == inFolder ||
+        state_.SelectedTab()->id != state_.SelectedSpace().AllTabs().front()->id) {
+        return done(L"deleting the folder holding the selected tab didn't select the space's first tab");
+    }
     if (asked.size() != 2 || state_.FolderByID(folder) || state_.FolderByID(nested) || state_.FindTabByID(inFolder)) {
         return done(L"the folder menu's Delete didn't remove the folder");
     }

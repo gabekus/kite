@@ -14,6 +14,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "shell/Capture.h"
@@ -29,14 +30,13 @@ struct ContextMenuEntry {
     std::vector<ContextMenuEntry> entries;  // a submenu's
 };
 
-// Each entry's index in the tree, depth first, every entry counted (separators and submenus
-// too): what ShowContextMenu returns for the one chosen.
-size_t ContextMenuSize(const std::vector<ContextMenuEntry>& entries);
-
 // Shows `entries` at `screen` (px) for `window`, dark or light, and waits until it closes
-// (Windows' menu loop). The chosen entry's index (an enabled item, never a submenu or a
-// separator), or none.
+// (Windows' menu loop). The chosen entry's index in the tree, depth first, every entry counted
+// (separators and submenus too); always an enabled item, never a submenu or a separator. Or none.
 std::optional<size_t> ShowContextMenu(HWND window, const std::vector<ContextMenuEntry>& entries, POINT screen, bool dark);
+// An entry's title as the menu's text: `&` marks a mnemonic in Win32 menus and the Mac's titles
+// have none, so each is doubled.
+std::wstring ContextMenuText(std::string_view title);
 
 // For --capture: the menu opened at `screen` as ShowContextMenu would, read back once it shows
 // (PrintWindow of its window: without the rounded corners and shadow DWM adds) and closed,

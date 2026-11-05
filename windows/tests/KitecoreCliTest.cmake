@@ -948,9 +948,22 @@ string(JSON onHeaderLine GET "${onHeader}" line)
 menus_kitecore(onNewTab click 100 487 --button right)
 string(JSON onNewTabTarget GET "${onNewTab}" target)
 menus_kitecore(onDivider click 100 455 --button right)
+# A row's own buttons: the Today tab's close button (202 to 226 in its pill at 157 + 351) and the
+# header's chevron (205 to 231, 5pt down) pass a right-click's menu up to their row, marked as buttons
+# (a Ctrl+click presses them instead).
+menus_kitecore(onClose click 214 528 --button right)
+string(JSON onCloseKind GET "${onClose}" kind)
+string(JSON onCloseButton GET "${onClose}" button)
+menus_kitecore(onChevron click 220 167 --button right)
+string(JSON onChevronKind GET "${onChevron}" kind)
+string(JSON onChevronButton GET "${onChevron}" button)
+string(JSON onFolderButton ERROR_VARIABLE onFolderNoButton GET "${onFolder}" button)
+if(NOT onCloseKind STREQUAL "tab" OR NOT onCloseButton OR NOT onChevronKind STREQUAL "space" OR NOT onChevronButton OR NOT onFolderNoButton)
+  message(FATAL_ERROR "right-clicks on buttons gave ${onClose}, ${onChevron}; on the row ${onFolder}")
+endif()
 string(JSON onDividerTarget GET "${onDivider}" target)
 if(NOT onFolderKind STREQUAL "folder" OR NOT onFolderID STREQUAL menuReading OR NOT onFolderLine STREQUAL line
-   OR NOT onHeaderKind STREQUAL "space" OR NOT onHeaderLine MATCHES "^\\(Change Space Icon…\\) \\| Rename Space…"
+   OR NOT onHeaderKind STREQUAL "space" OR NOT onHeaderLine MATCHES "^\\(?Change Space Icon…\\)? \\| Rename Space…"
    OR NOT onNewTabTarget STREQUAL "none" OR NOT onDividerTarget STREQUAL "none")
   message(FATAL_ERROR "right-clicks gave ${onFolder}, ${onHeader}, ${onNewTab}, ${onDivider}")
 endif()
@@ -970,15 +983,16 @@ endif()
 # Duplicate: a copy right after it; Delete: the Mac's question, then its tabs archived.
 menus_kitecore(dupResult menu folder ${menuReading} --pick Duplicate)
 string(JSON copyID GET "${dupResult}" id)
-menus_kitecore(state state)
-string(JSON afterReading GET "${state}" spaces 0 pinned 2 id)
+# The copy is right after Reading among the pinned items (the session's third).
+file(READ "${MENUS}/session.json" session)
+string(JSON afterReading GET "${session}" state spaces 0 pinnedItems 2 folder _0 id)
 menus_kitecore(deleted menu folder ${copyID} --pick Delete)
 string(JSON askTitle GET "${deleted}" asks title)
 string(JSON askConfirm GET "${deleted}" asks confirm)
 string(JSON archivedCount LENGTH "${deleted}" archived)
 menus_kitecore(copyShown shown folder ${copyID})
-if(NOT askTitle STREQUAL "Delete your “Reading” folder?" OR NOT askConfirm STREQUAL "Delete Folder" OR NOT archivedCount EQUAL 3
-   OR NOT copyShown STREQUAL "no")
+if(NOT afterReading STREQUAL copyID OR NOT askTitle STREQUAL "Delete your “Reading” folder?" OR NOT askConfirm STREQUAL "Delete Folder"
+   OR NOT archivedCount EQUAL 3 OR NOT copyShown STREQUAL "no")
   message(FATAL_ERROR "Duplicate and Delete gave ${dupResult} (then ${afterReading}), ${deleted}, ${copyShown}")
 endif()
 # A tab's Pin Tab pins it; Add to Favorites makes it a favorite, whose menu is the favorite's.
@@ -1013,6 +1027,23 @@ string(JSON spaceName GET "${state}" spaces 1 name)
 string(JSON selectedSpace GET "${state}" selectedSpaceID)
 if(NOT spaceName STREQUAL "Recipes" OR NOT selectedSpace STREQUAL turnedSpace)
   message(FATAL_ERROR "Turn into Space gave ${turned}: ${state}")
+endif()
+# A live folder (one the Mac made: session.json is shared): Delete Live Folder asks Arc's question,
+# then removes it with its tab, unarchived, and turns its source off.
+file(READ "${MENUS}/session.json" session)
+string(JSON live SET "${session}" state spaces 0 pinnedItems 99
+       [=[{"folder":{"_0":{"id":"0F0F0F0F-0000-4000-8000-000000000001","name":"Pull Requests","isExpanded":true,"live":{"source":"github"},"items":[{"tab":{"_0":{"id":"0F0F0F0F-0000-4000-8000-0000000000A1","url":"https://github.com/a/b/pull/1","title":"A pull request","lastActiveAt":0}}}]}}}]=])
+file(WRITE "${MENUS}/session.json" "${live}")
+menus_kitecore(liveMenu menu folder 0F0F0F0F-0000-4000-8000-000000000001)
+string(JSON liveLine GET "${liveMenu}" line)
+menus_kitecore(liveGone menu folder 0F0F0F0F-0000-4000-8000-000000000001 --pick Delete Live Folder)
+string(JSON liveAsk GET "${liveGone}" asks title)
+string(JSON liveRemoved GET "${liveGone}" removed 0)
+file(READ "${MENUS}/session.json" liveState)
+string(JSON liveOff GET "${liveState}" state liveFoldersTurnedOff 0)
+if(NOT liveLine STREQUAL "(Refresh) | --- | Delete Live Folder" OR NOT liveAsk STREQUAL "Delete your GitHub Live Folder?"
+   OR NOT liveRemoved STREQUAL "0F0F0F0F-0000-4000-8000-0000000000A1" OR NOT liveOff STREQUAL "github")
+  message(FATAL_ERROR "Delete Live Folder gave ${liveMenu}, ${liveGone}: ${liveState}")
 endif()
 file(REMOVE_RECURSE "${MENUS}")
 
