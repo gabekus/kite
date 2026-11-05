@@ -83,8 +83,11 @@ TEXT_FLOOR=92611226a9834ac52b95a77268bf1f5647f08490
 # There, on a test-safe run only, once the main window's selected page has loaded, the window runs ⌘F's showFind and
 # FindBar.setQuery (the field's stringValue, then the search a keystroke runs: no key events, no input method, no
 # menu, nothing activated), then writes "KITE_TEST_FIND: ready: …" on stderr. Older Kites ignore the hooks, so the
-# capture would show no bar. If #384 lands by squash or rebase, set this to the commit it landed as on main.
-FIND_FLOOR=d80c54e24750a18cbfb5fa8c648b3b8ef8c12c2a
+# capture would show no bar. 3a9a2f1 (the review's hardening) opens the bar with Ask on Page always off, so captures
+# don't depend on the runner's saved askOnPageEnabled and the Ask button (which runs Claude) never shows, and turns
+# Writing Tools off; the hooks work from d80c54e. If #384 lands by squash or rebase, set this to the commit it
+# landed as on main.
+FIND_FLOOR=3a9a2f15a2e1cff3c74071e9cd10faa382fe1bbb
 # How long a state waits, after Kite's socket answers, for that ready line (Kite itself gives up 30 s after launch).
 FIND_READY_SECONDS=30
 
