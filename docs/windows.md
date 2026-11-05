@@ -835,14 +835,16 @@ the session's writer does (atomically, skipping unchanged bytes), so the UI
 thread touches no file; a download that starts before the read is in waits for
 it, and the list read joins under it. An unreadable file is moved aside, and
 one with items Kite can't read is copied aside first, as on the Mac. Quitting
-waits for the session's and downloads.json's last writes within one 10 s
-deadline, and logoff within one of 3 s. A progress report costs Kite's UI thread
-about 8 μs (the model and the timer; nothing is drawn: the Library comes with
-W20b), measured by `--save-log`, which logs Chromium's reports, those that
-reached Kite, their cost and downloads.json's writes. Closing the window with
-downloads running asks first, the Mac's "Downloads in progress"
-(`shell/QuitDialog.h`, a task dialog where the Mac draws its own alert); Close
-Kite cancels them. It's asked as the window closes, before its pages do, where
+waits for the session's, history's and downloads.json's last writes within one
+10 s deadline (downloads.json's handed over first, so it runs alongside the
+other two on its own worker), and logoff within one of 3 s. A progress report
+costs Kite's UI thread about 8 μs (the model and the timer; nothing is drawn:
+the Library comes with W20b), measured by `--save-log`, which logs Chromium's
+reports, those that reached Kite, their cost and downloads.json's writes.
+Closing the window with downloads running asks first, the Mac's "Downloads in
+progress" (`shell/QuitDialog.h`, a task dialog where the Mac draws its own
+alert); Close Kite cancels them. It's asked as the window closes, before its
+pages do, where
 the Mac asks at terminate: closing the window is quitting here. A quiet run logs
 `KITE_TEST_MODAL: dialog: Downloads in progress | [Close Kite, Keep browsing]`
 and closes, as the Mac's test-safe run answers, and a profile set to Ask has its
