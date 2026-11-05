@@ -1,5 +1,6 @@
 import AppKit
 import KiteCore
+import WebKit
 
 /// Runs `FindTestHook` (`KITE_TEST_FIND`, `KITE_TEST_FIND_OPEN`) once in a window, when its selected tab's page has
 /// finished loading. Test-safe runs only: on a real profile `start` reads nothing and waits for nothing.
@@ -78,6 +79,7 @@ final class FindTestHookRunner {
                 wait.webViewLoading = webView.isLoading
                 wait.webViewProgress = webView.estimatedProgress
                 wait.webViewHasURL = webView.url != nil
+                wait.contentProcess = Self.contentProcess(of: webView)
             }
             wait.windowOrderedIn = controller.window?.isVisible == true
             wait.windowOnScreen = controller.window?.screen != nil
@@ -115,6 +117,30 @@ final class FindTestHookRunner {
 
     /// Times a page's web content process ended on this run (WebKitPage), for the give-up line.
     private(set) static var contentProcessEnds = 0
+
+    /// The web content process WebKit runs for `webView` (its private `_webProcessIdentifier`): 0 for none, nil when
+    /// this WebKit doesn't say.
+    static func contentProcess(of webView: WKWebView) -> Int? {
+        guard webView.responds(to: NSSelectorFromString("_webProcessIdentifier")) else { return nil }
+        return (webView.value(forKey: "_webProcessIdentifier") as? NSNumber)?.intValue
+    }
+
+    /// Right after WebKitPage asks WebKit to load (and again 2 s later), on a run with a find hook only: whether the
+    /// load took and whether the page has a web content process. W21's headless runs ended with no URL, no load and
+    /// no navigation callback, so this says whether WebKit dropped the load at once or later.
+    static func logLoadAsked(_ webView: WKWebView) {
+        guard configured != nil else { return }
+        func line(_ when: String) -> String {
+            FindTestHook.loadLine(when, urlSet: webView.url != nil, loading: webView.isLoading,
+                                  progress: webView.estimatedProgress, contentProcess: contentProcess(of: webView))
+        }
+        log(line("load asked"))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak webView] in
+            guard let webView else { return }
+            log(FindTestHook.loadLine("2 s after the load", urlSet: webView.url != nil, loading: webView.isLoading,
+                                      progress: webView.estimatedProgress, contentProcess: contentProcess(of: webView)))
+        }
+    }
 
     /// A page milestone from WebKit's navigation delegate, on a run with a find hook only (nothing otherwise): where
     /// a headless load stops. An error gives its domain and code only.
