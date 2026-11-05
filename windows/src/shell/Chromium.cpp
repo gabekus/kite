@@ -29,6 +29,7 @@
 #include "include/cef_request_handler.h"
 #include "include/cef_task.h"
 #include "include/cef_v8.h"
+#include "core/ChromiumSwitches.h"
 #include "core/Json.h"
 #include "core/DownloadsModel.h"
 #include "core/LiveTabPolicy.h"
@@ -214,6 +215,9 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
     std::string shown;
     bool minimized = false;
     bool occluded = false;  // SetOccluded
+    // The feature lists CEF had before Kite's went on (OnBeforeCommandLineProcessing, before any
+    // other thread reads them; ReadFeatureLists).
+    std::string cefEnableFeatures, cefDisableFeatures;
     Hole overlayHole;  // SetOverlayHole's, in client px
     LiveTabPolicy policy;  // at most six live pages, as the Mac's PagePool
     ULONGLONG closingSince = 0;  // when MayCloseWindow started closing
@@ -840,24 +844,22 @@ public:
     // yet, so one try covers both, and the browsers Chromium makes itself (the Mac's
     // KCDefaultClient) too.
     void OnContextInitialized() override { ApplyEnergySaver(*shared_); }
-    // --chromium-switches, in the browser process only (its helpers get what Chromium passes on).
+    // Kite's defaults (Chromium's native occlusion tracker off) and --chromium-switches, in the
+    // browser process only (its helpers get what Chromium passes on). The feature lists add to
+    // what's already there (CEF's own), never replace it (core/ChromiumSwitches.h).
     void OnBeforeCommandLineProcessing(const CefString& processType, CefRefPtr<CefCommandLine> commandLine) override {
         if (!processType.empty()) return;
-        for (const std::string& entry : switches_) {
+        const auto existing = [&](const char* name) {
+            return commandLine->HasSwitch(name) ? commandLine->GetSwitchValue(name).ToString() : std::string();
+        };
+        // CEF's own lists, for --smoke-test's check that they're all still there.
+        shared_->cefEnableFeatures = existing("enable-features");
+        shared_->cefDisableFeatures = existing("disable-features");
+        for (const std::string& entry :
+             chromium_switches::BrowserSwitches(switches_, shared_->cefEnableFeatures, shared_->cefDisableFeatures)) {
             const size_t equals = entry.find('=');
-            if (equals == std::string::npos) {
-                commandLine->AppendSwitch(entry);
-                continue;
-            }
-            const std::string name = entry.substr(0, equals);
-            std::string value = entry.substr(equals + 1);
-            // A feature list adds to what's already there (CEF's own, or an earlier entry), never
-            // replaces it: appending a switch again replaces its value.
-            if (name == "disable-features" && commandLine->HasSwitch(name)) {
-                const std::string existing = commandLine->GetSwitchValue(name).ToString();
-                if (!existing.empty()) value = existing + "," + value;
-            }
-            commandLine->AppendSwitchWithValue(name, value);
+            if (equals == std::string::npos) commandLine->AppendSwitch(entry);
+            else commandLine->AppendSwitchWithValue(entry.substr(0, equals), entry.substr(equals + 1));
         }
     }
 
@@ -2149,6 +2151,17 @@ void Chromium::ReadEnergySaver(std::function<void(std::optional<int> state)> don
         CefRefPtr<CefValue> value = prefs ? prefs->GetPreference(kEnergySaverPref) : nullptr;
         if (value && value->GetType() == VTYPE_INT) state = value->GetInt();
         shared->Post([done = std::move(done), state] { done(state); });
+    });
+}
+
+void Chromium::ReadFeatureLists(std::function<void(FeatureLists lists)> done) {
+    RunOnCefUIThread([shared = shared_, done = std::move(done)]() mutable {
+        FeatureLists lists{.cefEnable = shared->cefEnableFeatures, .cefDisable = shared->cefDisableFeatures};
+        if (CefRefPtr<CefCommandLine> line = CefCommandLine::GetGlobalCommandLine()) {
+            lists.enable = line->GetSwitchValue("enable-features").ToString();
+            lists.disable = line->GetSwitchValue("disable-features").ToString();
+        }
+        shared->Post([done = std::move(done), lists = std::move(lists)]() mutable { done(std::move(lists)); });
     });
 }
 

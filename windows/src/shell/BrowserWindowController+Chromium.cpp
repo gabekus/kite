@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "core/ChromiumSwitches.h"
 #include "core/LiveTabPolicy.h"
 #include "core/TitleBar.h"
 #include "shell/Chromium.h"
@@ -219,6 +220,7 @@ void BrowserWindowController::CloseWhenSmokeTestIsDone() {
         energySaverRead_ = true;
         energySaverState_ = state;
     });
+    chromium_->ReadFeatureLists([this](Chromium::FeatureLists lists) { featureLists_ = std::move(lists); });
     closeAskedAt_ = GetTickCount64();
     PostMessageW(window_.Handle(), WM_CLOSE, 0, 0);
 }
@@ -244,6 +246,15 @@ std::wstring BrowserWindowController::ShutDownChromium() {
     if (!energySaverState_) return L"Chromium has no Energy Saver preference to turn on";
     if (*energySaverState_ != 1) {
         return L"Chromium's Energy Saver is " + std::to_wstring(*energySaverState_) + L", not on (1)";
+    }
+    // Chromium's native occlusion tracker off unless --chromium-switches turned it on, merged
+    // into CEF's own feature lists, and no feature both on and off (core/ChromiumSwitches.h).
+    if (!featureLists_) return L"Chromium's feature lists were never read back";
+    const Chromium::FeatureLists& lists = *featureLists_;
+    if (const std::string problem = chromium_switches::FeatureProblem(options_.chromiumSwitches, lists.cefEnable, lists.cefDisable, lists.enable, lists.disable);
+        !problem.empty()) {
+        return L"Chromium's features: " + Widen(problem) + L" (enable-features=" + Widen(lists.enable) + L", disable-features=" +
+               Widen(lists.disable) + L"; CEF's own: " + Widen(lists.cefEnable) + L", " + Widen(lists.cefDisable) + L")";
     }
     // One WM_CLOSE must close the window (the browsers first); the 30 s timer's second one
     // would otherwise hide a close that hangs.

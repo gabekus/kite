@@ -45,6 +45,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "core/DownloadsModel.h"
@@ -968,6 +969,8 @@ private:
     // The smoke test's read of Chromium's Energy Saver preference (Chromium::ReadEnergySaver).
     bool energySaverRead_ = false;
     std::optional<int> energySaverState_;
+    // And of its feature lists (Chromium::ReadFeatureLists): nullopt until read.
+    std::optional<Chromium::FeatureLists> featureLists_;
     // The smoke test's find, once the first page loaded: who has the keyboard, then its query,
     // then one with no match (BrowserWindowController+Tests.cpp).
     enum class SmokeFind { Idle, Matching, Missing, Done };

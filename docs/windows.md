@@ -168,7 +168,8 @@ resize and reflow them. That leans on Chromium's window layout, so `--smoke-test
 if the widget isn't found; W10's off-screen pages replace it with `WasHidden`.
 A covered Kite (and a locked, display-off or other-desktop one) hides its
 shown page the same way (P2, "A window no one can see draws nothing" below):
-Chromium's own occlusion tracking covers only its top-level windows.
+Chromium's own occlusion tracker covers only its top-level windows, never
+these child-window pages, and Kite turns it off (P12b).
 `windows/helix/pages/popup-opener.html` logs the page's `visibilityState`,
 resizes and opener messages in its title to check all this (on Gabe's PC,
 not in CI). CEF runs its own UI
@@ -1494,6 +1495,18 @@ Windows that means:
     window when they could be stale: the end of a lock or display-off, the
     pointer on a covered Kite, Kite's activation, any cloak event, and the
     heartbeat's whole passes.
+  - **Chromium's own tracker is off** (P12b, docs/windows-native-occlusion.md):
+    Kite's browser process gets `--disable-features=CalculateNativeWinOcclusion`, merged
+    into CEF's own `disable-features` (`core/ChromiumSwitches.h`; `kitecore
+    chromium-switches` prints the result). In CEF 156 that tracker can't see Kite's pages
+    (child windows), so it never hid a covered Kite, and its thread woke about 1,800 times a
+    second (18 ms/s of CPU) whenever any app's window animated anywhere on the desktop. What
+    it did do for Kite, hide the pages on lock and display off, Kite's own occlusion does.
+    `--smoke-test` fails unless the feature, named in the check, is off and not also on, and
+    CEF's own features are all still there (`chromium_switches::FeatureProblem`). On a test profile,
+    `--chromium-switches "--enable-features=CalculateNativeWinOcclusion"` turns it back on
+    (the A/B tool, and a check after a CEF update: Chromium's main maps a child widget to its
+    root window, so a later CEF's tracker may see Kite).
   - **A page Kite hides stays hidden.** Chromium can show a page whose windows Kite hid before
     it had drawn: a page made while Kite can't be seen (Kite opened behind other windows, a new
     or woken tab, a navigation to another renderer) went `hidden`, then `visible` about 0.4 s
@@ -1605,7 +1618,10 @@ behind other windows, without asking for the focus, and never shows a dialog, as
   (`OnBeforeCommandLineProcessing`), from an allow-list (`shell/PerfProtocol.h`): the GPU
   backend and rasterization (always in the sandboxed GPU process), throttling and backgrounding,
   the renderer limit, and four features that can be turned off by name, to measure Kite with one
-  and without. Nothing that weakens the sandbox, site isolation or web security, opens a
+  and without; and `--enable-features=CalculateNativeWinOcclusion`, which turns Chromium's
+  native occlusion tracker back on (off by default, P12b) and takes it out of
+  `disable-features`, so it's never both. One switch turning a feature on and another turning
+  it off is refused. Nothing that weakens the sandbox, site isolation or web security, opens a
   debugging port, or changes a path or a launched process. Chromium reads nothing else of
   Kite.exe's command line.
 

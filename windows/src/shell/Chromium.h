@@ -246,6 +246,14 @@ public:
     // anything Kite asks of CEF after this call (CloseBrowser's DoClose). On is Chromium's own
     // default, so it shows that Kite set it only on a profile whose Local State had it off.
     void ReadEnergySaver(std::function<void(std::optional<int> state)> done);
+    // For --smoke-test: the browser process's enable-features and disable-features as Chromium
+    // has them ("" for none), after Kite's defaults and --chromium-switches went on
+    // (core/ChromiumSwitches.h), and CEF's own from before; `done` runs on Kite's UI thread, as
+    // ReadEnergySaver's does.
+    struct FeatureLists {
+        std::string enable, disable, cefEnable, cefDisable;
+    };
+    void ReadFeatureLists(std::function<void(FeatureLists lists)> done);
     // After the main window is gone: waits (at most 10 s) for every browser to close, then
     // shuts Chromium down. False when a browser didn't close in time, here or within the
     // window's 5 s close deadline, so Chromium went down under it. --smoke-test fails on it.
