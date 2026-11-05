@@ -165,7 +165,8 @@ ThemeSwatchesView::Frame ThemeSwatchesView::FrameFor(const BarRect& row, float s
     // frame), the arrow moving along its edge to stay level with the row.
     POINT anchor{std::lround(row.right * scale), std::lround((row.top + row.bottom) / 2 * scale)};
     ClientToScreen(owner_, &anchor);
-    MONITORINFO monitor{sizeof(monitor)};
+    MONITORINFO monitor{};
+    monitor.cbSize = sizeof(monitor);
     if (!GetMonitorInfoW(MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST), &monitor)) return f;
     POINT screen = f.origin;
     ClientToScreen(owner_, &screen);

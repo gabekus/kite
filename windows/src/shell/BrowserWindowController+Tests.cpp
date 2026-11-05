@@ -1907,7 +1907,8 @@ std::wstring BrowserWindowController::SmokeTestNewSpace() {
     // field's DestroyCaret coming first (the window's keyboard assumed, as a quiet run never has it).
     {
         const auto caretOwner = [] {
-            GUITHREADINFO info{sizeof(info)};
+            GUITHREADINFO info{};
+            info.cbSize = sizeof(info);
             return GetGUIThreadInfo(GetCurrentThreadId(), &info) ? info.hwndCaret : nullptr;
         };
         page.AssumeWindowFocusForTest(true);
