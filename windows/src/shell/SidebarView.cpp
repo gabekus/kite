@@ -1334,6 +1334,10 @@ bool SidebarView::ScrollList(POINT at, float distance) {
     return true;
 }
 
+void SidebarView::ScrollListBy(float distance) {
+    if (distance != 0) SetScroll(scrollExact_ + distance);
+}
+
 void SidebarView::SetScroll(float scroll) {
     // The wheel's position is kept as it comes (a touchpad's small steps add up); the list
     // draws and takes the pointer at it rounded to whole pixels, so rows keep crisp edges.

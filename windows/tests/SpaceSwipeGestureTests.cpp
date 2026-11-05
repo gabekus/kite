@@ -75,6 +75,42 @@ TEST(onlyGesturesOverTheSidebarSwipe) {
     CHECK(gesture.Handle(At(Phase::Changed, 30, 0, 0.032), true, spaces.Begin()) == Step::Move);
 }
 
+TEST(wherePointerIsIsAskedOnlyUntilTheGestureIsDecided) {
+    // The Mac's isOverSidebar: for began, and for movement before the gesture is decided.
+    SpaceSwipeGesture gesture;
+    Spaces spaces;
+    gesture.Handle(At(Phase::Began, 0, 0, 0), true, spaces.Begin());
+    CHECK(gesture.AskedWhere());
+    // No movement yet: still undecided, still asked.
+    gesture.Handle(At(Phase::Changed, 0, 0, 0.008), true, spaces.Begin());
+    CHECK(gesture.AskedWhere());
+    // Decided vertical on this one, asked first.
+    CHECK(gesture.Handle(At(Phase::Changed, 1, -6, 0.016), true, spaces.Begin()) == Step::Pass);
+    CHECK(gesture.AskedWhere());
+    // The rest of it isn't asked, wherever the pointer is: off the sidebar it's still the list's.
+    CHECK(gesture.Handle(At(Phase::Changed, 0, -6, 0.032), false, spaces.Begin()) == Step::Pass);
+    CHECK(!gesture.AskedWhere());
+    CHECK(gesture.Handle(At(Phase::Ended, 0, 0, 0.048), false, spaces.Begin()) == Step::Pass);
+    CHECK(!gesture.AskedWhere());
+    CHECK(gesture.Handle(At(Phase::Momentum, 0, -4, 0.064), false, spaces.Begin()) == Step::Pass);
+    CHECK(!gesture.AskedWhere());
+    CHECK(gesture.Handle(At(Phase::MomentumEnded, 0, 0, 0.08), false, spaces.Begin()) == Step::Pass);
+    CHECK(!gesture.AskedWhere());
+    // Off the sidebar before it's decided: asked, and passed.
+    gesture.Handle(At(Phase::Began, 0, 0, 1), true, spaces.Begin());
+    CHECK(gesture.Handle(At(Phase::Changed, -20, 0, 1.016), false, spaces.Begin()) == Step::Pass);
+    CHECK(gesture.AskedWhere() && !gesture.Swiping());
+    // A swipe's own events aren't asked: it's the swipe's wherever the pointer goes.
+    CHECK(gesture.Handle(At(Phase::Changed, -20, 0, 1.032), true, spaces.Begin()) == Step::Move);
+    CHECK(gesture.AskedWhere());
+    CHECK(gesture.Handle(At(Phase::Changed, -20, 0, 1.048), false, spaces.Begin()) == Step::Move);
+    CHECK(!gesture.AskedWhere());
+    CHECK(gesture.Handle(At(Phase::Ended, 0, 0, 1.064), false, spaces.Begin()) == Step::Release);
+    CHECK(!gesture.AskedWhere());
+    CHECK(gesture.Handle(At(Phase::Momentum, -10, 0, 1.08), false, spaces.Begin()) == Step::Swallow);
+    CHECK(!gesture.AskedWhere());
+}
+
 TEST(eventsOutsideAGesturePass) {
     SpaceSwipeGesture gesture;
     Spaces spaces;

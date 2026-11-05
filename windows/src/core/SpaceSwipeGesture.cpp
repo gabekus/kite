@@ -9,6 +9,7 @@ namespace kite {
 SpaceSwipeGesture::Step SpaceSwipeGesture::Handle(const SwipeInput& input, bool overSidebar,
                                                   const std::function<SwipeStart()>& begin) {
     using Phase = SwipeInput::Phase;
+    askedWhere_ = false;
     const bool momentum = input.phase == Phase::Momentum || input.phase == Phase::MomentumEnded;
     if (swallowingMomentum_) {
         if (!momentum) {
@@ -32,6 +33,7 @@ SpaceSwipeGesture::Step SpaceSwipeGesture::Handle(const SwipeInput& input, bool 
     if (!swipe_) {
         if (input.phase == Phase::Began) vertical_ = false;
         if (input.phase != Phase::Began && (input.phase != Phase::Changed || vertical_)) return Step::Pass;
+        askedWhere_ = true;
         if (!overSidebar) return Step::Pass;
         const double dx = std::abs(input.dx), dy = std::abs(input.dy);
         // No movement yet: decide on the first event that has some.

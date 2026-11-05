@@ -28,7 +28,9 @@ namespace kite {
 
 namespace {
 
-// A frame log's touchpad records at most (a few MB; a resting finger polls once a frame).
+// A frame log's touchpad records at most: about 20 MB held (a record's string is 40 to 90
+// characters, some 100 bytes with its allocation) and 8 to 18 MB written. A resting finger
+// polls once a frame, so a 500 Hz display fills it in under 7 minutes of resting.
 constexpr size_t kMaxTouchpadLog = 200000;
 
 }  // namespace
@@ -70,8 +72,6 @@ BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserStat
       shownSpaceID_(state.SelectedSpace().id) {}
 
 BrowserWindowController::~BrowserWindowController() {
-    // A slide still running lets go of the compositor clock's boost.
-    if (toggling_) FrameClock::BoostWithoutFrames(false);
     // The views and the compositor go before the window: it stops calling into them first.
     window_.onClose = nullptr;
     window_.onSize = nullptr;
@@ -284,11 +284,11 @@ void BrowserWindowController::SpaceChanged(size_t old, size_t now) {
     const double duration =
         IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle()) && sidebarShown_ ? sidebar_->SlidePages(from, 0) : 0;
     if (duration <= 0) {
-        sidebarSliding_ = false;
+        SetSliding(false);
         return FinishSettling();
     }
     // The compositor runs it; Kite only hears when it has ended.
-    sidebarSliding_ = true;
+    SetSliding(true);
     slideStarted_ = true;
     // The compositor starts it at the commit's frame, up to a frame after now: the timer allows
     // for one at 60 Hz.
@@ -297,7 +297,7 @@ void BrowserWindowController::SpaceChanged(size_t old, size_t now) {
 
 void BrowserWindowController::FinishSettling() {
     KillTimer(window_.Handle(), kSettleTimer);
-    sidebarSliding_ = false;
+    SetSliding(false);
     slideStarted_ = false;
     // A swipe's landing: its space is selected now the pages are at rest, its page where the
     // neighbour's was.
@@ -309,6 +309,13 @@ void BrowserWindowController::FinishSettling() {
     sidebar_->Update(state_);
 }
 
+void BrowserWindowController::SetSliding(bool sliding) {
+    sidebarSliding_ = sliding;
+    // The display at its highest rate while the pages slide on the compositor, as the Mac's
+    // settle boosts on its clock: a switch with no crossfade (the same theme) too.
+    slideBoost_.Set(sliding);
+}
+
 bool BrowserWindowController::OverSidebar(POINT at) const {
     RECT client{};
     GetClientRect(window_.Handle(), &client);
@@ -318,23 +325,31 @@ bool BrowserWindowController::OverSidebar(POINT at) const {
 }
 
 SpaceSwipeGesture::Step BrowserWindowController::SwipeInputArrived(const SwipeInput& input, POINT at) {
-    // Asked of each event until a swipe begins, as the Mac's isOverSidebar: the pointer may have
-    // left the sidebar since the fingers came down, or the command bar opened over it.
+    // Asked of a gesture's began and its movement until it's decided, as the Mac's
+    // isOverSidebar: the pointer may have left the sidebar since the fingers came down, or the
+    // command bar opened over it.
     const bool overSidebar = OverSidebar(at);
     const SpaceSwipeGesture::Step step = swipe_.Handle(input, overSidebar, [this] { return BeginSwipe(); });
     switch (step) {
     case SpaceSwipeGesture::Step::Pass:
-        if (overSidebar) {
-            // A vertical gesture is the list's scroll (and its momentum) under the pointer:
-            // content dragged down goes back up the list.
-            if (input.dy != 0) sidebar_->ScrollList(at, static_cast<float>(-input.dy));
-        } else if (touchpad_) {
-            // Not the sidebar's: the rest of it is the system's wheel messages, for whatever is
-            // under the pointer (the Mac passes the event on to it).
-            touchpad_->ReleaseContact();
+        if (!swipe_.AskedWhere()) {
+            // Decided: the rest of a vertical gesture, momentum included, is the list's wherever
+            // the pointer goes, when it was decided over the list.
+            if (listScrolling_) sidebar_->ScrollListBy(static_cast<float>(-input.dy));
+        } else if (overSidebar) {
+            // A vertical gesture is the list's scroll under the pointer: content dragged down goes
+            // back up the list.
+            listScrolling_ = sidebar_->ScrollList(at, static_cast<float>(-input.dy));
+        } else {
+            // Off the sidebar before it's decided: not the sidebar's. The rest of it is the
+            // system's wheel messages, for whatever is under the pointer (the Mac passes the
+            // event on to it).
+            listScrolling_ = false;
+            if (touchpad_) touchpad_->ReleaseContact();
         }
         break;
     case SpaceSwipeGesture::Step::Move:
+        listScrolling_ = false;
         ShowSwipe();
         break;
     case SpaceSwipeGesture::Step::Release:
@@ -351,7 +366,7 @@ SwipeStart BrowserWindowController::BeginSwipe() {
     // neighbours, a landing still to come selected first.
     float offset = sidebar_->PageOffset();
     KillTimer(window_.Handle(), kSettleTimer);
-    sidebarSliding_ = false;
+    SetSliding(false);
     slideStarted_ = false;
     offset += static_cast<float>(CommitLanding() * kSidebarWidth);
     if (pagesAnchor_) {
@@ -401,7 +416,7 @@ void BrowserWindowController::FinishSwipe(int landing) {
         sidebar_->SetPageOffset(to);
         return FinishSettling();
     }
-    sidebarSliding_ = true;
+    SetSliding(true);
     // The bar's light slides with them (SlidePages leaves that to the sidebar's next Update),
     // and the slide starts now, as a keyboard switch's: PageOffset reads it from now, so a swipe
     // catching it mid-way carries on from where the pages really are.
@@ -655,7 +670,7 @@ void BrowserWindowController::SetSidebarShown(bool shown) {
     const double duration = sidebar_->SetShown(shown, visible);
     toggling_ = duration > 0;
     // The display at its highest rate while it slides (docs/windows.md, Refresh rate).
-    if (toggling_ != wasToggling) FrameClock::BoostWithoutFrames(toggling_);
+    if (toggling_ != wasToggling) toggleBoost_.Set(toggling_);
     // The system menu's item says what it will do next (validateMenuItem's retitling).
     if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
         ModifyMenuW(menu, kToggleSidebarMenuID, MF_BYCOMMAND | MF_STRING, kToggleSidebarMenuID, ToggleSidebarMenuText().c_str());
@@ -686,7 +701,7 @@ void BrowserWindowController::FinishToggle() {
     KillTimer(window_.Handle(), kToggleTimer);
     if (!toggling_) return;
     toggling_ = false;
-    FrameClock::BoostWithoutFrames(false);
+    toggleBoost_.Set(false);
     sidebar_->SettleToggle();
     if (!sidebarShown_) MovePage();
     if (compositor_) compositor_->Commit();
@@ -954,7 +969,8 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     if (message == kFrameMessage) {
         // Delivered after the frame: a frame that takes longer than the next tick doesn't queue
         // another behind it.
-        if (clock_->Running()) Frame(FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr));
+        // A test run steps its own (RunUntil), and one posted before it began is dropped.
+        if (clock_->Running() && !clock_->Manual()) Frame(FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr));
         clock_->Delivered();
         return true;
     }
