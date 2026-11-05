@@ -928,7 +928,9 @@ Known differences for W9f:
 - Cancel with the draft the only space left (the others deleted meanwhile) beeps and keeps the
   page: Delete Space refuses the last space, and the Mac's would end the page and leave the
   nameless space for the next launch to drop.
-- Rename Space… on the draft goes to the page's name field.
+- Rename Space… on the draft goes to the page's name field, and Change Space Icon… is disabled on
+  the draft space (its header, where the picker hangs, is under the page; the Mac's opens the
+  picker on a header no one sees).
 - The help tags (the about field's and the profile's info button) and the + button's tooltip
   aren't shown yet, and Undo New Space waits for undo (W16).
 

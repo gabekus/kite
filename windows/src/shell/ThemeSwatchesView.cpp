@@ -76,7 +76,7 @@ ThemeSwatchesView::~ThemeSwatchesView() {
     UseCompositor(nullptr);
 }
 
-std::optional<LRESULT> ThemeSwatchesView::Handle(UINT message, WPARAM, LPARAM lParam) {
+std::optional<LRESULT> ThemeSwatchesView::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
     const HWND window = popover_.Handle();
     switch (message) {
     case WM_LBUTTONDOWN:
@@ -93,9 +93,36 @@ std::optional<LRESULT> ThemeSwatchesView::Handle(UINT message, WPARAM, LPARAM lP
         return 0;
     }
     case WM_CAPTURECHANGED: pressed_.reset(); return 0;
+    case WM_DPICHANGED:
+        // Shown on a monitor of another scale (as the picker's): drawn again at its scale, its body
+        // the same size in points, where Windows suggests.
+        if (open_ && HIWORD(wParam) != dpi_ && lParam) Rescale(HIWORD(wParam), *reinterpret_cast<const RECT*>(lParam));
+        return 0;
     default: break;
     }
     return std::nullopt;
+}
+
+void ThemeSwatchesView::Rescale(UINT dpi, const RECT& suggested) {
+    dpi_ = dpi;
+    const float scale = static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
+    frame_.width = static_cast<UINT>(std::ceil((T::kArrowDepth + layout_.width + 2 * frame_.margin) * scale));
+    frame_.height = static_cast<UINT>(std::ceil((layout_.height + 2 * frame_.margin) * scale));
+    HRESULT hr = S_OK;
+    std::wstring error;
+    if (!surface_ || FAILED(hr = surface_->Resize(frame_.width, frame_.height))) {
+        error = L"resizing the theme swatches' surface";
+    } else {
+        error = DrawInto(surface_.Get(), frame_, nullptr, hr);
+    }
+    if (!error.empty()) {
+        deviceLost_ = IsDeviceLost(hr);
+        Close();
+        if (deviceLost_ && onDeviceLost) onDeviceLost();
+        return;
+    }
+    compositor_->Commit();
+    popover_.Place(POINT{suggested.left, suggested.top}, frame_.width, frame_.height, !offscreen_);
 }
 
 void ThemeSwatchesView::UseCompositor(Compositor* compositor) {

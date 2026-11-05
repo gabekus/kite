@@ -23,7 +23,7 @@
 //   kitecore [--profile DIR] menu tab|favorite TAB_ID|folder FOLDER [--pick TITLE...]
 //   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
 //   kitecore [--profile DIR] space swipe DX [SECONDS]
-//   kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID
+//   kitecore [--profile DIR] space menu ID [--creating DRAFT]|rename ID NAME...|icon ID ICON|delete ID|folder ID
 //   kitecore [--profile DIR] space new [--about TEXT] [--theme N] NAME...
 //   kitecore [--profile DIR] space create [--about TEXT] [--theme N] [--away] [--cancel|--delete-draft] [NAME...]
 //   kitecore [--profile DIR] space plus-menu|create-page [HEIGHT] [--hit X,Y] [--swatch X,Y]
@@ -61,6 +61,9 @@
 // pane, it selects that favorite (in the space you're in); on the empty state's close button, it
 // dismisses it (the one-shot flag, written to the profile).
 // On the bar's + button, `click` prints its menu (and runs nothing: the window shows it).
+// `--creating DRAFT` (sidebar, click, space menu) says Create a Space is open making space DRAFT,
+// as the window would have it (kitecore keeps no page between runs): the + button is hidden and
+// the draft's menu can't change its icon (SpaceMenu with the creation).
 // `space new` is + › New Space with Create a Space's fields filled in and Create Space pressed:
 // the space right after the selected one, selected, with its theme (or preset N, from 1, its
 // intensity kept) and profile, and what it's for. `space create` runs the page step by step and
@@ -257,7 +260,7 @@ int Usage() {
         "       kitecore [--profile DIR] evict MAX [--shown TAB_ID] [--popup POPUP_ID=OPENER_ID]... TAB_ID=LAST_SHOWN...\n"
         "       kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]\n"
         "       kitecore [--profile DIR] space swipe DX [SECONDS]\n"
-        "       kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID\n"
+        "       kitecore [--profile DIR] space menu ID [--creating DRAFT]|rename ID NAME...|icon ID ICON|delete ID|folder ID\n"
         "       kitecore [--profile DIR] space new [--about TEXT] [--theme N] NAME...\n"
         "       kitecore [--profile DIR] space create [--about TEXT] [--theme N] [--away] [--cancel|--delete-draft] [NAME...]\n"
         "       kitecore [--profile DIR] space plus-menu|create-page [HEIGHT] [--hit X,Y] [--swatch X,Y]\n"
@@ -1011,6 +1014,20 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Create a Space open, as the window would have it (--creating DRAFT): what the sidebar's and
+    // the space's menus show for it.
+    std::optional<SpaceCreation> creating;
+    if (args[0] == "sidebar" || args[0] == "click" || args[0] == "space") {
+        for (size_t i = 1; i + 1 < args.size(); ++i) {
+            if (args[i] != "--creating") continue;
+            const std::string draft = Id(args[i + 1]);
+            if (!state.SpaceIndex(draft)) return kNotFound;
+            creating = SpaceCreation{draft, state.selectedSpaceID, false};
+            args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i + 2));
+            break;
+        }
+    }
+
     const std::string& command = args[0];
     const SearchEngine engine = SearchEngineFromRaw(state.searchEngine).value_or(SearchEngine::Google);
     bool changed = false;
@@ -1389,7 +1406,7 @@ int main(int argc, char** argv) {
                 const std::vector<SpaceCell> cells = SpaceCells(state);
                 const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
                 if (const auto press = SpaceBarPressAt(layout, cells, x, y - SpaceBarTop(values[2]))) {
-                    put("space", press->spaceID, SpaceMenuLine(SpaceMenu(state, press->spaceID)));
+                    put("space", press->spaceID, SpaceMenuLine(SpaceMenu(state, press->spaceID, creating)));
                 }
             } else if (x >= 0 && x < 240 && InFavorites(tray, 240, x, y)) {
                 if (const auto pane = FavoritePressAt(tray, x, y); pane && pane->target == FavoritePress::Target::Pane) {
@@ -1398,7 +1415,7 @@ int main(int argc, char** argv) {
             } else if (x >= 0 && x < 240 && !TopRowItemAt(topRow, x, y)) {
                 if (const auto target = SidebarMenuTargetAt(rows, 240, values[2], values[3], x, y, listTop)) {
                     switch (target->kind) {
-                    case SidebarMenuTarget::Kind::Space: put("space", target->id, SpaceMenuLine(SpaceMenu(state, target->id))); break;
+                    case SidebarMenuTarget::Kind::Space: put("space", target->id, SpaceMenuLine(SpaceMenu(state, target->id, creating))); break;
                     case SidebarMenuTarget::Kind::Tab: put("tab", target->id, SidebarMenuLine(TabMenu(state, target->id))); break;
                     case SidebarMenuTarget::Kind::Folder: put("folder", target->id, SidebarMenuLine(FolderMenu(state, target->id))); break;
                     case SidebarMenuTarget::Kind::Favorite:
@@ -1439,6 +1456,11 @@ int main(int argc, char** argv) {
             const std::vector<SpaceCell> cells = SpaceCells(state);
             const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
             const float x = values[0], y = values[1] - SpaceBarTop(values[2]);
+            // Create a Space hides the + button: a click there takes nothing.
+            if (creating && layout.plus.Contains(x, y)) {
+                std::puts(json::Write(json::Object{{"target", std::string("none")}}).c_str());
+                return kOk;
+            }
             if (layout.plus.Contains(x, y)) {
                 // The + button: its menu, which the window shows (nothing runs here).
                 const auto bindings = ReadKeyBindings(std::get<std::filesystem::path>(resolved));
@@ -1775,7 +1797,7 @@ int main(int argc, char** argv) {
             if (!state.SpaceIndex(id)) return kNotFound;
             state.SelectSpace(id);
         } else if (action == "menu" && args.size() == 3) {
-            const std::vector<SpaceMenuItem> menu = SpaceMenu(state, Id(args[2]));
+            const std::vector<SpaceMenuItem> menu = SpaceMenu(state, Id(args[2]), creating);
             if (menu.empty()) return kNotFound;
             json::Array items;
             for (const SpaceMenuItem& item : menu) {

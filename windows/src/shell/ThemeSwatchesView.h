@@ -8,8 +8,8 @@
 // minimizing, or the page closing.
 //
 // In NSPopover's place, a window of its own (shell/PopoverWindow, as W9e's icon picker's), kept
-// inside the work area of the monitor it opens on: one surface, drawn when it opens and when its
-// appearance changes. A press picks on release over the same swatch, as a plain SwiftUI Button;
+// inside the work area of the monitor it opens on: one surface, drawn when it opens, when its
+// appearance changes, and at a new monitor's scale (WM_DPICHANGED). A press picks on release over the same swatch, as a plain SwiftUI Button;
 // nothing hovers. In W21's keyboard model it holds the keyboard while it's open (the controller's
 // KeyboardField::ThemeSwatches), as the Mac's popover becomes the key window.
 
@@ -79,6 +79,8 @@ private:
     ThemeSwatchesView(HWND owner, Callbacks callbacks, bool offscreen) : popover_(owner), callbacks_(std::move(callbacks)), offscreen_(offscreen) {}
     // Its window's messages (shell/PopoverWindow takes the rest): none for the default.
     std::optional<LRESULT> Handle(UINT message, WPARAM wParam, LPARAM lParam);
+    // Its window moved to a monitor at `dpi`: drawn again at that scale, at Windows' `suggested` place.
+    void Rescale(UINT dpi, const RECT& suggested);
 
     // The window's size and its body's top-left in it, px, and the body's in the owner's client
     // area, for `row` at `scale`; with `onScreen`, moved inside the work area of the monitor the row

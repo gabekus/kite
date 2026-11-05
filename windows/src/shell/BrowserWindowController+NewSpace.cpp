@@ -113,7 +113,9 @@ void BrowserWindowController::PickSpaceTheme(size_t preset) {
 }
 
 void BrowserWindowController::CloseThemeSwatches(bool handBack) {
-    if (!swatches_ || !swatches_->IsOpen()) return;
+    // Nothing open: a hold left over (an open that never showed) goes all the same, as
+    // CloseIconPicker releases the picker's.
+    if (!swatches_ || !swatches_->IsOpen()) return ReleaseSwatchesKeyboard(handBack);
     // Its closed callback lets the keyboard go, as this close says.
     swatchesHandBack_ = handBack;
     swatches_->Close();
