@@ -31,6 +31,7 @@ constexpr float kHeaderHeight = 36;
 constexpr float kListTopSpacer = 3;
 constexpr float kHeaderIconSize = 26;
 constexpr float kHeaderIconTop = 5;
+constexpr float kHeaderIconX = 13;  // the header's icon button, from the sidebar's left
 constexpr float kRowPitch = 41;
 constexpr float kPillHeight = 36;
 constexpr float kIconInset = 9;  // the favicon's leading edge in the pill
@@ -126,10 +127,12 @@ float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height, float 
 // What's under a point of a sidebar `width`×`height` points scrolled `scroll` down, its page
 // starting at `listTop` (the Mac's
 // hitTest and acceptsPress): the address field's text button, a row's pill (tabs, folders, New
-// Tab), the space header (all of its cell) or its chevron (Collapse Pinned Tabs, while the space has
-// pinned items), or a tab's close button. The divider and the space around pills take nothing.
+// Tab), the space header (all of its cell), its icon (Change Space Icon, while the space has one)
+// or its chevron (Collapse Pinned Tabs, while the space has pinned items), or a tab's close
+// button. The divider and the space around pills take nothing.
 struct SidebarHit {
-    enum class Target { None, AddressField, Row, PinnedChevron, CloseButton, ResetButton };
+    // New targets go last: kitecore's click names them in this order (and checks the count).
+    enum class Target { None, AddressField, Row, PinnedChevron, CloseButton, ResetButton, HeaderIcon };
     Target target = Target::None;
     size_t row = 0;  // Row, PinnedChevron, CloseButton and ResetButton: which row
     bool operator==(const SidebarHit&) const = default;
@@ -153,21 +156,23 @@ struct SidebarPress {
 };
 // Nothing when the point takes no presses. An activating click (the window was in the
 // background) presses only what accepts first mouse on the Mac: the address field, the
-// chevron and a close button, not the rows.
+// chevron, the header's icon and a close button, not the rows.
 std::optional<SidebarPress> SidebarPressAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x,
                                            float y, int clicks, bool activating = false,
                                            float listTop = sidebar_metrics::kHeaderAreaHeight);
 struct SidebarTap {
-    enum class Action { None, EditAddress, TogglePinnedSection, SelectTab, SetFolderExpanded, NewTab, CloseTab, ResetTab };
+    // New actions go last, as Target's.
+    enum class Action { None, EditAddress, TogglePinnedSection, SelectTab, SetFolderExpanded, NewTab, CloseTab, ResetTab, ChangeIcon };
     Action action = Action::None;
     std::string id;         // the tab, folder or space
     bool expanded = false;  // SetFolderExpanded: open (true) or closed
     bool operator==(const SidebarTap&) const = default;
 };
 // Letting go of `press` at a point of the sidebar as it is now: the field, the chevron, a close
-// button and Back to Pinned URL act when it ends over them; a row taps when it ends inside its
-// bounds, on a single click (the second click of a double-click renames instead:
-// SidebarRenameOnPress). The space's header takes no tap (a click on its name renames).
+// button, Back to Pinned URL and the header's icon (the icon picker, SpaceHeaderRowCell.openPicker)
+// act when it ends over them; a row taps when it ends inside its bounds, on a single click (the
+// second click of a double-click renames instead: SidebarRenameOnPress). The space's header takes
+// no tap (a click on its name renames).
 SidebarTap SidebarRelease(const SidebarPress& press, const std::vector<SidebarRow>& rows, float width, float height, float scroll,
                           float x, float y, float listTop = sidebar_metrics::kHeaderAreaHeight);
 // The tab a press renames as it goes down: the second press of a double-click on a tab's row

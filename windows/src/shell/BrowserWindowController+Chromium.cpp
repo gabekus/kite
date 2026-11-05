@@ -175,12 +175,13 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     if (options_.saveLog && options_.testAutomaticDownloads) chromium_->AllowAutomaticDownloads(*options_.testAutomaticDownloads);
     if (options_.saveLog) chromium_->LogParkedPages();
     window_.onWake = [this] { chromium_->RunPending(); };
-    window_.onMinimize = [this] {
-        sidebar_->HideTip();
+    // After Init's (the tip hides, the icon picker closes), Chromium's.
+    window_.onMinimize = [this, before = std::move(window_.onMinimize)] {
+        if (before) before();
         chromium_->Minimized();
     };
-    window_.onMove = [this] {
-        sidebar_->HideTip();
+    window_.onMove = [this, before = std::move(window_.onMove)] {
+        if (before) before();
         chromium_->WindowMoved();
     };
     window_.mayClose = [this] { return MayQuit() && chromium_->MayCloseWindow(); };

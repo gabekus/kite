@@ -76,7 +76,7 @@ std::vector<SpaceMenuItem> SpaceMenu(const BrowserState& state, const std::strin
     using C = SpaceMenuItem::Command;
     const SpaceMenuItem separator{};
     return {
-        {C::ChangeIcon, "Change Space Icon\xE2\x80\xA6", false, false},
+        {C::ChangeIcon, "Change Space Icon\xE2\x80\xA6", true, false},
         {C::Rename, "Rename Space\xE2\x80\xA6", true, false},
         {C::Describe, "What's This Space For?\xE2\x80\xA6", false, false},
         {C::EditTheme, "Edit Theme Color\xE2\x80\xA6", false, false},

@@ -77,6 +77,7 @@
 #include "shell/Occlusion.h"
 #include "shell/Renderer.h"
 #include "shell/SidebarView.h"
+#include "shell/SpaceIconPickerView.h"
 #include "shell/TouchpadInput.h"
 
 namespace kite {
@@ -209,6 +210,11 @@ public:
     // `text` typed over it when given; `focused` draws it as the window with the keyboard does
     // (a quiet capture's window never has it).
     std::wstring HoldRename(size_t index, const std::optional<std::string>& text, bool focused = false);
+    // For a capture: Change Space Icon…'s picker open for space `index` (from 0, selected first)
+    // on `tab`, chosen with a click on its segment, and on the Emoji tab `category` chosen in the
+    // bar; with `cell`, that cell clicked (its icon set) and the picker closed with Escape.
+    std::wstring HoldIconPicker(size_t index, IconPickerTab tab, std::optional<size_t> cell = std::nullopt,
+                                std::optional<size_t> category = std::nullopt);
     // For a capture: what Capture composes over the frame next, space `index`'s menu opened
     // over its cell in the bar (Windows' own menu, read back as it shows).
     void HoldSpaceMenu(size_t index) { heldMenu_ = index; }
@@ -276,9 +282,9 @@ private:
     // the checkpoints so two never collide (the ones not in this branch yet are reserved):
     //   1 smoke, 2 archive, 3 settle, 4 session save (W11), 5 history (W25a), 6 Arc merge (W33a),
     //   7 sidebar toggle (W12), 8 downloads save (W20a), 9 test tab close, 10 find (W21),
-    //   11 Chromium::kStallTimer (the parked pages' stall check).
+    //   11 Chromium::kStallTimer (the parked pages' stall check), 12 Change Space Icon…'s 0.15 s (W9e).
     // 0x4B42 and up are the views' (the command bar's caret, Chromium's close deadline, the
-    // sidebar's tip and drop, the rename field's caret, the find field's caret at 0x4B47). The WM_APP messages, each its own: +1
+    // sidebar's tip and drop, the rename field's caret, the find field's caret at 0x4B47, the icon picker's at 0x4B49, W9e). The WM_APP messages, each its own: +1
     // MainWindow::kWakeMessage, +2 the command bar's redraw, +3 the sidebar's redraw, +4 favicons,
     // +5 the frame clock, +6 space icons, +7 memory pressure (W11), +8 history, +9 Import from
     // Arc's read (kArcReadMessage), +10 arcSaved, +11 downloads, +20 perf. Filter checks that
@@ -313,6 +319,10 @@ private:
     static constexpr UINT kSpaceIconsMessage = WM_APP + 6;
     // Posted by the memory watch (MemoryPressure.h), wParam the MemoryPressure level.
     static constexpr UINT kMemoryPressureMessage = WM_APP + 7;
+    // Change Space Icon… from the space's menu: the picker opens 0.15 s after it closes, on the
+    // space it selected (the Mac's openPicker(after: 0.15)). The next id after the others' (the
+    // list above; Filter checks none overlap).
+    static constexpr UINT_PTR kIconPickerTimer = 12;
     // Posted by history's worker when a profile's file has been read (HistoryStores::SetWake).
     static constexpr UINT kHistoryMessage = WM_APP + 8;
     // Posted by shell/Occlusion when its verdict changes (the shared WM_APP allocation gives P2 +12).
@@ -479,8 +489,10 @@ private:
     // Mac one first responder a window): the command bar's while it's open, else a rename's, else
     // the find bar's, else none (the page's). GiveKeyboard takes it from the others before `to`
     // takes it, so their carets go first: opening the command bar takes it from both, a rename
-    // from the find field, and Ctrl+F or a press in the find field ends a rename.
-    enum class KeyboardField { None, CommandBar, Rename, Find };
+    // from the find field, and Ctrl+F or a press in the find field ends a rename. The icon
+    // picker's Search has it from Change Space Icon…'s request (the menu's 0.15 s included) until
+    // the picker closes; anything else taking it closes the picker.
+    enum class KeyboardField { None, CommandBar, Rename, Find, IconPicker };
     KeyboardField KeyboardOwner() const;
     // With `focusFindField` false (a press in it), the find field takes it itself, the caret
     // where the press is rather than its text all selected.
@@ -507,6 +519,22 @@ private:
     void DeleteSpace(std::string spaceID);
     // A space dropped in the bar at `index` among the others (the Mac's moveSpace).
     void MoveSpace(const std::string& spaceID, size_t index);
+    // Change Space Icon… (the Mac's requestIconPicker): the space selected, then its header's
+    // picker, at once from the header's icon or 0.15 s on from the menu.
+    void RequestIconPicker(const std::string& spaceID, bool fromMenu);
+    // The picker for the selected space `spaceID`, hanging from its header's icon.
+    void ShowIconPicker(const std::string& spaceID);
+    // A cell or the bin (the picker's pick): the icon set, the picture it replaced deleted.
+    void PickIcon(const std::string& spaceID, const std::string& icon);
+    // `focusPage` false: a close caused by a press, a deactivation, a move or a minimize, after
+    // which the keyboard isn't handed to the page (onFocus does that when the window comes back).
+    void CloseIconPicker(bool focusPage = true);
+    // The picker no longer holds the keyboard. With `focusPage`, when nothing of Kite's has it and
+    // Kite's window is the one in front (unless another field is taking it now), the page gets it.
+    void ReleaseIconPickerKeyboard(bool focusPage = true);
+    // The smoke test's icon picker: opened from the menu and the header's icon, an emoji, a
+    // search, a category, a symbol and the bin picked, and the ways it closes.
+    std::wstring SmokeTestIconPicker();
     void ArchiveTab();
     void ReopenClosedTab();
     // View › Hide Sidebar and Show Sidebar (the Mac's toggleSidebar and updateSidebar): the sidebar
@@ -771,6 +799,24 @@ private:
     std::map<std::string, PageStatus> pageStatus_;
     std::unique_ptr<CaptionButtonsView> caption_;
     std::unique_ptr<CommandBarView> commandBar_;
+    // Change Space Icon…'s popover (after the sidebar, whose painter it borrows, so it goes first),
+    // and the space the menu asked it for, waiting on kIconPickerTimer.
+    std::unique_ptr<SpaceIconPickerView> iconPicker_;
+    std::optional<std::string> pendingIconPicker_;
+    // The picker holds the keyboard (KeyboardField::IconPicker): set as it's asked for, before the
+    // window takes the focus, so onFocus never hands it to the page meanwhile.
+    bool iconPickerKeyboard_ = false;
+    // GiveKeyboard is moving the keyboard to another field: the picker it closes doesn't hand
+    // the keyboard to the page.
+    bool givingKeyboard_ = false;
+    // The picker is being opened or replaced (Open closes the one before it): its keyboard is
+    // kept throughout, with no release in between.
+    bool openingIconPicker_ = false;
+    // Whether the next release may hand the keyboard to the page: not for a close caused by a
+    // press (what was pressed decides), a deactivation, a move or a minimize.
+    bool releaseFocusesPage_ = true;
+    // The smoke test's counts: the picker's keyboard released, and handed on to the page.
+    size_t pickerKeyboardReleases_ = 0;
     std::wstring barError_;
     std::unique_ptr<FindBarView> findBar_;
     std::string findTabID_;  // the tab the find bar is open on

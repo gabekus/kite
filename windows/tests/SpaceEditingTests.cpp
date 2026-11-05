@@ -276,7 +276,7 @@ TEST(theSpaceMenuHasTheMacsItemsInItsOrder) {
     BrowserState state = ThreeSpaces();
     const std::vector<SpaceMenuItem> menu = SpaceMenu(state, state.spaces[1].id);
     CHECK(SpaceMenuLine(menu) ==
-          "(Change Space Icon\xE2\x80\xA6) | Rename Space\xE2\x80\xA6 | (What's This Space For?\xE2\x80\xA6) | (Edit Theme Color\xE2\x80\xA6) | "
+          "Change Space Icon\xE2\x80\xA6 | Rename Space\xE2\x80\xA6 | (What's This Space For?\xE2\x80\xA6) | (Edit Theme Color\xE2\x80\xA6) | "
           "(Set Profile \xE2\x96\xB8) | --- | New Folder | (Live Folders \xE2\x96\xB8) | --- | Delete Space");
     CHECK(SpaceMenu(state, "NOPE").empty());
 }

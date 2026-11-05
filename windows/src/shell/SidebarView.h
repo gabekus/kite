@@ -91,6 +91,8 @@ public:
         std::function<void(const std::string& spaceID, const std::string& name)> renameSpace;
         // A click on the current space's name: its rename field (the Mac's beginRenaming).
         std::function<void(const std::string& spaceID)> beginRenaming;
+        // A click on the header's icon: Change Space Icon's picker (SpaceHeaderRowCell.openPicker).
+        std::function<void(const std::string& spaceID)> changeIcon;
         // A tab's or folder's row field committed with `name` (the Mac's RenameField.onCommit).
         std::function<void(const std::string& tabID, const std::string& name)> renameTab;
         std::function<void(const std::string& folderID, const std::string& name)> renameFolder;
@@ -241,6 +243,26 @@ public:
     void InvalidatePages();
     // On the pictures' message: the bar's cells and the headers showing those that arrived draw again.
     void PicturesArrived();
+
+    // The selected list scrolled (the wheel, a touchpad): the header the picker hangs from moved.
+    std::function<void()> onListScrolled;
+    // The icon picker open for a space (SpaceHeaderRowCell's pickerOpen): its header keeps the
+    // icon's slot, a dashed square where an icon-less space has none, for the picker to hang from.
+    void SetIconPickerSpace(const std::optional<std::string>& spaceID);
+    const std::optional<std::string>& IconPickerSpace() const { return pickerSpace_; }
+    // Where the selected space's header icon is, in the window's client points (at rest: the
+    // strip's offset left out), when `spaceID` is that space; kept below the address field when
+    // the list is scrolled past it.
+    std::optional<D2D1_RECT_F> HeaderIconRect(const std::string& spaceID);
+    // The header's icon's middle, client px (for the tests' presses).
+    std::optional<POINT> HeaderIconCentre();
+    // Whether a point (client px) is on the selected header's icon button: its icon, or the
+    // picker's placeholder while that shows (a press there is the button's, not a press outside
+    // the picker).
+    bool OverHeaderIcon(POINT client) const;
+    // The sidebar's painter and text factory, which the icon picker draws with too.
+    SpaceIconPainter* Painter() const { return icons_.get(); }
+    IDWriteFactory* DWrite() const { return dwrite_.Get(); }
 
     // Draws now if anything changed since the last draw; with `readBack`, always, also
     // copying the sidebar (premultiplied BGRA, at the window's top-left) there for --capture.
@@ -432,6 +454,12 @@ private:
     bool renamePressed_ = false;  // a left press went to the rename field
     std::map<std::string, SpaceTip> tips_;  // each space's, by id (from the last Update)
     std::optional<std::string> tipHover_;  // the cell the tip's timer, or the tip, is for
+    std::optional<std::string> pickerSpace_;  // the space whose icon picker is open
+    // Whether a header keeps its icon's slot: it has an icon, or its picker is open.
+    bool HeaderShowsIcon(const SidebarRow& row) const { return !row.icon.empty() || pickerSpace_ == row.id; }
+    // The selected page's rows as presses see them: the picker's placeholder is the icon button's
+    // (SpaceHeaderRowCell's iconButton holds it), so it's hit as an icon is.
+    std::vector<SidebarRow> PressRows() const;
 
     // Pointer.
     Actions actions_;
