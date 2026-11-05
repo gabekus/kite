@@ -99,6 +99,9 @@ public:
     // A redraw of its own (a press, a key, the wheel, the caret) found the GPU gone: the owner
     // rebuilds (and the picker closes with the old device).
     std::function<void()> onDeviceLost;
+    // For the smoke test: the next Open loses the GPU at its end, as its own redraw can (reported to
+    // onDeviceLost, whose rebuild closes the picker before Open returns).
+    void LoseDeviceInNextOpenForTest() { testLoseDeviceInOpen_ = true; }
     // The caret's blink (the owner's timer, a view's: 0x4B42–0x4B48 are taken or reserved).
     static constexpr UINT_PTR kCaretTimer = 0x4B49;
 
@@ -174,6 +177,7 @@ private:
     std::vector<bool> rowsDrawn_;
     bool gridAttached_ = false;  // the grid's clip is in the tree (the Emoji tab)
     bool deviceLost_ = false;
+    bool testLoseDeviceInOpen_ = false;
     // Each emoji's layout and where it draws in its frame (its ink centred), made once, by the
     // emoji (every cell is the same size), and kept while the picker lives (the catalog's 1101 at
     // most).

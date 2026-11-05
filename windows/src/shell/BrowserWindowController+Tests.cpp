@@ -1388,6 +1388,22 @@ std::wstring BrowserWindowController::SmokeTestIconPicker() {
         if (std::wstring problem = gaveUp(L"a press elsewhere", handoffs, false); !problem.empty()) return problem;
     }
 #endif
+    // A GPU lost inside Open (its redraw reports it, and the rebuild closes the picker before Open
+    // returns) is a failed open: no picker, so nothing holds the keyboard or the header's slot.
+    iconPicker_->LoseDeviceInNextOpenForTest();
+    RequestIconPicker(id, false);
+    if (iconPicker_->IsOpen()) return L"a picker lost inside its Open still showed";
+    if (KeyboardOwner() != KeyboardField::None || sidebar_->IconPickerSpace()) {
+        return L"a picker lost inside its Open kept the keyboard or the header's slot";
+    }
+#ifdef KITE_HAS_CEF
+    if (chromium_ && chromium_->KeepsKeyboard()) return L"a picker lost inside its Open kept the page off the keyboard";
+#endif
+    // And the rebuilt picker opens again, and Escape closes it.
+    RequestIconPicker(id, false);
+    if (!open() || KeyboardOwner() != KeyboardField::IconPicker) return L"the picker didn't open again after a lost GPU";
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+    if (iconPicker_->IsOpen() || KeyboardOwner() != KeyboardField::None) return L"Escape didn't close the picker after a lost GPU";
     state_.SetSpaceIcon(id, original);
     StateChanged();
     frames_.clear();

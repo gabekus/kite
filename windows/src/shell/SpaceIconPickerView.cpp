@@ -290,6 +290,12 @@ std::wstring SpaceIconPickerView::Open(IconPickerState state, const std::string&
         RedrawOrReport();
         if (state_) PlaceWindow();
     }
+    // The smoke test's stand-in for a GPU lost in the redraw above, which reports it.
+    if (testLoseDeviceInOpen_ && state_) {
+        testLoseDeviceInOpen_ = false;
+        deviceLost_ = true;
+        if (onDeviceLost) onDeviceLost();
+    }
     return {};
 }
 

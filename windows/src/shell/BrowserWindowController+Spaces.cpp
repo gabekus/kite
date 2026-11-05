@@ -156,10 +156,12 @@ void BrowserWindowController::ShowIconPicker(const std::string& spaceID) {
                                                    PickerRect{anchor->left, anchor->top, anchor->right, anchor->bottom}, window_.Dpi(),
                                                    dark_.value_or(true));
     openingIconPicker_ = false;
-    if (!problem.empty()) {
+    // Lost on the way (a GPU lost in Open's own redraw rebuilds everything, which closes it) is a
+    // failure too: no picker, so nothing to hold the keyboard or the header's slot.
+    if (!problem.empty() || !iconPicker_->IsOpen()) {
         sidebar_->SetIconPickerSpace(std::nullopt);
         ReleaseIconPickerKeyboard();
-        OutputDebugStringW((L"Kite: the icon picker couldn't open: " + problem + L"\n").c_str());
+        if (!problem.empty()) OutputDebugStringW((L"Kite: the icon picker couldn't open: " + problem + L"\n").c_str());
         if (iconPicker_->DeviceLost()) Draw();
         return;
     }
