@@ -25,4 +25,14 @@ inline std::string Narrow(std::wstring_view text) {
     return out;
 }
 
+// Writes `text` as UTF-8 to a standard handle, if the launcher gave us one (a GUI process
+// has no console, but a launcher that redirects stdout or stderr, like CI, gets the text).
+inline void WriteUtf8(DWORD which, std::wstring_view text) {
+    HANDLE handle = GetStdHandle(which);
+    if (!handle || handle == INVALID_HANDLE_VALUE || text.empty()) return;
+    const std::string utf8 = Narrow(text);
+    DWORD written = 0;
+    WriteFile(handle, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
+}
+
 }  // namespace kite

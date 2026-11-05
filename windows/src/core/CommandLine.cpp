@@ -22,6 +22,14 @@ size_t SwitchPrefixLength(std::string_view s) {
 
 bool Contains(const std::vector<std::string>& list, std::string_view s) { return std::find(list.begin(), list.end(), s) != list.end(); }
 
+// An integer, nothing else: an optional "-" and ASCII digits ("-120"). Chromium reads "-120" as a
+// switch, but one named "120", and none of its switches is a number; a name with a letter in it
+// isn't an integer, and neither is anything with whitespace, "=", "--" or "/".
+bool IsInteger(std::string_view s) {
+    if (s.starts_with("-")) s.remove_prefix(1);
+    return !s.empty() && std::all_of(s.begin(), s.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+
 std::string LowerAscii(std::string_view s) {
     std::string out(s);
     for (char& c : out) {
@@ -49,8 +57,10 @@ std::optional<std::string> Check(const std::vector<std::string>& arguments, cons
         if (Contains(spec.valueOptions, a) || takesSwitches) {
             if (i + 1 >= arguments.size()) return a + " takes a value";
             const std::string& value = arguments[++i];
-            // Anything else would be a switch Chromium reads, swallowed as Kite's value.
-            if (!takesSwitches && (IsChromiumSwitch(value) || Trimmed(value).starts_with("-") || Trimmed(value).starts_with("/"))) {
+            // Anything else would be a switch Chromium reads, swallowed as Kite's value. An integer
+            // is the one exception: a negative number (--swipe -120) names no switch.
+            if (!takesSwitches && !IsInteger(value) &&
+                (IsChromiumSwitch(value) || Trimmed(value).starts_with("-") || Trimmed(value).starts_with("/"))) {
                 return a + " takes a value, not " + value;
             }
             continue;

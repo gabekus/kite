@@ -1,0 +1,174 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index dd0a558c0..896edb370 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -979,6 +979,7 @@ source_set("libcef_static") {
+     "//components/printing/common",
+     "//components/printing/renderer",
+     "//components/proxy_config",
++    "//components/sessions",
+     "//components/services/print_compositor/public/cpp",
+     "//components/services/print_compositor/public/mojom",
+     "//components/update_client",
+diff --git a/include/cef_browser.h b/include/cef_browser.h
+index 1831ac202..9a7a58e10 100644
+--- a/include/cef_browser.h
++++ b/include/cef_browser.h
+@@ -1088,7 +1088,30 @@ class CefBrowserHost : public virtual CefBaseRefCounted {
+   ///
+   /*--cef(added=experimental)--*/
+   virtual void SetAxViewportCollapse(bool enabled) = 0;
++
++  ///
++  /// Returns this browser's back/forward list, with each entry's page state
++  /// (scroll position, form contents), serialized the way Chrome's session
++  /// restore does, for RestoreNavigationState in another browser. Returns
++  /// nullptr if the browser hasn't committed a navigation. Must be called on
++  /// the UI thread. (Kite)
++  ///
++  /*--cef(added=experimental)--*/
++  virtual CefRefPtr<CefBinaryValue> GetNavigationState() = 0;
++
++  ///
++  /// Restores a back/forward list from GetNavigationState and loads its
++  /// current entry. Call it on a browser created with an empty URL, before
++  /// anything else navigates it. Returns false if |state| doesn't parse. Must
++  /// be called on the UI thread. (Kite)
++  ///
++  /*--cef(added=experimental)--*/
++  virtual bool RestoreNavigationState(CefRefPtr<CefBinaryValue> state) = 0;
+ #endif
+ };
+ 
++// Kite's patch is applied: CefBrowserHost has GetNavigationState and
++// RestoreNavigationState.
++#define KITE_CEF_NAVIGATION_STATE 1
++
+ #endif  // CEF_INCLUDE_CEF_BROWSER_H_
+diff --git a/libcef/browser/browser_host_base.cc b/libcef/browser/browser_host_base.cc
+index c9f84e503..84bb74aa0 100644
+--- a/libcef/browser/browser_host_base.cc
++++ b/libcef/browser/browser_host_base.cc
+@@ -7,6 +7,7 @@
+ #include <tuple>
+ 
+ #include "base/logging.h"
++#include "base/pickle.h"
+ #include "cef/libcef/browser/browser_guest_util.h"
+ #include "cef/libcef/browser/browser_info_manager.h"
+ #include "cef/libcef/browser/browser_platform_delegate.h"
+@@ -25,6 +26,8 @@
+ #include "components/favicon/core/favicon_url.h"
+ #include "components/find_in_page/find_tab_helper.h"
+ #include "components/find_in_page/find_types.h"
++#include "components/sessions/content/content_serialized_navigation_builder.h"
++#include "components/sessions/core/serialized_navigation_entry.h"
+ #include "components/spellcheck/common/spellcheck_features.h"
+ #include "components/zoom/page_zoom.h"
+ #include "components/zoom/zoom_controller.h"
+@@ -34,6 +37,7 @@
+ #include "content/public/browser/download_request_utils.h"
+ #include "content/public/browser/file_select_listener.h"
+ #include "content/public/browser/navigation_entry.h"
++#include "content/public/browser/restore_type.h"
+ #include "content/public/browser/render_view_host.h"
+ #include "content/public/browser/render_widget_host.h"
+ #include "ui/base/resource/resource_scale_factor.h"
+@@ -990,6 +994,84 @@ void CefBrowserHostBase::SetAxViewportCollapse(bool enabled) {
+   }
+ }
+ 
++namespace {
++
++// GetNavigationState's format: version, selected index, entry count, then each
++// entry as Chrome's session restore pickles it.
++constexpr int kNavigationStateVersion = 1;
++// Per entry. An entry over it is written without its page state, as in
++// Chrome's session restore.
++constexpr int kMaxNavigationEntrySize = 1024 * 1024;
++
++}  // namespace
++
++CefRefPtr<CefBinaryValue> CefBrowserHostBase::GetNavigationState() {
++  if (!CEF_CURRENTLY_ON_UIT()) {
++    DCHECK(false) << "called on invalid thread";
++    return nullptr;
++  }
++
++  auto web_contents = GetWebContents();
++  if (!web_contents) {
++    return nullptr;
++  }
++
++  content::NavigationController& controller = web_contents->GetController();
++  content::NavigationEntry* committed = controller.GetLastCommittedEntry();
++  if (!committed || committed->IsInitialEntry()) {
++    return nullptr;
++  }
++
++  const int count = controller.GetEntryCount();
++  base::Pickle pickle;
++  pickle.WriteInt(kNavigationStateVersion);
++  pickle.WriteInt(controller.GetLastCommittedEntryIndex());
++  pickle.WriteInt(count);
++  for (int i = 0; i < count; ++i) {
++    sessions::ContentSerializedNavigationBuilder::FromNavigationEntry(
++        i, controller.GetEntryAtIndex(i))
++        .WriteToPickle(kMaxNavigationEntrySize, &pickle);
++  }
++  return CefBinaryValue::Create(pickle.data(), pickle.size());
++}
++
++bool CefBrowserHostBase::RestoreNavigationState(
++    CefRefPtr<CefBinaryValue> state) {
++  if (!CEF_CURRENTLY_ON_UIT()) {
++    DCHECK(false) << "called on invalid thread";
++    return false;
++  }
++
++  auto web_contents = GetWebContents();
++  if (!web_contents || !state || state->GetSize() == 0) {
++    return false;
++  }
++
++  auto iterator = base::PickleIterator::WithData(
++      base::span(static_cast<const uint8_t*>(state->GetRawData()),
++                 state->GetSize()));
++  int version = 0, selected = 0, count = 0;
++  if (!iterator.ReadInt(&version) || version != kNavigationStateVersion ||
++      !iterator.ReadInt(&selected) || !iterator.ReadInt(&count) ||
++      count <= 0 || selected < 0 || selected >= count) {
++    return false;
++  }
++
++  std::vector<sessions::SerializedNavigationEntry> navigations(count);
++  for (auto& navigation : navigations) {
++    if (!navigation.ReadFromPickle(&iterator)) {
++      return false;
++    }
++  }
++
++  auto entries = sessions::ContentSerializedNavigationBuilder::
++      ToNavigationEntries(navigations, web_contents->GetBrowserContext());
++  content::NavigationController& controller = web_contents->GetController();
++  controller.Restore(selected, content::RestoreType::kRestored, &entries);
++  controller.LoadIfNecessary();
++  return true;
++}
++
+ void CefBrowserHostBase::ReplaceMisspelling(const CefString& word) {
+   if (!CEF_CURRENTLY_ON_UIT()) {
+     CEF_POST_TASK(
+diff --git a/libcef/browser/browser_host_base.h b/libcef/browser/browser_host_base.h
+index f984a1542..10f993f2e 100644
+--- a/libcef/browser/browser_host_base.h
++++ b/libcef/browser/browser_host_base.h
+@@ -280,6 +280,8 @@ class CefBrowserHostBase : public CefBrowserHost,
+   bool IsRenderProcessUnresponsive() override;
+   cef_runtime_style_t GetRuntimeStyle() override;
+   void SetAxViewportCollapse(bool enabled) override;
++  CefRefPtr<CefBinaryValue> GetNavigationState() override;
++  bool RestoreNavigationState(CefRefPtr<CefBinaryValue> state) override;
+ 
+   // CefBrowser methods:
+   bool IsValid() override;
