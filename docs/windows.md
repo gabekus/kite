@@ -1510,7 +1510,9 @@ Windows that means:
       Chromium show a page (its browser made, its placement going hidden, a main frame's load
       starting or ending; never a subframe's), a page Kite has hidden then is re-hidden at
       0.5, 1, 1.5, 3 and 6 s, asking nothing of the page. A new one of these restarts the
-      schedule rather than adding to it, so a page has one step pending at a time. They're
+      schedule rather than adding to it, so a page has one step pending at a time, but a step
+      due within 0.5 s stays and the schedule goes on from the new anchor after it, so anchors
+      coming faster than that can't put the first re-hide off for good. They're
       anchors, not causes: what makes Chromium show such a page isn't known. It was seen 0.4 to
       1.3 s after one of them, `document.open()` pages and a page whose load never ends
       included.
@@ -1556,7 +1558,8 @@ Windows that means:
     main-frame load starting or ending), with Kite's listener gone (`document.open()`) or its
     renderer lying, draws until the next anchor or verdict change. None was seen; every show
     measured came 0.4 to 1.3 s after an anchor. A page that keeps making anchors (navigating
-    every half second) keeps putting the steps off, and past 16 re-hides in 10 s waits.
+    itself over and over) is re-hidden about every half second, and past 16 re-hides in 10 s
+    waits.
 
 ## Measuring performance
 

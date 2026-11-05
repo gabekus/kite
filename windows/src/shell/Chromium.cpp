@@ -78,6 +78,8 @@ constexpr ULONGLONG kRehideSettleMs = 250;
 // makes Chromium show it; it was seen 0.4 to 1.3 s after them (measured), with or without a
 // load end.
 constexpr int64_t kRehideScheduleMs[] = {500, 1000, 1500, 3000, 6000};
+// A new anchor keeps a step due this soon rather than restarting the schedule (Shared::Anchor).
+constexpr ULONGLONG kKeepDueStepMs = 500;
 // At most this many re-hides of a page in any 10 s, whatever its renderer says: two
 // navigations' schedules (start and end each restart it) and their reports.
 constexpr size_t kMaxRehidesPer10s = 16;
@@ -190,6 +192,8 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
         bool saysVisible = false;
         std::deque<ULONGLONG> rehides;
         uint64_t schedule = 0;  // Anchor's latest; an older schedule's steps do nothing
+        ULONGLONG anchoredAt = 0;  // when the latest anchor came (GetTickCount64)
+        ULONGLONG stepDue = 0;     // when the pending step fires; 0 for none
         bool recheckDue = false;
         // Find asked for before the browser existed (Ctrl+F straight after a new tab): run once
         // it's made, the last one asked for.
@@ -592,23 +596,39 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
     // Something happened that might make Chromium show the page (kRehideScheduleMs): from now,
     // a page Kite has hidden then is hidden again at each step, asking nothing of the page, which
     // may have dropped the listener (document.open) or be compromised. A new anchor restarts the
-    // schedule, never adds one: one step is pending per page at a time. Past the last step, a
-    // page whose listener is gone could still draw (docs/windows.md, P2's Known gaps).
+    // schedule, never adds one: one step is pending per page at a time. But a step due within
+    // kKeepDueStepMs stays, and the schedule goes on from the new anchor after it, so anchors
+    // coming faster than that (a page navigating itself over and over) can't put the first
+    // re-hide off for good. Past the last step, a page whose listener is gone could still draw
+    // (docs/windows.md, P2's Known gaps).
     void Anchor(const std::string& tabID, Page& page) {
         if (!page.browser) return;
-        ScheduleStep(tabID, page.browser, ++page.schedule, 0);
+        const ULONGLONG now = GetTickCount64();
+        page.anchoredAt = now;
+        if (page.stepDue && page.stepDue <= now + kKeepDueStepMs) return;  // it stays; the rest follows the new anchor
+        ScheduleStep(tabID, page.browser, ++page.schedule, page, kRehideScheduleMs[0]);
     }
     void Anchored(const std::string& tabID, const CefRefPtr<CefBrowser>& browser) {
         if (Page* page = PageFor(tabID, browser)) Anchor(tabID, *page);
     }
-    void ScheduleStep(const std::string& tabID, const CefRefPtr<CefBrowser>& browser, uint64_t schedule, size_t step) {
-        const int64_t delay = kRehideScheduleMs[step] - (step ? kRehideScheduleMs[step - 1] : 0);
-        CefPostDelayedTask(TID_UI, new FunctionTask([shared = shared_from_this(), tabID, browser, schedule, step] {
-            shared->Post([shared, tabID, browser, schedule, step] {
+    // The pending step, `delay` ms from now. When it fires: the re-hide, then the first step of
+    // the latest anchor's schedule still ahead, if any.
+    void ScheduleStep(const std::string& tabID, const CefRefPtr<CefBrowser>& browser, uint64_t schedule, Page& page, int64_t delay) {
+        page.stepDue = GetTickCount64() + static_cast<ULONGLONG>(delay);
+        CefPostDelayedTask(TID_UI, new FunctionTask([shared = shared_from_this(), tabID, browser, schedule] {
+            shared->Post([shared, tabID, browser, schedule] {
                 Page* p = shared->PageFor(tabID, browser);
                 if (!p || p->schedule != schedule) return;  // closed, or restarted since
+                p->stepDue = 0;
                 if (p->hwnd && !p->placed.visible) Rehide(*p);
-                if (step + 1 < std::size(kRehideScheduleMs)) shared->ScheduleStep(tabID, browser, schedule, step + 1);
+                const ULONGLONG now = GetTickCount64();
+                for (const int64_t step : kRehideScheduleMs) {
+                    const ULONGLONG due = p->anchoredAt + static_cast<ULONGLONG>(step);
+                    if (due > now) {
+                        shared->ScheduleStep(tabID, browser, schedule, *p, static_cast<int64_t>(due - now));
+                        break;
+                    }
+                }
             });
         }), delay);
     }
