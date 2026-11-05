@@ -392,16 +392,7 @@ void Run::RunPhase(const std::string& name, const std::function<void(Phase&)>& b
         Sample();
         body(phase);
         Sample();
-        if (markNow("phase-end:" + name, phase.endMark)) {
-            // A command Kite accepted but then couldn't run (its state had moved on).
-            for (const Mark& m : log_->marks) {
-                if (m.name == "control-refused" && m.qpc >= phase.beginMark.qpc && m.qpc <= phase.endMark.qpc) {
-                    Fail("Kite refused the command " + m.detail + " when it came to run it, in " + name);
-                    break;
-                }
-            }
-            phases_.push_back(std::move(phase));
-        }
+        if (markNow("phase-end:" + name, phase.endMark)) phases_.push_back(std::move(phase));
     }
     current_ = nullptr;
 }
@@ -597,6 +588,19 @@ Value Run::Go(std::wstring& error, bool& kiteFailed) {
         if (!std::any_of(log_->inputs.begin(), log_->inputs.end(), [&](const InputRecord& r) { return r.kind == "move" && inside(hover, r.inputQpc); })) {
             Fail("hover logged no pointer moves");
         }
+    }
+
+    // A command Kite accepted but couldn't run when it came to it (its state had moved on),
+    // anywhere in the run, in a phase or between them.
+    log_->Pump();
+    for (const Mark& m : log_->marks) {
+        if (m.name != "control-refused") continue;
+        std::string where = "between phases";
+        for (const Phase& p : phases_) {
+            if (m.qpc >= p.beginMark.qpc && m.qpc <= p.endMark.qpc) where = "in " + p.name;
+        }
+        Fail("Kite refused the command " + m.detail + " when it came to run it, " + where);
+        break;
     }
 
     // Shutdown: one WM_CLOSE, then every process gone (30 s at most, then the job is ended).
@@ -1100,24 +1104,13 @@ int wmain(int argc, wchar_t** argv) {
     if (options.kite.empty()) return Usage("--kite is required");
     if (!std::filesystem::exists(options.kite)) return Usage("no Kite.exe at " + Utf8(options.kite));
     if (!options.phases.empty() && options.scenario != "standard") return Usage("--phases picks from the standard scenario's phases");
-    // The same allow-list Kite.exe applies, before anything starts, with the reason.
-    for (size_t start = 0; start < options.switches.size();) {
-        if (options.switches[start] == L' ') {
-            ++start;
-            continue;
-        }
-        const size_t end = std::min(options.switches.find(L' ', start), options.switches.size());
-        const std::string token = Narrow(options.switches.substr(start, end - start));
-        start = end;
-        if (!token.starts_with("--") || token.size() < 3) return Usage("--chromium-switches takes --name or --name=value, not " + token);
-        const std::string entry = token.substr(2);
-        const size_t equals = entry.find('=');
-        const std::string name = entry.substr(0, equals), value = equals == std::string::npos ? "" : entry.substr(equals + 1);
-        if (!kite::perf::AllowedChromiumSwitch(name, value)) {
-            return Usage("--chromium-switches: " + token +
-                         " isn't on Kite's allow-list (shell/PerfProtocol.h): only switches that measure Chromium without weakening "
-                         "the sandbox, site isolation or web security, and only the listed features for --disable-features");
-        }
+    // The same parser and allow-list Kite.exe applies (shell/PerfProtocol.h), before anything
+    // starts, with the reason.
+    if (std::wstring refused; !options.switches.empty() && !kite::perf::ParseChromiumSwitches(options.switches, refused)) {
+        return Usage("--chromium-switches: " + Narrow(refused) +
+                     " isn't --name[=value] on Kite's allow-list (shell/PerfProtocol.h): only switches that measure Chromium "
+                     "without weakening the sandbox, site isolation or web security, and only the listed features for "
+                     "--disable-features");
     }
     if (options.label.empty()) options.label = options.scenario;
     if (options.out.empty()) options.out = Widen("kiteperf-" + options.label + ".json");
