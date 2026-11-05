@@ -492,7 +492,8 @@ Spaces, pinned tabs, folders, splits, favorites, profiles, the archive, Site
 Search and Arc's settings go into `session.json`, in the Mac's format;
 shortcut changes into `keybindings.json` (read at launch) and Air Traffic
 Control routes into `LinkRouting.json`, as the Mac's stores keep them.
-The session is saved first, then the other two files. Arc's unnamed spaces stay
+The session is saved first, then the other two files, both on the session
+writer's thread (`SessionWriter::SaveThen`). Arc's unnamed spaces stay
 out, as the Mac's dialog starts, unless Arc has no named space at all (Arc for
 Windows often has one unnamed space holding everything): then they come over, a
 deliberate difference from the Mac. A sidebar item listed twice or in a loop
@@ -510,22 +511,41 @@ Arc's browsing history comes too (W33a; `core/ArcHistoryImport`, ported from
 KiteMac's `ArcHistoryImport.swift` and `BrowserHistoryImport.chromium`): each
 profile's `User Data\<profile>\History`, Chromium's database, read as the
 Mac's query reads its `urls` table (`hidden = 0 AND last_visit_time > 0`, the
-newest 20,000 by last visit, then the web pages among them, "" for no title, a
-count of at least 1), and merged with `History.merge` into the history of the
-Kite profile that Arc profile's spaces went to; Kite's 20,000-page cap applies
-after the merge, and importing again doubles nothing. The Mac copies the file
-and opens the copy with the system's SQLite. Kite for Windows reads it in place
-with its own reader, a page at a time (`sqlite::FilePages`, `ScanTable`), keeping
-the newest rows in a heap as they stream past: a synthetic 200 MB History
-(360,000 pages, `scripts/make-history.py --synthetic`) imports in 0.4 s with a
-42 MB peak working set (warm cache). Since it isn't a copy, a profile's history
-is left out, with the reason in the confirmation and the summary, while Arc may
-be changing it: Arc running (Chromium's `User Data\lockfile`), a hot
-`History-journal`, a `History-wal` that isn't empty (the reader doesn't read
-write-ahead log frames; Arc for Windows keeps a rollback journal), or the file
-changing during the read. Merging 20,000 pages costs the UI thread about 40 ms,
-once, after the confirmation. `kitecore import-arc` prints the history counts:
-rows found, pages imported and new, and what was left out by reason.
+newest 20,000 by last visit, then the web pages among them, each URL as the
+Mac's `URL(string:)` writes it, `History::Normalized`; "" for no title, a count
+of at least 1), and merged with `History.merge` into the history of the Kite
+profile that Arc profile's spaces went to, once the session that names that
+profile is saved; Kite's 20,000-page cap applies after the merge, and importing
+again doubles nothing. Kite for Windows reads the file in place with its own
+reader, a page at a time (`sqlite::FilePages`, `ScanTable`), keeping the newest
+rows in a heap as they stream past: a synthetic 201 MB History (360,000 pages,
+`scripts/make-history.py --synthetic`) imports in about 0.45 s with a 35–45 MB
+peak working set (warm cache). Since it isn't a copy, a profile's history (and
+Web Data) is left out, with the reason in the confirmation and the summary,
+while Arc may be changing it (`DatabaseBusy`): a live writer of the database,
+its journal, its log or `User Data\lockfile` (a probe that opens each for
+reading while denying writers, before and after the read: *Arc is writing it*),
+a hot journal or a `History-wal` that isn't empty with no writer (*Arc didn't
+finish its last write*), or the file changing during the read. A lockfile
+nobody holds is nothing. Merging costs the UI thread once, after the session
+is saved: about 45 ms for 20,000 pages, 65–135 ms into a full history, about
+50 ms more for each further profile. `kitecore import-arc` prints the history
+counts: rows found, pages imported and new, and what was left out by reason.
+
+Known differences from the Mac's history import:
+
+- The Mac copies History (with its `-journal` and `-wal`) and opens the copy
+  with SQLite, which rolls a hot journal back and reads a WAL's frames; Kite for
+  Windows refuses both (*open and quit Arc once*). After Arc shuts down for good
+  (2026-12-22) that can't be cleared, so the follow-up is reading through them:
+  an in-memory rollback of the journal's pages, or the WAL's committed frames.
+- While Arc is writing (running), the Mac reads its copy; Kite for Windows
+  refuses.
+- A row over 4 MiB, or a URL over Chromium's 2 MB, is left out.
+- Rows tied on last visit at the 20,000th place go by row order (SQLite leaves
+  it unspecified); two rows that are one URL once normalized are one page.
+- A history store whose file isn't read yet queues an import and merges it
+  once it is, so its new pages aren't counted in the summary.
 
 ## Refresh rate
 
