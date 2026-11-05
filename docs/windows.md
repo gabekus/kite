@@ -442,9 +442,9 @@ same theme) is at the display's highest rate too, as the Mac's settle on its clo
 is. A gesture whose pointer is off the sidebar before it's decided (over the page,
 or the command bar opened), and a contact that rests past 10 s, are released
 (`ReleaseContact`), so the rest is the system's wheel messages for whatever is under
-the pointer. Core's `TouchpadPhases` turns the viewport's statuses and content reports into the Mac's phases and sends the viewport back over
-its content's middle after a gesture that moved it, the next gesture counting from
-there however late DirectManipulation applies it (its tests replay the sequences:
+the pointer. Core's `TouchpadPhases` turns the viewport's statuses and content
+reports into the Mac's phases and sends the viewport back over its content's middle
+after a gesture that moved it, the next gesture counting from there however late DirectManipulation applies it (its tests replay the sequences:
 momentum, fingers down mid-momentum, the system taking the viewport, the reset's own
 pass). `--capture FILE --swipe DX` holds a swipe DX points in, and the smoke test
 feeds the same handler a vertical gesture, one whose pointer has moved over the page
@@ -452,8 +452,8 @@ before it's decided, a vertical one that carries on over the page (still the lis
 its momentum too, and its contact kept), one decided vertical over the top row
 (released), a swipe that lands, one caught mid-settle, a short one that stays and a
 flick back; then, with a third space added for it, a keyboard switch overtaking a
-landing, a space selected under the swipe, a release in a hidden window (it lands at once), the
-rubber band before the first space and a crossfade's boost ending while the
+landing, a space selected under the swipe, a release in a hidden window (it lands at
+once), the rubber band before the first space and a crossfade's boost ending while the
 touchpad's frames go on; and with the other spaces set aside, both ways on one
 space. `--frame-log` also records every status, content report, release and poll,
 for a run on a real touchpad. Known differences:
