@@ -77,7 +77,9 @@ public enum UIInspection: Hashable, Sendable {
     /// The view a click at `point` would reach (AppKit's hit test from the window's frame view, as a mouse down
     /// takes), then each of its superviews. Nothing is sent: no event, no hover, no move.
     case hit(window: Int?, point: UIPoint)
-    case input(window: Int?, event: UIInputEvent)
+    /// `expect` (a click or drag only): the view its mouse down must reach, checked by Kite just before it sends it;
+    /// otherwise nothing is sent and the call fails.
+    case input(window: Int?, event: UIInputEvent, expect: UIHitExpectation? = nil)
     /// The menu bar: every item's path, shortcut, action, target, enabled and hidden state.
     case menu(match: String?)
     /// Recent key presses and where each went: menu item, responder, text input.
@@ -155,7 +157,15 @@ public enum UIInspection: Hashable, Sendable {
             guard let point = try a.point("point") else { throw Invalid("\"point\" is required: [x, y] in window points.") }
             self = .hit(window: window, point: point)
         case "input":
-            self = .input(window: window, event: try a.inputEvent())
+            let event = try a.inputEvent()
+            let expect = try a.hitExpectation()
+            if expect != nil {
+                switch event {
+                case .click, .drag: break
+                default: throw Invalid("\"expect\" goes with a click or a drag only.")
+                }
+            }
+            self = .input(window: window, event: event, expect: expect)
         case "menu":
             self = .menu(match: try a.nonEmpty("match"))
         case "key_log":
@@ -213,6 +223,10 @@ public enum UIInspection: Hashable, Sendable {
                 "keys": ["type": "string", "description": "input/trace: keys like \"cmd+s\" or \"cmd+t Escape\"."],
                 "text": ["type": "string", "description": "input: text to type."],
                 "click": point,
+                "expect": [
+                    "type": "object",
+                    "description": "input click or drag: the view its mouse down must reach, {\"path\": tree path, \"class\": class name, \"inside\": [classes the view hit may be instead, inside it]}; checked just before sending, and nothing is sent if it doesn't.",
+                ],
                 "button": ["type": "string", "enum": ["left", "right", "middle"]],
                 "count": ["type": "integer", "minimum": 1, "maximum": 3],
                 "modifiers": ["type": "string", "description": "input click, pointer moves: e.g. \"cmd\" or \"shift+alt\"."],
@@ -313,6 +327,24 @@ private struct UIArguments {
             throw Invalid("\"modifiers\" must look like \"cmd\", \"shift\" or \"cmd+shift\".")
         }
         return chord.modifiers
+    }
+
+    func hitExpectation() throws -> UIHitExpectation? {
+        guard let value = values["expect"], !value.isNull else { return nil }
+        let usage = "\"expect\" is {\"path\": \"0.3.1\", \"class\": \"ClassName\", \"inside\": [\"ClassName\", …]}."
+        guard let object = value.objectValue, Set(object.keys).isSubset(of: ["path", "class", "inside"]),
+              let path = object["path"]?.stringValue, !path.isEmpty,
+              path.split(separator: ".", omittingEmptySubsequences: false).allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isNumber } }),
+              let className = object["class"]?.stringValue, !className.isEmpty else { throw Invalid(usage) }
+        var inside: Set<String> = []
+        if let list = object["inside"], !list.isNull {
+            guard let items = list.arrayValue else { throw Invalid(usage) }
+            for item in items {
+                guard let name = item.stringValue, !name.isEmpty else { throw Invalid(usage) }
+                inside.insert(name)
+            }
+        }
+        return UIHitExpectation(path: path, className: className, inside: inside)
     }
 
     func inputEvent() throws -> UIInputEvent {
