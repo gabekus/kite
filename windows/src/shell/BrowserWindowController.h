@@ -191,11 +191,16 @@ private:
     // (BrowserWindowController's Layout.defaultSidebarWidth, and ArcMetrics.Content.inset in core's
     // sidebar_toggle::kContentInset).
     static constexpr int kSidebarWidth = 240;
-    // The window's timers and posted messages. The WM_APP messages, each its own: +1
+    // The window's timers and posted messages. The timers' ids on this window, shared out across
+    // the checkpoints so two never collide (the ones not in this branch yet are reserved):
+    //   1 smoke, 2 archive, 3 settle, 4 session save (W11), 5 history (W25a), 6 Arc merge (W33a),
+    //   7 sidebar toggle (W12), 8 downloads save (W20a).
+    // 0x4B42 and up are the views' (the command bar's caret, Chromium's close deadline, the
+    // sidebar's tip and drop, the rename field's caret). The WM_APP messages, each its own: +1
     // MainWindow::kWakeMessage, +2 the command bar's redraw, +3 the sidebar's redraw, +4 favicons,
     // +5 the frame clock, +6 space icons, +7 memory pressure (W11), +8 history, +9 Import from
-    // Arc's read (kArcReadMessage), +10 arcSaved, +11 downloads, +20 perf. Filter checks that the
-    // ids it sees don't overlap.
+    // Arc's read (kArcReadMessage), +10 arcSaved, +11 downloads, +20 perf. Filter checks that
+    // neither the timers nor the messages it sees overlap.
     static constexpr UINT_PTR kSmokeTimer = 1;
     // The auto-archive's pass, every 15 minutes as on the Mac (AppDelegate's archiveTimer).
     static constexpr UINT_PTR kArchiveTimer = 2;
