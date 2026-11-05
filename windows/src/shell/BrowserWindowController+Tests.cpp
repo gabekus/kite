@@ -1274,8 +1274,13 @@ std::wstring BrowserWindowController::SmokeTestTabEditing() {
     // Back to Pinned URL: a pinned tab off its page shows the button on hover, and a click on it
     // takes the tab home; Reset all tabs in this Space does the same for every one.
     state_.Select(original);
+    // Reset all tabs in this Space is the space's: another pinned tab already off its page (a
+    // session's, as three-spaces.json's Docs) enables it before this one is pinned, so only a change
+    // counts.
+    const bool spaceDrifted = CommandEnabled("resetSpace");
     RunCommand("pinTab");
-    if (CommandEnabled("resetTab") || CommandEnabled("resetSpace")) return done(L"Reset was enabled for a tab on its pinned page");
+    if (CommandEnabled("resetTab")) return done(L"Reset was enabled for a tab on its pinned page");
+    if (CommandEnabled("resetSpace") != spaceDrifted) return done(L"pinning a tab on its page changed Reset all tabs in this Space");
     state_.TabAt(*state_.Location(original))->url = "data:text/html,away";
     StateChanged();
     if (!CommandEnabled("resetTab") || !CommandEnabled("resetSpace") || !CommandEnabled("replacePinnedTab")) {
