@@ -1460,7 +1460,7 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
                                     Chromium::kStallTimer,
 #endif
                                     0x4B43,           CommandBarView::kCaretTimer, SidebarView::kTipTimer, SidebarView::kDropTimer,
-                                    SpaceRenameField::kCaretTimer, SpaceIconPickerView::kCaretTimer};
+                                    RenameField::kCaretTimer, SpaceIconPickerView::kCaretTimer};
         for (size_t i = 0; i < std::size(ids); ++i) {
             for (size_t j = i + 1; j < std::size(ids); ++j) {
                 if (ids[i] == ids[j]) return false;
