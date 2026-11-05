@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "core/Models.h"
@@ -61,6 +62,24 @@ public:
     // a critically damped spring with this response, as SwiftUI's
     // .spring(response:dampingFraction: 1) draws it. Under a tenth of a point is at rest (0).
     static double Settle(double from, double elapsed, double response);
+
+    // The spaces a swipe pages between, by id, as they were when it began (SpaceSwipe.Neighbours).
+    // They can change under a swipe (a space reordered or deleted, another selected), so the
+    // window looks them up by id on every event rather than by the index it started from.
+    struct Neighbours {
+        std::optional<std::string> previous;
+        std::string current;
+        std::optional<std::string> next;
+        // None when there's no selected space to swipe from.
+        static std::optional<Neighbours> Make(const std::vector<std::string>& spaces, size_t selected);
+        // The space `direction` (-1, 0 or +1, as Direction and Landing) points at.
+        std::optional<std::string> Towards(int direction) const;
+        // The space towards `direction` while the swipe still holds: none once the selection has
+        // moved off the space it began on, or the space it points at has gone or no longer sits
+        // next to it on that side (the pages on screen would be the wrong ones).
+        std::optional<std::string> Target(int direction, const std::vector<std::string>& spaces, const std::string& selected) const;
+        bool operator==(const Neighbours&) const = default;
+    };
 
     // The spaces whose pages are built, by index: the selected one and its neighbours, so a
     // swipe has both sides ready the moment it starts. While the pages settle after a switch

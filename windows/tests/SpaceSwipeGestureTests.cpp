@@ -168,3 +168,37 @@ TEST(pastTheLastSpaceTheSwipeRubberBandsAndStays) {
     gesture.Handle(At(Phase::Ended, 0, 0, 1), true, spaces.Begin());
     CHECK(gesture.Landing() == 0);
 }
+
+// SpaceSwipeController.cancel's abandonedGesture: the spaces changed under the swipe, which is
+// dropped; the rest of that gesture shows nothing, and the next one swipes again.
+TEST(anAbandonedSwipeSwallowsTheRestOfItsGesture) {
+    SpaceSwipeGesture gesture;
+    Spaces spaces;
+    gesture.Handle(At(Phase::Began, 0, 0, 0), true, spaces.Begin());
+    CHECK(gesture.Handle(At(Phase::Changed, -30, 0, 0.016), true, spaces.Begin()) == Step::Move);
+    gesture.Abandon();
+    CHECK(!gesture.Swiping() && gesture.Landing() == 0);
+    CHECK(gesture.Handle(At(Phase::Changed, -30, 0, 0.032), true, spaces.Begin()) == Step::Swallow);
+    CHECK(!gesture.Swiping() && spaces.begun == 1);
+    CHECK(gesture.Handle(At(Phase::Ended, 0, 0, 0.048), true, spaces.Begin()) == Step::Swallow);
+    // Its momentum is swallowed too, then a new gesture is a swipe of its own.
+    CHECK(gesture.Handle(At(Phase::Momentum, -20, 0, 0.064), true, spaces.Begin()) == Step::Swallow);
+    CHECK(gesture.Handle(At(Phase::MomentumEnded, 0, 0, 0.08), true, spaces.Begin()) == Step::Swallow);
+    gesture.Handle(At(Phase::Began, 0, 0, 1), true, spaces.Begin());
+    CHECK(gesture.Handle(At(Phase::Changed, -30, 0, 1.016), true, spaces.Begin()) == Step::Move);
+    CHECK(spaces.begun == 2);
+}
+
+TEST(anAbandonedGestureWhoseEndNeverCameEndsAtTheNextOne) {
+    SpaceSwipeGesture gesture;
+    Spaces spaces;
+    gesture.Handle(At(Phase::Began, 0, 0, 0), true, spaces.Begin());
+    gesture.Handle(At(Phase::Changed, -30, 0, 0.016), true, spaces.Begin());
+    gesture.Abandon();
+    gesture.Handle(At(Phase::Began, 0, 0, 1), true, spaces.Begin());
+    CHECK(gesture.Handle(At(Phase::Changed, -30, 0, 1.016), true, spaces.Begin()) == Step::Move);
+    // Abandoning nothing changes nothing.
+    SpaceSwipeGesture idle;
+    idle.Abandon();
+    CHECK(idle.Handle(At(Phase::Began, 0, 0, 0), true, spaces.Begin()) == Step::Pass);
+}
