@@ -146,6 +146,16 @@ jobs:
           # The headless model reads what the app wrote.
           & windows/build/Release/kitecore.exe --profile $profileDir state
           if ($LASTEXITCODE -ne 0) { throw "kitecore state exited with $LASTEXITCODE" }
+          # The smoke test above also failed unless Chromium's native occlusion tracker was off
+          # (Kite's default, P12b). On a test profile --chromium-switches turns it back on, and
+          # the smoke test then fails unless it's on and not also off; on and off at once is
+          # refused.
+          New-Item -ItemType File -Path (Join-Path $profileDir 'kite-test-profile') | Out-Null
+          $code = Run-Kite @('--smoke-test', '--chromium-switches', '--enable-features=CalculateNativeWinOcclusion')
+          if ($code -ne 0) { throw "--smoke-test with the tracker turned back on exited with $code" }
+          $code = Run-Kite @('--smoke-test', '--chromium-switches', '"--enable-features=CalculateNativeWinOcclusion --disable-features=CalculateNativeWinOcclusion"')
+          if ($code -ne 1) { throw "the tracker both on and off: expected exit 1, got $code" }
+          Remove-Item (Join-Path $profileDir 'kite-test-profile')
 
           # A flag without its value is a usage error (exit 1), never a normal launch.
           $code = Run-Kite @('--capture')

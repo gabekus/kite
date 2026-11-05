@@ -39,6 +39,7 @@
 //   kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]
 //   kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY
 //   kitecore occlusion WINDOW [--monitor RECT]... [OCCLUDER...]
+//   kitecore chromium-switches [--existing-enable LIST] [--existing-disable LIST] [--NAME[=VALUE]...]
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
 // an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
@@ -144,6 +145,13 @@
 // `occlusion` is shell/Occlusion's sum: how many of the window's pixels show on the monitors
 // (default one 1920×1080 at 0,0) past the occluders, and whether that's covered. Rects are
 // screen pixels LEFT,TOP,RIGHT,BOTTOM.
+// `chromium-switches` prints what Kite.exe adds to Chromium's browser-process command line
+// (core/ChromiumSwitches.h) for --chromium-switches' entries (Kite.exe also checks them against
+// its allow-list, shell/PerfProtocol.h; this doesn't), given the enable-features and
+// disable-features CEF already has (default none): `switches` in the order they're appended,
+// the resulting `enableFeatures` and `disableFeatures`, and `problem`, what --smoke-test would
+// say of those lists ("" for nothing). With no entries, Kite's defaults: Chromium's native
+// occlusion tracker off.
 
 #include <algorithm>
 #include <charconv>
@@ -159,6 +167,7 @@
 #include <vector>
 
 #include "core/ArcImportController.h"
+#include "core/ChromiumSwitches.h"
 #include "core/CommandBar.h"
 #include "core/Downloads.h"
 #include "core/DownloadsModel.h"
@@ -242,7 +251,8 @@ int Usage() {
         "                |merge FILE|remove URL...|remove-since SECONDS|all|clear [--chromium PROFILE]\n"
         "       kitecore history chromium-date MICROSECONDS\n"
         "       kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]\n"
-        "       kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY\n",
+        "       kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY\n"
+        "       kitecore chromium-switches [--existing-enable LIST] [--existing-disable LIST] [--NAME[=VALUE]...]\n",
         stderr);
     return kUsage;
 }
@@ -858,6 +868,35 @@ int main(int argc, char** argv) {
             if (error != std::errc() || end != args[1].data() + args[1].size() || tabs < 0 || tabs > 100000) return Usage();
         }
         return SaveBenchCommand(tabs);
+    }
+
+    if (args[0] == "chromium-switches") {
+        // Needs no profile: the switches Kite.exe gives Chromium (core/ChromiumSwitches.h).
+        std::string enable, disable;
+        std::vector<std::string> requested;
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--existing-enable" || args[i] == "--existing-disable") {
+                if (i + 1 >= args.size()) return Usage();
+                (args[i] == "--existing-enable" ? enable : disable) = args[i + 1];
+                ++i;
+                continue;
+            }
+            if (!args[i].starts_with("--") || args[i].size() == 2 || args[i][2] == '=') return Usage();
+            requested.push_back(args[i].substr(2));
+        }
+        json::Array switches;
+        for (const std::string& entry : chromium_switches::BrowserSwitches(requested, enable, disable)) {
+            // Appended in order, each replacing a switch of its name: the lists as Chromium reads them.
+            if (entry.starts_with("enable-features=")) enable = entry.substr(16);
+            if (entry.starts_with("disable-features=")) disable = entry.substr(17);
+            switches.push_back(json::Value(entry));
+        }
+        std::puts(json::Write(json::Object{{"switches", json::Value(std::move(switches))},
+                                           {"enableFeatures", json::Value(enable)},
+                                           {"disableFeatures", json::Value(disable)},
+                                           {"problem", json::Value(chromium_switches::FeatureProblem(requested, enable, disable))}})
+                      .c_str());
+        return kOk;
     }
 
     if (args[0] == "occlusion") {

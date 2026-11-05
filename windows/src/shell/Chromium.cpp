@@ -29,6 +29,7 @@
 #include "include/cef_request_handler.h"
 #include "include/cef_task.h"
 #include "include/cef_v8.h"
+#include "core/ChromiumSwitches.h"
 #include "core/Json.h"
 #include "core/DownloadsModel.h"
 #include "core/LiveTabPolicy.h"
@@ -690,24 +691,19 @@ public:
     // yet, so one try covers both, and the browsers Chromium makes itself (the Mac's
     // KCDefaultClient) too.
     void OnContextInitialized() override { ApplyEnergySaver(*shared_); }
-    // --chromium-switches, in the browser process only (its helpers get what Chromium passes on).
+    // Kite's defaults (Chromium's native occlusion tracker off) and --chromium-switches, in the
+    // browser process only (its helpers get what Chromium passes on). The feature lists add to
+    // what's already there (CEF's own), never replace it (core/ChromiumSwitches.h).
     void OnBeforeCommandLineProcessing(const CefString& processType, CefRefPtr<CefCommandLine> commandLine) override {
         if (!processType.empty()) return;
-        for (const std::string& entry : switches_) {
+        const auto existing = [&](const char* name) {
+            return commandLine->HasSwitch(name) ? commandLine->GetSwitchValue(name).ToString() : std::string();
+        };
+        for (const std::string& entry :
+             chromium_switches::BrowserSwitches(switches_, existing("enable-features"), existing("disable-features"))) {
             const size_t equals = entry.find('=');
-            if (equals == std::string::npos) {
-                commandLine->AppendSwitch(entry);
-                continue;
-            }
-            const std::string name = entry.substr(0, equals);
-            std::string value = entry.substr(equals + 1);
-            // A feature list adds to what's already there (CEF's own, or an earlier entry), never
-            // replaces it: appending a switch again replaces its value.
-            if (name == "disable-features" && commandLine->HasSwitch(name)) {
-                const std::string existing = commandLine->GetSwitchValue(name).ToString();
-                if (!existing.empty()) value = existing + "," + value;
-            }
-            commandLine->AppendSwitchWithValue(name, value);
+            if (equals == std::string::npos) commandLine->AppendSwitch(entry);
+            else commandLine->AppendSwitchWithValue(entry.substr(0, equals), entry.substr(equals + 1));
         }
     }
 
@@ -1916,6 +1912,19 @@ void Chromium::ReadEnergySaver(std::function<void(std::optional<int> state)> don
         CefRefPtr<CefValue> value = prefs ? prefs->GetPreference(kEnergySaverPref) : nullptr;
         if (value && value->GetType() == VTYPE_INT) state = value->GetInt();
         shared->Post([done = std::move(done), state] { done(state); });
+    });
+}
+
+void Chromium::ReadFeatureLists(std::function<void(std::string enable, std::string disable)> done) {
+    RunOnCefUIThread([shared = shared_, done = std::move(done)]() mutable {
+        std::string enable, disable;
+        if (CefRefPtr<CefCommandLine> line = CefCommandLine::GetGlobalCommandLine()) {
+            enable = line->GetSwitchValue("enable-features").ToString();
+            disable = line->GetSwitchValue("disable-features").ToString();
+        }
+        shared->Post([done = std::move(done), enable = std::move(enable), disable = std::move(disable)]() mutable {
+            done(std::move(enable), std::move(disable));
+        });
     });
 }
 

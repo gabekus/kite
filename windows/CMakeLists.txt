@@ -42,6 +42,7 @@ add_library(KiteCoreWin STATIC
   src/core/ArcImportFiles.cpp
   src/core/ColorSpaces.cpp
   src/core/CommandBar.cpp
+  src/core/ChromiumSwitches.cpp
   src/core/CommandLine.cpp
   src/core/Downloads.cpp
   src/core/DownloadsModel.cpp
@@ -345,6 +346,7 @@ add_executable(KiteCoreTests
   tests/ArcHistoryImportTests.cpp
   tests/ArcImportTests.cpp
   tests/ArcImportFilesTests.cpp
+  tests/ChromiumSwitchesTests.cpp
   tests/CommandBarTests.cpp
   tests/CommandLineTests.cpp
   tests/DownloadsTests.cpp

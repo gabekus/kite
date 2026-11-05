@@ -315,6 +315,27 @@ expect_exit_early(1 occlusion)
 expect_exit_early(1 occlusion 0,0,10)
 expect_exit_early(1 occlusion 0,0,10,10 --monitor)
 
+# Chromium's browser-process switches (core/ChromiumSwitches.h): the native occlusion tracker
+# off by default, merged after CEF's own disable-features; --enable-features turns it back on and
+# takes it out of disable-features, so it's never both.
+kitecore(defaults chromium-switches)
+kitecore(merged chromium-switches --existing-disable A --disable-gpu-vsync --disable-features=BackForwardCache)
+kitecore(on chromium-switches --existing-disable CalculateNativeWinOcclusion,A --enable-features=CalculateNativeWinOcclusion)
+string(JSON defaultsOff GET "${defaults}" disableFeatures)
+string(JSON defaultsProblem GET "${defaults}" problem)
+string(JSON mergedFirst GET "${merged}" switches 0)
+string(JSON mergedOff GET "${merged}" disableFeatures)
+string(JSON onOn GET "${on}" enableFeatures)
+string(JSON onOff GET "${on}" disableFeatures)
+string(JSON onProblem GET "${on}" problem)
+if(NOT defaultsOff STREQUAL "CalculateNativeWinOcclusion" OR NOT defaultsProblem STREQUAL "" OR NOT mergedFirst STREQUAL "disable-gpu-vsync"
+   OR NOT mergedOff STREQUAL "A,CalculateNativeWinOcclusion,BackForwardCache" OR NOT onOn STREQUAL "CalculateNativeWinOcclusion"
+   OR NOT onOff STREQUAL "A" OR NOT onProblem STREQUAL "")
+  message(FATAL_ERROR "chromium-switches gave '${defaults}', '${merged}', '${on}'")
+endif()
+expect_exit_early(1 chromium-switches disable-gpu)
+expect_exit_early(1 chromium-switches --existing-enable)
+
 # A middle click (Windows' close-a-tab click, not the Mac's): on a tab's row it closes the tab as
 # its close button does, today's going and a pinned one (in a folder too) only unloading; on a
 # folder, the header, the top row, the space bar or a favorite, nothing. On the UI gate's sidebar
