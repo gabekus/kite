@@ -20,6 +20,20 @@
 //   Kite.exe --capture FILE.png --space-tip N
 //                            the same with space N's tip (1-based) over its cell, at rest (the
 //                            cell's hover backing isn't drawn: no pointer is on it).
+//   Kite.exe --capture FILE.png --swipe DX
+//                            the same with two fingers on a touchpad holding the sidebar's
+//                            content dragged DX points sideways (positive towards the previous
+//                            space): the pages, the bar's light and the theme as they follow.
+//   Kite.exe --capture FILE.png --space-drag N,X | --space-drop N,X
+//                            the same with space N's cell in the bar (from 1) pressed and dragged
+//                            to X points along the bar and held there (the ghost and the open
+//                            slot), or let go there and settled (the space moved).
+//   Kite.exe --capture FILE.png --space-menu N
+//                            the same with space N's menu open over its cell, as a right-click
+//                            there opens it (Windows' own menu, read back from its window).
+//   Kite.exe --capture FILE.png --rename-space N
+//                            the same with space N's header renaming it (Rename Space…), its name
+//                            all selected.
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
@@ -47,6 +61,7 @@
 #include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -59,6 +74,7 @@
 #include <variant>
 #include <vector>
 
+#include "core/CommandLine.h"
 #include "core/KeyBindings.h"
 #include "core/SessionStore.h"
 #include "core/SessionWriter.h"
@@ -168,26 +184,42 @@ int Fail(bool quiet, const std::wstring& message, int code) {
     return code;
 }
 
+#ifdef KITE_HAS_CEF
+// Ends the process now, with `code` (Fail has already written why): what CEF asks for when
+// CefInitialize fails.
+[[noreturn]] void ExitNow(int code) {
+    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
+    ExitProcess(static_cast<UINT>(code));  // not reached
+}
+#endif
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
+    const std::vector<std::wstring> args = Arguments();
+    std::vector<std::string> utf8;
+    for (const std::wstring& a : args) utf8.push_back(Narrow(a));
 #ifdef KITE_HAS_CEF
-    // Chromium starts Kite.exe again for its renderer, GPU and utility processes.
+    // Chromium starts Kite.exe again for its renderer, GPU and utility processes, and reads the
+    // raw command line in each (CefExecuteProcess parses GetCommandLineW itself). Those launches
+    // are Chromium's own, so a --type spelled any other way, or naming a helper Kite doesn't run
+    // (a crashpad handler, say), is someone else's: it ends here.
+    if (const auto type = kite::command_line::ChromiumProcessType(utf8)) {
+        static constexpr std::string_view kHelpers[] = {"renderer", "gpu-process", "utility"};
+        if (!type->canonical || std::find(std::begin(kHelpers), std::end(kHelpers), type->value) == std::end(kHelpers)) return kUsage;
+    }
     if (const int code = kite::RunChromiumSubprocess(instance); code >= 0) return code;
 #endif
-    const std::vector<std::wstring> args = Arguments();
-    // An unknown flag (a typo like --smoketest or --capture-scale=2) is an error, never a
-    // normal launch on the real profile.
-    for (size_t i = 0; i < args.size(); ++i) {
-        const std::wstring& a = args[i];
-        if (a == L"--smoke-test" || a == L"--backdrop-test") continue;
-        if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar" || a == L"--frame-log" ||
-            a == L"--space-tip" || a == L"--save-log" || a == L"--occlusion-log") {
-            ++i;
-            continue;
-        }
-        if (a.starts_with(L"-")) return Fail(true, L"unknown option " + a, kUsage);
-    }
+    // Kite takes only its own flags and their values: anything else is an error, never a normal
+    // launch on the real profile (a typo like --smoketest or --capture-scale=2). Chromium reads
+    // the raw line too, before CEF stops it (command_line_args_disabled stops only the browser
+    // process's later reads), trimming Unicode whitespace and taking "--", "-" and "/" as switch
+    // prefixes; so no argument Chromium could read as a switch gets past this, not even as a
+    // value (core/CommandLine.h).
+    kite::command_line::Spec spec;
+    spec.flags = {"--smoke-test", "--backdrop-test"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--save-log", "--occlusion-log"};
+    if (const auto problem = kite::command_line::Check(utf8, spec)) return Fail(true, Widen(*problem), kUsage);
     if (HasFlag(args, L"--backdrop-test")) {
         // Touches no profile, so it needs no KITE_SUPPORT_PATH.
         std::wstring report, problem;
@@ -237,6 +269,56 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         tipIndex = static_cast<size_t>(std::stoi(*tipOption.value) - 1);
     }
     if (tipOption.present && !captureOption.present) return Fail(quiet, L"--space-tip only goes with --capture", kUsage);
+    const OptionValue swipeOption = Option(args, L"--swipe");
+    std::optional<double> swipe;
+    if (swipeOption.present) {
+        const std::string text = swipeOption.value ? Narrow(*swipeOption.value) : std::string();
+        double dx = 0;
+        auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), dx);
+        if (text.empty() || error != std::errc() || end != text.data() + text.size() || dx == 0 || !(std::abs(dx) <= 10000)) {
+            return Fail(quiet, L"--swipe takes the points the fingers dragged, -10000 to 10000 and not 0", kUsage);
+        }
+        swipe = dx;
+    }
+    if (swipeOption.present && !captureOption.present) return Fail(quiet, L"--swipe only goes with --capture", kUsage);
+    // The space bar's and the header's editing states: a space's place (from 1), and for a drag
+    // the points along the bar it's dragged to.
+    const auto place = [](const std::wstring& text) -> std::optional<size_t> {
+        if (text.empty() || text.size() > 3 || !std::all_of(text.begin(), text.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; })) {
+            return std::nullopt;
+        }
+        const int n = std::stoi(text);
+        return n >= 1 ? std::optional<size_t>(static_cast<size_t>(n - 1)) : std::nullopt;
+    };
+    struct HeldDrag {
+        size_t index;
+        float x;
+        bool drop;
+    };
+    std::optional<HeldDrag> heldDrag;
+    for (const wchar_t* flag : {L"--space-drag", L"--space-drop"}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        const std::string text = option.value ? Narrow(*option.value) : std::string();
+        const size_t comma = text.find(',');
+        float x = 0;
+        const char* begin = comma == std::string::npos ? nullptr : text.data() + comma + 1;
+        const auto [end, failed] = begin ? std::from_chars(begin, text.data() + text.size(), x) : std::from_chars_result{nullptr, std::errc::invalid_argument};
+        const std::optional<size_t> index = comma == std::string::npos ? std::nullopt : place(Widen(text.substr(0, comma)));
+        if (!index || failed != std::errc() || end != text.data() + text.size() || !(std::abs(x) <= 10000) || heldDrag) {
+            return Fail(quiet, std::wstring(flag) + L" takes a space's place from 1 and the points along the bar, N,X (one of --space-drag and --space-drop)", kUsage);
+        }
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+        heldDrag = HeldDrag{*index, x, std::wstring(flag) == L"--space-drop"};
+    }
+    std::optional<size_t> heldMenu, heldRename;
+    for (const auto& [flag, out] : {std::pair<const wchar_t*, std::optional<size_t>*>{L"--space-menu", &heldMenu}, {L"--rename-space", &heldRename}}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        *out = option.value ? place(*option.value) : std::nullopt;
+        if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a space's place, from 1", kUsage);
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+    }
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
     const OptionValue occlusionLogOption = Option(args, L"--occlusion-log");
@@ -397,10 +479,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         // Another Kite has this profile and was told to come forward; this one leaves quietly,
         // before its window shows or it saves anything. A test run that found one tested
         // nothing, so it fails.
+        // CefInitialize returned false either way: CEF requires the process to end at once, with
+        // no CefShutdown and none of Chromium's or Kite's teardown after it.
         case kite::Chromium::StartResult::AlreadyRunning:
-            return quiet ? Fail(quiet, L"another Kite has this profile open", kWindowFailed) : kOk;
+            ExitNow(quiet ? Fail(quiet, L"another Kite has this profile open", kWindowFailed) : kOk);
         case kite::Chromium::StartResult::Failed:
-            return Fail(quiet, L"Kite couldn't start Chromium: " + problem, kWindowFailed);
+            ExitNow(Fail(quiet, L"Kite couldn't start Chromium: " + problem, kWindowFailed));
         }
     }
 #endif
@@ -422,7 +506,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         kite::Pixels pixels;
         const std::optional<std::string> barText =
             commandBarOption.present ? std::optional<std::string>(Narrow(*commandBarOption.value)) : std::nullopt;
-        captureError = controller->Capture(pixels, barText, tipIndex);
+        if (swipe) captureError = controller->HoldSwipe(*swipe);
+        if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
+        if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
+        if (heldMenu) controller->HoldSpaceMenu(*heldMenu);
+        if (captureError.empty()) captureError = controller->Capture(pixels, barText, tipIndex);
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);
         PostMessageW(window.Handle(), WM_CLOSE, 0, 0);
     }

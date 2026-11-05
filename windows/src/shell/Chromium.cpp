@@ -784,6 +784,10 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
     // CEF app built without the sandbox.
     settings.multi_threaded_message_loop = true;
     settings.no_sandbox = true;
+    // Kite.exe's own command line is Kite's (main.cpp), never Chromium switches: without this,
+    // CEF reads it as the browser process's, so `Kite.exe /remote-debugging-port=9222` opened a
+    // debugging port. The helpers still get theirs, from the command lines Chromium gives them.
+    settings.command_line_args_disabled = true;
     settings.log_severity = LOGSEVERITY_WARNING;
     settings.persist_session_cookies = true;
     settings.background_color = kPageBackdrop;

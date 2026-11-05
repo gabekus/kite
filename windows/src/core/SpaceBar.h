@@ -36,6 +36,10 @@ constexpr float kBackingOpacity = 0.08f;  // labelColor's, under the pointer (no
 constexpr float kTipGap = 2;
 constexpr double kTipDelay = 0.4;
 constexpr float kDragDistance = 4;  // a press that moves this far drags (DragGesture(minimumDistance: 4))
+// A drag's cells sliding aside and its drop landing (SpaceBarView.slide, unmeasured in Arc), on
+// Core Animation's ease-in-ease-out.
+constexpr double kReorderSlide = 0.2;
+constexpr double kReorderTiming[4] = {0.42, 0.0, 0.58, 1.0};
 }  // namespace space_bar_metrics
 
 // The bar's top in points from the sidebar's top, for a sidebar `height` points tall: where the
@@ -104,8 +108,8 @@ struct SpaceCell {
 std::vector<SpaceCell> SpaceCells(const BrowserState& state);
 
 // A press on a space's cell (the Mac's SpaceCellView mouseDown): the space, where it went down
-// (bar points), and whether it has moved far enough to be a drag, which reorders (W9d) rather
-// than selects.
+// (bar points), and whether it has moved far enough to be a drag, which reorders (SpaceDrag)
+// rather than selects.
 struct SpaceBarPress {
     std::string spaceID;
     float x = 0, y = 0;
@@ -119,6 +123,43 @@ void SpaceBarMove(SpaceBarPress& press, float x, float y);
 // pressed, as it is now (mouseUp's bounds.contains), within the strip's viewport.
 std::optional<std::string> SpaceBarRelease(const SpaceBarPress& press, const SpaceBarLayout& layout, const std::vector<SpaceCell>& cells,
                                            float x, float y);
+
+// A space's icon dragged to a new place in the strip (the Mac's SpaceBarView.Reorder, cellDragged
+// and cellDragEnded): picked up once its press has moved kDragDistance, it follows the pointer as
+// a ghost (the cell it left shows nothing), the others slide aside for an open slot where it
+// aims, and a drop lands it there, or back where it came from off the strip. Positions are bar
+// points, as SpaceBarPress's.
+struct SpaceDrag {
+    std::string spaceID;
+    size_t from = 0;                     // its place when picked up
+    float startX = 0, startY = 0;        // where the press went down
+    float x = 0, y = 0;                  // where the pointer is
+    float pickedUpX = 0, pickedUpY = 0;  // its cell's centre when picked up
+    // The open slot (its place among the others), none while the pointer is off the strip.
+    std::optional<size_t> target;
+    bool landing = false;  // dropped: settling into `target`, then moved there
+    bool operator==(const SpaceDrag&) const = default;
+};
+// The drag a press becomes once it's dragged: its open slot its own place until the pointer
+// says otherwise. None with a single space (nothing to reorder) or a press that isn't a drag.
+std::optional<SpaceDrag> BeginSpaceDrag(const SpaceBarLayout& layout, const std::vector<SpaceCell>& cells, const SpaceBarPress& press);
+// The slot a pointer at (x, y) aims at among `count` spaces: Arc's dock takes the drop anywhere
+// over the strip's scroll view, which spans the bar's height between its end buttons (the
+// room); off it, none.
+std::optional<size_t> SpaceDropTarget(const SpaceBarLayout& layout, size_t count, float x, float y);
+// The pointer moved to (x, y): the ghost follows it. True when the open slot moved (the cells
+// slide). A landing drag doesn't move.
+bool MoveSpaceDrag(SpaceDrag& drag, const SpaceBarLayout& layout, size_t count, float x, float y);
+// Let go at (x, y): the slot it lands in (where it aims, else where it came from), and it's
+// landing. The space moves there (BrowserState::MoveSpace) once it has settled.
+size_t DropSpaceDrag(SpaceDrag& drag, const SpaceBarLayout& layout, size_t count, float x, float y);
+// Where each of `ids`' cells sits while `drag` is on (SpaceBarView.placeCells): the others in
+// the slots SpaceReorder::Slots gives them, the dragged one at the open slot (it shows nothing
+// there), or the last slot while there's none. The slots are the layout's cells, on its pixels.
+std::vector<BarRect> SpaceDragCells(const SpaceBarLayout& layout, const std::vector<std::string>& ids, const SpaceDrag& drag);
+// The ghost's frame: a cell's size following the pointer from where it was picked up, or once
+// landing, its slot.
+BarRect SpaceDragGhost(const SpaceBarLayout& layout, const SpaceDrag& drag);
 
 // How lit a cell is along a settle of the pages from offset `from` to `to` (SpaceSwipe::Highlight
 // with the strip at v), as `rest + slope * s` with s = v - to, the settle's own value (core's

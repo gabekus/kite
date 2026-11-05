@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "core/Models.h"
@@ -62,6 +63,24 @@ public:
     // .spring(response:dampingFraction: 1) draws it. Under a tenth of a point is at rest (0).
     static double Settle(double from, double elapsed, double response);
 
+    // The spaces a swipe pages between, by id, as they were when it began (SpaceSwipe.Neighbours).
+    // They can change under a swipe (a space reordered or deleted, another selected), so the
+    // window looks them up by id on every event rather than by the index it started from.
+    struct Neighbours {
+        std::optional<std::string> previous;
+        std::string current;
+        std::optional<std::string> next;
+        // None when there's no selected space to swipe from.
+        static std::optional<Neighbours> Make(const std::vector<std::string>& spaces, size_t selected);
+        // The space `direction` (-1, 0 or +1, as Direction and Landing) points at.
+        std::optional<std::string> Towards(int direction) const;
+        // The space towards `direction` while the swipe still holds: none once the selection has
+        // moved off the space it began on, or the space it points at has gone or no longer sits
+        // next to it on that side (the pages on screen would be the wrong ones).
+        std::optional<std::string> Target(int direction, const std::vector<std::string>& spaces, const std::string& selected) const;
+        bool operator==(const Neighbours&) const = default;
+    };
+
     // The spaces whose pages are built, by index: the selected one and its neighbours, so a
     // swipe has both sides ready the moment it starts. While the pages settle after a switch
     // they stay those of `anchor`, the space the switch left, plus the new one; a far jump
@@ -110,23 +129,39 @@ constexpr double kDefaultTiming[4] = {0.25, 0.1, 0.25, 1.0};
 double ThemeCrossfadeProgress(double elapsed, double startProgress = 0);
 
 // The backdrop's crossfade from one theme to another (the same theme at rest): the Mac's
-// ThemeView.setTheme and draw. Times are seconds on the caller's clock.
+// ThemeView.setTheme and draw, and its swipe's setInteractiveTheme and finishInteractiveTheme.
+// Times are seconds on the caller's clock.
 struct ThemeCrossfade {
     Theme from, to;
     std::optional<double> start;  // while fading
+    // Where the fade starts from: 0 for a switch, the swipe's progress when one is let go.
+    double startProgress = 0;
+    // While fingers swipe between spaces: the crossfade follows them, not the clock.
+    std::optional<float> interactive;
 
     ThemeCrossfade() = default;
     explicit ThemeCrossfade(const Theme& theme) : from(theme), to(theme) {}
     // Fades to `theme` from `now`. Interrupted before halfway it carries on from the side that
     // was showing more (to = from), as ThemeView. True when a fade began; false for the theme
-    // it's already going to, or back to the one it came from before halfway (nothing to fade).
+    // it's already going to, back to the one it came from before halfway (nothing to fade), or
+    // mid-swipe (the swipe's release settles it).
     bool Set(const Theme& theme, double now);
-    // At `theme` at once (nothing on screen to fade).
+    // At `theme` at once (nothing on screen to fade), a swipe's crossfade too.
     void Snap(const Theme& theme);
+    // Mid-swipe: `fromTheme` crossfaded towards `toTheme` by `progress` (clamped to 0...1),
+    // held until the swipe moves again. Between one theme and itself the progress stays put, so
+    // nothing draws again for it.
+    void SetInteractive(const Theme& fromTheme, const Theme& toTheme, float progress);
+    // The swipe was let go at `now`: settles on `theme`, either side of the crossfade, with the
+    // switch's spring from wherever the fingers left it (at once when there's nothing to fade).
+    // A third theme (a space selected under the swipe) fades in as a switch would, from the
+    // side that was showing more.
+    void FinishInteractive(const Theme& theme, double now);
     // The progress for a frame shown at `time`, 0...1; from kThemeDuration on, 1 and at rest on
     // `to`.
     float Progress(double time);
     bool Fading() const { return start.has_value(); }
+    bool Interactive() const { return interactive.has_value(); }
 };
 
 }  // namespace kite

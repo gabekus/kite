@@ -11,8 +11,8 @@
 // click outside the panel closes it, as on the Mac.
 //
 // The text field is Kite's own, since a Win32 edit control can't draw into DirectComposition:
-// DirectWrite text, Windows' editing keys, the clipboard, and IME through the system's
-// composition window placed at the caret.
+// DirectWrite text, Windows' editing keys and the clipboard (shell/TextEditing, shell/TextLine), and IME
+// through the system's composition window placed at the caret.
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -33,6 +33,7 @@
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
 #include "shell/Renderer.h"
+#include "shell/TextLine.h"
 
 namespace kite {
 
@@ -103,9 +104,10 @@ public:
 
     // Posted to the window for the next draw (Invalidate).
     static constexpr UINT kRedrawMessage = WM_APP + 2;
+    static constexpr UINT_PTR kCaretTimer = 0x4B42;  // 'KB'; Chromium's close deadline is 0x4B43
 
 private:
-    CommandBarView(HWND window, Callbacks callbacks) : window_(window), callbacks_(std::move(callbacks)) {}
+    CommandBarView(HWND window, Callbacks callbacks) : window_(window), callbacks_(std::move(callbacks)), line_(window, kCaretTimer) {}
 
     struct RowText {
         Microsoft::WRL::ComPtr<IDWriteTextLayout> title, detail;
@@ -134,21 +136,11 @@ private:
     void SetRows(std::vector<CommandSuggestion> rows);
     void BuildRowText();
 
-    // Text editing.
+    // Text editing (shell/TextEditing): what an edit changed redraws the field.
     void SetText(std::wstring text, size_t caret, size_t anchor);
     void TextChanged();
     void SelectionChanged();
-    void Insert(std::wstring_view text);
-    void DeleteRange(size_t from, size_t to);
-    bool HasSelection() const { return caret_ != anchor_; }
-    size_t SelectionStart() const { return caret_ < anchor_ ? caret_ : anchor_; }
-    size_t SelectionEnd() const { return caret_ < anchor_ ? anchor_ : caret_; }
-    size_t PreviousCharacter(size_t at) const;
-    size_t NextCharacter(size_t at) const;
-    size_t PreviousWord(size_t at) const;
-    size_t NextWord(size_t at) const;
-    void Copy() const;
-    void Paste();
+    void Apply(TextEditing::Change change);
     bool KeyDown(UINT virtualKey, bool ctrl, bool shift);
     void Character(wchar_t character);
     void Commit();
@@ -160,9 +152,7 @@ private:
     int RowAt(D2D1_POINT_2F point) const;
     bool InField(D2D1_POINT_2F point) const;
     float TextTop() const;     // where the field's text layout goes, for its baseline at 38.5
-    float LineHeight() const;  // the field's line, for the caret
     size_t TextIndexAt(float x) const;
-    float CaretX() const;
     void KeepCaretVisible();
     void PlaceImeWindow();
     void RestartCaretBlink();
@@ -205,13 +195,8 @@ private:
     Microsoft::WRL::ComPtr<ID2D1PathGeometry> outsidePanel_;
     float shadowWidth_ = -1, shadowHeight_ = -1;
     UINT shadowDpi_ = 0;
-    // The caret: a small surface in its own visual over the panel, so a blink is a Commit,
-    // not a redraw.
-    Microsoft::WRL::ComPtr<IDCompositionVisual> caretVisual_;
-    Microsoft::WRL::ComPtr<IDCompositionSurface> caretSurface_;
-    UINT caretWidth_ = 0, caretHeight_ = 0;
-    D2D1_COLOR_F caretColor_{};
-    bool caretAdded_ = false;
+    // The caret: its own visual over the panel, so a blink is a Commit, not a redraw.
+    CaretVisual caret_;
     bool deviceLost_ = false;
     bool redrawPosted_ = false;
     bool drawOnRestore_ = false;  // a draw came while the window was minimized
@@ -221,17 +206,11 @@ private:
     CommandBarMode mode_ = CommandBarMode::NewTab;
     Look look_;
     Geometry geometry_;
-    std::wstring text_;
-    std::vector<bool> characterStarts_;  // per UTF-16 unit of text_, and one past the end
-    size_t caret_ = 0, anchor_ = 0;      // UTF-16 offsets
-    wchar_t highSurrogate_ = 0;
-    float scrollX_ = 0;                  // how far the text is scrolled left, in points
-    Microsoft::WRL::ComPtr<IDWriteTextLayout> textLayout_, placeholderLayout_;
+    TextLine line_;  // the field's text, caret, selection, layout and blink
+    Microsoft::WRL::ComPtr<IDWriteTextLayout> placeholderLayout_;
     std::vector<CommandSuggestion> rows_;
     std::vector<RowText> rowText_;
     int highlighted_ = 0;
-    bool caretOn_ = true;
-    ULONGLONG blinkSince_ = 0;  // Windows stops the blink after a while (SPI_GETCARETTIMEOUT)
     bool focused_ = true;
     bool composing_ = false;  // an IME composition is open
     bool selecting_ = false;  // dragging a selection in the field

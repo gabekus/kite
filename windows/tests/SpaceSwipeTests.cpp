@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <vector>
 
 #include "Check.h"
@@ -246,4 +247,128 @@ TEST(theSettlesSegmentsFollowTheSpring) {
     CHECK(SettleDuration(240, space_motion::kPageResponse) < 0.2);
     CHECK(SettleDuration(0.05, space_motion::kPageResponse) == 0);
     CHECK(SettleSegments(0, space_motion::kPageResponse).empty());
+}
+
+// The crossfade following a swipe (ThemeView.setInteractiveTheme, finishInteractiveTheme).
+
+TEST(aSwipesCrossfadeFollowsTheFingers) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
+    ThemeCrossfade fade(a);
+    fade.SetInteractive(a, b, 0.4f);
+    CHECK(fade.Interactive() && !fade.Fading());
+    CHECK(fade.from == a && fade.to == b);
+    // Held whatever the time: it moves when the fingers do.
+    CHECK(fade.Progress(10) == 0.4f && fade.Progress(20) == 0.4f);
+    fade.SetInteractive(a, b, 1.5f);
+    CHECK(fade.Progress(0) == 1);
+    // A switch mid-swipe waits for the release.
+    CHECK(!fade.Set(Solid(0x445566), 1));
+    CHECK(fade.Interactive() && fade.to == b);
+}
+
+TEST(aReleasedSwipeSettlesFromWhereTheFingersLeftIt) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
+    ThemeCrossfade fade(a);
+    fade.SetInteractive(a, b, 0.6f);
+    fade.FinishInteractive(b, 5);
+    CHECK(!fade.Interactive() && fade.Fading());
+    CHECK(fade.from == a && fade.to == b);
+    CHECK(std::abs(fade.Progress(5) - 0.6f) < 1e-6);
+    CHECK(fade.Progress(5.05) > 0.6f);
+    CHECK(fade.Progress(5.5) == 1);
+    CHECK(!fade.Fading() && fade.from == b && fade.to == b);
+    // The next switch starts from nothing again.
+    CHECK(fade.Set(a, 6));
+    CHECK(fade.Progress(6) == 0);
+}
+
+TEST(aSwipeLetGoBackSettlesOnTheThemeItLeft) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
+    ThemeCrossfade fade(a);
+    fade.SetInteractive(a, b, 0.3f);
+    fade.FinishInteractive(a, 1);
+    // The same mix read from the other end: 30% of the way to `b` is 70% of the way back.
+    CHECK(fade.from == b && fade.to == a);
+    CHECK(std::abs(fade.Progress(1) - 0.7f) < 1e-6);
+    CHECK(fade.Progress(1.5) == 1);
+    CHECK(fade.from == a && fade.to == a);
+}
+
+TEST(aSwipeBetweenOneThemeFadesNothing) {
+    const Theme a = Solid(0x112233);
+    ThemeCrossfade fade(a);
+    // Past the last space (or to a neighbour with the same theme): the progress never moves.
+    fade.SetInteractive(a, a, 0.2f);
+    const float held = fade.Progress(0);
+    fade.SetInteractive(a, a, 0.7f);
+    CHECK(fade.Progress(0) == held);
+    // And the release is at rest at once: no frames for a fade between identical themes.
+    fade.FinishInteractive(a, 1);
+    CHECK(!fade.Fading() && !fade.Interactive() && fade.from == a && fade.to == a && fade.Progress(1) == 1);
+}
+
+TEST(aSpaceSelectedUnderTheSwipeSettlesOnItsTheme) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC), c = Solid(0x445566);
+    // Swiping from a towards b, 30% in, when the keyboard selects c: c fades in from a.
+    ThemeCrossfade fade(a);
+    fade.SetInteractive(a, b, 0.3f);
+    fade.FinishInteractive(c, 2);
+    CHECK(fade.from == a && fade.to == c && fade.Fading() && fade.Progress(2) == 0);
+    CHECK(fade.Progress(3) == 1 && fade.from == c);
+    // Past halfway it comes from b.
+    fade.SetInteractive(c, b, 0.8f);
+    fade.FinishInteractive(a, 4);
+    CHECK(fade.from == b && fade.to == a);
+}
+
+TEST(aSwipeLetGoAlreadyThereFadesNothing) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
+    ThemeCrossfade fade(a);
+    fade.SetInteractive(a, b, 1.0f);
+    fade.FinishInteractive(b, 1);
+    CHECK(!fade.Fading() && fade.from == b && fade.to == b);
+    fade.SetInteractive(b, a, 0.0f);
+    fade.FinishInteractive(b, 2);
+    CHECK(!fade.Fading() && fade.from == b && fade.to == b);
+}
+
+TEST(aSnapEndsASwipesCrossfade) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
+    ThemeCrossfade fade(a);
+    fade.SetInteractive(a, b, 0.5f);
+    fade.Snap(b);
+    CHECK(!fade.Interactive() && !fade.Fading() && fade.from == b && fade.to == b && fade.Progress(0) == 1);
+}
+
+// SpacesTests' neighbour guard (SpaceSwipe.Neighbours), which the controller checks on every
+// swipe event and its release.
+TEST(neighboursAreCapturedByID) {
+    const std::vector<std::string> ids{"A", "B", "C"};
+    const auto first = SpaceSwipe::Neighbours::Make(ids, 0);
+    CHECK(first && !first->previous && first->current == "A" && first->next == "B");
+    const auto last = SpaceSwipe::Neighbours::Make(ids, 2);
+    CHECK(last && last->Towards(-1) == "B" && !last->Towards(1));
+    CHECK(!SpaceSwipe::Neighbours::Make(ids, 3));
+    CHECK(!SpaceSwipe::Neighbours::Make({}, 0));
+}
+
+TEST(aSwipeWhoseSpacesChangedHasNoTarget) {
+    const std::vector<std::string> ids{"A", "B", "C"};
+    const SpaceSwipe::Neighbours swipe = *SpaceSwipe::Neighbours::Make(ids, 2);
+    CHECK(swipe.Target(-1, ids, "C") == "B");
+    // The neighbour was deleted mid-swipe: the old index would now be out of range.
+    CHECK(!swipe.Target(-1, {"A", "C"}, "C"));
+    // The space it started on was deleted.
+    CHECK(!swipe.Target(0, {"A", "B"}, "B"));
+    // Something else switched space (a shortcut, a click in the bar).
+    CHECK(!swipe.Target(0, ids, "A"));
+    // Moved but still its neighbour on that side: found by id.
+    CHECK(swipe.Target(-1, {"B", "C", "A"}, "C") == "B");
+    // Moved to the other side, or away: the pages on screen are no longer its neighbours.
+    CHECK(!swipe.Target(-1, {"C", "B", "A"}, "C"));
+    CHECK(!swipe.Target(-1, {"B", "A", "C"}, "C"));
+    // A space inserted between them.
+    CHECK(!swipe.Target(-1, {"A", "B", "X", "C"}, "C"));
+    // Towards nothing (rubber-banding): the current space, while it's still there.
+    CHECK(swipe.Target(0, {"B", "A", "C"}, "C") == "C");
 }

@@ -12,7 +12,9 @@
 // DirectComposition animation of the strip's offset (SlidePages), so no frame of it runs Kite's
 // code or draws anything. It shows hover and takes
 // clicks and the wheel (HandleMouse); what a click does goes to Actions. Under the pages, the
-// space bar (shell/SpaceBarView). Not yet: the top row or favorites.
+// space bar (shell/SpaceBarView), whose cells drag to new places, and the space's menu on a
+// right-click on a cell or the header (Actions::spaceMenu). While a space is renamed its header
+// shows the name field (shell/SpaceRenameField). Not yet: the top row or favorites.
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -28,6 +30,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -39,6 +42,7 @@
 #include "shell/Favicons.h"
 #include "shell/SpaceBarView.h"
 #include "shell/SpaceIconPainter.h"
+#include "shell/SpaceRenameField.h"
 #include "shell/SpaceTipView.h"
 
 namespace kite {
@@ -63,6 +67,14 @@ public:
         std::function<void()> editAddress;  // the address field
         std::function<void(const std::string& tabID)> closeTab;  // a tab's close button
         std::function<void(const std::string& spaceID)> selectSpace;  // a space's cell in the bar
+        // A cell dropped at `index` among the others, once it has settled.
+        std::function<void(const std::string& spaceID, size_t index)> moveSpace;
+        // A right-click on a space's cell or its header: its menu at `screen` (px).
+        std::function<void(const std::string& spaceID, POINT screen)> spaceMenu;
+        // The header's name field committed (Return, Done, or leaving it) with `name`.
+        std::function<void(const std::string& spaceID, const std::string& name)> renameSpace;
+        // A click on the current space's name: its rename field (the Mac's beginRenaming).
+        std::function<void(const std::string& spaceID)> beginRenaming;
     };
     void SetActions(Actions actions) { actions_ = std::move(actions); }
 
@@ -73,6 +85,33 @@ public:
     bool HandleMouse(UINT message, WPARAM wParam, LPARAM lParam);
     // Forgets the pointer and any press (the command bar opened over the window).
     void ClearHover();
+
+    // Renaming a space in its header (the Mac's renamingSpaceID): the selected space's, whose
+    // header shows the name field (shell/SpaceRenameField) instead of its name, with the keyboard.
+    // EndRenaming commits what's typed (renameSpace) or, with `commit` false, drops it.
+    void BeginRenaming(const std::string& spaceID, const std::string& name);
+    void EndRenaming(bool commit);
+    // Closes the field and gives back its space and what was typed, renaming nothing (the
+    // window renames it in the same update that ends it).
+    std::optional<std::pair<std::string, std::string>> TakeRename();
+    std::optional<std::string> Renaming() const;
+    // The window's keys, characters, IME and focus while renaming (after the command bar's).
+    // True when the field took `message`.
+    bool HandleKey(UINT message, WPARAM wParam, LPARAM lParam);
+    // Types into the field as the keyboard would (--capture, the smoke test).
+    void TypeInRename(std::string_view text);
+    // A drag of a space's cell that's still settling (its drop's move comes on the timer).
+    bool DraggingSpace() const { return bar_->Drag().has_value(); }
+    std::optional<std::string> DraggedSpace() const { return bar_->Drag() ? std::optional(bar_->Drag()->spaceID) : std::nullopt; }
+    // For the tests: the rename's Done, its centre in client px; and the rename drawn with the
+    // keyboard (a quiet capture's window never has it), its selection in the focused colour.
+    std::optional<POINT> RenameDoneCentre() const;
+    // The middle of the selected space's name in its header, client px (a click there renames).
+    std::optional<POINT> HeaderNameCentre();
+    void FocusRenameForCapture();
+    // Where space `index`'s cell is, in client px (its centre), for the tests' presses and the
+    // menu's place.
+    std::optional<POINT> SpaceCellCentre(size_t index) const;
     // A left press went to something else (the command bar): the click that brought the window
     // forward is over, and the next one on a row taps.
     void ForgetActivation();
@@ -87,7 +126,8 @@ public:
     // it draws on the next pass of the message loop.
     void Update(const BrowserState& state, const std::optional<std::string>& anchor = std::nullopt);
     // Where the strip of pages sits, in points from rest (positive shows the previous space's
-    // page coming in from the left). Shown at the compositor's next commit; draws nothing.
+    // page coming in from the left), the bar's light with it (a swipe's frame). Shown at the
+    // compositor's next commit; draws nothing.
     void SetPageOffset(float offset);
     // The strip settles from `from` to `to` points with Arc's page spring, on the compositor
     // from the next commit (core's SettleSegments). How long that takes, in seconds; 0 when
@@ -95,6 +135,11 @@ public:
     double SlidePages(float from, float to);
     // Where the strip is now, mid-slide too (for hit tests, and a slide caught mid-way).
     float PageOffset() const;
+    // A touchpad's scroll at `at` (client px): over the selected space's list it scrolls by
+    // `distance` points (positive moves it on, down the list) and is the list's (true).
+    bool ScrollList(POINT at, float distance);
+    // The selected space's list's scroll, in points.
+    float ListScroll() const { return scrollExact_; }
     // The window's size or DPI changed: `width` is the sidebar's, in points. Draw follows.
     void Layout(float width, UINT dpi);
     // Icons arrived (Favicons::TakeResults): the pages, whose rows wait for them, draw again
@@ -114,6 +159,8 @@ public:
     bool HandleMessage(UINT message, WPARAM wParam);
     static constexpr UINT kRedrawMessage = WM_APP + 3;
     static constexpr UINT_PTR kTipTimer = 0x4B44;  // 'KD'; the command bar's caret is 0x4B42
+    // A drop's landing: the space moves once its icon has settled (kReorderSlide).
+    static constexpr UINT_PTR kDropTimer = 0x4B46;
 
     // Hides the space tip: the window moved, resized or minimized (an owned window would come
     // back with it, where it was).
@@ -178,7 +225,16 @@ private:
     void RefreshHover();
     // A point in the sidebar as the space bar sees it, when it's over the bar.
     std::optional<D2D1_POINT_2F> BarPoint(D2D1_POINT_2F point) const;
+    // The drag of a cell, from the press that started it, to its drop and its landing.
+    void DragSpaceTo(D2D1_POINT_2F barPoint);
+    void DropSpace(D2D1_POINT_2F barPoint);
+    void FinishDrop();
+    // Where the rename field sits over the header drawn at `top` (DrawRow's).
+    void PlaceRenameField(float x, float top);
+    // The header's name as DrawRow lays it out at `top` (page points): where a click renames.
+    D2D1_RECT_F HeaderNameRect(const SidebarRow& row, float top);
     void SetScroll(float scroll);
+    bool OverList(D2D1_POINT_2F p) const;
     void Perform(const SidebarTap& tap);
     void DrawText(ID2D1DeviceContext* context, const std::string& text, IDWriteTextFormat* format, float x, float baseline,
                   float maxWidth, D2D1_COLOR_F color);
@@ -216,6 +272,7 @@ private:
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
     bool dirty_ = true;  // the address field
     float pageOffset_ = 0;  // the strip's, in points: at rest, or where a slide ends
+    std::vector<size_t> built_;  // the built pages' spaces, by index (model_.pages')
     struct Slide {
         std::vector<CubicSegment> segments;
         double duration;
@@ -228,6 +285,10 @@ private:
     bool redrawPosted_ = false;
     std::unique_ptr<SpaceBarView> bar_;
     std::unique_ptr<SpaceTipView> tip_;
+    std::unique_ptr<SpaceRenameField> rename_;  // while a space is renamed
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> doneFormat_;  // the rename's Done
+    bool barDragging_ = false;  // the press on a cell dragged it (BeginDrag)
+    bool renamePressed_ = false;  // a left press went to the rename field
     std::map<std::string, SpaceTip> tips_;  // each space's, by id (from the last Update)
     std::optional<std::string> tipHover_;  // the cell the tip's timer, or the tip, is for
 

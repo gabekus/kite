@@ -53,7 +53,7 @@ windows/
   src/cli/      kitecore: the model, headless
   tests/        unit tests (no test framework dependency)
   helix/        checkpoints.md and states/ (sessions for the UI gate)
-  resources/    Kite.manifest (DPI, UTF-8 code page, long paths) and its MinGW .rc
+  resources/    Kite.manifest (DPI, UTF-8 code page, long paths, Common Controls 6) and its MinGW .rc
   scripts/      fetch-cef.ps1, gen-unicode-tables.py
   cmake/        mingw-w64.cmake (cross-compile check off Windows)
 ```
@@ -170,7 +170,23 @@ DirectComposition are untouched; CEF's callbacks reach Kite's thread through
 stay synchronous between the threads, because a child window on another
 thread shares its parent's input (focus and DPI changes, destroying the
 window), until W10 removes the child windows. A second
-launch hands over to the running Kite (Chromium allows one per profile). Profiles sit where the Mac keeps them: `<support>\Chromium`
+launch hands over to the running Kite (Chromium allows one per profile). Kite.exe's command
+line is Kite's, but Chromium reads the raw line too: CEF's startup parses it before
+`command_line_args_disabled` stops the browser process's later reads, and each helper's
+`CefExecuteProcess` reads it whole. Chromium trims every argument of Unicode whitespace and takes
+`--`, `-` and `/` as switch prefixes, case-insensitively, and acts on `chromehtml:` itself. So
+Kite takes only its own flags and their values (`core/CommandLine.h`): any other argument, a
+value Chromium could read as a switch, or `chromehtml:` anywhere, is an error before anything
+starts. A value that is exactly an integer, like `--swipe -120`'s, is the one exception:
+Chromium reads `-120` as a switch named `120`, and none of its switches is a number.
+`--type` launches are Chromium's own helpers: one spelled any other way than Chromium's
+`--type=X`, or for a helper Kite doesn't run (a crashpad handler), exits at once.
+`--wait-for-debugger` is still honoured before Kite's parser runs (CEF's own startup); it only
+waits. W30's protocol and file handlers must register as `"Kite.exe" --single-argument %1`, as
+Chrome does, with `Arguments()` reading the raw line the same way (everything after
+`--single-argument` is one argument, never a switch), and must pass the URL it checked itself: a
+second launch's arguments don't reach `OnAlreadyRunningAppRelaunch` with arguments disabled, so
+the relaunch message has to carry and validate it. Profiles sit where the Mac keeps them: `<support>\Chromium`
 is `root_cache_path`, the default profile is `Chromium\Default`, and a
 space's other profile gets its own request context in `Chromium\<directory>`.
 Popups and `target=_blank` links open as tabs that keep `window.opener`, as
@@ -320,8 +336,7 @@ measured archivebox and plus (Segoe Fluent's glyphs differ in size and shape),
 and the emoji is set so it draws the Mac's 14.5pt, centred on its ink. Cells sit
 on whole pixels at every scale (core snaps them), so they draw where they take
 clicks. Known differences: in the 2pt where two cells overlap only the later
-cell's backing shows (the Mac shows both), and a touchpad's sideways scroll over
-the bar scrolls the strip until W9c sends it to the swipe.
+cell's backing shows (the Mac shows both).
 
 The nine (W9b4) are Kite's own simple shapes (`core/SymbolShape.h`), not
 Apple's outlines: each is filled figures in the bar's 12.5pt about the icon's
@@ -380,13 +395,131 @@ continuous; and its x is on whole pixels where the Mac's is on whole points (up 
 0.5pt at 2x). A window restored under a still pointer shows its cell's tip 0.4 s
 later, as the Mac's tracking area enters again.
 
+Two fingers sideways on a precision touchpad over the sidebar (W9c) page between
+spaces, as the Mac's SpaceSwipeController: the pages follow the fingers,
+rubber-banding past the first and last space, the bar's light follows them
+(`SpaceSwipe::Highlight`), and the backdrop crossfades towards the neighbour by
+how far they've gone (`ThemeCrossfade::SetInteractive`). Let go past half a page,
+or flicked faster than 300pt/s towards a neighbour, the pages settle there on the
+switch's spring and the theme settles from where the fingers left it
+(`FinishInteractive`); the space is selected only once the pages are at rest, its
+page where the neighbour's was, so the slide's first frames don't wait for the
+selection's redraw and the page swap. A gesture is the swipe's when its first
+movement is more sideways than vertical; one that starts vertically scrolls the
+list for its whole length, momentum included, and a swipe's own momentum is
+swallowed (`core/SpaceSwipeGesture.h`, `kitecore space swipe DX [SECONDS]`). Until
+the swipe begins, each event asks where the pointer is then, as the Mac's
+`isOverSidebar`: a vertical gesture scrolls the list under it. A swipe can catch the
+pages mid-settle and carries on from where they are. Windows'
+wheel messages carry no gesture phases, so the touchpad's contact is taken on
+`DM_POINTERHITTEST` by a DirectManipulation viewport on manual updates
+(`shell/TouchpadInput.h`, Chromium's way). The frame clock steps it once a frame
+while the gesture or its momentum runs, at the display's highest rate, and while the
+fingers rest before moving, unboosted and for 10 s at most; each frame draws the
+backdrop only when the swipe moved. A gesture whose pointer is off the sidebar
+before it's the swipe's (over the page, or the command bar opened), and a contact
+that rests past 10 s, are released (`ReleaseContact`), so the rest is the system's
+wheel messages for whatever is under the pointer. Core's `TouchpadPhases` turns the viewport's
+statuses and content reports into the Mac's phases and sends the viewport back over
+its content's middle after a gesture that moved it, the next gesture counting from
+there however late DirectManipulation applies it (its tests replay the sequences:
+momentum, fingers down mid-momentum, the system taking the viewport, the reset's own
+pass). `--capture FILE --swipe DX` holds a swipe DX points in, and the smoke test
+feeds the same handler a vertical gesture, one whose pointer has moved over the page,
+a swipe that lands, one caught mid-settle, a short one that stays and a flick back;
+then, with a third space added for it, a keyboard switch overtaking a landing, a
+space selected under the swipe, a release in a hidden window (it lands at once), the
+rubber band before the first space and a crossfade's boost ending while the
+touchpad's frames go on; and with the other spaces set aside, both ways on one
+space. `--frame-log` also records every status, content report, release and poll,
+for a run on a real touchpad. Known differences:
+- What moves the pages is DirectManipulation's content travel, which follows
+  Windows' scrolling direction setting (the Mac's pages follow the fingers whichever
+  way its natural scrolling is set).
+- A mouse's sideways wheel or Shift and the wheel never pages spaces (the Mac's
+  doesn't either), it scrolls the bar's strip.
+- Only a contact that comes down over the sidebar can page: one that comes down over
+  the page is Chromium's (the hit test goes to its window), and its wheel messages
+  have no phases to page with, so a pointer that moves onto the sidebar before the
+  fingers do still scrolls the page. The Mac asks where its first movement is.
+- A space selected under the swipe (from the keyboard) leaves its theme between
+  three: the release goes on to the selected space's from whichever of the two was
+  showing more (`ThemeCrossfade::FinishInteractive`), where the Mac's
+  finishInteractiveTheme has no such branch and settles back on the theme the swipe
+  started from. For the same case the neighbour is looked up guarded (a release with
+  no space left that side stays), where the Mac's show and finish index the spaces
+  unguarded and would trap.
+Unverified on a real touchpad (synthetic touchpad input doesn't exist):
+DirectManipulation's actual status sequences and their timing, the scrolling
+direction, the hit test's point, whether the pointer moves while a contact is held,
+and whether a released contact's rest comes back as wheel messages.
+
 Known differences from the Mac: during the 0.2 s slide only the selected page
 takes clicks and shows hover (the Mac's outgoing page is a live list too), and
 Space n for a missing space is passed on from Kite's own window but still kept
-from a page (Chromium's key thread doesn't know the spaces). Not yet: the space
-bar (W9b), a touchpad's swipe (W9c), reordering spaces and the space menu
-(W9d). `Kite.exe --frame-log FILE` writes each frame the clock delivered in a
-test run.
+from a page (Chromium's key thread doesn't know the spaces). `Kite.exe --frame-log FILE`
+writes each frame the clock delivered in a test run.
+
+Editing spaces (W9d) is the Mac's SidebarSpaceBar cellDragged and menu(for:) with
+KiteCore's space edits (`core/SpaceEditing.h`, `BrowserState::RenameSpace`, `InsertSpace`,
+`SetSpaceIcon`, `DeleteSpace`, `MoveSpace`, `CreateFolder`). A press on a cell that moves 4pt
+picks its icon up: the cell it left shows nothing, a ghost (a visual sharing that cell's
+surfaces and the hover backing's) follows the pointer, and the other cells slide aside to open
+the slot it aims at, each an `IDCompositionAnimation` of its offset over 0.2 s on Core
+Animation's ease-in-ease-out (`core/SpaceBar.h`'s `SpaceDrag`). A drag draws nothing: a move
+within the open slot moves only the ghost's visual, a new slot starts the cells' slides, and
+the sidebar's redraw message coalesces a burst of moves into one commit. A drop over the strip
+lands in that slot, anywhere else (or the mouse taken away) back where it came from, the ghost
+settling there over the same 0.2 s; then, a frame later, the space moves, keeping the
+selection where it was. A drop still landing refuses a new drag, as the Mac's, and the spaces
+changing under a drag end it. A swipe keeps the spaces it began between by id
+(`SpaceSwipe::Neighbours`, the Mac's): once a reorder or a delete under it leaves the pages on
+screen the wrong ones, it's dropped, the pages and the theme settle back, and the rest of its
+gesture shows nothing (`SpaceSwipeGesture::Abandon`).
+
+A right-click on a cell or the space's header opens the space's menu with the Mac's items,
+order and words (`SpaceMenu`): Change Space Icon…, Rename Space…, What's This Space For?…,
+Edit Theme Color…, Set Profile ▸, then New Folder and Live Folders ▸, then Delete Space
+(disabled for the last space). Rename Space…, or a click on the current space's name, opens
+the header's name field (`shell/SpaceRenameField`, the Mac's SpaceRenameField and Done): the
+name all selected in the header's 13pt semibold, 2pt into the field as in AppKit's field
+editor, over the editor's textBackgroundColor (#1E1E1E dark, white light, square, from 3pt
+before the field to 1pt past its end and 22pt tall, as the Mac's capture draws it), "Space Name" when
+empty, Done at the right (its width rounded up to a point, as SidebarLabel's naturalWidth);
+Return or Done renames (a blank name keeps the old one), Escape doesn't, and leaving it (a
+press elsewhere in the window, the page or the command bar taking the keyboard, the menu
+opening, another space shown) keeps what was typed; another app taking the keyboard doesn't
+end it. The field is a visual of its own in its space's page, so it slides and swipes with
+the page and a keystroke draws only the field; its editing, layout, scrolling, selection,
+caret and blink are the command bar's, moved out for both (`shell/TextEditing`,
+`shell/TextLine`). Delete Space deletes a space with no tabs at once and asks first about one
+with tabs, in the Mac's words ("Delete “Name”?", "Its pinned and unpinned tabs are closed.",
+Delete and Cancel), its pages closing with it. `kitecore space menu`, `rename`, `icon`,
+`folder`, `delete`, `new`, `move` and `drag` do the same headless. Kite.exe delay-loads
+comctl32 (the question) and gdi32 (the menu's read-back), so Chromium's processes don't load
+them.
+
+Known differences: the menu is Windows' own (TrackPopupMenuEx), as the Mac's is AppKit's: it
+looks like Windows' and opens on the right button's release, as Windows' context menus do,
+where the Mac's opens on the press. It's dark in a dark space through uxtheme's unnamed
+SetPreferredAppMode and FlushMenuThemes (ordinals 135 and 136, as Explorer and Notepad use
+them), on Windows 10 1903 and later only, set as the menu opens and put back to the default as
+it closes (the mode is the whole process's; docs/windows-architecture.md); without them it's
+light. The question before Delete Space is a task dialog (Common Controls 6, which the
+manifest now asks for), always light, where the Mac has a sheet. Disabled until their
+checkpoints: Change Space Icon… (the icon picker, W9e), What's This Space For?… and Edit Theme
+Color… (their dialogs, and the theme editor), Set Profile and Live Folders (Windows can't move
+a space's pages to another profile or keep live folders yet). Not yet: the + button's menu and
+Arc's Create a Space page, which New Space opens (W9f; `kitecore space new` makes the space
+they'd leave), Undo, and the rename's caret in `--capture` (its own visual, as the command
+bar's). `--capture FILE --space-drag N,X` holds space N's cell dragged to X points along the
+bar, `--space-drop N,X` lets it go there and settle, `--space-menu N` reads back space N's menu
+(PrintWindow of this machine's own Windows menu, so it differs by Windows version, theme and
+monitor scale, without DWM's rounded corners and shadow, resampled from its monitor's scale
+to the capture's) and puts its bottom-left on the cell's centre, and `--rename-space N` opens
+space N's name field drawn as with the keyboard (a quiet capture's window never has it).
+
+
 
 ## Saving the session
 
@@ -437,9 +570,12 @@ Windows that means:
   a thread waits on `DCompositionWaitForCompositorClock` (Windows 11), or
   `DwmFlush` before it, and posts the window one message a frame, only while
   something has to redraw each frame (the theme's crossfade, a shader mix that
-  a compositor property can't do). While it runs it calls
-  `DCompositionBoostCompositorClock`, so a display with a dynamic refresh rate
-  runs at its highest, as the Mac asks for the screen's maximum rate. The
+  a compositor property can't do), or a touchpad gesture's DirectManipulation
+  updates need stepping (W9c). While something moves (a crossfade, fingers or
+  their momentum) it calls `DCompositionBoostCompositorClock`, so a display with
+  a dynamic refresh rate runs at its highest, as the Mac asks for the screen's
+  maximum rate; the window decides that each frame (`FrameClock::SetBoost`), so
+  fingers resting after a fade leave the rate alone. The
   compositor's clock is the system's: with several displays it follows the
   fastest, not necessarily the window's. Each frame is drawn for
   DirectComposition's estimate of when it reaches the screen

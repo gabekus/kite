@@ -26,7 +26,10 @@
 #     "name": "drag",                               NAME.png; [a-z0-9._-]
 #     "holds": "what the capture should show",
 #     "session": {"ref": …, "path": …} | {"inline": {…session.json…}},           default: the top-level one
-#     "env": {"KITE_TEST_CONTEXT_MENU": "1"},       only the hooks in HOOKS below
+#     "env": {"KITE_TEST_CONTEXT_MENU": "1"},       only the hooks in HOOKS below; the find bar's:
+#            {"KITE_TEST_FIND": "domain"}           the bar open searching for this ([A-Za-z0-9 ._-]{1,40}, as text), or
+#            {"KITE_TEST_FIND_OPEN": "1"}           the bar open and empty; one of the two, on a base with FIND_FLOOR,
+#                                                   and the capture waits for Kite's "KITE_TEST_FIND: ready" line
 #     "profile_files": {"test-context-menu-pick": "Rename Space…"},              test-* files in the profile, and
 #                                                   history.json (checked like a session, 1 MB at most)
 #     "steps": [{"ui": "input", "args": {"from": [86,795], "to": [150,795], "steps": 10, "hold": 10}},
@@ -54,6 +57,11 @@
 #   into a visible CommandBarField
 #   (Kite's own command bar, which acts only on Return, and Return can't be sent), and only on a base that has
 #   TEXT_FLOOR (the build inserts test-safe text without key events, so no input method).
+# - Find bar: KITE_TEST_FIND, whose value follows the text rule above ([A-Za-z0-9 ._-]{1,40}: no control characters,
+#   no Return), or KITE_TEST_FIND_OPEN, exactly 1; never both in one state, and only on a base that has FIND_FLOOR
+#   (test-safe only, the build opens the bar with ⌘F's own showFind and sets the query through the field's
+#   stringValue and search, without key events). A state fails, uncaptured, if Kite doesn't write
+#   "KITE_TEST_FIND: ready" within FIND_READY_SECONDS.
 # - Every test Kite is quit; the build's bundles are unregistered from Launch Services and deleted (never through a
 #   symlink, never outside the checkout).
 set -euo pipefail
@@ -70,6 +78,18 @@ SAFE_FLOOR=811b5fbaeeee6c0f5187661ecba992f5795e5623
 # without it can still take requests, just not text steps. If #374 lands by squash or rebase, set this to the commit
 # it landed as on main.
 TEXT_FLOOR=92611226a9834ac52b95a77268bf1f5647f08490
+
+# The oldest Kite the find-bar hooks (KITE_TEST_FIND, KITE_TEST_FIND_OPEN) may run on: fix/test-find-hooks (#384).
+# There, on a test-safe run only, once the main window's selected page has loaded, the window runs ⌘F's showFind and
+# FindBar.setQuery (the field's stringValue, then the search a keystroke runs: no key events, no input method, no
+# menu, nothing activated), then writes "KITE_TEST_FIND: ready: …" on stderr. Older Kites ignore the hooks, so the
+# capture would show no bar. 3a9a2f1 (the review's hardening) opens the bar with Ask on Page always off, so captures
+# don't depend on the runner's saved askOnPageEnabled and the Ask button (which runs Claude) never shows, and turns
+# Writing Tools off; the hooks work from d80c54e. If #384 lands by squash or rebase, set this to the commit it
+# landed as on main.
+FIND_FLOOR=3a9a2f15a2e1cff3c74071e9cd10faa382fe1bbb
+# How long a state waits, after Kite's socket answers, for that ready line (Kite itself gives up 30 s after launch).
+FIND_READY_SECONDS=30
 
 # Views a click, right-click (through showSidebarMenu's KITE_TEST_CONTEXT_MENU hook) or drag may start on. Each was
 # read in the Mac source: no hookless NSMenu, no window drag. Add one only after the same check. Not safe, for
@@ -185,9 +205,9 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 # --- Plan: validate the request and lay each state out as files for the loop below. ---
-python3 -I - "$REQUEST" "$WORK/plan" "$ROOT" "$SAFE_TARGETS" "$TEXT_FLOOR" <<'PY'
+python3 -I - "$REQUEST" "$WORK/plan" "$ROOT" "$SAFE_TARGETS" "$TEXT_FLOOR" "$FIND_FLOOR" <<'PY'
 import copy, ipaddress, json, os, re, subprocess, sys, urllib.parse, uuid
-request_path, plan, root, safe_targets, text_floor = sys.argv[1:6]
+request_path, plan, root, safe_targets, text_floor, find_floor = sys.argv[1:7]
 def fail(message):
     sys.exit(f"request.json refused: {message}")
 try:
@@ -202,7 +222,7 @@ if not NAME.fullmatch(str(request.get("id", ""))):
 
 # HOOKS: every KITE_TEST_* the Mac sources read (git grep -o 'KITE_TEST_[A-Z0-9_]*' Sources), classified.
 #   value kinds: "text" one line; "flag" exactly 1; "number"; "name" a file name, given to Kite as $PROFILE/name;
-#   "url" a public http(s) URL (the session rule).
+#   "url" a public http(s) URL (the session rule); "findtext" a text step's text (TEXT below).
 HOOKS = {
     "KITE_TEST_CONTEXT_MENU": "text",          # logs a context menu instead of showing it; text = the item to pick
     "KITE_TEST_BOOST_MENU": "text",            # presses the Boost editor's menu items without the menu
@@ -214,7 +234,11 @@ HOOKS = {
     "KITE_TEST_REOPEN_MAIN_AFTER": "number",   # reopens the main window behind the user's
     "KITE_TEST_EXPORT_DATA_PATH": "name",      # Export Data writes here instead of a save panel
     "KITE_TEST_OPEN_URL": "url",               # opens a link as another app would
+    "KITE_TEST_FIND": "findtext",              # the find bar open with this query, which only searches the page
+    "KITE_TEST_FIND_OPEN": "flag",             # the find bar open and empty
 }
+# The find bar's hooks: a base without FIND_FLOOR ignores them (no bar would show), so they're refused there.
+FIND_HOOKS = {"KITE_TEST_FIND", "KITE_TEST_FIND_OPEN"}
 # Set by this script for every launch, never by a request.
 OWNED = {"KITE_TEST_BLOCK_VIEWS_WINDOWS", "KITE_TEST_DOWNLOADS_PATH", "KITE_TEST_APPS_DIR", "KITE_TEST_DEFAULTS_PROBE",
          "KITE_TEST_PASTEBOARD"}   # PASTEBOARD: a pasteboard of the profile's own, never the clipboard
@@ -426,6 +450,12 @@ def has_text_fix():
     if not _text_fix:
         _text_fix.append(git("merge-base", "--is-ancestor", text_floor, "HEAD", lazy=False).returncode == 0)
     return _text_fix[0]
+_find_fix = []
+def has_find_fix():
+    # Checked once, on the checkout's HEAD; a FIND_FLOOR missing from the clone counts as not there.
+    if not _find_fix:
+        _find_fix.append(git("merge-base", "--is-ancestor", find_floor, "HEAD", lazy=False).returncode == 0)
+    return _find_fix[0]
 def check_step(action, args, menu_hook, where, previous):
     """Returns what must be true when the step runs: points on SAFE_TARGETS views, or (text) the command bar open."""
     if action == "trace" and "keys" in args:
@@ -531,11 +561,19 @@ for i, state in enumerate(request["states"]):
             fail(f"{where}: {key} is a number of seconds")
         elif kind == "url" and public_url(value):
             fail(f"{where}: {key} {public_url(value)}")
+        elif kind == "findtext" and not TEXT.fullmatch(value):
+            fail(f"{where}: {key} is 1–40 of A-Z a-z 0-9 space . _ - (the rule for text)")
         elif kind == "name":
             if not NAME.fullmatch(value):
                 fail(f"{where}: {key} is a file name inside the profile ([a-z0-9._-])")
             value = "@profile/" + value
+        if key in FIND_HOOKS and not has_find_fix():
+            fail(f"{where}: {key} needs a base with fix/test-find-hooks ({find_floor[:7]}), which this base doesn't "
+                 "contain: without it Kite ignores the hook")
         env_lines.append(f"{key}={value}")
+    if FIND_HOOKS <= set(env):
+        fail(f"{where}: KITE_TEST_FIND and KITE_TEST_FIND_OPEN are one or the other, not both")
+    find_hook = bool(FIND_HOOKS & set(env))
     files = dict(state.get("profile_files") or {}) if isinstance(state.get("profile_files") or {}, dict) else None
     if files is None:
         fail(f"{where}: profile_files is an object")
@@ -619,7 +657,8 @@ for i, state in enumerate(request["states"]):
         "size": [width, height], "expect": expect,
     }, ensure_ascii=False))
     write("vars", f"NAME={name}\nWIDTH={width}\nHEIGHT={height}\nSETTLE={settle}\nHOLD={hold or 0}\n"
-                  f"CAPTURE={1 if bool(state.get('capture', True)) else 0}\nSKIP={1 if state.get('skip') else 0}\n")
+                  f"CAPTURE={1 if bool(state.get('capture', True)) else 0}\nSKIP={1 if state.get('skip') else 0}\n"
+                  f"FIND={1 if find_hook else 0}\n")
     index.append(folder)
 with open(os.path.join(plan, "index"), "w") as f:
     f.write("".join(folder + "\n" for folder in index))
@@ -736,6 +775,23 @@ import json, sys
 expect = json.load(open(sys.argv[1], encoding="utf-8"))
 tree = open(sys.argv[2], encoding="utf-8", errors="replace").read()
 print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$folder/tree-launch.txt" >"$folder/expect-missing"
+    fi
+
+    # A find-bar hook opens the bar once the page has loaded and writes "KITE_TEST_FIND: ready: …" (for a query,
+    # when its search has come back): no steps and no capture until then.
+    if [[ "$FIND" == 1 ]]; then
+        ready=0
+        for _ in $(seq $((FIND_READY_SECONDS * 5))); do
+            if grep -q '^KITE_TEST_FIND: ready' "$PROFILE/kite.log" 2>/dev/null; then ready=1; break; fi
+            kill -0 "$KITE_PID" 2>/dev/null || break
+            sleep 0.2
+        done
+        if [[ "$ready" != 1 ]]; then
+            echo "failed: no 'KITE_TEST_FIND: ready' line from Kite in $FIND_READY_SECONDS s (the find bar didn't open)" >"$folder/status"
+            grep -E '^KITE_TEST_[A-Z_]+:' "$PROFILE/kite.log" >"$folder/test-lines" 2>/dev/null || true
+            cp "$PROFILE/kite.log" "$LOGS/$NAME.kite.log" 2>/dev/null || true
+            stop_kite; unset KITE_SUPPORT_PATH; failed=1; continue
+        fi
     fi
 
     step_status=0
