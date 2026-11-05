@@ -79,6 +79,10 @@ public:
         // --save-log: each save handed to the writer (when, and what it cost the UI thread) is
         // kept for SaveSaveLog.
         bool saveLog = false;
+        // A quiet run (main.cpp's `quiet`, which alone decides it): the window opens behind
+        // the others and never activates, the pages never take the focus or show a dialog
+        // (Chromium::Start's `quiet`), and every shortcut command must do something.
+        bool quiet = false;
         // The profile's SpaceIcons folder: the pictures chosen as space icons (a capture
         // decodes them in place, the rest on a worker).
         std::filesystem::path spaceIcons;
@@ -115,7 +119,7 @@ public:
 #endif
     // Shows the window (behind other windows for a quiet run) and, with Chromium, the first page,
     // and starts the auto-archive's timer.
-    void Show(int showCommand, bool behindOtherWindows);
+    void Show(int showCommand);
 
     // Draws the backdrop, the sidebar and the caption buttons and commits them; with
     // `readBack`, the backdrop's frame as presented. Rebuilds a lost GPU first.

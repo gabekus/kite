@@ -96,7 +96,7 @@ std::optional<std::filesystem::path> PickArcFolder(HWND owner) {
 void BrowserWindowController::ImportFromArc() {
     // Never a dialog in a test run; and reading Arc's files takes a moment, so a second press
     // meanwhile does nothing.
-    if (options_.smokeTest || options_.capture || arcReading_ || arcSave_ || closing_) return;
+    if (options_.quiet || arcReading_ || arcSave_ || closing_) return;
     if (!writer_ || !writer_->MaySave()) {
         // The session didn't read and is never saved: an import would be lost.
         MessageBoxW(window_.Handle(), L"Kite couldn't read its session, so it doesn't save it, and an import would be lost. Restart Kite and try again.",
