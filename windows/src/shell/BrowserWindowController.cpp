@@ -215,8 +215,13 @@ std::wstring BrowserWindowController::Init() {
     window_.filter = [this](UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
         return Filter(message, wParam, lParam, result);
     };
-    // Whether the window can be seen. Not for a capture, which draws one frame and goes.
-    if (!options_.capture) occlusion_ = Occlusion::Start(window_.Handle(), kOcclusionMessage, options_.occlusionLog);
+    // Whether the window can be seen. Not for a capture, which draws one frame and goes, nor
+    // for a smoke test or a frame log, whose checks of the slide and the crossfade would pass
+    // without a frame if the run were covered (a quiet run usually is).
+    if (!options_.capture && !options_.smokeTest && !options_.frameLog) {
+        occlusion_ = Occlusion::Start(window_.Handle(), kOcclusionMessage, options_.occlusionLog);
+        if (occlusion_) occlusion_->RegisterNotifications();
+    }
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE): what the pages
     // reported runs first (titles, addresses), then the caller saves.
     window_.onClose = [this] {
@@ -239,22 +244,18 @@ void BrowserWindowController::ApplyAppearance(const Theme& theme) {
 
 // MARK: Spaces
 
+bool BrowserWindowController::Seen() const {
+    return IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle()) && !occluded_;
+}
+
 void BrowserWindowController::SetTheme(const Theme& theme) {
-    // Nothing on screen to fade: it's simply the new theme when the window shows again.
-    if (!IsWindowVisible(window_.Handle()) || IsIconic(window_.Handle())) {
-        if (theme != theme_.to || theme_.Fading()) theme_.Snap(theme);
-        return;
-    }
-    // Covered, locked, display off, another desktop: no one sees a fade, so it lands at once
-    // (one draw, not a frame clock), and is right even if the window is seen after all.
-    if (occluded_) {
-        if (theme != theme_.to || theme_.Fading()) {
-            theme_.Snap(theme);
-            Draw();
-        }
-        return;
-    }
-    if (theme_.Set(theme, FrameClock::Now())) clock_->Start();
+    // Nothing on screen to fade (minimized, hidden, covered, locked, display off, another
+    // desktop): it lands at once (core's CrossfadeTo). Drawn now if there's a window to draw
+    // into, so it's right even if the window is seen after all; a minimized one draws it on
+    // restore (OnSize).
+    bool snapped = false;
+    if (occlusion::CrossfadeTo(theme_, theme, FrameClock::Now(), Seen(), snapped)) clock_->Start();
+    else if (snapped && IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle())) Draw();
 }
 
 void BrowserWindowController::SyncSpace() {
@@ -273,9 +274,8 @@ void BrowserWindowController::SpaceChanged(size_t old, size_t now) {
     KillTimer(window_.Handle(), kSettleTimer);
     pagesAnchor_ = state_.spaces[old].id;
     const float from = (now > old ? 1.0f : -1.0f) * static_cast<float>(kSidebarWidth);
-    // No sidebar on screen to slide: just land.
-    const double duration =
-        IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle()) ? sidebar_->SlidePages(from, 0) : 0;
+    // No sidebar anyone sees to slide: just land.
+    const double duration = Seen() ? sidebar_->SlidePages(from, 0) : 0;
     if (duration <= 0) {
         sidebarSliding_ = false;
         return FinishSettling();
@@ -324,19 +324,24 @@ void BrowserWindowController::Frame(double time) {
 }
 
 void BrowserWindowController::OcclusionChanged() {
-    const bool hidden = occlusion_ && occlusion_->Verdict() != occlusion::Hidden::No;
+    const occlusion::Hidden verdict = occlusion_ ? occlusion_->Verdict() : occlusion::Hidden::No;
+    // Kite's own activation is the last word on covered (a verdict posted before it may come
+    // after it); a lock, the display or another desktop still hide it.
+    SetOccluded(verdict != occlusion::Hidden::No && !(verdict == occlusion::Hidden::Covered && activeApp_));
+}
+
+void BrowserWindowController::SetOccluded(bool hidden) {
     if (hidden == occluded_) return;
     occluded_ = hidden;
 #ifdef KITE_HAS_CEF
     if (chromium_) chromium_->SetOccluded(hidden);
 #endif
     if (hidden) {
-        // A crossfade under way lands now and the clock stops.
+        // A crossfade under way lands now, drawn once, and the frame clock stops.
         if (theme_.Fading()) {
             theme_.Snap(theme_.to);
-            clock_->Stop();
-            lastFrameTime_.reset();
-            if (!IsIconic(window_.Handle())) Draw();
+            StopFrameClockUnseen();
+            if (IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle())) Draw();
         }
         return;
     }
@@ -345,6 +350,13 @@ void BrowserWindowController::OcclusionChanged() {
     // page that showed again takes it back, unless the command bar has it.
     if (chromium_ && GetForegroundWindow() == window_.Handle() && (!commandBar_ || !commandBar_->IsOpen())) chromium_->Focus();
 #endif
+}
+
+void BrowserWindowController::StopFrameClockUnseen() {
+    // Only the crossfade runs the clock on this branch. (With #381's touchpad, which polls and
+    // boosts on it, this keeps it while the touchpad still needs frames.)
+    clock_->Stop();
+    lastFrameTime_.reset();
 }
 
 std::wstring BrowserWindowController::SaveFrameLog(const std::filesystem::path& file) const {
@@ -665,9 +677,22 @@ void BrowserWindowController::OnSize() {
 bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
     if (occlusion_) {
         if (occlusion_->HandleMessage(message, wParam, lParam, result)) return true;
-        // Moved, resized, minimized, restored or shown: Kite's own rect changed (seen, not
-        // handled: the window's own WM_SIZE and WM_MOVE follow).
-        if (message == WM_WINDOWPOSCHANGED) occlusion_->WindowChanged();
+        // Moved, resized, minimized, restored or shown, or the monitors, the work area or the
+        // scale changed: what Kite's window covers on screen did (seen, not handled: the
+        // window's own handling follows).
+        if (message == WM_WINDOWPOSCHANGED || message == WM_DISPLAYCHANGE || message == WM_DPICHANGED ||
+            (message == WM_SETTINGCHANGE && wParam == SPI_SETWORKAREA)) {
+            occlusion_->WindowChanged();
+        }
+        // Kite's app activated: it's in front, so seen, now on this thread; the watcher hears
+        // after.
+        if (message == WM_ACTIVATEAPP) {
+            activeApp_ = wParam != FALSE;
+            if (activeApp_) {
+                if (occlusion_->Verdict() == occlusion::Hidden::Covered) SetOccluded(false);
+                occlusion_->Activated();
+            }
+        }
     }
     if (message == kOcclusionMessage) {
         OcclusionChanged();
@@ -774,7 +799,7 @@ void BrowserWindowController::Show(int showCommand, bool behindOtherWindows) {
 std::wstring BrowserWindowController::SmokeTestSpaces() {
     const std::string before = state_.SelectedSpace().id;
     const size_t index = state_.SelectedSpaceIndex();
-    const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
+    const bool visible = Seen();
     const auto settle = [&](const wchar_t* what) -> std::wstring {
         const bool fades = theme_.Fading();
         if (visible && !sidebarSliding_) return std::wstring(what) + L" didn't slide the pages";

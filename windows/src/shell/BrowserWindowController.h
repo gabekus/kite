@@ -131,10 +131,18 @@ private:
     // One frame of the clock's: the theme's crossfade drawn for the composition frame at
     // `time` (the pages' slide runs on the compositor).
     void Frame(double time);
+    // Whether anyone can see the window: shown, not minimized, and not hidden by shell/
+    // Occlusion (covered, locked, display off, another desktop). What animates on screen
+    // (the crossfade, the pages' slide) runs only while it is.
+    bool Seen() const;
     // shell/Occlusion's verdict changed: while the window can't be seen, its page is hidden
     // (Chromium stops drawing it) and a crossfade lands at once, as the Mac's ThemeView skips
     // it for an occluded window.
     void OcclusionChanged();
+    void SetOccluded(bool hidden);
+    // The frame clock stops for an unseen window, unless something that isn't drawing still
+    // needs its frames.
+    void StopFrameClockUnseen();
     std::wstring DrawAt(double time, Pixels* readBack);
     // The smoke test's space switch, there and back, run to rest.
     std::wstring SmokeTestSpaces();
@@ -207,7 +215,8 @@ private:
     bool slideStarted_ = false;
     // Whether the window can be seen (after the window, which it posts to, in destruction).
     std::unique_ptr<Occlusion> occlusion_;
-    bool occluded_ = false;  // the verdict as last handled: hidden for any reason
+    bool occluded_ = false;   // the verdict as last handled: hidden for any reason
+    bool activeApp_ = false;  // WM_ACTIVATEAPP: Kite's app is the active one
     std::unique_ptr<Compositor> compositor_;
     std::unique_ptr<Favicons> favicons_;
     std::unique_ptr<SidebarView> sidebar_;

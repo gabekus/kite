@@ -384,21 +384,44 @@ Windows that means:
   another virtual desktop (`DWMWA_CLOAKED`), or opaque windows cover it (fewer
   than 64 of its pixels left, `core/Occlusion.h`). Then the shown page's widget
   is hidden as when minimized, so Chromium stops drawing it, and a theme
-  crossfade lands at once with the frame clock stopped. Covered is worked out
-  as Chromium's `NativeWindowOcclusionTrackerWin` does: out-of-context WinEvent
-  hooks and an `EnumWindows` pass that subtracts the windows above Kite's from
-  its rect, skipping layered see-through, click-through, acrylic, cloaked,
-  minimized and tool windows, owned popups and shaped windows. It errs towards
-  visible: Kite in front, a screen recorder or Zoom's sharing host running, a
-  window over it being dragged, or a taskbar thumbnail, Alt+Tab or Task View up
-  all count as seen. The hooks run on their own thread, so other apps' windows
-  moving never wake Kite's UI thread; `--occlusion-log FILE` (test profiles)
-  writes each verdict and the thread's counters. Known gaps: a window whose
-  DirectComposition content is see-through (Windows Terminal below 100%
-  opacity) counts as opaque, as in Chromium; a Kite captured as a window by an
-  app not on the recorder list (a meeting app sharing it while covered) shows
-  its card, not the page; and a recorder that quits leaves a covered Kite
-  drawing until the next window event.
+  crossfade lands at once with the frame clock stopped (`Seen()` in the browser
+  window). Covered is worked out as Chromium's `NativeWindowOcclusionTrackerWin`
+  does: out-of-context WinEvent hooks and an `EnumWindows` pass that subtracts
+  the windows above Kite's from its rect.
+  - **What covers.** A window covers only when nothing about it says it may be
+    see-through. These never cover: layered windows with alpha or a colour
+    key, click-through, acrylic, cloaked, minimized and tool windows, owned
+    popups, and windows with a shaped or empty region. Nor do windows drawn by
+    DirectComposition without a class known to be opaque (Chromium's and
+    Electron's `Chrome_WidgetWin_1`, and `ApplicationFrameWindow` for UWP
+    frames). That rules out the full-monitor `Windows.UI.Core.CoreWindow` the
+    emoji panel and touch keyboard use. WezTerm and Windows Terminal never
+    cover, since their opacity settings leave no trace in their styles.
+  - **What counts as seen.** It errs towards visible: Kite in front (its own
+    `WM_ACTIVATEAPP` is the last word), a screen recorder or Zoom's sharing
+    host running (not Windows 11's Snipping Tool, which stays running in the
+    background), a window being dragged near it (until the pass after the
+    drop), or a taskbar thumbnail, Alt+Tab or Task View up.
+  - **Hooks.** They run on their own thread, so other apps' windows never wake
+    Kite's UI thread. Each one is on only while it can change the verdict:
+    none while locked, display-off, minimized or on another desktop, and only
+    foreground changes while Kite is in front. Per process, only quiet events
+    are hooked: a maximize for the foreground app and the occluders, and hides
+    and destroys for the occluders. Moves and z-order aren't hooked at all.
+    Measured, a caret's every keystroke and a moving window's tens of events a
+    second blew the watcher's 20 wakeups/s budget.
+  - **Off for test runs.** `--smoke-test` and `--frame-log` run without
+    occlusion, so their checks of the slide and the crossfade can't pass
+    unseen. `--occlusion-log FILE` (test profiles) writes each verdict and the
+    thread's counters.
+  - **Known gaps.** A covered Kite uncovered by a keyboard snap (Win+Arrow) or a
+    program moving the window over it shows its card until the next event
+    (Kite clicked or Alt+Tabbed to, the window minimized, closed, dragged or
+    maximized). Whether Windows sends a restore-down as `STATECHANGE`, as
+    Chromium assumes, is unverified. A Kite captured as a window by an app not
+    on the recorder list (a meeting app sharing it while covered) shows its
+    card. A recorder that quits leaves a covered Kite drawing until the next
+    window event.
 
 ## Plan
 

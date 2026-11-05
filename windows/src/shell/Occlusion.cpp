@@ -5,11 +5,13 @@
 #include <dwmapi.h>
 #include <wtsapi32.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -31,13 +33,11 @@ constexpr UINT kPokeMessage = WM_APP + 13;
 // or Kite coming forward (those show it at once); Windows' own close and minimize animations
 // take longer than this.
 constexpr double kDebounceSeconds = 0.03;
+// A drag that starts this close to Kite's frame may come over it (core's Tracker::Dragging).
+constexpr int32_t kNearKitePixels = 64;
 
 // Not in every SDK's headers (MinGW's among them).
-constexpr DWORD kEventObjectCloaked = 0x8017;
-constexpr DWORD kEventObjectUncloaked = 0x8018;
-constexpr DWORD kDwmUseHostBackdropBrush = 17;  // DWMWA_USE_HOSTBACKDROPBRUSH
-constexpr DWORD kDwmSystemBackdropType = 38;    // DWMWA_SYSTEMBACKDROP_TYPE
-constexpr int kBackdropAcrylic = 3;             // DWMSBT_TRANSIENTWINDOW
+constexpr DWORD kDwmSystemBackdropType = 38;  // DWMWA_SYSTEMBACKDROP_TYPE
 // GUID_SESSION_DISPLAY_STATUS: the session's display is off (0), on (1) or dimmed (2).
 constexpr GUID kDisplayStatus = {0x2b84c20e, 0xad23, 0x4ddf, {0x93, 0xdb, 0x05, 0xff, 0xbd, 0x7e, 0xfc, 0xa5}};
 // WTSSessionInfoEx's answer (WTSINFOEXW), as far as the lock flag: the level, then a union
@@ -57,6 +57,12 @@ struct SessionInfoEx {
 static_assert(offsetof(WTSINFOEXW, Data.WTSInfoExLevel1.SessionFlags) == offsetof(SessionInfoEx, level1.sessionFlags));
 static_assert(WTSSessionInfoEx == kWtsSessionInfoEx && WTS_SESSIONSTATE_LOCK == kWtsSessionStateLock);
 #endif
+
+static_assert(EVENT_SYSTEM_FOREGROUND == occlusion::win_event::kForeground && EVENT_OBJECT_STATECHANGE == occlusion::win_event::kStateChange &&
+              EVENT_OBJECT_DESTROY == occlusion::win_event::kDestroy && OBJID_WINDOW == occlusion::win_event::kObjectWindow);
+static_assert(WS_POPUP == occlusion::win32::kPopup && WS_EX_LAYERED == occlusion::win32::kExLayered &&
+              WS_EX_TOOLWINDOW == occlusion::win32::kExToolWindow && COMPLEXREGION == occlusion::win32::kComplexRegion &&
+              NULLREGION == occlusion::win32::kNullRegion && LWA_ALPHA == occlusion::win32::kLayeredAlpha);
 
 double Seconds() {
     static const double frequency = [] {
@@ -79,14 +85,9 @@ Rect FrameRect(HWND hwnd) {
     return ToRect(r);
 }
 
-bool Cloaked(HWND hwnd) {
+bool CloakedWindow(HWND hwnd) {
     DWORD cloaked = 0;
     return SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof cloaked)) && cloaked != 0;
-}
-
-bool ClassIs(HWND hwnd, const char* name) {
-    char buffer[64] = {};
-    return GetClassNameA(hwnd, buffer, static_cast<int>(sizeof buffer)) > 0 && std::strcmp(buffer, name) == 0;
 }
 
 bool IsPreview(HWND hwnd) {
@@ -94,12 +95,34 @@ bool IsPreview(HWND hwnd) {
     return GetClassNameA(hwnd, buffer, static_cast<int>(sizeof buffer)) > 0 && occlusion::IsPreviewWindowClass(buffer);
 }
 
+Rect MonitorRect(HMONITOR monitor, bool workArea) {
+    MONITORINFO info{};
+    info.cbSize = sizeof info;
+    if (!monitor || !GetMonitorInfoW(monitor, &info)) return {};
+    return ToRect(workArea ? info.rcWork : info.rcMonitor);
+}
+
 BOOL CALLBACK AddMonitor(HMONITOR, HDC, LPRECT rect, LPARAM monitors) {
     reinterpret_cast<std::vector<Rect>*>(monitors)->push_back(ToRect(*rect));
     return TRUE;
 }
 
-std::string_view Json(bool value) { return value ? "true" : "false"; }
+// Whether the session is locked now; none when Windows can't say.
+std::optional<bool> SessionLocked() {
+    SessionInfoEx* info = nullptr;
+    DWORD bytes = 0;
+    if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, kWtsSessionInfoEx, reinterpret_cast<LPWSTR*>(&info),
+                                     &bytes) ||
+        !info) {
+        return std::nullopt;
+    }
+    std::optional<bool> locked;
+    if (bytes >= sizeof(SessionInfoEx) && info->level == 1) locked = info->level1.sessionFlags == kWtsSessionStateLock;
+    WTSFreeMemory(info);
+    return locked;
+}
+
+const char* Json(bool value) { return value ? "true" : "false"; }
 
 }  // namespace
 
@@ -107,20 +130,26 @@ struct Occlusion::Worker {
     Occlusion& owner;
     const HWND kite;
     const UINT message;
-    DWORD kiteProcess = GetCurrentProcessId();
+    const DWORD kiteProcess = GetCurrentProcessId();
     occlusion::Tracker tracker;
     double deadline = 0;  // when the pending pass runs; 0 for none
-    std::vector<HWINEVENTHOOK> globalHooks;
-    std::map<DWORD, HWINEVENTHOOK> locationHooks, hideHooks;
+    // The hooks on now: the system-wide ones (core's GlobalHooks), and per process.
+    struct Global {
+        HWINEVENTHOOK foreground = nullptr, moveSize = nullptr, minimize = nullptr, show = nullptr, cloak = nullptr;
+    } global;
+    HWINEVENTHOOK kiteCloak = nullptr;
+    std::map<DWORD, HWINEVENTHOOK> stateHooks, destroyHooks, hideHooks, showHooks;
+    HANDLE sessionsReady = nullptr;  // Global\TermSrvReadyEvent, while WTS registration waits for it
     HRGN scratch = CreateRectRgn(0, 0, 0, 0);
+    // Reused by every pass.
+    std::vector<Rect> monitors, occluderRects;
+    std::vector<DWORD> owners;
     // Whether each process with a window is a screen recorder, asked once per process.
     std::map<DWORD, bool> recorders;
     // What the last pass saw, for the log.
     int64_t visiblePixels = -1;
     size_t occluderCount = 0;
-    bool previewing = false;
-    bool covered = false;
-    // What the log last said of a pass, so it notes each change (test runs only).
+    bool previewing = false, covered = false;
     bool loggedCovered = false;
     size_t loggedOccluders = 0;
     // Counters: every event delivered, those that changed something, passes and their time.
@@ -135,55 +164,52 @@ struct Occlusion::Worker {
         if (scratch) DeleteObject(scratch);
     }
 
-    // On the worker thread: a hook goes from the thread that set it.
-    void Unhook() {
-        for (HWINEVENTHOOK hook : globalHooks) UnhookWinEvent(hook);
-        for (auto& [pid, hook] : locationHooks) UnhookWinEvent(hook);
-        for (auto& [pid, hook] : hideHooks) UnhookWinEvent(hook);
-        globalHooks.clear();
-        locationHooks.clear();
-        hideHooks.clear();
-    }
-
     static thread_local Worker* current;
 
     static void CALLBACK OnEvent(HWINEVENTHOOK, DWORD event, HWND hwnd, LONG object, LONG child, DWORD, DWORD) {
         if (current) current->Handle(event, hwnd, object, child);
     }
 
-    HWINEVENTHOOK Hook(DWORD first, DWORD last, DWORD process) {
+    static HWINEVENTHOOK Hook(DWORD first, DWORD last, DWORD process) {
         return SetWinEventHook(first, last, nullptr, &OnEvent, process, 0, WINEVENT_OUTOFCONTEXT);
+    }
+
+    // On the worker thread: a hook goes from the thread that set it.
+    void Unhook() {
+        for (HWINEVENTHOOK* hook : {&global.foreground, &global.moveSize, &global.minimize, &global.show, &global.cloak, &kiteCloak}) {
+            if (*hook) UnhookWinEvent(*hook);
+            *hook = nullptr;
+        }
+        for (auto* hooks : {&stateHooks, &destroyHooks, &hideHooks, &showHooks}) {
+            for (auto& [pid, hook] : *hooks) UnhookWinEvent(hook);
+            hooks->clear();
+        }
     }
 
     void Run() {
         current = this;
-        // Always: what can cover a visible Kite or show a covered one without a process of
-        // its own to watch (an app coming forward, a drag, a restore, a window shown, a
-        // desktop switched). Each is a burst only on a person's action, but EVENT_OBJECT_SHOW,
-        // which carets and tooltips send too: those are dropped at the first check.
-        const std::pair<DWORD, DWORD> ranges[] = {{EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND},
-                                                  {EVENT_SYSTEM_MOVESIZESTART, EVENT_SYSTEM_MOVESIZEEND},
-                                                  {EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND},
-                                                  {EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW},
-                                                  {kEventObjectCloaked, kEventObjectUncloaked}};
-        for (const auto& [first, last] : ranges) {
-            if (HWINEVENTHOOK hook = Hook(first, last, 0)) globalHooks.push_back(hook);
-        }
+        // The thread's queue, then whatever Kite's UI thread asked before it existed.
+        MSG first;
+        PeekMessageW(&first, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
         Log("started");
-        Schedule();  // the first pass
+        Poked();
+        Schedule();  // the first pass, which sets the first hooks
         for (;;) {
             DWORD timeout = INFINITE;
             if (deadline > 0) {
                 const double wait = deadline - Seconds();
                 timeout = wait <= 0 ? 0 : static_cast<DWORD>(wait * 1000) + 1;
             }
-            MsgWaitForMultipleObjectsEx(0, nullptr, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            const DWORD woke = MsgWaitForMultipleObjectsEx(sessionsReady ? 1 : 0, sessionsReady ? &sessionsReady : nullptr, timeout, QS_ALLINPUT,
+                                                           MWMO_INPUTAVAILABLE);
+            if (sessionsReady && woke == WAIT_OBJECT_0) SessionsReady();
             MSG msg;
             // Dispatching delivers the hooks' events (OnEvent).
             while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
                 if (msg.message == WM_QUIT) {
                     Log("stopped");
                     Unhook();
+                    if (sessionsReady) CloseHandle(sessionsReady);
                     current = nullptr;
                     return;
                 }
@@ -201,57 +227,64 @@ struct Occlusion::Worker {
         if (deadline == 0) deadline = Seconds() + kDebounceSeconds;
     }
 
-    void React(occlusion::Tracker::Reaction reaction) {
+    // What a reaction asks for: the verdict published at once, the hooks brought in line
+    // (once, whether a signal or the foreground changed), and a pass after the debounce.
+    void Apply(occlusion::Tracker::Reaction reaction, bool hooksMayChange = false) {
         if (reaction.recompute || reaction.reevaluate) ++relevant;
-        if (reaction.reevaluate) {
-            Publish();
-            UpdateHooks();
-        }
+        if (reaction.reevaluate) Publish();
+        if (reaction.reevaluate || hooksMayChange) UpdateHooks();
         if (reaction.recompute) Schedule();
     }
 
     void Poked() {
         owner.poked_ = false;
-        if (const int locked = owner.locked_.exchange(-1); locked >= 0) React(tracker.SetLocked(locked == 1));
-        if (const int off = owner.displayOff_.exchange(-1); off >= 0) React(tracker.SetDisplayOff(off == 1));
-        if (owner.windowChanged_.exchange(false)) React(tracker.KiteChanged());
+        if (owner.waitForSessions_.exchange(false) && !sessionsReady) {
+            // Early in a login the session service isn't up yet: register once it is.
+            sessionsReady = OpenEventW(SYNCHRONIZE, FALSE, L"Global\\TermSrvReadyEvent");
+        }
+        // The lock state at start, and again on any news while locked, in case an unlock was
+        // missed (the registration failed, or came after it).
+        if (owner.queryLock_.exchange(false) || tracker.Suspended()) {
+            if (const auto locked = SessionLocked()) owner.locked_ = *locked ? 1 : 0;
+        }
+        if (const int locked = owner.locked_.exchange(-1); locked >= 0) Apply(tracker.SetLocked(locked == 1));
+        if (const int off = owner.displayOff_.exchange(-1); off >= 0) Apply(tracker.SetDisplayOff(off == 1));
+        if (owner.activated_.exchange(false)) Apply(tracker.KiteActivated());
+        if (owner.windowChanged_.exchange(false)) {
+            Apply(tracker.KiteChanged());
+            if (log.is_open()) Log("kiteChanged");
+        }
+    }
+
+    void SessionsReady() {
+        CloseHandle(sessionsReady);
+        sessionsReady = nullptr;
+        owner.sessionRegistered_ = WTSRegisterSessionNotification(kite, NOTIFY_FOR_THIS_SESSION) != 0;
+        if (const auto locked = SessionLocked()) Apply(tracker.SetLocked(*locked));
     }
 
     void Handle(DWORD code, HWND hwnd, LONG object, LONG child) {
         ++events;
-        // Whole windows only: carets, cursors, scroll bars and a window's parts go at once.
-        if (!hwnd || object != OBJID_WINDOW || child != CHILDID_SELF) return;
+        const uintptr_t key = reinterpret_cast<uintptr_t>(hwnd);
+        const bool occluder = tracker.IsOccluder(key);
+        const std::optional<Event> event =
+            occlusion::FilterEvent(code, hwnd != nullptr, object, child, occluder, [hwnd] { return GetAncestor(hwnd, GA_ROOT) == hwnd; });
+        if (!event) return;
         occlusion::EventFacts facts;
-        switch (code) {
-        case EVENT_SYSTEM_FOREGROUND: facts.event = Event::Foreground; break;
-        case EVENT_SYSTEM_MOVESIZESTART: facts.event = Event::MoveSizeStart; break;
-        case EVENT_SYSTEM_MOVESIZEEND: facts.event = Event::MoveSizeEnd; break;
-        case EVENT_SYSTEM_MINIMIZESTART: facts.event = Event::MinimizeStart; break;
-        case EVENT_SYSTEM_MINIMIZEEND: facts.event = Event::MinimizeEnd; break;
-        case EVENT_OBJECT_SHOW: facts.event = Event::Show; break;
-        case EVENT_OBJECT_HIDE: facts.event = Event::Hide; break;
-        case EVENT_OBJECT_REORDER: facts.event = Event::Reorder; break;
-        case EVENT_OBJECT_LOCATIONCHANGE: facts.event = Event::LocationChange; break;
-        case kEventObjectCloaked: facts.event = Event::Cloaked; break;
-        case kEventObjectUncloaked: facts.event = Event::Uncloaked; break;
-        default: return;
-        }
-        facts.occluder = tracker.IsOccluder(reinterpret_cast<uintptr_t>(hwnd));
-        // Top-level windows only (a hidden occluder may already be gone: the set knows it).
-        if (!facts.occluder && facts.event != Event::Reorder && GetAncestor(hwnd, GA_ROOT) != hwnd) return;
+        facts.event = *event;
+        facts.occluder = occluder;
         DWORD process = 0;
         GetWindowThreadProcessId(hwnd, &process);
         facts.kiteProcess = process == kiteProcess;
         facts.kiteWindow = hwnd == kite;
-        if ((facts.event == Event::Show || facts.event == Event::Hide || facts.event == Event::Cloaked ||
-             facts.event == Event::Uncloaked) &&
-            process && process == ShellProcess()) {
-            facts.previewWindow = IsPreview(hwnd);
+        const bool showOrHide = *event == Event::Show || *event == Event::Hide || *event == Event::Destroy || *event == Event::Cloaked ||
+                                *event == Event::Uncloaked;
+        if (showOrHide && process && process == ShellProcess()) facts.previewWindow = IsPreview(hwnd);
+        if (tracker.NeedsOverKite(*event)) {
+            facts.overKite = FrameRect(hwnd).Intersects(*event == Event::MoveSizeStart ? KiteRect().Inflated(kNearKitePixels) : KiteRect());
         }
-        if (tracker.NeedsOverKite(facts.event)) facts.overKite = FrameRect(hwnd).Intersects(KiteRect());
-        React(tracker.OnEvent(facts));
-        // The foreground app's moves are hooked while Kite shows: it changed.
-        if (facts.event == Event::Foreground) UpdateHooks();
+        // The foreground app's hooks follow it.
+        Apply(tracker.OnEvent(facts), *event == Event::Foreground);
     }
 
     static DWORD ShellProcess() {
@@ -264,11 +297,7 @@ struct Occlusion::Worker {
     // and DWM clips it there.
     Rect KiteRect() const {
         Rect rect = FrameRect(kite);
-        if (IsZoomed(kite)) {
-            MONITORINFO info{};
-            info.cbSize = sizeof info;
-            if (GetMonitorInfoW(MonitorFromWindow(kite, MONITOR_DEFAULTTONEAREST), &info)) rect = rect.Intersection(ToRect(info.rcMonitor));
-        }
+        if (IsZoomed(kite)) rect = rect.Intersection(MonitorRect(MonitorFromWindow(kite, MONITOR_DEFAULTTONEAREST), false));
         return rect;
     }
 
@@ -276,78 +305,70 @@ struct Occlusion::Worker {
         Worker* worker;
         Rect target;
         DWORD shell;
-        std::vector<Rect> occluders;
         occlusion::Tracker::Pass* pass;
     };
 
     // One window above Kite's, top to bottom; false at Kite's own.
     bool Visit(HWND hwnd, Enumeration& e) {
         if (hwnd == kite) return false;
-        if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) return true;
+        if (!IsWindowVisible(hwnd)) return true;
         DWORD process = 0;
         GetWindowThreadProcessId(hwnd, &process);
-        if (process == kiteProcess) return true;  // Kite's own never cover it
         // A thumbnail or Alt+Tab up anywhere shows Kite's window as it is.
-        if (process == e.shell && !e.pass->previewing && IsPreview(hwnd) && !Cloaked(hwnd)) e.pass->previewing = true;
-        // The window's rect holds its frame: windows nowhere near Kite go without asking DWM.
+        if (process == e.shell && !e.pass->previewing && IsPreview(hwnd) && !CloakedWindow(hwnd)) e.pass->previewing = true;
+        // The window's rect holds its frame: windows nowhere near Kite go without asking more.
         RECT outer{};
         if (!GetWindowRect(hwnd, &outer) || !ToRect(outer).Intersects(e.target)) return true;
+        char className[96] = {};
+        GetClassNameA(hwnd, className, static_cast<int>(sizeof className));
         occlusion::WindowFacts w;
         w.visible = true;
-        w.rect = ToRect(outer);
-        const LONG style = GetWindowLongW(hwnd, GWL_STYLE);
-        const LONG exStyle = GetWindowLongW(hwnd, GWL_EXSTYLE);
-        w.clickThrough = (exStyle & WS_EX_TRANSPARENT) != 0;
-        w.toolWindow = (exStyle & WS_EX_TOOLWINDOW) != 0;
-        w.popup = (style & WS_POPUP) != 0;
+        w.minimized = IsIconic(hwnd) != 0;
+        w.maximized = IsZoomed(hwnd) != 0;
+        w.ownProcess = process == kiteProcess;
         w.owned = GetWindow(hwnd, GW_OWNER) != nullptr;
-        if (w.toolWindow || w.popup) w.taskbar = ClassIs(hwnd, "Shell_TrayWnd") || ClassIs(hwnd, "Shell_SecondaryTrayWnd");
-        w.layered = (exStyle & WS_EX_LAYERED) != 0;
-        if (w.layered) {
+        w.style = static_cast<uint32_t>(GetWindowLongW(hwnd, GWL_STYLE));
+        w.exStyle = static_cast<uint32_t>(GetWindowLongW(hwnd, GWL_EXSTYLE));
+        w.className = className;
+        if (w.exStyle & WS_EX_LAYERED) {
             BYTE alpha = 255;
             DWORD flags = 0;
             w.layeredKnown = GetLayeredWindowAttributes(hwnd, nullptr, &alpha, &flags) != 0;
-            w.layeredAlpha = (flags & LWA_ALPHA) != 0;
+            w.layeredFlags = flags;
             w.alpha = alpha;
-            w.layeredColorKey = (flags & LWA_COLORKEY) != 0;
         }
-        // The cheap checks first: most windows above Kite are out by now.
+        w.rect = ToRect(outer);
+        // What's left to ask DWM can only rule a window out: the cheap answer first.
         if (!occlusion::CanOcclude(w)) return true;
-        w.rect = FrameRect(hwnd);
-        if (!w.rect.Intersects(e.target)) return true;
-        w.cloaked = Cloaked(hwnd);
-        w.shapedRegion = scratch && GetWindowRgn(hwnd, scratch) == COMPLEXREGION;
-        BOOL hostBackdrop = FALSE;
+        w.region = scratch ? GetWindowRgn(hwnd, scratch) : 0;
+        w.cloaked = CloakedWindow(hwnd);
         int backdrop = 0;
-        w.acrylic = (SUCCEEDED(DwmGetWindowAttribute(hwnd, kDwmUseHostBackdropBrush, &hostBackdrop, sizeof hostBackdrop)) && hostBackdrop) ||
-                    (SUCCEEDED(DwmGetWindowAttribute(hwnd, kDwmSystemBackdropType, &backdrop, sizeof backdrop)) && backdrop == kBackdropAcrylic);
-        w.maximized = IsZoomed(hwnd) != 0;
-        if (w.maximized) {
-            MONITORINFO info{};
-            info.cbSize = sizeof info;
-            if (GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &info)) w.workArea = ToRect(info.rcWork);
-        }
+        if (SUCCEEDED(DwmGetWindowAttribute(hwnd, kDwmSystemBackdropType, &backdrop, sizeof backdrop))) w.backdrop = backdrop;
+        w.rect = FrameRect(hwnd);
+        if (w.maximized) w.workArea = MonitorRect(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), true);
         if (!occlusion::CanOcclude(w)) return true;
         const Rect covers = occlusion::OccludingRect(w);
         if (!covers.Intersects(e.target)) return true;
-        e.occluders.push_back(covers);
-        e.pass->occluders.insert(reinterpret_cast<uintptr_t>(hwnd));
-        e.pass->occluderProcesses.insert(process);
+        occluderRects.push_back(covers);
+        e.pass->occluders.push_back(reinterpret_cast<uintptr_t>(hwnd));
+        e.pass->occluderProcesses.push_back(process);
         return true;
     }
 
     // Recorders and sharing hosts have windows (OBS's, a sharing toolbar, ones hidden behind a
     // tray icon), so the processes that own a top-level window are the ones asked: far cheaper
-    // than listing every process, which took ~15 ms here. Each is asked its name once.
+    // than listing every process (~15 ms here). Each is asked its name once.
     bool RecorderRunning() {
-        std::set<DWORD> owners;
+        owners.clear();
         EnumWindows([](HWND hwnd, LPARAM data) -> BOOL {
             DWORD process = 0;
             GetWindowThreadProcessId(hwnd, &process);
-            reinterpret_cast<std::set<DWORD>*>(data)->insert(process);
+            reinterpret_cast<std::vector<DWORD>*>(data)->push_back(process);
             return TRUE;
         }, reinterpret_cast<LPARAM>(&owners));
-        std::erase_if(recorders, [&](const auto& entry) { return !owners.contains(entry.first); });
+        std::sort(owners.begin(), owners.end());
+        owners.erase(std::unique(owners.begin(), owners.end()), owners.end());
+        std::erase_if(recorders, [&](const auto& entry) { return !std::binary_search(owners.begin(), owners.end(), entry.first); });
         bool running = false;
         for (DWORD process : owners) {
             auto [it, added] = recorders.try_emplace(process, false);
@@ -381,26 +402,25 @@ struct Occlusion::Worker {
         DWORD foreground = 0;
         if (const HWND front = GetForegroundWindow()) GetWindowThreadProcessId(front, &foreground);
         pass.kiteForeground = foreground == kiteProcess;
-        React(tracker.SetCloaked(Cloaked(kite)));
-        // Locked or the display off: the windows can't change the verdict (the end of it asks
-        // for a pass).
-        if (tracker.Suspended()) return;
+        pass.kiteShown = IsWindowVisible(kite) && !IsIconic(kite);
+        // The cloak as of now; published with the rest below, once.
+        tracker.SetCloaked(CloakedWindow(kite));
         visiblePixels = -1;
         occluderCount = 0;
-        previewing = false;
-        covered = false;
-        // Minimized is the browser window's own business (it hides the page already); in
-        // front, Kite isn't covered. Neither needs the windows.
-        if (IsWindowVisible(kite) && !IsIconic(kite) && !pass.kiteForeground) {
-            Enumeration e{this, KiteRect(), ShellProcess(), {}, &pass};
-            std::vector<Rect> monitors;
+        previewing = covered = false;
+        // Locked, display off, on another desktop, minimized (the browser window's own
+        // business: it hides the page already) or in front: the windows can't matter.
+        if (!tracker.Suspended() && !tracker.Cloaked() && pass.kiteShown && !pass.kiteForeground) {
+            Enumeration e{this, KiteRect(), ShellProcess(), &pass};
+            monitors.clear();
+            occluderRects.clear();
             EnumDisplayMonitors(nullptr, nullptr, &AddMonitor, reinterpret_cast<LPARAM>(&monitors));
             EnumWindows([](HWND hwnd, LPARAM data) -> BOOL {
                 auto& e = *reinterpret_cast<Enumeration*>(data);
                 return e.worker->Visit(hwnd, e) ? TRUE : FALSE;
             }, reinterpret_cast<LPARAM>(&e));
-            visiblePixels = occlusion::VisiblePixels(e.target, monitors, e.occluders);
-            occluderCount = e.occluders.size();
+            visiblePixels = occlusion::VisiblePixels(e.target, monitors, occluderRects);
+            occluderCount = occluderRects.size();
             pass.covered = occlusion::Covered(visiblePixels);
             previewing = pass.previewing;
             covered = pass.covered;
@@ -409,24 +429,50 @@ struct Occlusion::Worker {
         tracker.SetPass(std::move(pass));
         Publish();
         UpdateHooks();
-        if (covered != loggedCovered || occluderCount != loggedOccluders) Log("pass");
         const double took = Seconds() - start;
         ++passes;
         passSeconds += took;
-        if (took > passMaxSeconds) passMaxSeconds = took;
+        passMaxSeconds = std::max(passMaxSeconds, took);
+        if (covered != loggedCovered || occluderCount != loggedOccluders) Log("pass");
     }
 
     void UpdateHooks() {
         DWORD foreground = 0;
-        if (const HWND front = GetForegroundWindow()) GetWindowThreadProcessId(front, &foreground);
-        const occlusion::ProcessHooks wanted = tracker.Hooks(kiteProcess, foreground, ShellProcess());
-        Sync(locationHooks, wanted.location, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE);
-        Sync(hideHooks, wanted.hideReorder, EVENT_OBJECT_HIDE, EVENT_OBJECT_REORDER);
+        bool foregroundNearKite = false;
+        if (const HWND front = GetForegroundWindow()) {
+            GetWindowThreadProcessId(front, &foreground);
+            const HMONITOR kiteMonitor = MonitorFromWindow(kite, MONITOR_DEFAULTTONEAREST);
+            foregroundNearKite = MonitorFromWindow(front, MONITOR_DEFAULTTONEAREST) == kiteMonitor ||
+                                 FrameRect(front).Intersects(MonitorRect(kiteMonitor, false));
+        }
+        using namespace occlusion::win_event;
+        const occlusion::GlobalHooks globals = tracker.Globals();
+        Set(global.foreground, globals.foreground, kForeground, kForeground, 0);
+        Set(global.moveSize, globals.moveSize, kMoveSizeStart, kMoveSizeEnd, 0);
+        Set(global.minimize, globals.minimize, kMinimizeStart, kMinimizeEnd, 0);
+        Set(global.show, globals.show, kShow, kShow, 0);
+        Set(global.cloak, globals.cloak, kCloaked, kUncloaked, 0);
+        const occlusion::ProcessHooks wanted = tracker.Hooks(kiteProcess, foreground, foregroundNearKite, ShellProcess());
+        Set(kiteCloak, wanted.kiteCloak, kCloaked, kUncloaked, kiteProcess);
+        Sync(stateHooks, wanted.stateChange, kStateChange, kStateChange);
+        Sync(destroyHooks, wanted.hide, kDestroy, kDestroy);
+        Sync(hideHooks, wanted.hide, kHide, kHide);
+        Sync(showHooks, wanted.show, kShow, kShow);
     }
 
-    void Sync(std::map<DWORD, HWINEVENTHOOK>& hooks, const std::set<uint32_t>& wanted, DWORD first, DWORD last) {
+    static void Set(HWINEVENTHOOK& hook, bool wanted, DWORD first, DWORD last, DWORD process) {
+        if (wanted == (hook != nullptr)) return;
+        if (hook) {
+            UnhookWinEvent(hook);
+            hook = nullptr;
+        } else {
+            hook = Hook(first, last, process);
+        }
+    }
+
+    static void Sync(std::map<DWORD, HWINEVENTHOOK>& hooks, const std::vector<uint32_t>& wanted, DWORD first, DWORD last) {
         for (auto it = hooks.begin(); it != hooks.end();) {
-            if (wanted.contains(it->first)) {
+            if (std::binary_search(wanted.begin(), wanted.end(), it->first)) {
                 ++it;
                 continue;
             }
@@ -437,6 +483,12 @@ struct Occlusion::Worker {
             if (hooks.contains(process)) continue;
             if (HWINEVENTHOOK hook = Hook(first, last, process)) hooks.emplace(process, hook);
         }
+    }
+
+    size_t HookCount() const {
+        size_t count = stateHooks.size() + destroyHooks.size() + hideHooks.size() + showHooks.size();
+        for (HWINEVENTHOOK hook : {global.foreground, global.moveSize, global.minimize, global.show, global.cloak, kiteCloak}) count += hook != nullptr;
+        return count;
     }
 
     void Publish() {
@@ -452,15 +504,15 @@ struct Occlusion::Worker {
         if (!log.is_open()) return;
         loggedCovered = covered;
         loggedOccluders = occluderCount;
-        char line[640];
+        char line[768];
         std::snprintf(line, sizeof line,
-                      "{\"t\":%.4f,\"%s\":\"%s\",\"covered\":%s,\"visiblePixels\":%lld,\"occluders\":%zu,\"previewing\":%s,\"events\":%llu,"
-                      "\"relevant\":%llu,\"passes\":%llu,\"passMaxMs\":%.3f,\"passTotalMs\":%.3f,\"processHooks\":%zu,\"thread\":%lu}\n",
-                      Seconds() - started, what, std::string(occlusion::Name(published)).c_str(),
-                      Json(covered).data(), static_cast<long long>(visiblePixels), occluderCount, Json(previewing).data(),
+                      "{\"t\":%.4f,\"%s\":\"%s\",\"covered\":%s,\"visiblePixels\":%lld,\"occluders\":%zu,\"previewing\":%s,\"dragging\":%s,"
+                      "\"events\":%llu,\"relevant\":%llu,\"passes\":%llu,\"passMaxMs\":%.3f,\"passTotalMs\":%.3f,\"hooks\":%zu,"
+                      "\"thread\":%lu}\n",
+                      Seconds() - started, what, std::string(occlusion::Name(published)).c_str(), Json(covered),
+                      static_cast<long long>(visiblePixels), occluderCount, Json(previewing), Json(tracker.Dragging()),
                       static_cast<unsigned long long>(events), static_cast<unsigned long long>(relevant),
-                      static_cast<unsigned long long>(passes), passMaxSeconds * 1000, passSeconds * 1000,
-                      locationHooks.size() + hideHooks.size(), GetCurrentThreadId());
+                      static_cast<unsigned long long>(passes), passMaxSeconds * 1000, passSeconds * 1000, HookCount(), GetCurrentThreadId());
         log << line;
         log.flush();
     }
@@ -469,52 +521,53 @@ struct Occlusion::Worker {
 thread_local Occlusion::Worker* Occlusion::Worker::current = nullptr;
 
 std::unique_ptr<Occlusion> Occlusion::Start(HWND window, UINT message, const std::filesystem::path& log) {
-    std::unique_ptr<Occlusion> occlusion(new Occlusion(window, message, log));
-    if (!occlusion->threadID_) return nullptr;
+    std::unique_ptr<Occlusion> occlusion(new Occlusion(window, log, message));
+    if (!occlusion->thread_) return nullptr;
     return occlusion;
 }
 
-Occlusion::Occlusion(HWND window, UINT message, const std::filesystem::path& log) : window_(window) {
+DWORD WINAPI Occlusion::ThreadMain(LPVOID self) {
+    auto* occlusion = static_cast<Occlusion*>(self);
+    occlusion->worker_->Run();
+    return 0;
+}
+
+Occlusion::Occlusion(HWND window, const std::filesystem::path& log, UINT message) : window_(window) {
     worker_ = std::make_unique<Worker>(*this, window, message);
     if (!log.empty()) worker_->log.open(log, std::ios::binary | std::ios::trunc);
-    // Launched while locked (a scheduled test run): hidden from the start.
-    SessionInfoEx* info = nullptr;
-    DWORD bytes = 0;
-    if (WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, kWtsSessionInfoEx, reinterpret_cast<LPWSTR*>(&info),
-                                    &bytes) &&
-        info) {
-        if (bytes >= sizeof(SessionInfoEx) && info->level == 1 && info->level1.sessionFlags == kWtsSessionStateLock) locked_ = 1;
-        WTSFreeMemory(info);
-    }
-    sessionNotification_ = WTSRegisterSessionNotification(window, NOTIFY_FOR_THIS_SESSION) != 0;
-    // Windows answers this at once with the display's state, then on each change.
-    displayNotification_ = RegisterPowerSettingNotification(window, &kDisplayStatus, DEVICE_NOTIFY_WINDOW_HANDLE);
-    // The thread's queue exists before Start returns, so a poke is never lost.
-    HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!ready) return;
-    thread_ = std::thread([this, ready] {
-        MSG msg;
-        PeekMessageW(&msg, nullptr, WM_USER, WM_USER, PM_NOREMOVE);  // makes the queue
-        threadID_ = GetCurrentThreadId();
-        SetEvent(ready);
-        worker_->Run();
-    });
-    WaitForSingleObject(ready, INFINITE);
-    CloseHandle(ready);
-    Poke();  // the initial lock state
+    // CreateThread rather than std::thread, which throws; Run makes the thread's queue in its
+    // first PeekMessage, and a poke before that is posted again (Poke).
+    thread_ = CreateThread(nullptr, 0, &ThreadMain, this, 0, &threadID_);
 }
 
 Occlusion::~Occlusion() {
-    if (displayNotification_) UnregisterPowerSettingNotification(displayNotification_);
-    if (sessionNotification_) WTSUnRegisterSessionNotification(window_);
-    if (thread_.joinable()) {
-        PostThreadMessageW(threadID_, WM_QUIT, 0, 0);
-        thread_.join();
+    if (thread_) {
+        // Until the thread has its queue a post can fail: try until it takes.
+        while (!PostThreadMessageW(threadID_, WM_QUIT, 0, 0) && WaitForSingleObject(thread_, 10) == WAIT_TIMEOUT) {
+        }
+        WaitForSingleObject(thread_, INFINITE);
+        CloseHandle(thread_);
     }
+    if (displayNotification_) UnregisterPowerSettingNotification(displayNotification_);
+    if (sessionRegistered_) WTSUnRegisterSessionNotification(window_);
+}
+
+void Occlusion::RegisterNotifications() {
+    // Registered first, then the state asked (on the worker, off this thread), so a lock in
+    // between isn't missed. Early in a login the service may not be up: the worker waits for it.
+    sessionRegistered_ = WTSRegisterSessionNotification(window_, NOTIFY_FOR_THIS_SESSION) != 0;
+    if (!sessionRegistered_) waitForSessions_ = true;
+    queryLock_ = true;
+    // Windows answers this at once with the display's state (a message to the window, which
+    // the caller hands to HandleMessage), then on each change.
+    displayNotification_ = RegisterPowerSettingNotification(window_, &kDisplayStatus, DEVICE_NOTIFY_WINDOW_HANDLE);
+    Poke();
 }
 
 void Occlusion::Poke() {
     if (!threadID_ || poked_.exchange(true)) return;
+    // The thread may not have its queue yet: it reads every flag when it does run (Run's
+    // first pass and its first poke), so a failed post just leaves the flag for then.
     if (!PostThreadMessageW(threadID_, kPokeMessage, 0, 0)) poked_ = false;
 }
 
@@ -523,23 +576,25 @@ void Occlusion::WindowChanged() {
     Poke();
 }
 
+void Occlusion::Activated() {
+    activated_ = true;
+    Poke();
+}
+
 bool Occlusion::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
-    if (message == WM_WTSSESSION_CHANGE) {
-        if (wParam == WTS_SESSION_LOCK || wParam == WTS_SESSION_UNLOCK) {
-            locked_ = wParam == WTS_SESSION_LOCK ? 1 : 0;
-            Poke();
-        }
+    if (message == WM_WTSSESSION_CHANGE && (wParam == WTS_SESSION_LOCK || wParam == WTS_SESSION_UNLOCK)) {
+        locked_ = wParam == WTS_SESSION_LOCK ? 1 : 0;
+        Poke();
         result = 0;
         return true;
     }
     if (message == WM_POWERBROADCAST && wParam == PBT_POWERSETTINGCHANGE && lParam) {
         const auto* setting = reinterpret_cast<const POWERBROADCAST_SETTING*>(lParam);
-        if (IsEqualGUID(setting->PowerSetting, kDisplayStatus) && setting->DataLength >= sizeof(DWORD)) {
-            DWORD state = 0;
-            std::memcpy(&state, setting->Data, sizeof state);
-            displayOff_ = state == 0 ? 1 : 0;  // dimmed still shows
-            Poke();
-        }
+        if (!IsEqualGUID(setting->PowerSetting, kDisplayStatus) || setting->DataLength < sizeof(DWORD)) return false;
+        DWORD state = 0;
+        std::memcpy(&state, setting->Data, sizeof state);
+        displayOff_ = state == 0 ? 1 : 0;  // dimmed still shows
+        Poke();
         result = TRUE;
         return true;
     }
