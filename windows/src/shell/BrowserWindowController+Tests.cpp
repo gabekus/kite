@@ -1244,9 +1244,14 @@ std::wstring BrowserWindowController::SmokeTestMiddleClick() {
     StateChanged();
     RunCommand("renameCurrentTab");
     for (wchar_t c : std::wstring_view(L"Kept")) SendMessageW(window, WM_CHAR, c, 0);
-    middleClick(*renamedAt, *renamedAt);
-    if (!state_.FindTabByID(renamed) || sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Tab, renamed}) {
-        return done(L"a middle click on the row being renamed closed it or ended the rename");
+    // In its field, and in its row left of the field (over the favicon), as a left press there.
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    const POINT renamedIcon{std::lround((sidebar_metrics::kPadding + sidebar_metrics::kIconInset) * scale), renamedAt->y};
+    for (const POINT point : {*renamedAt, renamedIcon}) {
+        middleClick(point, point);
+        if (!state_.FindTabByID(renamed) || sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Tab, renamed}) {
+            return done(L"a middle click on the row being renamed closed it or ended the rename");
+        }
     }
     middleClick(*otherAt, *otherAt);
     if (sidebar_->Renaming() || !state_.FindTabByID(renamed) || state_.FindTabByID(renamed)->DisplayTitle() != "Kept") {

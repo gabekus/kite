@@ -1831,13 +1831,16 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         if (p.x < 0 || p.x >= width_) return false;
         if (press_ || barPress_ || topPress_ || favoritePress_ || renamePressed_) return true;
         middlePress_.reset();
-        // While a row or header is renamed: a press on it is ignored (its close button is hidden
-        // while it renames, and closing it would lose what was typed); anywhere else it ends the
-        // rename, keeping what was typed, as a left press does, then goes on as a press.
+        // While something is renamed, as a left press: in its field (or on Done), or elsewhere in a
+        // renamed tab's or folder's row (InRenamedRow), it does nothing and the field keeps editing
+        // (the row's close button is hidden while it renames, and closing a Today tab would lose
+        // what was typed). Anywhere else it ends the rename, keeping what was typed, and goes on as
+        // a press.
         if (rename_) {
             const D2D1_POINT_2F q = OnPage(p);
-            const auto row = SidebarRowAt(model_.rows, width_, Height(), scroll_, q.x, q.y, listTop_);
-            if (row && Renames(model_.rows[*row])) {
+            const auto done = rename_->DoneBox();
+            const bool onDone = done && q.x >= done->left && q.x < done->right && q.y >= done->top && q.y < done->bottom;
+            if (rename_->InField(q.x, q.y) || onDone || InRenamedRow(q)) {
                 if (GetCapture() == window_) ReleaseCapture();
                 return true;
             }

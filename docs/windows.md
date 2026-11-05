@@ -1098,9 +1098,10 @@ folder or not, unloads, keeping its row while its page closes (the button's tool
 says "Unload"); one that closes for good (a split's pane, or one with no page) goes. A tab in one
 of Claude's folders has no close button unless it closes for good, and without one it takes no
 middle click. It acts on release inside the row it went down on, so a press moved off the row, or
-one the mouse capture was taken from, closes nothing. The press itself draws nothing. While a row
-or the header is renamed, a middle click on it does nothing (its close button is hidden then);
-one anywhere else ends the rename, keeping what was typed, as a left press does. A middle click on
+one the mouse capture was taken from, closes nothing. The press itself draws nothing. While
+something is renamed, a middle press goes as a left press does: in the field, or elsewhere in the
+renamed tab's or folder's row, it does nothing and the field keeps editing (the row's close button
+is hidden then); anywhere else it ends the rename, keeping what was typed. A middle click on
 a favorite, a folder, the header, New Tab, the space bar, the top row or empty sidebar does
 nothing: a favorite is a tile, not a tab row, and has no close button to stand in for. A page's
 own middle clicks (a link opening in a background tab, autoscroll) are Chromium's, in the page's
