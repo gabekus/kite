@@ -149,7 +149,7 @@ request that could reach past that, before anything runs:
   picker or Create a Space through the store paths a click takes, and the theme editor from its row's own
   view, without events. The state waits for Kite's `KITE_TEST_SIDEBAR: ready` line and fails,
   uncaptured, without it, when it says Kite is the active app or the popover isn't the main window's
-  child (`SIDEBAR_READY_OK`), or when Kite writes `KITE_TEST_SIDEBAR: changed` (the state went, or Kite
+  child at level 0 (`SIDEBAR_READY_OK`), or when Kite writes `KITE_TEST_SIDEBAR: changed` (the state went, or Kite
   became active) by just after the capture.
 
 The Mac job only reads the repository (no token left in its checkout); a GitHub-hosted job pushes

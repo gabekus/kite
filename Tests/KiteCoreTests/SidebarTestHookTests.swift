@@ -182,9 +182,15 @@ struct SidebarTestHookTests {
         let picker = SidebarTestHook.iconPicker(space: "Personal"), page = SidebarTestHook.newSpace(name: "Reading list", preset: nil)
         let theme = SidebarTestHook.newSpace(name: "Reading list", preset: 3)
         let child = SidebarTestHook.Shown.Popover(key: false, level: 0, parentIsMainWindow: true)
-        // Kite in the background, the popover the main window's child (key or not), or no popover: captured.
+        // Kite in the background, the popover the main window's child at normal level (key or not), or no popover:
+        // captured.
         #expect(passes(picker.readyLine(.init(appActive: false, popover: child))))
-        #expect(passes(theme.readyLine(.init(appActive: false, popover: .init(key: true, level: 101, parentIsMainWindow: true)))))
+        #expect(passes(theme.readyLine(.init(appActive: false, popover: .init(key: true, level: 0, parentIsMainWindow: true)))))
+        // A popover above normal level (it could be over the user's windows): refused, however it got there.
+        for level in [101, 3, 1, -1, 2_147_483_631, 10] {
+            #expect(!passes(theme.readyLine(.init(appActive: false, popover: .init(key: false, level: level, parentIsMainWindow: true)))),
+                    "\(level)")
+        }
         #expect(passes(page.readyLine(.init(appActive: false, popover: nil))))
         // Kite active, or a popover that isn't the main window's child: refused, whatever the rest says.
         #expect(!passes(picker.readyLine(.init(appActive: true, popover: child))))

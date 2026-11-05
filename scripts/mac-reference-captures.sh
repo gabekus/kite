@@ -148,16 +148,17 @@ FIND_READY_SECONDS=30
 # activated or fronted. It writes "KITE_TEST_SIDEBAR: ready: …" once the popover shows (or the page is up), and
 # `kite ui capture`'s in-process render draws the open popover over the window. Older Kites ignore the hooks, so the
 # capture would show neither. If that branch lands by squash or rebase, set this to the commit it landed as on main.
-SIDEBAR_FLOOR=69e0426c0821a7936f94ddee385b01009884a4e8
+SIDEBAR_FLOOR=7ad37b80584e50f8279dbca429d42e6bcebb460f
 # How long a state waits, after Kite's socket answers, for that ready line (or its "failed" line). Kite writes one by
 # 11 s after its window is up (SidebarTestHook.readyTimeout after a 1 s delay), and SidebarTestHookTests checks that
 # this stays at least 5 s above that.
 SIDEBAR_READY_SECONDS=20
 # What Kite's ready line must start with (an ERE, for bash's =~): Kite isn't the active app, and the hook's popover, if
-# it has one, is a child window of the main window (SidebarTestHook.Shown, whose facts come before any name). A key
-# popover window in an inactive app can't take the keyboard from another app. SidebarTestHookTests matches it against
-# the lines Kite writes.
-SIDEBAR_READY_OK='^KITE_TEST_SIDEBAR: ready: app active no; (no popover|popover key (yes|no), level -?[0-9]+, parent the main window); '
+# it has one, is a child window of the main window at normal level, 0 (SidebarTestHook.Shown, whose facts come before
+# any name). A higher level could put the popover over Gabe's windows: such a state fails, and needs a test-safe level
+# fix in Kite, not a looser check. A key popover window in an inactive app can't take the keyboard from another app.
+# SidebarTestHookTests matches it against the lines Kite writes.
+SIDEBAR_READY_OK='^KITE_TEST_SIDEBAR: ready: app active no; (no popover|popover key (yes|no), level 0, parent the main window); '
 
 # Views a click, right-click (through showSidebarMenu's KITE_TEST_CONTEXT_MENU hook) or drag may start on. Each was
 # read in the Mac source: no hookless NSMenu, no window drag. Window drag: the browser window is movable by its
@@ -1092,7 +1093,7 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
             kill -0 "$KITE_PID" 2>/dev/null || break
             sleep 0.2
         done
-        ready_line="$(grep -m1 '^KITE_TEST_SIDEBAR: ready' "$PROFILE/kite.log" 2>/dev/null || true)"
+        ready_line="$(grep -a -m1 '^KITE_TEST_SIDEBAR: ready' "$PROFILE/kite.log" 2>/dev/null || true)"
         if [[ "$ready" != 1 ]]; then
             echo "failed: no 'KITE_TEST_SIDEBAR: ready' line from Kite in $SIDEBAR_READY_SECONDS s (see test-lines)" >"$folder/status"
         elif [[ ! "$ready_line" =~ $SIDEBAR_READY_OK ]]; then
@@ -1220,7 +1221,7 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
         # ending) or Kite becoming active, and writes "changed": then the capture may not show the state, so it's dropped.
         if [[ "$SIDEBAR" == 1 && -f "$OUT/$NAME.png" ]]; then
             sleep 0.5
-            changed="$(grep -m1 '^KITE_TEST_SIDEBAR: changed' "$PROFILE/kite.log" 2>/dev/null || true)"
+            changed="$(grep -a -m1 '^KITE_TEST_SIDEBAR: changed' "$PROFILE/kite.log" 2>/dev/null || true)"
             if [[ -n "$changed" ]]; then
                 echo "failed: the hook's state didn't hold through the capture: ${changed:0:300}" >"$folder/status"
                 rm -f "$OUT/$NAME.png"; failed=1
