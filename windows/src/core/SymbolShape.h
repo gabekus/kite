@@ -90,6 +90,10 @@ private:
     ShapePoint current_;
 };
 
+// A straight stroke from `a` to `b`, `half` its width either side, with round ends: a rounded
+// rectangle round the line (the top row's X and reload's chevron, the empty favorites' close button).
+void AddStroke(ShapeBuilder& builder, ShapePoint a, ShapePoint b, float half);
+
 // For tests: the bounds of the added layers' figures (a cut that trims an edge isn't counted),
 // whether (x, y) is inked, and the inked area in square points (exact along rows `step` apart).
 ShapeBounds BoundsOf(const SymbolShape& shape);

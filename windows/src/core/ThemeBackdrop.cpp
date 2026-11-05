@@ -7,6 +7,7 @@
 #include <cfloat>
 #include <cmath>
 
+#include "core/ColorSpaces.h"
 #include "core/OKLab.h"
 
 // Every step rounds to float as the GPU does; x87's wider intermediates would drift off the
@@ -44,10 +45,8 @@ F3 OklabToLinearSRGB(F3 c) {
             -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s};
 }
 
-float LinearToSRGB(float c) {
-    c = Saturate(c);
-    return c <= 0.0031308f ? 12.92f * c : 1.055f * std::pow(c, 1.f / 2.4f) - 0.055f;
-}
+// sRGB's transfer function from linear (core/ColorSpaces.h), clamped.
+float LinearToSRGB(float c) { return color::LinearToSrgb(c); }
 
 // Where each colour sits, by palette size (kAnchors).
 constexpr F2 kAnchors[4][4] = {

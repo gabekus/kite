@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include "shell/Errors.h"
+#include "shell/SpaceIconPainter.h"
 #include "shell/Text.h"
 
 using Microsoft::WRL::ComPtr;
@@ -19,12 +20,6 @@ namespace E = favorites_empty;
 
 // NSColor.labelColor: black (light) or white (dark) at 85%.
 constexpr float kLabelAlpha = 0.85f;
-// SF Pro's ascender and descender, as fractions of the size: Segoe's baseline goes where SF's is.
-constexpr float kAscender = 0.952f;
-constexpr float kDescender = 0.241f;
-// The icon fonts' glyphs fill about this much of their em square (the rows' close button's).
-constexpr float kGlyphInk = 0.9f;
-constexpr wchar_t kXmark = 0xE711;  // Segoe's Cancel, for xmark
 
 D2D1_ROUNDED_RECT Rounded(D2D1_RECT_F r, float radius) { return D2D1::RoundedRect(r, radius, radius); }
 
@@ -33,9 +28,9 @@ D2D1_ROUNDED_RECT Rounded(D2D1_RECT_F r, float radius) { return D2D1::RoundedRec
 void SetLines(IDWriteTextLayout* layout, float size, int lines) {
     if (lines > 1) {
         const float pitch = E::LinePitch(size);
-        layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, pitch, pitch - std::ceil(size * kDescender));
+        layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, pitch, pitch - std::ceil(size * E::kDescender));
     } else {
-        layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, E::LineHeight(size), size * kAscender);
+        layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, E::LineHeight(size), size * E::kAscender);
     }
 }
 
@@ -54,28 +49,21 @@ std::unique_ptr<FavoritesView> FavoritesView::Create(HWND window, IDWriteFactory
     };
     // The system UI font for the Mac's SF Pro, as the rest of the sidebar.
     const wchar_t* text = installed(L"Segoe UI Variable Text") ? L"Segoe UI Variable Text" : L"Segoe UI";
-    const wchar_t* icons = installed(L"Segoe Fluent Icons") ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets";
     HRESULT hr = dwrite->CreateTextFormat(text, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                                           E::kTitleSize, L"", view->titleFormat_.GetAddressOf());
     if (SUCCEEDED(hr)) {
         hr = dwrite->CreateTextFormat(text, nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                                       E::kSubtitleSize, L"", view->subtitleFormat_.GetAddressOf());
     }
-    if (SUCCEEDED(hr)) {
-        hr = dwrite->CreateTextFormat(icons, nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                                      E::kCloseSymbolSize / kGlyphInk, L"", view->closeFormat_.GetAddressOf());
-    }
     if (FAILED(hr)) {
         error = HResultMessage(L"CreateTextFormat (the favorites)", hr);
         return nullptr;
     }
-    // Each line centred, wrapped at word breaks (CenteredLabel with `wraps`); the close button's
-    // symbol in the middle of its box.
-    for (IDWriteTextFormat* f : {view->titleFormat_.Get(), view->subtitleFormat_.Get(), view->closeFormat_.Get()}) {
+    // Each line centred, wrapped at word breaks (CenteredLabel with `wraps`).
+    for (IDWriteTextFormat* f : {view->titleFormat_.Get(), view->subtitleFormat_.Get()}) {
         f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         f->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
     }
-    view->closeFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     return view;
 }
 
@@ -107,6 +95,8 @@ void FavoritesView::ReleaseGpu() {
     closeOpacity_.reset();
     brush_.Reset();
     dashes_.Reset();
+    closeShape_.Reset();
+    closeShapeTried_ = false;
     placed_ = false;
 }
 
@@ -462,16 +452,19 @@ std::wstring FavoritesView::DrawEmptyState(bool readBack) {
         !error.empty()) {
         return error;
     }
-    // The close button's xmark in labelColor, faded to SymbolButton's 0.5 while hovered.
+    // The close button's X (Kite's own, at an 8pt bold xmark's box and weight) in labelColor, centred
+    // in its 18pt box, faded to SymbolButton's 0.5 while hovered.
     if (std::wstring error = draw(emptyClose_, tray_.closeFrame, closeAt_,
                                   [&](ID2D1DeviceContext* context, D2D1_RECT_F box) {
+                                      if (!closeShape_) return;
                                       const float c = dark_ ? 1.0f : 0.0f;
                                       brush_->SetColor(D2D1_COLOR_F{c, c, c, kLabelAlpha});
-                                      ComPtr<IDWriteTextLayout> layout;
-                                      if (SUCCEEDED(dwrite_->CreateTextLayout(&kXmark, 1, closeFormat_.Get(), box.right - box.left,
-                                                                              box.bottom - box.top, layout.GetAddressOf()))) {
-                                          context->DrawTextLayout(D2D1::Point2F(box.left, box.top), layout.Get(), brush_.Get());
-                                      }
+                                      D2D1_MATRIX_3X2_F transform{};
+                                      context->GetTransform(&transform);
+                                      context->SetTransform(
+                                          D2D1::Matrix3x2F::Translation((box.left + box.right) / 2, (box.top + box.bottom) / 2) * transform);
+                                      context->FillGeometry(closeShape_.Get(), brush_.Get());
+                                      context->SetTransform(transform);
                                   });
         !error.empty()) {
         return error;
@@ -515,6 +508,13 @@ std::wstring FavoritesView::Draw(const DrawIcon& drawIcon, IDCompositionVisual* 
                 return HResultMessage(L"creating the favorites' dashes", hr);
             }
         }
+        if (!closeShapeTried_) {
+            // Once per device, as the top row's shapes: a failure isn't retried every draw.
+            closeShapeTried_ = true;
+            ComPtr<ID2D1Factory> factory;
+            compositor_->D2D()->GetFactory(factory.GetAddressOf());
+            closeShape_ = MakeShapeGeometry(factory.Get(), E::CloseShape());
+        }
         if (std::wstring error = DrawEmptyState(readBack); !error.empty()) return error;
     }
     Place();
@@ -556,7 +556,7 @@ void FavoritesView::UpdateTooltips() {
     std::vector<RelayedTooltips::Tool> tools;
     tools.reserve(panes_.size() + 1);
     for (const FavoritePane* pane : panes_) tools.push_back({rect(pane->frame), Widen(pane->title)});
-    if (tray_.emptyState) tools.push_back({rect(tray_.closeFrame), L"Dismiss"});
+    if (tray_.emptyState) tools.push_back({rect(tray_.closeFrame), Widen(E::kCloseTooltip)});
     tooltips_.SetTools(std::move(tools));
 }
 

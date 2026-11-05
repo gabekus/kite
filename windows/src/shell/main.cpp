@@ -44,6 +44,9 @@
 //   Kite.exe --capture FILE.png --favicons
 //                            the same with the favicons fetched as the window fetches them (the
 //                            network, as the Mac's capture does), waiting for them (20 s at most).
+//   Kite.exe --capture FILE.png --empty-favorites-hover
+//                            the same with the pointer on the favorites' empty state (a profile with no
+//                            favorites), its close button showing.
 //   Kite.exe --capture FILE.png --favorite-hover N | --favorite-click N
 //                            the same with the pointer resting on the Nth favorite's pane (from 1, in
 //                            the grid's order), or after a click on it (pressed and let go there).
@@ -191,7 +194,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // normal launch on the real profile.
     for (size_t i = 0; i < args.size(); ++i) {
         const std::wstring& a = args[i];
-        if (a == L"--smoke-test" || a == L"--backdrop-test" || a == L"--favicons") continue;
+        if (a == L"--smoke-test" || a == L"--backdrop-test" || a == L"--favicons" || a == L"--empty-favorites-hover") continue;
         if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar" || a == L"--frame-log" ||
             a == L"--space-tip" || a == L"--swipe" || a == L"--space-drag" || a == L"--space-drop" || a == L"--space-menu" ||
             a == L"--rename-space" || a == L"--page-status" || a == L"--toggle-sidebar" || a == L"--favorite-hover" ||
@@ -326,6 +329,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // The favorites' states, for a capture: their favicons, and a pane hovered or clicked.
     const bool captureFavicons = HasFlag(args, L"--favicons");
     if (captureFavicons && !captureOption.present) return Fail(quiet, L"--favicons only goes with --capture", kUsage);
+    const bool heldEmptyHover = HasFlag(args, L"--empty-favorites-hover");
+    if (heldEmptyHover && !captureOption.present) return Fail(quiet, L"--empty-favorites-hover only goes with --capture", kUsage);
     std::optional<size_t> heldFavoriteHover, heldFavoriteClick;
     for (const auto& [flag, out] :
          {std::pair<const wchar_t*, std::optional<size_t>*>{L"--favorite-hover", &heldFavoriteHover}, {L"--favorite-click", &heldFavoriteClick}}) {
@@ -479,6 +484,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (heldMenu) controller->HoldSpaceMenu(*heldMenu);
         if (captureError.empty() && heldFavoriteClick) captureError = controller->ClickFavorite(*heldFavoriteClick);
         if (captureError.empty() && heldFavoriteHover) captureError = controller->HoldFavoriteHover(*heldFavoriteHover);
+        if (captureError.empty() && heldEmptyHover) captureError = controller->HoldEmptyFavoritesHover();
         // Last, so the favicons of whatever the states above show have come. Favorites whose icons
         // didn't load show the globe, as on the Mac; the run says which.
         if (captureError.empty() && captureFavicons) {

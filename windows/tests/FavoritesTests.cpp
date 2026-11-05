@@ -9,8 +9,12 @@
 // FavoritesTrayLayout, FavoritePaneView.applyFill, NSImage.dominantColor) is AppKit with no Swift
 // tests: each case is named for the Mac code it checks, with ArcMetrics.Sidebar's numbers.
 
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <string_view>
 #include <cstdint>
@@ -30,7 +34,15 @@ namespace F = favorites_metrics;
 
 bool Near(double a, double b, double within = 0.001) { return std::fabs(a - b) <= within; }
 
-Tab Favorite(std::string url, std::string title, std::string id = NewUuid()) {
+// Ids of their own, distinct whatever NewUuid's randomness does on the machine running the tests.
+std::string TestID() {
+    static int next = 0;
+    char id[37];
+    std::snprintf(id, sizeof(id), "00000000-0000-4000-8000-%012d", ++next);
+    return id;
+}
+
+Tab Favorite(std::string url, std::string title, std::string id = TestID()) {
     Tab tab;
     tab.id = std::move(id);
     tab.url = std::move(url);
@@ -41,6 +53,8 @@ Tab Favorite(std::string url, std::string title, std::string id = NewUuid()) {
 // The default state with `count` favorites (site0 … site{count-1}) and nothing selected.
 BrowserState WithFavorites(size_t count) {
     BrowserState state = BrowserState::MakeDefault(std::nullopt);
+    for (Space& space : state.spaces) space.id = TestID();
+    state.selectedSpaceID = state.spaces[0].id;
     std::vector<Tab> grid;
     for (size_t i = 0; i < count; ++i) grid.push_back(Favorite("https://site" + std::to_string(i) + ".example", "Site " + std::to_string(i)));
     state.SetFavorites(std::move(grid));
@@ -85,7 +99,7 @@ TEST(favoritesTrayLayoutFitsSquareTilesInANarrowSidebar) {
     CHECK(FavoritesColumns(4, 212) == 4);
     CHECK(FavoritesColumns(4, 211.9f) == 2);  // three fit, so 2 + 2
     CHECK(FavoritesColumns(8, 157) == 3);     // three a row fit: 3 + 3 + 2
-    CHECK(FavoritesColumns(8, 156) == 2);     // two do: 2 Ã— 4
+    CHECK(FavoritesColumns(8, 156) == 2);     // two do: 2 × 4
     CHECK(FavoritesColumns(3, 10) == 1);      // never none
 }
 
@@ -154,7 +168,7 @@ TEST(favoriteTileViewShowsASplitAsOneTileWithItsPanes) {
 
 TEST(aSplitIsOneRowAndMovesAsOne) {
     std::vector<std::string> ids;
-    for (int i = 0; i < 5; ++i) ids.push_back(NewUuid());
+    for (int i = 0; i < 5; ++i) ids.push_back(TestID());
     const std::vector<SplitView> splits{SplitView{"SPLIT", {ids[1], ids[2]}, {0.5, 0.5}, "horizontal", std::nullopt, {}}};
     const std::vector<SidebarGroup> groups = GroupBySplit(ids, splits);
     CHECK(groups.size() == 4);
@@ -280,7 +294,7 @@ TEST(theSpacesPageStartsUnderTheFavorites) {
 
 TEST(theSpacesPageScrollsTheRoomLeftUnderTheFavorites) {
     BrowserState state = WithFavorites(9);
-    for (int i = 0; i < 20; ++i) state.OpenTab("https://tab" + std::to_string(i) + ".example", std::nullopt, false);
+    for (int i = 0; i < 20; ++i) state.OpenTab("https://tab" + std::to_string(i) + ".example", std::nullopt, false, Now(), TestID());
     const std::vector<SidebarRow> rows = SidebarRows(state, 0);
     const float listTop = SidebarListTop(LayOutFavorites(state, 0, 240, true));
     // Less room, so further to scroll to its end.
@@ -294,7 +308,7 @@ TEST(theSpacesPageScrollsTheRoomLeftUnderTheFavorites) {
 TEST(tabNumbersCountTheFavoritesFirst) {
     BrowserState state = WithFavorites(2);
     const std::string a = state.Favorites()[0].id, b = state.Favorites()[1].id;
-    const std::string tab = state.OpenTab("https://tab.example");
+    const std::string tab = state.OpenTab("https://tab.example", std::nullopt, true, Now(), TestID());
     state.SelectTabNumber(1);
     CHECK(state.SelectedTab()->id == a);
     state.SelectTabNumber(2);
@@ -321,7 +335,7 @@ TEST(tabNumbersCountAFavoriteSplitOnce) {
     std::vector<Tab> stamped = grid;
     stamped[1].lastActiveAt = 50;  // the split's pane used last
     state.SetFavorites(stamped);
-    const std::string tab = state.OpenTab("https://tab.example", std::nullopt, true, 60);
+    const std::string tab = state.OpenTab("https://tab.example", std::nullopt, true, 60, TestID());
     // Stops: [split S], site2, tab, as the grid's tiles.
     CHECK(state.SidebarStops(state.SelectedSpaceIndex()).size() == 3);
     CHECK(LayOutFavorites(state, state.SelectedSpaceIndex(), 240, true).tiles.size() == 2);
@@ -484,50 +498,63 @@ TEST(favoritePaneViewDrawsAgainOnlyWhatChanged) {
 // MARK: OneShotFlags (OneShotFlags.swift's file on a test profile)
 
 namespace {
-// What Foundation's PropertyListEncoder writes for these two flags (Python's plistlib writes the
-// same binary property list), as a test profile's One-Shot Flags.plist holds them.
-const uint8_t kMacFlags[] = {
-    0x62, 0x70, 0x6c, 0x69, 0x73, 0x74, 0x30, 0x30, 0xd2, 0x01, 0x02, 0x03, 0x04, 0x5f, 0x10, 0x1c, 0x66, 0x61, 0x76, 0x6f, 0x72, 0x69,
-    0x74, 0x65, 0x73, 0x45, 0x6d, 0x70, 0x74, 0x79, 0x53, 0x74, 0x61, 0x74, 0x65, 0x44, 0x69, 0x73, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64,
-    0x5f, 0x10, 0x19, 0x70, 0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x4d, 0x61, 0x6e, 0x61, 0x67, 0x65, 0x72, 0x4f, 0x66, 0x66, 0x65,
-    0x72, 0x53, 0x68, 0x6f, 0x77, 0x6e, 0x09, 0x08, 0x08, 0x0d, 0x2c, 0x48, 0x49, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x4a};
+// Tests/Fixtures/one-shot-flags.plist, which the Swift suite reads with PropertyListDecoder too
+// (OneShotFlagsTests.readsTheSharedFixture): favoritesEmptyStateDismissed true,
+// passwordManagerOfferShown false, as a binary property list in Apple's format.
+std::string FlagsFixture() {
+    std::ifstream in(std::filesystem::path(KITE_FIXTURES_DIR) / "one-shot-flags.plist", std::ios::binary);
+    return std::string{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
 }  // namespace
 
-TEST(oneShotFlagsReadTheMacsPropertyList) {
-    const auto flags = OneShotFlags::Parse(std::string_view(reinterpret_cast<const char*>(kMacFlags), sizeof(kMacFlags)));
+TEST(oneShotFlagsReadTheSharedFixture) {
+    const std::string fixture = FlagsFixture();
+    CHECK(fixture.size() == 111);
+    const auto flags = OneShotFlags::Parse(fixture);
     CHECK(flags && flags->size() == 2);
     CHECK(flags && flags->at("favoritesEmptyStateDismissed") && !flags->at("passwordManagerOfferShown"));
 }
 
 TEST(oneShotFlagsWriteAPropertyListTheyReadBack) {
     std::map<std::string, bool> flags{{"favoritesEmptyStateDismissed", true}, {"passwordManagerOfferShown", false}};
-    const std::string bytes = OneShotFlags::Write(flags);
-    // The Mac's writer's bytes, for the same flags (keys in order, no shared objects).
-    CHECK(bytes == std::string(reinterpret_cast<const char*>(kMacFlags), sizeof(kMacFlags)));
-    CHECK(OneShotFlags::Parse(bytes) == flags);
-    // A long key (an extended count), a non-ASCII one (UTF-16), and none at all.
-    std::map<std::string, bool> odd{{std::string(300, 'k'), true}, {"caf\xc3\xa9", false}};
-    CHECK(OneShotFlags::Parse(OneShotFlags::Write(odd)) == odd);
-    CHECK(OneShotFlags::Parse(OneShotFlags::Write({})) == (std::map<std::string, bool>{}));
+    const std::optional<std::string> bytes = OneShotFlags::Write(flags);
+    // The fixture's bytes, for the same flags (keys in order, no shared objects).
+    CHECK(bytes && *bytes == FlagsFixture());
+    CHECK(bytes && OneShotFlags::Parse(*bytes) == flags);
+    // A long key (an extended count), a non-ASCII one (UTF-16, a surrogate pair too), and none at all.
+    std::map<std::string, bool> odd{{std::string(300, 'k'), true}, {"caf\xc3\xa9", false}, {"\xf0\x9f\xaa\x81kite", true}};
+    const auto oddBytes = OneShotFlags::Write(odd);
+    CHECK(oddBytes && OneShotFlags::Parse(*oddBytes) == odd);
+    const auto none = OneShotFlags::Write({});
+    CHECK(none && OneShotFlags::Parse(*none) == (std::map<std::string, bool>{}));
+}
+
+TEST(oneShotFlagsRefuseAKeyThatIsntUTF8) {
+    // A stray continuation byte, a truncated sequence, an overlong slash: none of them text.
+    for (const char* key : {"bad\x80key", "cut\xe2\x82", "\xc0\xaf"}) {
+        CHECK(!OneShotFlags::Write({{key, true}}));
+    }
+    // And Set says so, keeping the flag for this run.
+    OneShotFlags flags = OneShotFlags::Load(std::filesystem::temp_directory_path() / ("kite-flags-" + TestID() + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())));
+    CHECK(!flags.Set("bad\x80key", true).empty() && flags.Get("bad\x80key"));
 }
 
 TEST(oneShotFlagsReadNothingFromAnythingElse) {
     CHECK(!OneShotFlags::Parse(""));
     CHECK(!OneShotFlags::Parse("bplist00"));
     CHECK(!OneShotFlags::Parse("<?xml version=\"1.0\"?><plist/>"));
-    // A value that isn't a boolean: [String: Bool] doesn't decode, so no flags.
-    std::string bytes(reinterpret_cast<const char*>(kMacFlags), sizeof(kMacFlags));
+    // A value that isn't a boolean: [String: Bool] doesn't decode, so no flags at all.
+    std::string bytes = FlagsFixture();
     bytes[72] = 0x10;  // the first value's marker, now an integer
     CHECK(!OneShotFlags::Parse(bytes));
     // Truncated: none.
-    CHECK(!OneShotFlags::Parse(std::string_view(reinterpret_cast<const char*>(kMacFlags), sizeof(kMacFlags) - 1)));
+    const std::string fixture = FlagsFixture();
+    CHECK(!OneShotFlags::Parse(std::string_view(fixture).substr(0, fixture.size() - 1)));
 }
 
 TEST(oneShotFlagsLiveInTheProfilesFolder) {
     namespace fs = std::filesystem;
-    const fs::path folder = fs::temp_directory_path() / ("kite-flags-" + NewUuid());
+    const fs::path folder = fs::temp_directory_path() / ("kite-flags-" + TestID() + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     // A missing file: nothing set.
     OneShotFlags flags = OneShotFlags::Load(folder);
     CHECK(!flags.Get(OneShotFlags::kFavoritesEmptyStateDismissed));
@@ -538,6 +565,11 @@ TEST(oneShotFlagsLiveInTheProfilesFolder) {
     // Another flag set keeps the first.
     CHECK(OneShotFlags::Load(folder).Set("passwordManagerOfferShown", true).empty());
     CHECK(OneShotFlags::Load(folder).Get(OneShotFlags::kFavoritesEmptyStateDismissed));
+    // A folder that can't be made (a file in its way): the error names it.
+    const fs::path blocked = folder / "file";
+    { std::ofstream(blocked) << "x"; }
+    const std::string problem = OneShotFlags::Load(blocked / "profile").Set("asked", true);
+    CHECK(problem.find("couldn't create") == 0 && problem.find("profile") != std::string::npos);
     std::error_code error;
     fs::remove_all(folder, error);
 }

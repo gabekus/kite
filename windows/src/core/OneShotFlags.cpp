@@ -11,6 +11,8 @@
 #include <system_error>
 #include <vector>
 
+#include "core/Unicode.h"
+
 namespace kite {
 
 namespace {
@@ -60,51 +62,10 @@ void AppendMarker(std::string& out, uint8_t type, size_t count) {
     }
 }
 
-void AppendUtf8(std::string& out, uint32_t c) {
-    if (c < 0x80) {
-        out.push_back(static_cast<char>(c));
-    } else if (c < 0x800) {
-        out.push_back(static_cast<char>(0xC0 | (c >> 6)));
-        out.push_back(static_cast<char>(0x80 | (c & 0x3F)));
-    } else if (c < 0x10000) {
-        out.push_back(static_cast<char>(0xE0 | (c >> 12)));
-        out.push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
-        out.push_back(static_cast<char>(0x80 | (c & 0x3F)));
-    } else {
-        out.push_back(static_cast<char>(0xF0 | (c >> 18)));
-        out.push_back(static_cast<char>(0x80 | ((c >> 12) & 0x3F)));
-        out.push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
-        out.push_back(static_cast<char>(0x80 | (c & 0x3F)));
-    }
-}
-
-std::u16string Utf16(const std::string& text) {
-    std::u16string wide;
-    for (size_t i = 0; i < text.size();) {
-        const uint8_t b = static_cast<uint8_t>(text[i]);
-        uint32_t c = b;
-        size_t n = 1;
-        if (b >= 0xF0) {
-            c = b & 0x07;
-            n = 4;
-        } else if (b >= 0xE0) {
-            c = b & 0x0F;
-            n = 3;
-        } else if (b >= 0xC0) {
-            c = b & 0x1F;
-            n = 2;
-        }
-        for (size_t k = 1; k < n && i + k < text.size(); ++k) c = (c << 6) | (static_cast<uint8_t>(text[i + k]) & 0x3F);
-        i += n;
-        if (c >= 0x10000) {
-            c -= 0x10000;
-            wide.push_back(static_cast<char16_t>(0xD800 + (c >> 10)));
-            wide.push_back(static_cast<char16_t>(0xDC00 + (c & 0x3FF)));
-        } else {
-            wide.push_back(static_cast<char16_t>(c));
-        }
-    }
-    return wide;
+// A path as text for an error (u8string, as SessionStore's: string() throws outside the ANSI code page).
+std::string PathText(const std::filesystem::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string(text.begin(), text.end());
 }
 
 }  // namespace
@@ -139,20 +100,20 @@ std::optional<std::map<std::string, bool>> OneShotFlags::Parse(std::string_view 
             return std::string(bytes.substr(start, static_cast<size_t>(length)));
         }
         if (type != 0x60 || length > table / 2 || start > table - 2 * length) return std::nullopt;  // UTF-16, big-endian
-        std::string out;
+        std::u32string points;
         for (uint64_t i = 0; i < length; ++i) {
-            uint32_t c = static_cast<uint32_t>(ReadInt(bytes, static_cast<size_t>(start + 2 * i), 2));
+            char32_t c = static_cast<char32_t>(ReadInt(bytes, static_cast<size_t>(start + 2 * i), 2));
             if (c >= 0xD800 && c < 0xDC00 && i + 1 < length) {
-                const uint32_t low = static_cast<uint32_t>(ReadInt(bytes, static_cast<size_t>(start + 2 * (i + 1)), 2));
+                const char32_t low = static_cast<char32_t>(ReadInt(bytes, static_cast<size_t>(start + 2 * (i + 1)), 2));
                 if (low < 0xDC00 || low >= 0xE000) return std::nullopt;
                 c = 0x10000 + ((c - 0xD800) << 10) + (low - 0xDC00);
                 ++i;
             } else if (c >= 0xD800 && c < 0xE000) {
-                return std::nullopt;  // a lone surrogate isn't valid UTF-8
+                return std::nullopt;  // a lone surrogate isn't text
             }
-            AppendUtf8(out, c);
+            points.push_back(c);
         }
-        return out;
+        return unicode::Encode(points);
     };
     const auto dict = offset(top);
     if (!dict || (static_cast<uint8_t>(bytes[*dict]) & 0xF0) != 0xD0) return std::nullopt;
@@ -172,7 +133,7 @@ std::optional<std::map<std::string, bool>> OneShotFlags::Parse(std::string_view 
     return flags;
 }
 
-std::string OneShotFlags::Write(const std::map<std::string, bool>& flags) {
+std::optional<std::string> OneShotFlags::Write(const std::map<std::string, bool>& flags) {
     // The dictionary, its keys, then its values.
     const size_t objects = 1 + 2 * flags.size();
     const size_t refSize = objects < 0x100 ? 1 : 2;
@@ -188,11 +149,23 @@ std::string OneShotFlags::Write(const std::map<std::string, bool>& flags) {
         if (std::all_of(key.begin(), key.end(), [](char c) { return static_cast<uint8_t>(c) < 0x80; })) {
             AppendMarker(out, 0x50, key.size());
             out += key;
-        } else {
-            const std::u16string wide = Utf16(key);
-            AppendMarker(out, 0x60, wide.size());
-            for (char16_t c : wide) AppendInt(out, c, 2);
+            continue;
         }
+        // UTF-16, big-endian; text that isn't UTF-8 (Decode's U+FFFD where it wasn't) isn't a key.
+        const std::vector<char32_t> points = unicode::Decode(key);
+        if (unicode::Encode(std::u32string(points.begin(), points.end())) != key) return std::nullopt;
+        std::u16string wide;
+        for (char32_t c : points) {
+            if (c >= 0x10000) {
+                c -= 0x10000;
+                wide.push_back(static_cast<char16_t>(0xD800 + (c >> 10)));
+                wide.push_back(static_cast<char16_t>(0xDC00 + (c & 0x3FF)));
+            } else {
+                wide.push_back(static_cast<char16_t>(c));
+            }
+        }
+        AppendMarker(out, 0x60, wide.size());
+        for (char16_t c : wide) AppendInt(out, c, 2);
     }
     for (const auto& entry : flags) {
         offsets.push_back(out.size());
@@ -227,7 +200,7 @@ bool OneShotFlags::Get(const std::string& key) const {
 
 std::string OneShotFlags::Set(const std::string& key, bool value) {
     flags_[key] = value;
-    if (file_.empty()) return "no profile folder";
+    if (file_.empty()) return "no profile folder for the one-shot flags";
     // The Mac's set: the file as it is now, with this flag changed.
     std::map<std::string, bool> merged;
     if (std::ifstream in(file_, std::ios::binary); in) {
@@ -235,20 +208,26 @@ std::string OneShotFlags::Set(const std::string& key, bool value) {
         if (auto parsed = Parse(bytes)) merged = std::move(*parsed);
     }
     merged[key] = value;
+    const std::optional<std::string> bytes = Write(merged);
+    if (!bytes) return "a one-shot flag's name isn't UTF-8";
+    // As SessionStore::Save: a sibling temporary file, flushed, then moved over the file.
     std::error_code error;
     std::filesystem::create_directories(file_.parent_path(), error);
+    if (error) return "couldn't create " + PathText(file_.parent_path()) + ": " + error.message();
     std::filesystem::path temporary = file_;
     temporary += ".tmp";
     {
         std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-        const std::string bytes = Write(merged);
-        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-        if (!out) return "couldn't write the one-shot flags";
+        if (!out) return "couldn't write " + PathText(temporary);
+        out.write(bytes->data(), static_cast<std::streamsize>(bytes->size()));
+        out.flush();
+        if (!out) return "couldn't write " + PathText(temporary);
     }
     std::filesystem::rename(temporary, file_, error);
     if (error) {
-        std::filesystem::remove(temporary, error);
-        return "couldn't replace the one-shot flags";
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        return "couldn't replace " + PathText(file_) + ": " + error.message();
     }
     return {};
 }

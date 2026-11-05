@@ -3,9 +3,10 @@
 #include "core/Favorites.h"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <map>
+
+#include "core/ColorSpaces.h"
 
 namespace kite {
 
@@ -14,53 +15,6 @@ namespace {
 namespace M = favorites_metrics;
 namespace E = favorites_empty;
 
-// SF Pro's ascender and descender, as fractions of the size (as the sidebar's labels).
-constexpr float kAscender = 0.952f;
-constexpr float kDescender = 0.241f;
-
-// Colour maths for FavoriteHighlight: 3×3 matrices, and RGB to XYZ for a set of primaries.
-using Matrix = std::array<std::array<double, 3>, 3>;
-using Vector = std::array<double, 3>;
-
-Vector Apply(const Matrix& m, const Vector& v) {
-    return {m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2], m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
-            m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2]};
-}
-
-Matrix Inverse(const Matrix& m) {
-    const double det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
-                       m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-    Matrix out{};
-    for (int r = 0; r < 3; ++r) {
-        for (int c = 0; c < 3; ++c) {
-            // The cofactor of (c, r), by cyclic indices.
-            const int r1 = (c + 1) % 3, r2 = (c + 2) % 3, c1 = (r + 1) % 3, c2 = (r + 2) % 3;
-            out[r][c] = (m[r1][c1] * m[r2][c2] - m[r1][c2] * m[r2][c1]) / det;
-        }
-    }
-    return out;
-}
-
-// Linear RGB to XYZ for primaries (x, y) red, green and blue, with a D65 white.
-Matrix ToXYZ(const double (&xy)[3][2]) {
-    Matrix p{};
-    for (int c = 0; c < 3; ++c) {
-        const double x = xy[c][0], y = xy[c][1];
-        p[0][c] = x / y;
-        p[1][c] = 1;
-        p[2][c] = (1 - x - y) / y;
-    }
-    const double wx = 0.3127, wy = 0.3290;
-    const Vector scale = Apply(Inverse(p), Vector{wx / wy, 1, (1 - wx - wy) / wy});
-    for (int r = 0; r < 3; ++r) {
-        for (int c = 0; c < 3; ++c) p[r][c] *= scale[c];
-    }
-    return p;
-}
-
-double SrgbToLinear(double c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); }
-double LinearToSrgb(double c) { return c <= 0.0031308 ? 12.92 * c : 1.055 * std::pow(c, 1 / 2.4) - 0.055; }
-
 }  // namespace
 
 namespace favorites_empty {
@@ -68,6 +22,17 @@ namespace favorites_empty {
 float LineHeight(float size) { return std::ceil(size * (kAscender + kDescender)); }
 float LinePitch(float size) { return std::ceil(size * kAscender) + std::ceil(size * kDescender); }
 float LabelHeight(float size, int lines) { return lines <= 1 ? LineHeight(size) : static_cast<float>(lines) * LinePitch(size); }
+const SymbolShape& CloseShape() {
+    static const SymbolShape shape = [] {
+        constexpr float half = kCloseStroke / 2, reach = kCloseInk / 2 - half;
+        ShapeBuilder b;
+        AddStroke(b, ShapePoint{-reach, -reach}, ShapePoint{reach, reach}, half);
+        AddStroke(b, ShapePoint{-reach, reach}, ShapePoint{reach, -reach}, half);
+        return b.Build();
+    }();
+    return shape;
+}
+
 float Height(int titleLines, int subtitleLines) {
     return std::max(M::kHeight, LabelHeight(kTitleSize, titleLines) + kTextGap + LabelHeight(kSubtitleSize, subtitleLines)) + 2 * kPadding;
 }
@@ -189,12 +154,6 @@ FavoritesTray LayOutFavorites(const BrowserState& state, size_t space, float wid
 
 bool InFavorites(const FavoritesTray& tray, float width, float x, float y) {
     return tray.height > 0 && x >= 0 && x < width && y >= FavoritesTop() && y < FavoritesTop() + tray.height;
-}
-
-size_t FavoritePaneCount(const FavoritesTray& tray) {
-    size_t count = 0;
-    for (const FavoriteTile& tile : tray.tiles) count += tile.panes.size();
-    return count;
 }
 
 std::optional<FavoriteHit> FavoritePaneAt(const FavoritesTray& tray, float x, float y) {
@@ -320,25 +279,11 @@ FavoriteRedraw FavoriteRedrawFor(const std::optional<std::pair<BarRect, FaviconS
 }
 
 ThemeColor FavoriteHighlight(ThemeColor dominant) {
-    // NSColor.blended(withFraction:of:) converts both colours to calibrated RGB (Apple's Generic RGB
-    // profile: these primaries, gamma 1.8), mixes them there and gives an NSColor in that space,
-    // which sRGB then shows. Fitted against the Mac's ring on YouTube's red (255, 149, 150); a plain
-    // sRGB mix gives (255, 129, 129).
-    static const double kSrgb[3][2] = {{0.64, 0.33}, {0.30, 0.60}, {0.15, 0.06}};
-    static const double kGeneric[3][2] = {{0.630, 0.340}, {0.295, 0.605}, {0.155, 0.077}};
-    static const Matrix srgbToXYZ = ToXYZ(kSrgb), xyzToSrgb = Inverse(srgbToXYZ);
-    static const Matrix genericToXYZ = ToXYZ(kGeneric), xyzToGeneric = Inverse(genericToXYZ);
-    constexpr double kGamma = 1.8;
-    const Vector linear{SrgbToLinear(dominant.r), SrgbToLinear(dominant.g), SrgbToLinear(dominant.b)};
-    Vector generic = Apply(xyzToGeneric, Apply(srgbToXYZ, linear));
-    const double f = M::kHighlightWhiten;
-    for (double& c : generic) {
-        const double encoded = std::pow(std::clamp(c, 0.0, 1.0), 1 / kGamma);
-        c = std::pow(encoded * (1 - f) + f, kGamma);
-    }
-    const Vector srgb = Apply(xyzToSrgb, Apply(genericToXYZ, generic));
-    const auto out = [](double c) { return static_cast<float>(LinearToSrgb(std::clamp(c, 0.0, 1.0))); };
-    return ThemeColor{out(srgb[0]), out(srgb[1]), out(srgb[2])};
+    // FavoritePaneView.color: highlight.blended(withFraction: 0.5, of: .white), in calibrated RGB as
+    // NSColor mixes (YouTube's red rings (255, 149, 150) on the Mac; an sRGB mix gives 129s).
+    const color::Color mixed = color::BlendCalibrated(color::Color{dominant.r, dominant.g, dominant.b, 1}, color::Color{1, 1, 1, 1},
+                                                      favorites_metrics::kHighlightWhiten);
+    return ThemeColor{mixed.r, mixed.g, mixed.b};
 }
 
 }  // namespace kite

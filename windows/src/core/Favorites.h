@@ -22,6 +22,7 @@
 #include "core/Models.h"
 #include "core/Sidebar.h"
 #include "core/SpaceBar.h"
+#include "core/SymbolShape.h"
 
 namespace kite {
 
@@ -58,7 +59,8 @@ constexpr uint32_t kColorSampleSide = 16;
 // Arc's empty tray (FavoritesEmptyStateView), in points: its title and subtitle 2pt apart in the
 // 16pt insets, centred in a box at least a tile high, 6pt above and below; a 1.5pt dashed outline
 // (5 on, 4 off) of labelColor at 0.2 on the box inset by 0.75 with the sidebar's corners less that;
-// and the close button (xmark, 8pt bold, at 0.5) 4pt in from the top-right, shown while hovered.
+// and the close button (xmark, 8pt bold, at 0.5) 4pt in from the top-right, shown while hovered:
+// Kite's own two-stroke X (CloseShape), sized to an 8pt bold xmark's box and weight.
 namespace favorites_empty {
 constexpr const char* kTitle = "Drag to add Favorites";
 constexpr const char* kSubtitle = "Favorites keep your most used sites and apps close";
@@ -77,6 +79,11 @@ constexpr float kCloseSize = 18;
 constexpr float kCloseInset = 4;
 constexpr float kCloseSymbolSize = 8;
 constexpr float kCloseOpacity = 0.5f;
+constexpr const char* kCloseTooltip = "Dismiss";  // close.toolTip
+// SF Pro's ascender and descender, as fractions of the size: where the labels' lines sit (and where
+// Segoe's baseline goes, in the shell).
+constexpr float kAscender = 0.952f;
+constexpr float kDescender = 0.241f;
 // CenteredLabel's line box: one line is SF's ascender plus descender (plus leading) rounded up; a
 // wrapped one's lines are each the ascender and the descender rounded up (15 for 12pt semibold,
 // 14 for 11pt).
@@ -87,6 +94,13 @@ float LabelHeight(float size, int lines);
 // height(forWidth:)): 59 for Kite's 240pt sidebar, whose subtitle wraps onto two lines.
 float Height(int titleLines, int subtitleLines);
 constexpr int kTitleLines = 1, kSubtitleLines = 2;  // in a 240pt sidebar, as the Mac's wrap them
+// The close button's X: two crossed strokes with round ends, in points about the button's centre.
+// An 8pt bold xmark's ink (scaled from the top row's 15pt X, 11pt across and 1.18pt strokes, and
+// thickened to bold's weight): 6.2pt across, 1pt strokes. An estimate until a Mac capture holds the
+// hovered box (the reference run can't hover). Nothing here is Apple's outline.
+const SymbolShape& CloseShape();
+constexpr float kCloseInk = 6.2f;
+constexpr float kCloseStroke = 1.0f;
 }  // namespace favorites_empty
 
 // FavoritesTrayLayout.columns: as many columns as square tiles would allow in `width` (the
@@ -151,8 +165,6 @@ inline float SidebarListTop(const FavoritesTray& tray) { return sidebar_metrics:
 // Whether (x, y) is on the tray's band, insets and gaps included: the tray's, never a window drag
 // or a row (mouseDownCanMoveWindow false).
 bool InFavorites(const FavoritesTray& tray, float width, float x, float y);
-// Every pane in the grid's order, and the panes' count.
-size_t FavoritePaneCount(const FavoritesTray& tray);
 
 // The pane under (x, y): its tile, its place in it, and its place among all the panes.
 struct FavoriteHit {
@@ -219,8 +231,7 @@ FavoriteRedraw FavoriteRedrawFor(const std::optional<std::pair<BarRect, FaviconS
 // equally full the first in hue order wins (the Mac's dictionary picks one of them unordered).
 std::optional<ThemeColor> DominantColor(const uint8_t* bgra, uint32_t width, uint32_t height, size_t stride);
 // The ring's and the tint's colour (FavoritePaneView.color): the favicon's half way to white, as
-// NSColor.blended(withFraction: 0.5, of: .white) mixes them, in calibrated RGB (Apple's Generic
-// RGB, gamma 1.8, which the sRGB colour is converted into and clipped to first), back in sRGB.
+// NSColor.blended(withFraction: 0.5, of: .white) mixes them (core/ColorSpaces.h's BlendCalibrated).
 ThemeColor FavoriteHighlight(ThemeColor dominant);
 
 }  // namespace kite

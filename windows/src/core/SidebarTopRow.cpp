@@ -122,14 +122,7 @@ namespace {
 // A stroke from `a` to `p`, `half` its thickness either side, with round caps centred on its ends:
 // a rectangle reaching `half` past each end, its four corners rounded to `half`, which turns its
 // short ends into half circles.
-void Stroke(ShapeBuilder& b, ShapePoint a, ShapePoint p, float half) {
-    const float dx = p.x - a.x, dy = p.y - a.y, length = std::sqrt(dx * dx + dy * dy);
-    const float ux = dx / length * half, uy = dy / length * half;  // along it
-    const float nx = -uy, ny = ux;                                   // across it
-    a = ShapePoint{a.x - ux, a.y - uy};
-    p = ShapePoint{p.x + ux, p.y + uy};
-    b.RoundedPolygon({{a.x + nx, a.y + ny, half}, {p.x + nx, p.y + ny, half}, {p.x - nx, p.y - ny, half}, {a.x - nx, a.y - ny, half}});
-}
+void Stroke(ShapeBuilder& b, ShapePoint a, ShapePoint p, float half) { AddStroke(b, a, p, half); }
 
 // Reload's and the X's stroke: 2.36 px at 2× in the Mac's arrow.clockwise.
 constexpr float kStrokeHalf = 1.18f / 2;

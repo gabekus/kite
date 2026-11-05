@@ -270,7 +270,8 @@ theme) and a 2pt ring of that colour. The colour is NSImage.dominantColor's (the
 fullest of twelve hue bins in the icon drawn 16px a side) half way to white as
 `NSColor.blended(withFraction:of:)` mixes it: in calibrated RGB (Apple's Generic
 RGB, gamma 1.8), not sRGB, which is what makes YouTube's ring (255, 149, 150) and
-not (255, 129, 129). A grey or missing favicon has no colour: the pane is just
+not (255, 129, 129). That mix is `core/ColorSpaces.h`'s `BlendCalibrated` (alpha
+too), with sRGB's transfer function, shared with the OKLab maths and the backdrop. A grey or missing favicon has no colour: the pane is just
 white, the globe in its middle (Segoe's globe fills its em square, so it's set at
 the favicon's 18pt, the Mac's 36px at 2×; the rows' globes with it). A click
 selects the favorite (released inside the pane, not after a 4pt drag, not the
@@ -287,8 +288,12 @@ unchanged from W8).
   (`core/OneShotFlags.h`): the Mac keeps it in UserDefaults on a real profile and
   in the profile's `One-Shot Flags.plist` on a test one; Windows has no
   UserDefaults, so every profile keeps it in that file, a binary property list in
-  the Mac's format. The box's lines are as DirectWrite wraps them (the Mac's two
-  at 240pt).
+  the Mac's format (`Tests/Fixtures/one-shot-flags.plist`, which both test suites
+  read). The box's lines are as DirectWrite wraps them (the Mac's two at 240pt).
+  The close button's X is Kite's own two strokes (`favorites_empty::CloseShape`),
+  6.2pt across with 1pt strokes for the Mac's 8pt bold xmark, centred in its 18pt
+  box at 0.5: an estimate, since a Mac reference can't hover
+  (`--empty-favorites-hover` shows it on Windows).
 - **Each pane is up to four `FadedLayer`s** (the wash, the tint, the ring and the
   favicon; the tint and ring only once there's a colour) in a visual of its own,
   each drawn once at full strength and faded by its effect group, so a hover or a

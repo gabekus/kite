@@ -524,6 +524,21 @@ int main(int argc, char** argv) {
             json::Object out{{"target", std::string("topRow")}, {"button", std::string(TopRowButtonName(item.button))}, {"enabled", item.enabled}};
             out.emplace("action", item.enabled ? TopRowCommand(item.button) : std::string("none"));
             std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) {
+            const std::vector<SpaceCell> cells = SpaceCells(state);
+            const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
+            const float x = values[0], y = values[1] - SpaceBarTop(values[2]);
+            const auto press = SpaceBarPressAt(layout, cells, x, y);
+            json::Object out{{"target", std::string(press ? "spaceCell" : "none")}};
+            if (press) {
+                out.emplace("id", press->spaceID);
+                if (const auto space = SpaceBarRelease(*press, layout, cells, x, y)) {
+                    out.emplace("action", std::string("selectSpace"));
+                    state.SelectSpace(*space);
+                    changed = true;
+                }
+            }
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else if (InFavorites(tray, 240, values[0], values[1])) {
             // The tray's band: a pane's press selects its favorite on release (FavoritePaneView's
             // mouseUp), the empty state's close button dismisses it; the rest takes the press and
@@ -545,21 +560,6 @@ int main(int argc, char** argv) {
                         std::fprintf(stderr, "kitecore: %s\n", problem.c_str());
                         return kLoadFailed;
                     }
-                }
-            }
-            std::puts(json::Write(json::Value(std::move(out))).c_str());
-        } else if (values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) {
-            const std::vector<SpaceCell> cells = SpaceCells(state);
-            const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
-            const float x = values[0], y = values[1] - SpaceBarTop(values[2]);
-            const auto press = SpaceBarPressAt(layout, cells, x, y);
-            json::Object out{{"target", std::string(press ? "spaceCell" : "none")}};
-            if (press) {
-                out.emplace("id", press->spaceID);
-                if (const auto space = SpaceBarRelease(*press, layout, cells, x, y)) {
-                    out.emplace("action", std::string("selectSpace"));
-                    state.SelectSpace(*space);
-                    changed = true;
                 }
             }
             std::puts(json::Write(json::Value(std::move(out))).c_str());

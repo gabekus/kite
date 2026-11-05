@@ -135,6 +135,8 @@ public:
     // or a click on it (pressed and let go there, as the pointer sends them).
     std::wstring HoldFavoriteHover(size_t index);
     std::wstring ClickFavorite(size_t index);
+    // For a capture: the pointer resting on the favorites' empty state, its close button showing.
+    std::wstring HoldEmptyFavoritesHover();
     // For a --favicons capture: the sidebar's favicons (and the 16px icons the favorites' colours
     // come from) fetched and decoded, drawing as they come, for at most `seconds`. `failed` gets
     // the favorites' favicons that didn't load (they show the globe, as the Mac's do).

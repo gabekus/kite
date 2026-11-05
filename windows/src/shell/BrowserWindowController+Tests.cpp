@@ -16,6 +16,7 @@
 #include "core/Uuid.h"
 #include "shell/Capture.h"
 #include "shell/SpaceMenu.h"
+#include "shell/Text.h"
 
 namespace kite {
 
@@ -819,6 +820,16 @@ std::wstring BrowserWindowController::HoldFavoriteHover(size_t index) {
     return {};
 }
 
+std::wstring BrowserWindowController::HoldEmptyFavoritesHover() {
+    const FavoritesTray& tray = sidebar_->Favorites();
+    if (!tray.emptyState) return L"the favorites' empty state isn't showing";
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    // The pointer resting on the box, clear of its close button (the button's tooltip waits).
+    SendMouse(window_.Handle(), WM_MOUSEMOVE,
+              POINT{std::lround((tray.emptyFrame.left + 24) * scale), std::lround((tray.emptyFrame.top + 30) * scale)}, 0);
+    return sidebar_->FavoritesCloseShown() ? L"" : L"the empty state's close button didn't show";
+}
+
 std::wstring BrowserWindowController::ClickFavorite(size_t index) {
     const std::optional<POINT> at = sidebar_->FavoriteCentre(index);
     if (!at) return L"there's no such favorite";
@@ -877,8 +888,17 @@ std::wstring BrowserWindowController::SmokeTestEmptyFavorites() {
         if (!sidebar_->FavoritesCloseShown() || !sidebar_->CommitPending()) return L"hovering the empty state didn't show its close button";
         sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0);
         if (sidebar_->FavoriteSurfaceDraws() != draws) return L"hovering the empty state drew";
-        // Its close button dismisses it: the page moves up under the address field.
+        // Its close button acts only when let go over it: pressed and let go on the box, nothing.
         const POINT close = client((tray.closeFrame.left + tray.closeFrame.right) / 2, (tray.closeFrame.top + tray.closeFrame.bottom) / 2);
+        const POINT box = client(tray.emptyFrame.left + 20, tray.emptyFrame.top + 20);
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, close, 0);
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, close, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, box, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, box, 0);
+        if (oneShotFlags_.Get(OneShotFlags::kFavoritesEmptyStateDismissed) || !sidebar_->Favorites().emptyState || GetCapture() == window_.Handle()) {
+            return L"letting go of the close button off it dismissed the empty state";
+        }
+        // Let go over it, it dismisses it: the page moves up under the address field.
         SendMouse(window_.Handle(), WM_MOUSEMOVE, close, 0);
         SendMouse(window_.Handle(), WM_LBUTTONDOWN, close, MK_LBUTTON);
         SendMouse(window_.Handle(), WM_LBUTTONUP, close, 0);
@@ -890,8 +910,9 @@ std::wstring BrowserWindowController::SmokeTestEmptyFavorites() {
         return {};
     }();
     sidebar_->ClearHover();
-    oneShotFlags_.Set(OneShotFlags::kFavoritesEmptyStateDismissed, false);
+    const std::string restored = oneShotFlags_.Set(OneShotFlags::kFavoritesEmptyStateDismissed, false);
     sidebar_->SetFavoritesEmptyStateDismissed(false);
+    if (!restored.empty() && failure.empty()) return L"the empty state's flag couldn't be set back: " + Widen(restored);
     if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
     return failure;
 }
@@ -963,6 +984,14 @@ std::wstring BrowserWindowController::SmokeTestFavorites() {
     state_.spaces[space].selectedTabID = selected;
     sidebar_->Update(state_, pagesAnchor_);
     if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
+    // From some favorites to none: the page back where the tray as it is now ends it, its scroll
+    // within the shorter or longer list, and (not dismissed) the empty state's layers made.
+    if (failure.empty() && before.empty()) {
+        const FavoritesTray& now = sidebar_->Favorites();
+        if (sidebar_->ListTop() != SidebarListTop(now) || !now.tiles.empty()) return L"the page didn't come back up when the favorites went";
+        if (sidebar_->ListScroll() < 0) return L"the list's scroll left its list when the favorites went";
+        if (now.emptyState && !sidebar_->FavoritesEmptyStateDrawn()) return L"the empty state didn't draw when the favorites went";
+    }
     return failure;
 }
 

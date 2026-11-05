@@ -32,6 +32,7 @@ endif()
 
 # The model (the Windows counterpart of KiteCore): standard C++ only, unit-tested headless.
 add_library(KiteCoreWin STATIC
+  src/core/ColorSpaces.cpp
   src/core/CommandBar.cpp
   src/core/Favorites.cpp
   src/core/Json.cpp

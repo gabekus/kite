@@ -234,8 +234,8 @@ double SidebarView::SetShown(bool shown, bool animate) {
     }
     // Its tooltips come back once it's on screen again, and go at once as it leaves.
     topRow_->SetTooltipsActive(shown);
+    PlaceFavorites();  // its tooltips' places, from where the sidebar rests, before they're back
     favorites_->SetTooltipsActive(shown);
-    PlaceFavorites();  // its tooltips' places, from where the sidebar rests
     if (animate && root_ && compositor_ && from != to) {
         const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
         // From now: the compositor starts it at the commit's frame, up to a frame later, so Left()
@@ -484,9 +484,10 @@ void SidebarView::PlacePages() {
 void SidebarView::PlaceFavorites() {
     // A pane's hover or selection is its opacities, which the next pass commits; anything else
     // that changed draws (NeedsDraw).
-    const FavoritesTray tray =
-        LayOutFavorites(model_.favorites, width_, emptyStateDismissed_, favorites_->EmptyStateHeight(width_));
-    if (favorites_->Update(tray, model_.dark, SidebarLeft(shown_, width_))) commitPending_ = true;
+    if (favorites_->Update(LayOutFavorites(model_.favorites, width_, emptyStateDismissed_, favorites_->EmptyStateHeight(width_)), model_.dark,
+                           SidebarLeft(shown_, width_))) {
+        commitPending_ = true;
+    }
     const float listTop = SidebarListTop(favorites_->Tray());
     if (listTop != listTop_) {
         // The pages start lower or higher: each draws again from its new top.
@@ -919,8 +920,8 @@ bool SidebarView::DrawFavicon(ID2D1DeviceContext* context, const FaviconSource& 
         }
     }
     // No icon (yet): the globe, stretched to the square. Unlike the other symbols, Segoe's globe
-    // fills its whole em square (at 20pt it inked 20pt, 40px at 2Ã—), so it's set at the square's
-    // size to ink the Mac's 18pt (36px at 2Ã—, FaviconImageView's side).
+    // fills its whole em square (at 20pt it inked 20pt, 40px at 2×), so it's set at the square's
+    // size to ink the Mac's 18pt (36px at 2×, FaviconImageView's side).
     DrawGlyph(context, kGlobe, side, box, Primary(kLabelAlpha * kGlobeOpacity));
     return false;
 }

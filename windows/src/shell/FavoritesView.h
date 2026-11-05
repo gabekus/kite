@@ -98,6 +98,8 @@ public:
     // The look each pane is at now, in the grid's order, and whether the close button shows.
     std::vector<FavoriteLook> Looks() const;
     bool CloseShown() const { return emptyHover_ && tray_.emptyState; }
+    // Whether the empty state's layers have drawn (the smoke test's favorites-to-none).
+    bool EmptyStateDrawn() const { return emptyBox_.surface && emptyClose_.surface; }
 
 private:
     FavoritesView(HWND window, Favicons* favicons, bool tooltips) : favicons_(favicons), tooltips_(window, tooltips) {}
@@ -132,13 +134,15 @@ private:
     Favicons* favicons_;
     RelayedTooltips tooltips_;
     Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_;
-    Microsoft::WRL::ComPtr<IDWriteTextFormat> titleFormat_, subtitleFormat_, closeFormat_;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> titleFormat_, subtitleFormat_;
 
     Compositor* compositor_ = nullptr;
     IDCompositionVisual* parent_ = nullptr;
     Microsoft::WRL::ComPtr<IDCompositionVisual> container_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
     Microsoft::WRL::ComPtr<ID2D1StrokeStyle> dashes_;
+    Microsoft::WRL::ComPtr<ID2D1Geometry> closeShape_;  // core's CloseShape, made once per device
+    bool closeShapeTried_ = false;
     std::map<std::string, PaneGpu> gpu_;  // by tab id
     std::vector<PaneGpu*> paneGpu_;       // each pane's (into gpu_), in panes_' order
     FadedLayer emptyBox_, emptyClose_;

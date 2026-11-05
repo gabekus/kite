@@ -164,6 +164,7 @@ public:
     // Where the space's page starts, in points: under the favorites.
     float ListTop() const { return listTop_; }
     bool FavoritesCloseShown() const { return favorites_->CloseShown(); }
+    bool FavoritesEmptyStateDrawn() const { return favorites_->EmptyStateDrawn(); }
     // The favorites' empty state was dismissed (the one-shot flag, OneShotFlags.h): the tray shows
     // only with favorites in it.
     void SetFavoritesEmptyStateDismissed(bool dismissed);
