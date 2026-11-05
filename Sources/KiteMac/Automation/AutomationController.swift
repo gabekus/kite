@@ -74,6 +74,8 @@ final class AutomationController {
     @ObservationIgnored var handoffPoller: Task<Void, Never>?
     /// Which step's ring each tab's page shows, so Kite takes it off when the step ends.
     @ObservationIgnored var ringShown: [UUID: String] = [:]
+    /// The frame of another origin that holds each tab's ring, when the step's control is in one (`ringLook`).
+    @ObservationIgnored var ringFrames: [UUID: PageFrame] = [:]
     @ObservationIgnored var handoffCount = 0
     /// Steps a handoff report has told Claude are blocked, so a wait ends early for each only once.
     @ObservationIgnored var reportedBlockedSteps: Set<String> = []
