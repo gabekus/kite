@@ -146,6 +146,19 @@ struct SidebarTestHookTests {
         }
     }
 
+    @Test func kitesLineComesInsideTheScriptsWait() throws {
+        // The script waits SIDEBAR_READY_SECONDS once Kite's socket answers; Kite's runner starts a second after the
+        // window is up and gives up readyTimeout later, so its ready (or failed) line must come with room to spare.
+        let script = try String(contentsOf: Self.mac.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("scripts/mac-reference-captures.sh"), encoding: .utf8)
+        let line = try #require(script.split(whereSeparator: \.isNewline).first { $0.hasPrefix("SIDEBAR_READY_SECONDS=") })
+        let seconds = try #require(Double(line.dropFirst("SIDEBAR_READY_SECONDS=".count)))
+        #expect(1 + SidebarTestHook.readyTimeout + 5 <= seconds)
+        // And it allows exactly the hook's keys, presets 1-7 and nothing else.
+        for key in SidebarTestHook.keys { #expect(script.contains("\"\(key)\": "), "\(key)") }
+        #expect(script.contains(#""KITE_TEST_NEW_SPACE_THEME": ("1", "2", "3", "4", "5", "6", "7"),"#))
+    }
+
     @Test func anInProcessCaptureDrawsAnOpenPopover() throws {
         // The popovers are child windows: the in-process render draws them over the window, as on screen.
         let capture = try source("Diagnostics/UICapture.swift")
