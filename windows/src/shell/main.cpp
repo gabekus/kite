@@ -152,6 +152,15 @@ int Fail(bool quiet, const std::wstring& message, int code) {
     return code;
 }
 
+#ifdef KITE_HAS_CEF
+// Ends the process now, with `code` (Fail has already written why): what CEF asks for when
+// CefInitialize fails.
+[[noreturn]] void ExitNow(int code) {
+    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
+    ExitProcess(static_cast<UINT>(code));  // not reached
+}
+#endif
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
@@ -336,10 +345,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         // Another Kite has this profile and was told to come forward; this one leaves quietly,
         // before its window shows or it saves anything. A test run that found one tested
         // nothing, so it fails.
+        // CefInitialize returned false either way: CEF requires the process to end at once, with
+        // no CefShutdown and none of Chromium's or Kite's teardown after it.
         case kite::Chromium::StartResult::AlreadyRunning:
-            return quiet ? Fail(quiet, L"another Kite has this profile open", kWindowFailed) : kOk;
+            ExitNow(quiet ? Fail(quiet, L"another Kite has this profile open", kWindowFailed) : kOk);
         case kite::Chromium::StartResult::Failed:
-            return Fail(quiet, L"Kite couldn't start Chromium: " + problem, kWindowFailed);
+            ExitNow(Fail(quiet, L"Kite couldn't start Chromium: " + problem, kWindowFailed));
         }
     }
 #endif
