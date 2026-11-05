@@ -13,6 +13,11 @@ extension BrowserWindowController {
     private var askPanel: AskOnPagePanel? { findBar?.askPanel }
 
     @objc func showFind(_ sender: Any?) {
+        openFind(askEnabled: AskOnPage.isEnabled(in: .standard))
+    }
+
+    /// ⌘F: shows the bar (as the find bar or, `askEnabled`, the ask card) and focuses its field.
+    private func openFind(askEnabled: Bool) {
         guard shownPage != nil else { return NSSound.beep() }
         let bar = findBar ?? makeFindBar()
         // Arc's find field takes ⌘F itself (CommandFTextField.onCommandF): typed in the field during
@@ -22,10 +27,46 @@ extension BrowserWindowController {
             askPanel?.reset()
             bar.clearQuery()
         }
-        bar.askEnabled = AskOnPage.isEnabled(in: .standard)
+        bar.askEnabled = askEnabled
         bar.updatePlaceholder()
         bar.reveal()
         bar.focus()
+    }
+
+    /// `FindTestHook`, test-safe runs only (FindTestHookRunner calls it once the shown page has loaded): ⌘F's own
+    /// `showFind` (with Ask on Page off, whatever the saved defaults say: `FindTestHook.asksOnPage`), then the query
+    /// set the way the field takes a keystroke, through `FindBar.setQuery` (the field's string value, then the search
+    /// `controlTextDidChange` runs). No key events, so no input method; no menu.
+    func applyFindTestHook(_ hook: FindTestHook) {
+        guard WindowPresenter.testSafe, shownPage != nil else { return }
+        for step in hook.steps {
+            switch step {
+            case .showFind(let askOnPage):
+                openFind(askEnabled: askOnPage)
+                // The field editor's own text checking could underline the query or show a correction, Writing
+                // Tools or prediction panel.
+                if let editor = findBar?.field.currentEditor() as? NSTextView {
+                    editor.isAutomaticSpellingCorrectionEnabled = false
+                    editor.isAutomaticTextReplacementEnabled = false
+                    editor.isAutomaticTextCompletionEnabled = false
+                    editor.isContinuousSpellCheckingEnabled = false
+                    editor.inlinePredictionType = .no
+                    if #available(macOS 15.0, *) { editor.writingToolsBehavior = .none }
+                }
+            case .setQuery(let text):
+                guard let bar = findBar else { return }
+                bar.onResult = { result, counter in
+                    FindTestHookRunner.log(FindTestHook.resultLine(query: text, found: result.found, matches: result.matches,
+                                                                   activeMatch: result.activeMatch, counter: counter))
+                }
+                bar.setQuery(text)
+                // As after typing it: the caret after the last character, nothing selected.
+                if let editor = bar.field.currentEditor() as? NSTextView {
+                    editor.setSelectedRange(NSRange(location: (bar.field.stringValue as NSString).length, length: 0))
+                }
+            }
+        }
+        if hook == .open, findBar?.isHidden == false { FindTestHookRunner.log(FindTestHook.openLine) }
     }
 
     @objc func findNext(_ sender: Any?) { stepFind(forward: true) }
