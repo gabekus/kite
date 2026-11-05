@@ -35,11 +35,16 @@ their own PR, never as a side effect of a checkpoint.
 
 - Draw nothing while idle: no timers or animation ticks without visible
   change. Animations run on the compositor (DirectComposition), not on a CPU loop.
-  The one exception is an animation that must draw again each frame because no
+  One exception is an animation that must draw again each frame because no
   compositor property can do it (the theme's crossfade, an OKLab mix in a
   shader, as the Mac's ThemeView): it runs on the frame clock
   (`shell/FrameClock.h`), at the display's rate, only while it changes, and
-  the clock stops when it ends. An offset, a scale or an opacity is always an
+  the clock stops when it ends. The other is a touchpad contact taken over the
+  sidebar, whose DirectManipulation manual updates the same clock steps
+  (`shell/TouchpadInput.h`): while its gesture or momentum runs, drawing only
+  the frames it moved, and, unboosted and drawing nothing, while the fingers
+  rest before moving, for at most 10 s, after which the contact goes back to
+  the system. An offset, a scale or an opacity is always an
   `IDCompositionAnimation`.
 - Render at the display's refresh rate with no 60fps caps (docs/windows.md,
   Refresh rate).
