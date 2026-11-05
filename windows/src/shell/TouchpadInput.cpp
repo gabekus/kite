@@ -179,6 +179,7 @@ bool TouchpadInput::HitTest(WPARAM wParam, LPARAM lParam, const std::function<bo
 }
 
 void TouchpadInput::ReleaseContact() {
+    ++releasesAsked_;
     if (contactHeld_) releaseWanted_ = true;
 }
 

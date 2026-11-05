@@ -173,6 +173,9 @@ public:
     // A touchpad's scroll at `at` (client px): over the selected space's list it scrolls by
     // `distance` points (positive moves it on, down the list) and is the list's (true).
     bool ScrollList(POINT at, float distance);
+    // The rest of a touchpad's scroll that ScrollList took, wherever the pointer is now: the
+    // gesture stays with the list it was decided under.
+    void ScrollListBy(float distance);
     // The selected space's list's scroll, in points.
     float ListScroll() const { return scrollExact_; }
     // The window's size or DPI changed: `width` is the sidebar's, in points. Draw follows.
