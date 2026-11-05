@@ -349,7 +349,8 @@ IconPickerPlacement SpaceIconPickerView::Placement(bool inOwner) const {
                             static_cast<float>(origin.x + client.right) / scale, static_cast<float>(origin.y + client.bottom) / scale};
     } else {
         // The screen the anchor is on (AppKit keeps a popover on its positioning view's screen).
-        MONITORINFO monitor{sizeof(monitor)};
+        MONITORINFO monitor{};
+        monitor.cbSize = sizeof(monitor);
         const POINT at{std::lround(static_cast<float>(origin.x) + (anchor_.left + anchor_.right) / 2 * ownerScale),
                        std::lround(static_cast<float>(origin.y) + anchor_.bottom * ownerScale)};
         GetMonitorInfoW(MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST), &monitor);
