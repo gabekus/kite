@@ -1082,12 +1082,16 @@ Windows that means:
   a 60Hz timer.
 - **DirectComposition animations** run at the compositor's rate.
 - The windowed CEF fallback (child HWND) renders at the monitor's rate on its own.
-- **Chromium's Energy Saver** caps pages at 30fps on battery below 20% by
-  default. As on the Mac (`KCRuntime.mm`), Kite sets
-  `performance_tuning.battery_saver_mode.state` to 0 unless the user turns it
-  on (`Chromium::SetEnergySaverEnabled`). `--smoke-test` reads it back, which
-  proves Kite set it only on a fresh profile: Local State keeps a value an
-  earlier run wrote.
+- **Chromium's Energy Saver** caps pages at 30fps on battery below 20%. As on
+  the Mac (`KCRuntime.mm`, on by default since 9e19088c, as in Chrome), Kite
+  sets `performance_tuning.battery_saver_mode.state` to 1 unless the user turns
+  it off (`Chromium::SetEnergySaverEnabled`); every launch sets it, so Local
+  State's value from an earlier run doesn't stick. Nothing turns it off on
+  Windows yet: the Mac's toggle (Settings › Advanced › Kite, and the Kite menu)
+  and its stored choice (`chromiumEnergySaver` in UserDefaults) come with
+  Settings (W31). `--smoke-test` reads it back and fails unless it's 1. That's
+  Chromium's own default too, so CI's smoke writes a Local State with it off (0)
+  first, and a 1 then shows that Kite set it.
 
 ## Measuring performance
 
