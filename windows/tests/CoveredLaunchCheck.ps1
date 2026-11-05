@@ -2,7 +2,7 @@
 # first page, made after Kite's occlusion already said "covered", ends up hidden and its
 # requestAnimationFrame stops, and stays that way while Kite stays covered.
 #
-#   pwsh windows/tests/CoveredLaunchCheck.ps1 -Kite windows\build\Release\Kite.exe [-Cover] [-Seconds 12]
+#   pwsh windows/tests/CoveredLaunchCheck.ps1 -Kite windows\build\Release\Kite.exe [-Cover] [-Seconds 15]
 #        [-Attack none|stopPropagation|spoofState]
 #
 # Kite runs as a quiet --perf-log run on a fresh %TEMP% test profile, so it opens at the bottom of
@@ -17,13 +17,13 @@
 # which drops every listener on the document and the window (an old document.write page does the
 # same); docOpenStop also adds stopPropagation's listener to the new document. The page's own log
 # reads Document.prototype's getter, so it sees through the spoof.
-# The run is 12 s so its last 3 s come after Kite's last re-hide after the load (6 s after it):
+# The run is 15 s so its last 6 s come after Kite's last re-hide after the load (6 s after it):
 # each one shows the page for a few ms, a frame or two. Never run -Cover on a PC in use: it
 # blacks out every monitor for the run.
 param(
   [Parameter(Mandatory)] [string] $Kite,
   [switch] $Cover,
-  [int] $Seconds = 12,
+  [int] $Seconds = 15,
   [ValidateSet('none', 'stopPropagation', 'spoofState', 'docOpen', 'docOpenStop')] [string] $Attack = 'none'
 )
 $ErrorActionPreference = 'Stop'
@@ -180,10 +180,10 @@ setInterval(() => { vis(); log += 'F' + Date.now() + ':' + frames + ' '; documen
   if (-not $lastVisibility -or $lastVisibility[0] -ne 'H') {
     throw "the page was still visible when Kite closed (last change: $lastVisibility)"
   }
-  # rAF over the last 3 s before the close: none.
+  # rAF over the last 6 s before the close: none. (A hidden page's timers can run only every 2 s.)
   $samples = @($before | Where-Object { $_[0] -eq 'F' } | ForEach-Object { $p = $_.Substring(1) -split ':'; [pscustomobject]@{ t = [double]$p[0]; n = [int]$p[1] } })
-  $recent = @($samples | Where-Object { $_.t -ge $closedAt - 3500 })
-  if ($recent.Count -lt 2) { throw "too few rAF samples in the last 3 s ($($recent.Count))" }
+  $recent = @($samples | Where-Object { $_.t -ge $closedAt - 6000 })
+  if ($recent.Count -lt 2) { throw "too few rAF samples in the last 6 s ($($recent.Count))" }
   $ran = $recent[-1].n - $recent[0].n
   if ($ran -ne 0) { throw "requestAnimationFrame ran $ran frames in the last $([int](($recent[-1].t - $recent[0].t) / 1000)) s while Kite was covered" }
   Write-Host "covered launch ($Attack): the page ended hidden, rAF stopped at $($recent[-1].n) frames"
