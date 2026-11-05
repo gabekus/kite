@@ -21,6 +21,7 @@
 #include "shell/Capture.h"
 #ifdef KITE_HAS_CEF
 #include "shell/Chromium.h"
+#include "shell/Sandbox.h"
 #endif
 #include "shell/Errors.h"
 #include "shell/Keys.h"

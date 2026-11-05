@@ -98,17 +98,21 @@ jobs:
         run: |
           # Runs Kite.exe and returns its exit code, killing it after a minute so a run that
           # never quits fails the step instead of hanging the job.
-          # Kite.exe writes why it failed to stderr, shown here.
+          # Kite.exe writes why it failed to stderr, and what the smoke test found of the first
+          # page's renderer sandbox (W6b) to stdout, both shown here.
           function Run-Kite([string[]] $arguments) {
+            $stdoutFile = Join-Path $env:RUNNER_TEMP "kite-stdout-$([guid]::NewGuid()).txt"
             $stderrFile = Join-Path $env:RUNNER_TEMP "kite-stderr-$([guid]::NewGuid()).txt"
             $process = Start-Process -FilePath (Resolve-Path windows/build/Release/Kite.exe) -ArgumentList $arguments `
-              -RedirectStandardError $stderrFile -PassThru
+              -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile -PassThru
             $null = $process.Handle  # keep the handle, or ExitCode reads empty after WaitForExit(timeout)
             if (-not $process.WaitForExit(60000)) {
               $process.Kill()
               throw "Kite.exe $arguments didn't exit within 60 s"
             }
-            if ((Test-Path $stderrFile) -and (Get-Item $stderrFile).Length -gt 0) { Write-Host (Get-Content $stderrFile -Raw) }
+            foreach ($file in $stdoutFile, $stderrFile) {
+              if ((Test-Path $file) -and (Get-Item $file).Length -gt 0) { Write-Host (Get-Content $file -Raw) }
+            }
             return $process.ExitCode
           }
           $profileDir = Join-Path $env:RUNNER_TEMP "kite-smoke-$([guid]::NewGuid())"
@@ -119,6 +123,8 @@ jobs:
           & windows/build/Release/kitecore.exe --profile $profileDir open $smokePage | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "kitecore open exited with $LASTEXITCODE" }
 
+          # It also fails unless the first page's renderer is in Chromium's sandbox and no helper
+          # but the network service runs at medium integrity (W6b); it prints each one's sandbox.
           $code = Run-Kite @('--smoke-test')
           if ($code -ne 0) { throw "--smoke-test exited with $code" }
           if (-not (Test-Path (Join-Path $profileDir 'session.json'))) { throw 'Kite.exe wrote no session.json' }
@@ -144,6 +150,11 @@ jobs:
           if ($code -ne 1) { throw "/remote-debugging-port: expected exit 1, got $code" }
           $code = Run-Kite @('--capture', '--smoke-test')
           if ($code -ne 1) { throw "--capture with a flag as its value: expected exit 1, got $code" }
+          # Kite.exe runs from its own folder (CEF's bootstrap), so paths must be absolute.
+          $code = Run-Kite @('--capture', 'relative.png')
+          if ($code -ne 1) { throw "--capture with a relative path: expected exit 1, got $code" }
+          $code = Run-Kite @('--smoke-test', '--frame-log', 'relative.jsonl')
+          if ($code -ne 1) { throw "--frame-log with a relative path: expected exit 1, got $code" }
 
           # A KITE_SUPPORT_PATH that isn't a directory is refused (exit 2), never fallen back from.
           $file = Join-Path $profileDir 'not-a-dir'
@@ -151,6 +162,9 @@ jobs:
           $env:KITE_SUPPORT_PATH = $file
           $code = Run-Kite @('--smoke-test')
           if ($code -ne 2) { throw "a file as KITE_SUPPORT_PATH: expected exit 2, got $code" }
+          $env:KITE_SUPPORT_PATH = 'relative\profile'
+          $code = Run-Kite @('--smoke-test')
+          if ($code -ne 2) { throw "a relative KITE_SUPPORT_PATH: expected exit 2, got $code" }
 
           # Test flags never run on the real profile.
           Remove-Item Env:KITE_SUPPORT_PATH
@@ -164,7 +178,7 @@ jobs:
           # nothing (exit 4 if it does), a few space switches and a hover, then WM_CLOSE. WARP has
           # no PDH GPU counters, so the GPU fields are null.
           $out = Join-Path $env:RUNNER_TEMP 'kiteperf-smoke.json'
-          & windows/build/Release/kiteperf.exe --kite (Resolve-Path windows/build/Release/Kite.exe) --scenario smoke --runs 1 --out $out
+          & windows/build/tools/Release/kiteperf.exe --kite (Resolve-Path windows/build/Release/Kite.exe) --scenario smoke --runs 1 --out $out
           if ($LASTEXITCODE -ne 0) { throw "kiteperf --scenario smoke exited with $LASTEXITCODE" }
       - name: Backdrop matches the Mac's shader (GPU vs CPU reference)
         timeout-minutes: 5
@@ -237,8 +251,6 @@ jobs:
             !windows/build/Release/**/*.lib
             !windows/build/Release/**/*.pdb
             !windows/build/Release/**/*.exp
-            !windows/build/Release/KiteCoreTests.exe
-            !windows/build/Release/kiteperf.exe
           if-no-files-found: error
       - name: Upload the capture
         if: always()

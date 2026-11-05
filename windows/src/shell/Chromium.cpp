@@ -52,6 +52,14 @@ constexpr char kEnergySaverPref[] = "performance_tuning.battery_saver_mode.state
 constexpr UINT kCloseDeadlineMs = 5'000;
 constexpr UINT_PTR kCloseDeadlineTimer = 0x4B43;  // 'KC'; BrowserWindowController's timers are small numbers
 
+// Tells the browser process which renderer hosts each tab's main frame. CEF has no
+// browser-side accessor for a browser's render process id, so the renderer sends its own, from
+// each new main-frame script context (a navigation that moves the tab to another renderer
+// sends again). The Mac's KiteHelper/main.mm and KCBrowser.mm share the name. Sent in every
+// run, as on the Mac, whose Task Manager reads it (Windows' will); today only --smoke-test
+// uses it, and a message per new main-frame context costs nothing that shows.
+constexpr char kRendererPIDMessage[] = "kite.rendererPID";
+
 CefRect ToCefRect(const RECT& r) { return CefRect(r.left, r.top, r.right - r.left, r.bottom - r.top); }
 
 // A page's window: Alloy style, a child of Kite's window over the card, made without
@@ -348,7 +356,7 @@ void ApplyEnergySaver(const Chromium::Shared& shared) {
         OutputDebugStringW((L"Kite: couldn't set Energy Saver: " + error.ToWString() + L"\n").c_str());
     }
 }
-// On a quiet run's renderers' command lines: the renderer skips window.print() (QuietRenderer)
+// On a quiet run's renderers' command lines: the renderer skips window.print() (KiteHelperApp)
 // and sends this process message instead.
 constexpr char kQuietSwitch[] = "kite-quiet-run";
 constexpr char kPrintSkipped[] = "kite.printSkipped";
@@ -404,6 +412,44 @@ private:
     IMPLEMENT_REFCOUNTING(KiteApp);
 };
 
+// window.print() in a quiet run's renderer: Alloy shows the system's print dialog, which comes
+// to the front (CEF's print handler is Linux only). It returns at once instead, as a cancelled
+// one does, and tells the browser process, which writes the KITE_TEST_MODAL line.
+class SkipPrint : public CefV8Handler {
+public:
+    bool Execute(const CefString&, CefRefPtr<CefV8Value>, const CefV8ValueList&, CefRefPtr<CefV8Value>&, CefString&) override {
+        if (CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext()) {
+            if (CefRefPtr<CefFrame> frame = context->GetFrame()) frame->SendProcessMessage(PID_BROWSER, CefProcessMessage::Create(kPrintSkipped));
+        }
+        return true;
+    }
+
+private:
+    IMPLEMENT_REFCOUNTING(SkipPrint);
+};
+
+// Kite's CefApp in the helpers (the Mac's KiteHelperApp, KiteHelper/main.mm): in a renderer,
+// each tab's main frame reports the process it runs in; a quiet run's renderer (`quietRenderer`,
+// RunChromiumSubprocess) also skips window.print() in every frame (SkipPrint).
+class KiteHelperApp : public CefApp, public CefRenderProcessHandler {
+public:
+    explicit KiteHelperApp(bool quietRenderer) : quietRenderer_(quietRenderer) {}
+    CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
+
+    // Every frame's window, before its scripts run.
+    void OnContextCreated(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, CefRefPtr<CefV8Context> context) override {
+        if (quietRenderer_) context->GetGlobal()->SetValue("print", CefV8Value::CreateFunction("print", new SkipPrint), V8_PROPERTY_ATTRIBUTE_NONE);
+        if (!frame->IsMain()) return;
+        CefRefPtr<CefProcessMessage> message = CefProcessMessage::Create(kRendererPIDMessage);
+        message->GetArgumentList()->SetInt(0, static_cast<int>(GetCurrentProcessId()));
+        frame->SendProcessMessage(PID_BROWSER, message);
+    }
+
+private:
+    const bool quietRenderer_;
+    IMPLEMENT_REFCOUNTING(KiteHelperApp);
+};
+
 // One per tab: CEF's handlers for that tab's browser, on CEF's UI thread.
 // A page's Developer Tools window: only counted in and out (Shared::Count), so Chromium
 // isn't shut down under it when Kite quits with it open.
@@ -443,6 +489,24 @@ public:
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+
+    // The renderer's messages (KiteHelperApp): kite.rendererPID, the process now hosting this
+    // tab's page; kite.printSkipped, a quiet run's window.print() that didn't open the dialog.
+    bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefProcessId source,
+                                  CefRefPtr<CefProcessMessage> message) override {
+        if (source != PID_RENDERER) return false;
+        if (message->GetName() == kPrintSkipped) {
+            LogSkippedModal(L"print dialog");
+            return true;
+        }
+        if (message->GetName() != kRendererPIDMessage || !frame || !frame->IsMain()) return false;
+        const int pid = message->GetArgumentList()->GetInt(0);
+        if (pid <= 0) return true;
+        shared_->Post([shared = shared_, id = tabID_, browser, pid] {
+            if (shared->PageFor(id, browser) && shared->events.rendererStarted) shared->events.rendererStarted(id, static_cast<DWORD>(pid));
+        });
+        return true;
+    }
 
     // CefLifeSpanHandler
 
@@ -663,14 +727,6 @@ public:
         return true;
     }
 
-    // CefClient: the renderer skipped window.print() (QuietRenderer).
-    bool OnProcessMessageReceived(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefProcessId,
-                                  CefRefPtr<CefProcessMessage> message) override {
-        if (message->GetName() != kPrintSkipped) return false;
-        LogSkippedModal(L"print dialog");
-        return true;
-    }
-
     // CefFocusHandler
 
     // While Kite's command bar is open, a page never takes the keyboard back (Chromium
@@ -848,51 +904,20 @@ void Chromium::Shared::DiscardUnderPressure() {
 }
 
 void Chromium::DiscardHiddenPages() { shared_->DiscardUnderPressure(); }
-namespace {
 
-// window.print() in a quiet run's renderer: Alloy shows the system's print dialog, which comes
-// to the front (CEF's print handler is Linux only). It returns at once instead, as a cancelled
-// one does, and tells the browser process, which writes the KITE_TEST_MODAL line.
-class SkipPrint : public CefV8Handler {
-public:
-    bool Execute(const CefString&, CefRefPtr<CefV8Value>, const CefV8ValueList&, CefRefPtr<CefV8Value>&, CefString&) override {
-        if (CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext()) {
-            if (CefRefPtr<CefFrame> frame = context->GetFrame()) frame->SendProcessMessage(PID_BROWSER, CefProcessMessage::Create(kPrintSkipped));
-        }
-        return true;
-    }
-
-private:
-    IMPLEMENT_REFCOUNTING(SkipPrint);
-};
-
-class QuietRenderer : public CefApp, public CefRenderProcessHandler {
-public:
-    CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
-    // Every frame's window, before its scripts run.
-    void OnContextCreated(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefV8Context> context) override {
-        context->GetGlobal()->SetValue("print", CefV8Value::CreateFunction("print", new SkipPrint), V8_PROPERTY_ATTRIBUTE_NONE);
-    }
-
-private:
-    IMPLEMENT_REFCOUNTING(QuietRenderer);
-};
-
-}  // namespace
-
-int RunChromiumSubprocess(HINSTANCE instance) {
+int RunChromiumSubprocess(HINSTANCE instance, void* sandboxInfo) {
     CefMainArgs args(instance);
     // A quiet run's renderer (KiteApp::OnBeforeChildProcessLaunch's switch, on renderers only)
-    // skips window.print().
+    // skips window.print() (KiteHelperApp).
     CefRefPtr<CefCommandLine> commandLine = CefCommandLine::CreateCommandLine();
     commandLine->InitFromString(GetCommandLineW());
-    CefRefPtr<CefApp> app;
-    if (commandLine->HasSwitch(kQuietSwitch) && commandLine->GetSwitchValue("type") == "renderer") app = new QuietRenderer;
-    return CefExecuteProcess(args, app, nullptr);
+    const bool quietRenderer = commandLine->HasSwitch(kQuietSwitch) && commandLine->GetSwitchValue("type") == "renderer";
+    return CefExecuteProcess(args, new KiteHelperApp(quietRenderer), sandboxInfo);
 }
 
-Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
-                                      bool quiet, std::vector<std::string> switches, std::unique_ptr<Chromium>& out, std::wstring& error) {
+Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, void* sandboxInfo,
+                                      PageEvents events, bool quiet, std::vector<std::string> switches, std::unique_ptr<Chromium>& out,
+                                      std::wstring& error) {
     // Chromium wants root_cache_path absolute and every cache_path inside it, else it keeps
     // that profile in memory only; built from the resolved path, like the Mac (realpath).
     std::error_code ec;
@@ -914,11 +939,8 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
 
     CefSettings settings;
     // CEF's own UI thread, so Kite's message loop (DirectComposition, the device-lost wait)
-    // stays its own. The sandbox needs CEF's bootstrap executable and is its own checkpoint
-    // (W6b in windows/helix/checkpoints.md); until then pages run unsandboxed, as in any
-    // CEF app built without the sandbox.
+    // stays its own. The Chromium sandbox is on, as on the Mac (main.cpp's RunWinMain).
     settings.multi_threaded_message_loop = true;
-    settings.no_sandbox = true;
     // Kite.exe's own command line is Kite's (main.cpp), never Chromium switches: without this,
     // CEF reads it as the browser process's, so `Kite.exe /remote-debugging-port=9222` opened a
     // debugging port. The helpers still get theirs, from the command lines Chromium gives them.
@@ -931,7 +953,7 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
     CefString(&settings.log_file) = (resolved / L"chromium.log").wstring();
     CefMainArgs args(instance);
     perf::Mark("cef-init-begin");
-    const bool initialized = CefInitialize(args, settings, new KiteApp(shared, std::move(switches)), nullptr);
+    const bool initialized = CefInitialize(args, settings, new KiteApp(shared, std::move(switches)), sandboxInfo);
     perf::Mark("cef-init-end");
     if (!initialized) {
         const int code = CefGetExitCode();

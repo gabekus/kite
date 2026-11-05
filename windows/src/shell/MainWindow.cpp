@@ -6,9 +6,9 @@
 #include <shellapi.h>
 #include <windowsx.h>
 
-// The module this code is linked into (the linker's symbol for its image base): Kite.exe today.
-// Icons load from it rather than from GetModuleHandle(nullptr), so they still come from the
-// right module if the window code moves into a DLL behind a bootstrap exe.
+// The module this code is linked into (the linker's symbol for its image base): Kite.dll with
+// Chromium (Kite.exe is CEF's bootstrap, W6b), Kite.exe without. Icons load from it rather than
+// from GetModuleHandle(nullptr), which is the bootstrap's.
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 
 namespace kite {
