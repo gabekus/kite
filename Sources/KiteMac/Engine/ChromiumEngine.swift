@@ -39,9 +39,10 @@ final class ChromiumEngine: WebEngine {
     }
 
     func makePage(url: URL?, restoring state: Any?) -> WebPage {
-        // CEF has no equivalent of WebKit's interactionState, so a revived tab reloads its URL.
+        // A revived tab gets its back/forward list back; with a stock CEF build (no state) it reloads its URL.
         ChromiumPage(
-            browser: KCBrowser(url: url, delegate: ChromiumDelegateProxy.placeholder, context: context),
+            browser: KCBrowser(url: url, delegate: ChromiumDelegateProxy.placeholder, context: context,
+                               navigationState: state as? Data),
             adblocker: adblocker,
             appliesBoosts: appliesBoosts
         )
@@ -432,7 +433,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         }
     }
 
-    func hibernationState() -> Any? { nil }
+    func hibernationState() -> Any? { browser.navigationState }
 
     func checkBusy(_ completion: @escaping (Bool) -> Void) {
         if mediaInUse { return completion(true) }
@@ -667,6 +668,13 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         onEvent(.permissionRequest(PermissionRequest(id: promptID, origin: origin, permissions: requested) { allow in
             decisionHandler(allow.map { $0 ? .allow : .block } ?? .dismiss)
         }))
+    }
+
+    func browser(_ browser: KCBrowser, systemBlocksPermissions permissions: [NSNumber]) {
+        let devices = permissions.compactMap { KCSitePermission(rawValue: $0.intValue) }.compactMap { permission in
+            permission == .camera ? SystemMediaAccess.Device.camera : permission == .microphone ? .microphone : nil
+        }
+        SystemMediaAccess.reportBlocked(devices, in: browser.view.window)
     }
 
     func browser(_ browser: KCBrowser, runJavaScriptDialog kind: JavaScriptDialogKind, message: String,

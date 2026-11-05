@@ -360,7 +360,7 @@ std::wstring FavoritesView::DrawPane(size_t index, const DrawIcon& drawIcon, boo
         // The ring goes above the tint, which a draw before it this pass may just have made.
         IDCompositionVisual* reference = &l.layer == &gpu.ring ? gpu.tint.visual.Get() : l.reference;
         bool fresh = false;
-        std::wstring error = DrawFadedLayer(*compositor_, l.layer, width, height, dpi_, l.content, readBack, hr, fresh);
+        std::wstring error = DrawFadedLayer(*compositor_, perf::View::Sidebar, l.layer, width, height, dpi_, l.content, readBack, hr, fresh);
         if (fresh && l.layer.visual) {
             // A new layer: its opacity set by Place.
             gpu.placed.reset();
@@ -433,7 +433,7 @@ std::wstring FavoritesView::DrawEmptyState(bool readBack) {
         const float left = frame.left - static_cast<float>(at.x) / scale, top = frame.top - static_cast<float>(at.y) / scale;
         const D2D1_RECT_F box{left, top, left + frame.Width(), top + frame.Height()};
         bool fresh = false;
-        std::wstring error = DrawFadedLayer(*compositor_, layer, width, height, dpi_, [&](ID2D1DeviceContext* context) { content(context, box); },
+        std::wstring error = DrawFadedLayer(*compositor_, perf::View::Sidebar, layer, width, height, dpi_, [&](ID2D1DeviceContext* context) { content(context, box); },
                                             readBack, hr, fresh);
         if (fresh && layer.visual) closeOpacity_.reset();
         error = AttachFadedLayer(layer, fresh, std::move(error), container_.Get(), FALSE, nullptr, hr);

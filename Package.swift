@@ -46,6 +46,7 @@ if hasCEF {
         .unsafeFlags(["-L", cefDirectory + "/build/libcef_dll_wrapper", "-lcef_dll_wrapper"]),
         .linkedFramework("AppKit"),
         .linkedFramework("IOSurface"),
+        .linkedFramework("AVFoundation"),
     ]
     targets += [
         .target(

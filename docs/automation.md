@@ -177,6 +177,14 @@ What works with Kite in the background (checked on a test build behind other win
 - Command bars: SwiftUI shares one field editor between windows, so with several windows' bars open only one
   holds it. `input` gives its window's bar the field first, as becoming key would. Escape doesn't close a bar
   in a background window (SwiftUI's exit command needs a key window).
+- `input` `text` on a test-safe run goes straight into the command bar's field editor (`insertText`), with no
+  key events: those pass through the input method, and a Japanese input source would mark the text and draw its
+  candidate window on the user's screen. With anything else as the first responder it's refused
+  (`UITextEntry`), and the field editor's spelling correction, text replacement, completion and inline
+  prediction are off first, so no panel of theirs shows. `input` `keys` that type a character (a letter, digit,
+  space or symbol, with at most ⇧) are refused on a test-safe run for the same reason; named keys and ⌘/⌃/⌥
+  shortcuts still go. Element full screen and picture in picture (including Arc's automatic one) are off on a
+  test-safe run, since both take over or float over the display.
 - `trace`: animation `from`/`to` values are the layer's own (position in its superlayer, bottom-left), while
   the sampled frames are window points. SwiftUI's accessibility frames follow the model, not the animation, so
   `match` shows only start and end; the layers show the curve.
@@ -207,6 +215,18 @@ What works with Kite in the background (checked on a test build behind other win
   `KITE_TEST_INSTANT_LINKS_SEARCH_URL='http://127.0.0.1:PORT/results?q=%s'` makes the hidden reader load that page
   instead of Google (it takes the first `#search a` that holds an `h3`), and `KITE_CLAUDE_BIN` names a stub that
   prints the plan JSON. A slow fixture keeps the "Searching the web for you" row up long enough to capture.
+- The find bar (⌘F) without keys: on a test-safe run, `KITE_TEST_FIND_OPEN=1` opens the main window's find bar
+  once its selected tab's page has finished loading, as ⌘F does (`showFind`, but always with Ask on Page off, so
+  the plain find bar whatever `askOnPageEnabled` says, and no Ask button), and `KITE_TEST_FIND=text` also sets
+  its query the way the field takes a keystroke: the field's string value, then the search its text-change
+  delegate runs (`FindBar.setQuery`). No key events and no input method; Return is never pressed, so Ask on Page
+  never asks. It writes `KITE_TEST_FIND: ready: open, empty`, or `KITE_TEST_FIND: ready: "text", found, 2
+  matches, active 1, counter "1/2"` for each find result (WebKit reports found or not, no counts), and gives up
+  with a line after 30 s without a load. A real profile ignores both (`FindTestHook`). It writes
+  `KITE_TEST_FIND: armed: …` when it starts waiting, and the give-up line says what it saw (loads, the selected
+  tab's loading and progress, whether the window is visible). With either hook a WebKit page's window occlusion
+  detection is off, as with `KITE_TEST_CONTEXT_MENU`: the test window is covered, and WebKit stops a covered
+  window's page, which then never finishes loading (W21's first headless run timed out on all three states).
 - `menu`: AppKit ignores fn when matching a key against the menu bar, so a system item on fn E (Emoji &
   Symbols) or fn F (Enter Full Screen) fires on a plain "e" or "f" that reaches the menu bar, and is flagged.
 

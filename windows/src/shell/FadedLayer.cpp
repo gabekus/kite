@@ -6,7 +6,7 @@
 
 namespace kite {
 
-std::wstring DrawFadedLayer(Compositor& compositor, FadedLayer& layer, UINT width, UINT height, UINT dpi, const Compositor::Content& content,
+std::wstring DrawFadedLayer(Compositor& compositor, perf::View view, FadedLayer& layer, UINT width, UINT height, UINT dpi, const Compositor::Content& content,
                             bool readBack, HRESULT& hr, bool& fresh) {
     IDCompositionDevice* device = compositor.Device();
     if (!layer.visual) {
@@ -30,7 +30,7 @@ std::wstring DrawFadedLayer(Compositor& compositor, FadedLayer& layer, UINT widt
     layer.width = width;
     layer.height = height;
     layer.pixels = Pixels{};
-    return compositor.DrawSurface(layer.surface.Get(), width, height, dpi, content, readBack ? &layer.pixels : nullptr, hr);
+    return compositor.DrawSurface(view, layer.surface.Get(), width, height, dpi, content, readBack ? &layer.pixels : nullptr, hr);
 }
 
 std::wstring AttachFadedLayer(FadedLayer& layer, bool fresh, std::wstring error, IDCompositionVisual* parent, BOOL insertAbove,

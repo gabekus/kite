@@ -24,10 +24,10 @@ void BrowserWindowController::RecordEdit(const std::function<void()>& change) {
 
 void BrowserWindowController::EditState(const std::function<void()>& change, bool selectionMoved) {
     RecordEdit(change);
-    // StateChanged syncs the pinned URLs, as the Mac's mutate does. W11's merge: this saves Soon
-    // (StateChanged(SessionSaveDelay::Soon), SelectionMoved's own Soon), a sidebar change.
+    // A sidebar change, saved soon (SelectionMoved's save is Soon too); StateChanged syncs the
+    // pinned URLs, as the Mac's mutate does.
     if (selectionMoved) SelectionMoved();
-    else StateChanged();
+    else StateChanged(SessionSaveDelay::Soon);
 }
 
 void BrowserWindowController::TakeKeyboardForRename() {

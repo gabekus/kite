@@ -265,7 +265,7 @@ std::wstring SpaceTipView::DrawInto(IDCompositionVirtualSurface* surface, UINT w
         return HResultMessage(L"creating the space tip's brush", hr);
     }
     return compositor_->DrawSurface(
-        surface, width, height, dpi, [&](ID2D1DeviceContext* context) { Paint(context, tip, measured); }, readBack, hr);
+        perf::View::SpaceTip, surface, width, height, dpi, [&](ID2D1DeviceContext* context) { Paint(context, tip, measured); }, readBack, hr);
 }
 
 std::wstring SpaceTipView::Show(const std::string& spaceID, const SpaceTip& tip, const BarRect& cell, UINT dpi) {

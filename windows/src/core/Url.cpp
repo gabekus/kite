@@ -36,6 +36,18 @@ std::optional<std::string> Host(std::string_view url) {
     return std::string(authority.substr(0, authority.find(':')));
 }
 
+std::string_view Path(std::string_view url) {
+    auto scheme = Scheme(url);
+    if (!scheme) return {};
+    std::string_view rest = url.substr(scheme->size() + 1);
+    if (rest.substr(0, 2) == "//") {
+        rest.remove_prefix(2);
+        const size_t end = rest.find_first_of("/?#");
+        rest = end == std::string_view::npos ? std::string_view() : rest.substr(end);
+    }
+    return rest.substr(0, rest.find_first_of("?#"));
+}
+
 bool HasValidAuthority(std::string_view url) {
     auto scheme = Scheme(url);
     if (!scheme) return false;

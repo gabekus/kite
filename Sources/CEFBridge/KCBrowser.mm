@@ -1,6 +1,8 @@
 #import "CEFBridge.h"
 #import "KCInternal.h"
 
+#import <AVFoundation/AVFoundation.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -33,6 +35,7 @@
 - (void)deliverDevToolsResult:(int)messageID success:(bool)success data:(NSData *)data;
 - (void)willNavigateMainFrame:(CefRefPtr<CefRequest>)request;
 - (void)mainFrameDidStartLoading;
+- (void)mainFrameWentToApp;
 - (void)prepareFirstPage:(nullable NSURL *)url;
 - (NSMutableArray<NSString *> *)documentScriptIdentifiers;
 - (void)addDocumentScript:(NSString *)script navigation:(NSUInteger)navigation completion:(nullable void (^)(void))completion;
@@ -405,6 +408,12 @@ static bool IsInPageScheme(NSString* scheme) {
     return [schemes containsObject:scheme.lowercaseString];
 }
 
+/// The tab has no page of its own yet: nothing committed, or only a new pane's about:blank.
+static bool IsBlankPage(const CefString& committed) {
+    std::string url = committed.ToString();
+    return url.empty() || url == "about:blank";
+}
+
 /// t3code:, zoommtg:, etc. go to the app that claims them, as in WebKitEngine (an OAuth callback
 /// is a redirect to one). Chromium would show ERR_UNKNOWN_URL_SCHEME instead.
 static bool RouteExternalScheme(const CefString& target) {
@@ -453,6 +462,40 @@ static bool AskPermissions(KCBrowser* owner, NSArray<NSNumber*>* permissions, NS
         done(decision);
     }];
     return true;
+}
+
+/// Whether macOS lets Kite use `type`, asking the first time (on the main thread, like `then`).
+static void RequestSystemAccess(AVMediaType type, bool wanted, void (^then)(bool allowed)) {
+    if (!wanted) return then(true);
+    AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:type];
+    if (status != AVAuthorizationStatusNotDetermined) return then(status == AVAuthorizationStatusAuthorized);
+    [AVCaptureDevice requestAccessForMediaType:type completionHandler:^(BOOL granted) {
+        dispatch_async(dispatch_get_main_queue(), ^{ then(granted); });
+    }];
+}
+
+/// The CEF media bits in `requested` that macOS lets Kite use. Chromium (Alloy) never asks macOS
+/// itself, so without this macOS never lists Kite under Privacy & Security and capture fails
+/// with no way to turn it on. Asked the first time a site is given either, as Chrome does; the
+/// owner hears which ones macOS has turned off.
+static void WithSystemMediaAccess(KCBrowser* owner, uint32_t requested, void (^done)(uint32_t allowed)) {
+    const uint32_t audio = CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE;
+    const uint32_t video = CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE;
+    __weak KCBrowser* weakOwner = owner;
+    RequestSystemAccess(AVMediaTypeAudio, requested & audio, ^(bool microphone) {
+        RequestSystemAccess(AVMediaTypeVideo, requested & video, ^(bool camera) {
+            uint32_t allowed = requested;
+            NSMutableArray<NSNumber*>* off = [NSMutableArray array];
+            if (!camera) { allowed &= ~video; [off addObject:@(KCSitePermissionCamera)]; }
+            if (!microphone) { allowed &= ~audio; [off addObject:@(KCSitePermissionMicrophone)]; }
+            KCBrowser* browser = weakOwner;
+            id<KCBrowserDelegate> delegate = browser.delegate;
+            if (browser && off.count && [delegate respondsToSelector:@selector(browser:systemBlocksPermissions:)]) {
+                [delegate browser:browser systemBlocksPermissions:off];
+            }
+            done(allowed);
+        });
+    });
 }
 
 /// Per-browser CEF client: forwards Chromium callbacks to the Objective-C KCBrowser.
@@ -512,11 +555,13 @@ class KCClient : public CefClient,
             allAllowed = allAllowed && stored == KCSitePermissionValueAllow;
         }
         if (allAllowed) {
-            callback->Continue(requested_permissions);
+            WithSystemMediaAccess(owner, requested_permissions, ^(uint32_t allowed) { callback->Continue(allowed); });
             return true;
         }
+        __weak KCBrowser* weakOwner = owner;
         return AskPermissions(owner, permissions, origin, --media_prompt_id_, ^(KCPermissionDecision decision) {
-            callback->Continue(decision == KCPermissionDecisionAllow ? requested_permissions : CEF_MEDIA_PERMISSION_NONE);
+            if (decision != KCPermissionDecisionAllow) return callback->Continue(CEF_MEDIA_PERMISSION_NONE);
+            WithSystemMediaAccess(weakOwner, requested_permissions, ^(uint32_t allowed) { callback->Continue(allowed); });
         });
     }
 
@@ -535,10 +580,18 @@ class KCClient : public CefClient,
         if (requested_permissions & mic) [permissions addObject:@(KCSitePermissionMicrophone)];
         if (requested_permissions & location) [permissions addObject:@(KCSitePermissionLocation)];
         if (requested_permissions & notifications) [permissions addObject:@(KCSitePermissionNotifications)];
+        __weak KCBrowser* weakOwner = owner_;
+        uint32_t media = (requested_permissions & camera ? CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE : 0)
+                       | (requested_permissions & mic ? CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE : 0);
         return AskPermissions(owner_, permissions, ToNSURL(requesting_origin), (NSInteger)prompt_id,
                               ^(KCPermissionDecision decision) {
             switch (decision) {
-                case KCPermissionDecisionAllow: callback->Continue(CEF_PERMISSION_RESULT_ACCEPT); break;
+                case KCPermissionDecisionAllow: {
+                    // The site's answer stands; macOS is asked here so the capture that follows works.
+                    if (!media) { callback->Continue(CEF_PERMISSION_RESULT_ACCEPT); break; }
+                    WithSystemMediaAccess(weakOwner, media, ^(uint32_t) { callback->Continue(CEF_PERMISSION_RESULT_ACCEPT); });
+                    break;
+                }
                 case KCPermissionDecisionBlock: callback->Continue(CEF_PERMISSION_RESULT_DENY); break;
                 case KCPermissionDecisionDismiss: callback->Continue(CEF_PERMISSION_RESULT_DISMISS); break;
             }
@@ -765,7 +818,10 @@ class KCClient : public CefClient,
                         bool user_gesture,
                         bool is_redirect) override {
         if (RouteMailto(owner_, frame, request->GetURL())) return true;
-        if (RouteExternalScheme(request->GetURL())) return true;
+        if (RouteExternalScheme(request->GetURL())) {
+            if (frame->IsMain() && IsBlankPage(frame->GetURL())) [owner_ mainFrameWentToApp];
+            return true;
+        }
         if (frame->IsMain() && user_gesture && !is_redirect &&
             (request->GetTransitionType() & TT_SOURCE_MASK) == TT_LINK &&
             AskLinkPeek(owner_, request->GetURL(), false)) {
@@ -1176,6 +1232,8 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
 @implementation KCBrowser {
     CefRefPtr<CefBrowser> _browser;
     NSURL* _pendingURL;
+    /// Restored in place of loading _pendingURL, once the browser exists.
+    NSData* _pendingNavigationState;
     BOOL _pendingFocus;
     BOOL _hidden;
     double _zoomFactor;
@@ -1217,7 +1275,15 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
 }
 
 - (instancetype)initWithURL:(NSURL*)url delegate:(id<KCBrowserDelegate>)delegate context:(KCRequestContext*)context {
+    return [self initWithURL:url delegate:delegate context:context navigationState:nil];
+}
+
+- (instancetype)initWithURL:(NSURL*)url
+                   delegate:(id<KCBrowserDelegate>)delegate
+                    context:(KCRequestContext*)context
+            navigationState:(NSData*)navigationState {
     if ((self = [self initPopupWithDelegate:delegate])) {
+        _pendingNavigationState = navigationState;
         CefWindowInfo windowInfo;
         windowInfo.SetAsChild((__bridge CefWindowHandle)_view, CefRect(0, 0, 800, 600));
         CefBrowserSettings settings;
@@ -1290,6 +1356,8 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
     if (_pendingURL) {
         NSURL* url = _pendingURL;
         _pendingURL = nil;
+        NSData* navigationState = _pendingNavigationState;
+        _pendingNavigationState = nil;
         // A browser that hasn't navigated has no renderer yet, so a script registered
         // now can miss the first document; it runs again at load start (the script
         // guards against running twice).
@@ -1299,7 +1367,7 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
             [self addDocumentScript:script navigation:_navigationCount completion:nil];
             _runScriptAtLoadStart = YES;
         }
-        [self loadURL:url];
+        if (!navigationState || ![self restoreNavigationState:navigationState]) [self loadURL:url];
     }
     if (_zoomFactor != 1) self.zoomFactor = _zoomFactor;
     if (_audioMuted) browser->GetHost()->SetAudioMuted(true);
@@ -1334,6 +1402,28 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
         return;
     }
     _browser->GetMainFrame()->LoadURL(url.absoluteString.UTF8String);
+}
+
+- (NSData*)navigationState {
+#ifdef KITE_CEF_NAVIGATION_STATE
+    if (!_browser) return nil;
+    CefRefPtr<CefBinaryValue> state = _browser->GetHost()->GetNavigationState();
+    if (!state || state->GetSize() == 0) return nil;
+    NSMutableData* data = [NSMutableData dataWithLength:state->GetSize()];
+    state->GetData(data.mutableBytes, data.length, 0);
+    return data;
+#else
+    return nil;
+#endif
+}
+
+/// False when the state doesn't parse, or the CEF build can't restore one.
+- (BOOL)restoreNavigationState:(NSData*)state {
+#ifdef KITE_CEF_NAVIGATION_STATE
+    return _browser->GetHost()->RestoreNavigationState(CefBinaryValue::Create(state.bytes, state.length));
+#else
+    return NO;
+#endif
 }
 
 - (void)goBack { if (_browser) _browser->GoBack(); }
@@ -1749,6 +1839,17 @@ static CefRefPtr<CefValue> KCCefValue(id object) {
     if (!_runScriptAtLoadStart) return;
     _runScriptAtLoadStart = NO;
     if (_documentScriptSource) [self evaluateJavaScript:_documentScriptSource completion:^(id) {}];
+}
+
+/// A tab opened only for a link another app took (target=_blank, window.open, a redirect before its
+/// first page, a new split pane) closes, as in Chrome and Arc (its externalProtocolAutoClose): the
+/// delegate hears it as window.close(), so the opener comes back to the front.
+- (void)mainFrameWentToApp {
+    __weak KCBrowser* weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        KCBrowser* browser = weakSelf;
+        if (browser && !browser->_closed && !KCRuntimeIsQuitting()) [browser->_delegate browserDidRequestClose:browser];
+    });
 }
 
 - (void)willNavigateMainFrame:(CefRefPtr<CefRequest>)request {
