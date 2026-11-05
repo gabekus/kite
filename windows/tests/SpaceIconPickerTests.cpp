@@ -367,6 +367,10 @@ TEST(theIconTabsSymbolsAreFittedToTheMacsInk) {
     CHECK(circle.width == 16.5f && circle.height == 16.5f);
     const IconTabInk median = IconTabInkFor("star.fill");
     CHECK(!median.measured && median.width == 16.5f && median.height == 16.5f);
+    // Unverified, a filled name over an outline stand-in is stroked heavier, so a filled and an
+    // unfilled pair on one glyph differ.
+    CHECK(median.stroke == 0 && IconTabInkFor("cloud.fill").stroke > 0 && IconTabInkFor("cloud").stroke == 0);
+    CHECK(SymbolGlyphFor("cloud.fill") == SymbolGlyphFor("cloud"));
     CHECK(BarGlyphFitFor("face.smiling").scale == 0.78f && BarGlyphFitFor("face.smiling").stroke == 0);
 }
 

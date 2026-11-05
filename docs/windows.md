@@ -565,7 +565,7 @@ SF Symbol and picture icons (W9b2) draw in the bar and the page header
 Apple's systems, so the Icon tab's 56 symbols, "briefcase" and "photo" each
 have a stand-in glyph in Segoe Fluent Icons, or Segoe MDL2 Assets where Fluent
 isn't installed, picked by eye from every glyph each font has and checked
-against both fonts' character maps, except ten drawn as shapes (below). A
+against both fonts' character maps, except fourteen drawn as shapes (below). A
 symbol fills its glyph's outline, centred on its ink, at the size that makes
 Segoe's briefcase glyph ink the Mac's briefcase width, 14.65pt at 12.5 (one
 factor for every symbol; edge to edge, as a glyph's outline is measured, from
@@ -582,7 +582,9 @@ Fluent has one weight where the Mac's symbols are semibold (the placeholder's
 "photo" is regular on the Mac); several stand-ins are outlines of filled
 symbols, cloud and cloud.fill share a glyph, and nine have no such object in
 either font (bookmark, paw, bed, cutlery, dumbbell, bandage, baseball, takeaway
-bag, theatre masks), which W9b4 draws as Kite's own shapes (see below); glyphs
+bag, theatre masks), which W9b4 draws as Kite's own shapes (see below), as the W9e/W9f UI gate
+draws four whose stand-in was the wrong shape (the database drum, the code sign, the scroll, the
+tram; their bar and header boxes scaled from the Icon tab's, not yet measured); glyphs
 are centred on their ink where the Mac centres the symbol's image (checked only
 for the briefcase's glyph, within 0.25pt, before W9b5 drew the briefcase); no
 Mac capture shows a symbol Segoe draws, so the calibration's 14.65pt is checked
@@ -613,7 +615,7 @@ on whole pixels at every scale (core snaps them), so they draw where they take
 clicks. Known differences: in the 2pt where two cells overlap only the later
 cell's backing shows (the Mac shows both).
 
-The nine (W9b4) are Kite's own simple shapes (`core/SymbolShape.h`), not
+The nine (W9b4), and the UI gate's four, are Kite's own simple shapes (`core/SymbolShape.h`), not
 Apple's outlines: each is filled figures in the bar's 12.5pt about the icon's
 centre, in layers joined or cut in order (so the front theatre mask cuts a gap
 round itself in the one behind), drawn by the same painter through one Direct2D
@@ -845,13 +847,18 @@ lays out at its own monitor's scale (WM_DPICHANGED, and its window's DPI checked
 A capture draws it at the window's scale, whatever its monitor's. Like Choose a Theme's, it's in Kite's appearance (the
 Appearance setting, else Windows' apps' mode), as NSPopover takes NSApp's, not the space's theme's: the UI gate's Mac
 picker is dark over a light theme on a dark Mac; it follows Windows' mode changing while it's open. Its emoji ink 21pt
-in their 33.5pt cells, as Apple Color Emoji's 22pt do, and NSPopover's arrow is 13pt deep. The Icon tab's Segoe
-stand-ins are each fitted to the Mac's ink (core's IconTabInkFor: the box, the middle, and a stroke for weight where
-Segoe's stand-in is an outline and SF's is filled), from the 28 the gate's reference shows; the other 28 take their
-medians. Against the reference all 28 match the box within 8% and 27 the area within 15% (square.on.square.fill's
-outline reaches 0.78 of SF's filled one at the 2pt stroke the table allows; moon.fill's box sits 8% small to keep its
-heavier crescent's area to 1.07). The category bar's and the bin's symbols take 0.78 of the bar's factor, the car and
-the bin stroked for SF's heavier ink (core's BarGlyphFitFor). In the dark, the segmented control and the search field
+in their 33.5pt cells, as Apple Color Emoji's 22pt do, and NSPopover's arrow is 13pt deep. The Icon tab's
+stand-ins are each fitted to the Mac's ink (core's IconTabInkFor: the box's sides' geometric mean, the middle, and a
+stroke for weight where Segoe's stand-in is an outline and SF's is filled). Four whose Segoe stand-in was the wrong
+shape (the database drum, the code sign, the scroll, the tram) are Kite's own shapes (core/SymbolShape), and book.fill
+is Segoe's open book (E736), as the Mac's is open. Against the reference's 28 (columns 5-8) every side of every box is
+within 13% of the Mac's and 26 areas within 15% (square.on.square.fill's and book.fill's outlines reach 0.78 and 0.84
+of SF's filled ones at the 2pt stroke the table allows; moon.fill's box sits 8% small to keep its heavier crescent's
+area to 1.07). Columns 1-4 are unverified against the Mac: its capture can't show them (the popover hangs past the
+window's left edge), so they take the 28's median box, and a ".fill" over an outline stand-in is stroked to the
+measured .fill symbols' filled share of their box (so cloud.fill and cloud differ). The four new shapes' bar and
+header boxes are the Icon tab's scaled, not yet measured there. The category bar's and the bin's symbols take 0.78 of
+the bar's factor, the car and the bin stroked for SF's weight (core's BarGlyphFitFor). In the dark, the segmented control and the search field
 are one bezel and the knob, the divider and the popover's fill and edge are the gate's (as white over the fill, the Mac's
 alphas: its in-process capture draws the material unblurred, 75, where Windows' fill is 44) (all measured in the UI
 gate, review/w9e-mac).
@@ -952,16 +959,13 @@ Known differences for W9f:
 - The UI gate (review/w9f-mac) set what the page measured: a disabled Create Space at half again
   (SwiftUI's disabled plain button); the field that has the page's keyboard (in an inactive window
   too) keeps placeholderTextColor's placeholder and the other shows it at half the label's; typed
-  text in textColor (black in the light); Choose a Theme's brush bold for the weight of SF's filled
-  one; and Segoe UI Variable's weight axis set heavier than SF's weight names (Regular at 550,
-  Medium at 650, Semibold at 700), since at the same weight its ink is 15-30% lighter in a dark
-  space and up to 43% in a light one. That brings the labels to 0.90-1.02 of the Mac's weight and
-  their widths to within 1-7%; the title's Bold is the axis's heaviest and stays at 0.84. DirectWrite's
-  grayscale enhanced contrast was tried too: it only darkens dark-on-light text and gained under 5%,
-  so it isn't used. Segoe UI (Windows 10) has no weight axis and keeps its weights. Still different:
-  in a dark space the Mac's capture inks Profile's face.smiling filled (its code asks for the
-  outline, which it inks in a light space), and Windows' stays the outline; baselines are where
-  SF's are.
+  text in textColor (black in the light); and Choose a Theme's brush bold for the weight of SF's
+  filled one. Still different: Windows' text inks about 15-30% lighter than SF Pro's at the same
+  weight (up to 43% for dark text on a light theme), and Segoe UI runs about 5% narrower, across
+  Kite, not only here; that's a Kite-wide text-weight checkpoint of its own (DirectWrite's
+  grayscale enhanced contrast doesn't close it: under 5%, dark-on-light only). In a dark space the
+  Mac's capture inks Profile's face.smiling filled (its code asks for the outline, which it inks in
+  a light space), and Windows' stays the outline; baselines are where SF's are.
 
 ## Saving the session
 

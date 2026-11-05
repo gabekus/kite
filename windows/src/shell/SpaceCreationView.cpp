@@ -101,21 +101,11 @@ std::unique_ptr<SpaceCreationView> SpaceCreationView::Create(HWND window, IDWrit
         error = HResultMessage(L"CreateTextFormat", hr);
         return nullptr;
     }
-    // Segoe UI Variable inks lighter than SF Pro at the same weight (the UI gate, review/w9f-mac: the
-    // labels' ink 15-30% lighter in a dark space, up to 43% in a light one), so its weight axis sets
-    // each of the page's weights heavier: Regular 400 at 550, Medium 500 (Cancel's; it has no
-    // Medium instance) at 650, Semibold 600 at 700, as the space bar's semibold is Segoe's bold.
-    // That also brings its narrower text to within 1-3% of SF's widths. The title's Bold is the
-    // axis's heaviest. Segoe UI (Windows 10) has no axis and keeps its own weights.
+    // Segoe UI Variable has no Medium instance: its weight axis gives Cancel's 500.
     if (view->textFamily_ == L"Segoe UI Variable Text") {
-        const std::pair<IDWriteTextFormat*, float> weights[] = {{view->subtitleFormat_.Get(), 550.0f}, {view->rowFormat_.Get(), 550.0f},
-                                                                {view->rowBoldFormat_.Get(), 700.0f}, {view->pillFormat_.Get(), 700.0f},
-                                                                {view->cancelFormat_.Get(), 650.0f}};
-        for (auto [textFormat, weight] : weights) {
-            const DWRITE_FONT_AXIS_VALUE axis{DWRITE_FONT_AXIS_TAG_WEIGHT, weight};
-            ComPtr<IDWriteTextFormat3> variable;
-            if (SUCCEEDED(textFormat->QueryInterface(IID_PPV_ARGS(variable.GetAddressOf())))) variable->SetFontAxisValues(&axis, 1);
-        }
+        const DWRITE_FONT_AXIS_VALUE medium{DWRITE_FONT_AXIS_TAG_WEIGHT, 500};
+        ComPtr<IDWriteTextFormat3> variable;
+        if (SUCCEEDED(view->cancelFormat_->QueryInterface(IID_PPV_ARGS(variable.GetAddressOf())))) variable->SetFontAxisValues(&medium, 1);
     }
     for (IDWriteTextFormat* icon : {view->iconFormat_.Get(), view->iconBoldFormat_.Get()}) {
         icon->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);

@@ -334,12 +334,12 @@ constexpr InkEntry kIconTabInk[] = {
     {"asterisk", {14.5f, 16.5f, 0.15f, 0.33f, 0.6f}},
     {"bell.fill", {15.5f, 17.0f, 0.14f, 0.21f, 0.0f}},
     {"square.3.layers.3d", {16.5f, 18.0f, 0.16f, 0.39f, 0.61f}},
-    {"cylinder.split.1x2.fill", {14.0f, 17.0f, -0.07f, 0.8f, 1.37f}},
+    {"cylinder.split.1x2.fill", {14.0f, 17.0f, -0.07f, 0.8f, 0.0f}},
     {"tray.fill", {19.0f, 14.0f, -0.16f, 1.74f, 0.41f}},
     {"square.on.square.fill", {17.5f, 17.5f, 0.33f, 0.02f, 2.0f}},
     {"checkmark.square.fill", {15.0f, 15.0f, -0.15f, 0.08f, 0.0f}},
     {"doc.fill", {13.5f, 17.0f, -0.78f, 0.55f, 0.0f}},
-    {"book.fill", {19.0f, 15.0f, -0.17f, 0.08f, 1.5f}},
+    {"book.fill", {19.0f, 15.0f, -0.17f, 0.08f, 2.0f}},
     {"ellipsis.bubble.fill", {18.0f, 17.0f, -0.27f, 0.17f, 0.0f}},
     {"drop.fill", {11.5f, 16.5f, 0.15f, 0.52f, 0.0f}},
     {"circle.fill", {16.5f, 16.5f, 0.14f, 0.36f, 0.0f}},
@@ -354,12 +354,26 @@ constexpr InkEntry kIconTabInk[] = {
     {"chevron.left.forwardslash.chevron.right", {23.0f, 15.5f, 0.05f, 0.26f, 0.0f}},
     {"baseball.fill", {16.5f, 16.5f, 0.14f, 0.36f, 0.0f}},
     {"theatermasks.fill", {27.5f, 18.5f, -0.54f, 1.22f, 0.54f}},
-    {"scroll.fill", {17.5f, 17.0f, 0.75f, -0.13f, 1.17f}},
+    {"scroll.fill", {17.5f, 17.0f, 0.75f, -0.13f, 0.0f}},
     {"hand.thumbsup.fill", {16.5f, 17.0f, 0.92f, 0.33f, 0.0f}},
-    {"tram.fill", {14.5f, 20.5f, 0.13f, -0.62f, 0.34f}},
+    {"tram.fill", {14.5f, 20.5f, 0.13f, 0.49f, 0.0f}},
 };
 // The 28 measured's medians: a 16.5pt box, its middle 0.13pt right of the cell's and 0.36pt below.
 constexpr IconTabInk kIconTabInkMedian{16.5f, 16.5f, 0.13f, 0.36f, 0, false};
+// The other 28 aren't in the Mac's capture (its popover hangs past the window's edge: columns
+// 1-4 are unverified against the Mac). Until a reference shows them, a ".fill" whose Segoe
+// stand-in is an outline is stroked to the filled ink SF's ".fill" symbols have: the measured
+// .fill symbols' median area, 0.677 of their box (at most 2pt; so cloud.fill and cloud differ).
+struct OutlineFill {
+    std::string_view symbol;
+    float stroke;
+};
+constexpr OutlineFill kOutlineFills[] = {
+    {"square.on.circle.fill", 0.95f}, {"square.grid.2x2.fill", 0.75f}, {"archivebox.fill", 1.16f}, {"envelope.fill", 1.08f},
+    {"person.2.fill", 1.24f},         {"terminal.fill", 0.64f},        {"wrench.and.screwdriver.fill", 0.56f},
+    {"globe.americas.fill", 1.26f},   {"leaf.fill", 2.0f},             {"cloud.fill", 2.0f},
+    {"map.fill", 1.01f},              {"flame.fill", 2.0f},
+};
 
 }  // namespace
 
@@ -370,7 +384,11 @@ IconTabInk IconTabInkFor(std::string_view symbol) {
         ink.measured = true;
         return ink;
     }
-    return kIconTabInkMedian;
+    IconTabInk ink = kIconTabInkMedian;
+    for (const OutlineFill& fill : kOutlineFills) {
+        if (fill.symbol == symbol) ink.stroke = fill.stroke;
+    }
+    return ink;
 }
 
 BarGlyphFit BarGlyphFitFor(std::string_view symbol) {
@@ -382,10 +400,10 @@ BarGlyphFit BarGlyphFitFor(std::string_view symbol) {
         BarGlyphFit fit;
     };
     static constexpr Entry kFits[] = {
-        // At 0.78 Segoe's lightbulb, heart and flag ink within 8% of the Mac's box and area; its car
-        // and trash are outlines where SF's are heavier (area 72 against 103, 76.5 against 92), so
-        // they're stroked for the difference.
-        {"lightbulb", {0.78f, 0}}, {"heart", {0.78f, 0}}, {"flag", {0.78f, 0}}, {"car", {0.78f, 0.5f}}, {"trash", {0.78f, 0.3f}},
+        // At 0.78 Segoe's lightbulb, heart and flag ink within 8% of the Mac's box and weight; its car
+        // and trash are outlines lighter than SF's (weight 25.2 against 33.2, 37.8 against 45.9),
+        // so they're stroked for the weight (interpolated between two strokes' measured weights).
+        {"lightbulb", {0.78f, 0}}, {"heart", {0.78f, 0}}, {"flag", {0.78f, 0}}, {"car", {0.78f, 0.2f}}, {"trash", {0.78f, 0.16f}},
     };
     for (const Entry& entry : kFits) {
         if (entry.symbol == symbol) return entry.fit;

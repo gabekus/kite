@@ -63,14 +63,20 @@ TEST(eachDrawnSymbolInksTheMacsBoxWithItsWeight) {
     };
     const Mac mac[] = {
         {"bookmark.fill", -4.5f, 4.5f, -6.58f, 7.0f, 106.4f},
+        // The UI gate's four (review/w9e-mac picker-icon): the Mac's 16pt Icon tab ink, less the
+        // gate's half-point halo, scaled to 12.5 (the bar's own aren't measured yet).
+        {"cylinder.split.1x2.fill", -5.27f, 5.27f, -6.45f, 6.45f, 98.0f},
         {"pawprint.fill", -6.5f, 7.0f, -6.5f, 6.5f, 94.5f},
         {"bed.double.fill", -8, 8, -5.5f, 5.5f, 109.2f},
         {"fork.knife", -4.5f, 4.5f, -7.58f, 7.0f, 61.9f},
         {"dumbbell.fill", -8.5f, 8.5f, -4.63f, 5.0f, 90.2f},
         {"bandage.fill", -6.62f, 6.14f, -6.13f, 6.63f, 68.6f},
+        {"chevron.left.forwardslash.chevron.right", -8.79f, 8.79f, -5.86f, 5.86f, 62.0f},
         {"baseball.fill", -6.5f, 6.5f, -6.5f, 6.5f, 101.6f},
         {"takeoutbag.and.cup.and.straw.fill", -8, 8, -7.0f, 7.59f, 165.9f},
         {"theatermasks.fill", -11.0f, 10.6f, -7.5f, 7.0f, 183.6f},
+        {"scroll.fill", -6.64f, 6.64f, -6.45f, 6.45f, 122.0f},
+        {"tram.fill", -5.47f, 5.47f, -7.81f, 7.81f, 104.0f},
         // review/w9d-mac rest.png and w9b-mac two-spaces.png (the same box lit and greyed); the
         // area from the dark one, where no grain adds to it. Kite's own case: only the box, the
         // area, the centre and the stroke weight are the Mac's.
@@ -145,6 +151,11 @@ TEST(eachDrawnSymbolInksTheMacsBoxInTheHeader) {
     };
     const Mac mac[] = {
         {"bookmark.fill", -5.0f, 5.5f, -8.0f, 8.5f},
+        // The UI gate's four: no header render, so the bar's box scaled (1.2), centred.
+        {"cylinder.split.1x2.fill", -6.32f, 6.32f, -7.74f, 7.74f},
+        {"chevron.left.forwardslash.chevron.right", -10.55f, 10.55f, -7.03f, 7.03f},
+        {"scroll.fill", -7.97f, 7.97f, -7.74f, 7.74f},
+        {"tram.fill", -6.56f, 6.56f, -9.37f, 9.37f},
         {"pawprint.fill", -8.0f, 8.0f, -7.5f, 8.0f},
         {"bed.double.fill", -9.5f, 9.5f, -6.5f, 6.5f},
         {"fork.knife", -5.5f, 5.0f, -9.0f, 8.5f},
