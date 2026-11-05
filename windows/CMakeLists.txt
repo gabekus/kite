@@ -36,6 +36,7 @@ endif()
 # The model (the Windows counterpart of KiteCore): standard C++ only, unit-tested headless.
 add_library(KiteCoreWin STATIC
   src/core/AirTrafficControl.cpp
+  src/core/ArcCookieImport.cpp
   src/core/ArcHistoryImport.cpp
   src/core/ArcImport.cpp
   src/core/ArcImportController.cpp
@@ -194,6 +195,7 @@ endif()
 enable_testing()
 add_executable(KiteCoreTests
   tests/main.cpp
+  tests/ArcCookieImportTests.cpp
   tests/ArcHistoryImportTests.cpp
   tests/ArcImportTests.cpp
   tests/ArcImportFilesTests.cpp

@@ -18,6 +18,7 @@
 //            |merge FILE|remove URL...|remove-since SECONDS|all|clear [--chromium PROFILE]
 //   kitecore history chromium-date MICROSECONDS
 //   kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]
+//   kitecore [--profile DIR] arc-cookies [PATH|--auto]
 //   kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
@@ -60,6 +61,12 @@
 // historyRows, historyPages; imported: historyPages, historyPagesNew; skipped: history* by
 // reason); the summary prints once all of it is written. With --profile or
 // KITE_SUPPORT_PATH, KITE_ARC_DATA_PATH stands in for Arc's folder, as in the Mac's test runs.
+// kitecore never sets cookies (that's Kite.exe's Import from Arc, with "Bring sign-ins"):
+// `arc-cookies` reads each Arc profile's Cookies database (core/ArcCookieImport.h) with the same
+// checks, decrypting nothing, and prints how its rows are kept: per profile, how many there are by
+// encryption (v10: Kite can import them; v20: Chromium's app-bound encryption, which it can't;
+// plain; other), how many are session cookies, expired or partitioned, and whether Local State
+// has a DPAPI key and an app-bound one. Counts only, never a cookie's name, value or host.
 // `profile` lists, makes, renames and deletes Kite profiles (core/Profiles.h). A deleted one's
 // folder name is free again once its Chromium folder is gone, which kitecore never deletes.
 
@@ -76,8 +83,10 @@
 #include <string>
 #include <vector>
 
+#include "core/ArcCookieImport.h"
 #include "core/ArcImportController.h"
 #include "core/CommandBar.h"
+#include "core/Files.h"
 #include "core/History.h"
 #include "core/HistoryStore.h"
 #include "core/KeyBindings.h"
@@ -507,6 +516,54 @@ int HistoryCommand(std::vector<std::string> args, const std::filesystem::path& s
     return Usage();
 }
 
+// `arc-cookies`: how Arc's cookies are kept, counted, never decrypted (see the top).
+int ArcCookiesCommand(const std::vector<std::string>& args, const std::optional<std::filesystem::path>& profile) {
+    std::optional<std::filesystem::path> folder;
+    if (args.size() == 2 && args[1] != "--auto") {
+        if (args[1].starts_with("--")) return Usage();
+        folder = std::filesystem::path(std::u8string(args[1].begin(), args[1].end()));
+    } else if (args.size() > 2) {
+        return Usage();
+    } else {
+        folder = arc_import::ArcDirectory(profile ? profile : EnvironmentPath("KITE_SUPPORT_PATH"), EnvironmentPath("KITE_ARC_DATA_PATH"),
+                                          EnvironmentPath("LOCALAPPDATA"));
+    }
+    if (!folder) {
+        std::fputs("kitecore: Kite couldn't find Arc's folder\n", stderr);
+        return kNotFound;
+    }
+    const auto localState = ReadFile(*folder / "User Data" / "Local State", arc_import::kMaxArcFileBytes);
+    const arc_import::CookieKeyInfo key = arc_import::ParseCookieKey(localState ? *localState : std::string());
+    std::set<std::string> profiles{"Default"};
+    if (localState) {
+        for (const auto& [directory, name] : arc_import::ParseProfileNames(*localState)) profiles.insert(directory);
+    }
+    json::Object perProfile;
+    json::Array problems;
+    const Timestamp now = Now();
+    for (const std::string& arc : profiles) {
+        arc_import::ProfileCookies read = arc_import::ReadArcCookieRows(*folder, arc, arc_import::kMaxArcFileBytes);
+        std::string problem = read.problem;
+        if (problem.empty() && read.tooLarge) problem = "too large";
+        if (problem.empty() && read.unreadable) problem = "doesn't read";
+        if (!problem.empty()) problems.push_back(json::Object{{"profile", arc}, {"reason", problem}});
+        if (!read.table) continue;
+        const arc_import::CookieTally t = arc_import::TallyCookies(*read.table, now);
+        perProfile.emplace(arc, json::Object{{"rows", t.rows},
+                                             {"encryption", json::Object{{"v10", t.v10}, {"v20", t.v20}, {"plain", t.plain}, {"other", t.other}}},
+                                             {"session", t.session},
+                                             {"expired", t.expired},
+                                             {"partitioned", t.partitioned},
+                                             {"tooLong", t.tooLong},
+                                             {"databaseVersion", read.table->version}});
+    }
+    json::Object out{{"key", json::Object{{"dpapi", key.protectedKey.has_value()}, {"appBound", key.appBound}}},
+                     {"profiles", std::move(perProfile)}};
+    if (!problems.empty()) out.emplace("problems", std::move(problems));
+    std::puts(json::Write(json::Value(std::move(out))).c_str());
+    return kOk;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -553,6 +610,9 @@ int main(int argc, char** argv) {
 
     // History is its own file: the session isn't read.
     if (args[0] == "history") return HistoryCommand(args, std::get<std::filesystem::path>(resolved));
+
+    // Arc's folder only: neither the session nor a Kite profile is read.
+    if (args[0] == "arc-cookies") return ArcCookiesCommand(args, profile);
 
     // These don't read the session: backups are there for when it can't be read.
     if (args[0] == "backups" && args.size() == 1) {

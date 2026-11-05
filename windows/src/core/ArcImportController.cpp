@@ -587,7 +587,15 @@ Imported Import(BrowserState& state, const Plan& plan, ImportOptions options) {
     skippedHistory("historyTooLong", left.tooLong, "a row too long to be one Chromium wrote");
     skippedHistory("historySameURL", left.sameURL, "the same page as a newer row once the URL is written as Kite keeps it");
     skippedHistory("historyProfilesLeftOut", profilesLeftOut, "from a profile only unnamed spaces use; --include-unnamed brings them");
-    out.skipped.push_back(Skipped("signIns", std::nullopt, "Arc's cookies aren't imported on Windows yet"));
+    // Arc's cookies come over after the import, in the app, only when asked (Bring sign-ins), into
+    // the Kite profiles the Arc profiles went to: not one that fell back to Default, whose
+    // sessions would mix with Default's (the Mac's importSignIns).
+    for (const auto& [arc, kite] : merged.profiles) {
+        if (!merged.fellBack.contains(arc)) out.signInProfiles.emplace(arc, kite);
+    }
+    if (!options.signIns) {
+        out.skipped.push_back(Skipped("signIns", std::nullopt, "not asked for: Kite's Import from Arc brings Arc's cookies with Bring sign-ins; kitecore never sets cookies"));
+    }
     out.skipped.push_back(Skipped("extensions", std::nullopt, "Kite for Windows has no extensions yet"));
     out.notes.insert(out.notes.end(), result.notes.begin(), result.notes.end());
 
