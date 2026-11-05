@@ -532,8 +532,8 @@ its journal, its log or `User Data\lockfile` (a probe that opens each for
 reading while denying writers, before and after the read: *Arc is writing it*),
 a hot journal or a `History-wal` that isn't empty with no writer (*Arc didn't
 finish its last write*), or the file changing during the read. A lockfile
-nobody holds (or one that can't be opened at all) is nothing; any other failure
-to open a file counts as a writer. Merging runs on the UI thread after the
+nobody holds is nothing; failing to open a file for any reason but its not
+being there counts as a writer. Merging runs on the UI thread after the
 session is saved, one profile a message: about 45 ms for 20,000 pages, 65–135 ms
 into a full history (merging on the history worker from a snapshot is the
 follow-up). A window that closes with the writer's result in merges the rest at
