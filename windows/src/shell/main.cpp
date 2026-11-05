@@ -46,6 +46,7 @@
 #include <variant>
 #include <vector>
 
+#include "core/CommandLine.h"
 #include "core/KeyBindings.h"
 #include "core/SessionStore.h"
 #include "core/SupportDirectory.h"
@@ -154,29 +155,30 @@ int Fail(bool quiet, const std::wstring& message, int code) {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
+    const std::vector<std::wstring> args = Arguments();
+    std::vector<std::string> utf8;
+    for (const std::wstring& a : args) utf8.push_back(Narrow(a));
 #ifdef KITE_HAS_CEF
-    // Chromium starts Kite.exe again for its renderer, GPU and utility processes.
+    // Chromium starts Kite.exe again for its renderer, GPU and utility processes, and reads the
+    // raw command line in each (CefExecuteProcess parses GetCommandLineW itself). Those launches
+    // are Chromium's own, so a --type spelled any other way, or naming a helper Kite doesn't run
+    // (a crashpad handler, say), is someone else's: it ends here.
+    if (const auto type = kite::command_line::ChromiumProcessType(utf8)) {
+        static constexpr std::string_view kHelpers[] = {"renderer", "gpu-process", "utility"};
+        if (!type->canonical || std::find(std::begin(kHelpers), std::end(kHelpers), type->value) == std::end(kHelpers)) return kUsage;
+    }
     if (const int code = kite::RunChromiumSubprocess(instance); code >= 0) return code;
 #endif
-    const std::vector<std::wstring> args = Arguments();
-    // An unknown flag (a typo like --smoketest or --capture-scale=2) is an error, never a
-    // normal launch on the real profile. Windows' switch prefix "/" counts as a flag too, and an
-    // option's value never looks like one: it would be a flag swallowed as the value.
-    // Chromium never reads this line (Chromium::Start: command_line_args_disabled).
-    const auto looksLikeFlag = [](const std::wstring& a) { return a.starts_with(L"-") || a.starts_with(L"/"); };
-    for (size_t i = 0; i < args.size(); ++i) {
-        const std::wstring& a = args[i];
-        if (a == L"--smoke-test" || a == L"--backdrop-test") continue;
-        if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar" || a == L"--frame-log" ||
-            a == L"--space-tip") {
-            if (i + 1 < args.size() && looksLikeFlag(args[i + 1])) {
-                return Fail(true, a + L" takes a value, not " + args[i + 1], kUsage);
-            }
-            ++i;
-            continue;
-        }
-        if (looksLikeFlag(a)) return Fail(true, L"unknown option " + a, kUsage);
-    }
+    // Kite takes only its own flags and their values: anything else is an error, never a normal
+    // launch on the real profile (a typo like --smoketest or --capture-scale=2). Chromium reads
+    // the raw line too, before CEF stops it (command_line_args_disabled stops only the browser
+    // process's later reads), trimming Unicode whitespace and taking "--", "-" and "/" as switch
+    // prefixes; so no argument Chromium could read as a switch gets past this, not even as a
+    // value (core/CommandLine.h).
+    kite::command_line::Spec spec;
+    spec.flags = {"--smoke-test", "--backdrop-test"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip"};
+    if (const auto problem = kite::command_line::Check(utf8, spec)) return Fail(true, Widen(*problem), kUsage);
     if (HasFlag(args, L"--backdrop-test")) {
         // Touches no profile, so it needs no KITE_SUPPORT_PATH.
         std::wstring report, problem;
