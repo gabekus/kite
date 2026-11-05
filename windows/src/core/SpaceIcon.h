@@ -4,7 +4,7 @@
 // none (the bar's dot). Port of the Mac's Space.icon prefixes and SpaceIconImageView's choice
 // (Models.swift, SidebarListRows.swift). Windows draws an SF Symbol as the nearest glyph in
 // Segoe Fluent Icons (Windows 11), or Segoe MDL2 Assets where that's missing (Windows 10), both
-// in the system, and the nine neither font has as Kite's own shapes (core/SymbolShape.h): SF
+// in the system, and the ten it draws better as Kite's own shapes (core/SymbolShape.h): SF
 // Symbols themselves are Apple's and only draw on Apple's systems.
 
 #include <optional>

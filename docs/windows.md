@@ -109,6 +109,21 @@ is mid-draw. Keys that arrive before the bar opens open it
   base (#202020 dark, #F3F3F3 light); whether acrylic's own fallback differs
   isn't checked yet. As on the Mac, the material's light or dark appearance
   follows the space's theme.
+  A capture's sidebar is a few levels off the Mac's capture (about 4 darker in
+  dark, 5 to 6 lighter in light), and that's the material under the tint, not
+  the tint (W9b5). Both draw the theme with the same shader and alpha and lay it
+  over the material with the same "over" on sRGB values: solving each pixel of
+  a Mac capture for what's under the tint, `(capture − theme) / (1 − tint)`,
+  gives one flat colour over the whole sidebar, and the PC's captures are the
+  shader over #202020 to within half a level. That flat colour is what the
+  Mac's in-process capture draws for its `.sidebar` material, the unblurred
+  fallback of `cacheDisplay` (UICapture's `composedRender`): #272727 dark on the
+  CI Mac (w9c-mac, w9d-mac), (43, 43, 39) on Gabe's Mac (w9b-mac), and #E6E6E6
+  light. It changes from Mac to Mac, and on screen the material blurs what's
+  behind the window, so there's no Mac colour to port: the capture's fallback
+  stays Mica's base. With Personal's tint of 0.44, #272727 against #202020
+  is 0.56 × 7 ≈ 4 levels in every row; with Work's 0.55, #E6E6E6 against
+  #F3F3F3 is 0.45 × 12.5 ≈ 5.6.
 - **Title bar (W3b):** the window keeps `WS_OVERLAPPEDWINDOW` (so Snap,
   Aero Shake, the system menu and the taskbar behave as Windows expects) but
   `WM_NCCALCSIZE` takes the caption off: the client area, and the backdrop
@@ -251,7 +266,7 @@ SF Symbol and picture icons (W9b2) draw in the bar and the page header
 Apple's systems, so the Icon tab's 56 symbols, "briefcase" and "photo" each
 have a stand-in glyph in Segoe Fluent Icons, or Segoe MDL2 Assets where Fluent
 isn't installed, picked by eye from every glyph each font has and checked
-against both fonts' character maps, except nine drawn as shapes (below). A
+against both fonts' character maps, except ten drawn as shapes (below). A
 symbol fills its glyph's outline, centred on its ink, at the size that makes the briefcase ink the Mac's 15pt at 12.5 (one
 factor for every symbol), in the theme's accent when lit and in the label colour
 at 45% when greyed. A picture is the Mac's rounded square, round(size × 1.2) on a
@@ -263,12 +278,11 @@ again; a file that can't be read keeps its placeholder and is looked for again
 at a draw 2 s on (`core/PictureLoads.h`). One painter, the sidebar's, serves
 the bar and the headers. Known differences:
 Fluent has one weight where the Mac's symbols are semibold (the placeholder's
-"photo" is regular on the Mac), and its briefcase is 1.5pt taller for the same
-width; several stand-ins are outlines of filled symbols, cloud and cloud.fill
+"photo" is regular on the Mac); several stand-ins are outlines of filled symbols, cloud and cloud.fill
 share a glyph, and nine have no such object in either font (bookmark, paw, bed,
 cutlery, dumbbell, bandage, baseball, takeaway bag, theatre masks), which W9b4
 draws as Kite's own shapes (see below); glyphs are centred on their ink where the
-Mac centres the symbol's image (checked only for the briefcase, within 0.25pt);
+Mac centres the symbol's image (checked only for the briefcase's glyph before W9b5 drew it, within 0.25pt);
 an SF Symbol name outside the 58 (which the Mac draws, from automation or a
 hand-edited session) shows the dot in the bar and a blank icon slot in the
 header; a picture shows nothing until its decode arrives (the Mac reads it in its
@@ -312,6 +326,19 @@ are the bar's scaled by 1.2, where the Mac's symbol is redrawn at 15pt (the
 captures' header boxes agree to half a point); and the masks reach past the
 header's 26pt slot as the Mac's do (only their width was measured from the bar,
 the slot's capture clips them).
+
+The briefcase (W9b5, the test sessions' Work icon) is drawn the same way: Segoe's
+glyph is a plain case, without the Mac's band and clasp. It's outlines (a handle
+over a rounded body, strokes 1.35 and 1.2pt), a band across the body between two
+parabolas, 1.25pt deep and dipping from the walls to the middle, and a clasp hanging
+from it, fitted to the Mac's coverage in its 2x bar (the dark capture, no grain) to
+within a fifth of a pixel everywhere. The PC's captures give it the Mac's ink box in
+the bar, lit and greyed (14.5 × 12.5pt, centred at (-0.25, +0.25)), and its size in
+the header (17.5 × 15pt). Its glyph still sizes the other glyphs (the calibration
+above). Known difference: in two-spaces.json's header the PC's ink sits 0.75pt lower
+than the Mac's against the row's text, about 0.5pt of it the header's slot rather
+than the shape (the Mac's header slot isn't in that capture's tree, so this isn't
+measured).
 
 The tip over a hovered cell (W9b3) is the Mac's SpaceTip in SpaceTipWindow's place:
 0.4 s after the pointer comes onto a cell, a capsule 28pt tall centred over it, its

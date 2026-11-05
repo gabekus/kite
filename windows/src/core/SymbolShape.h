@@ -1,8 +1,9 @@
 #pragma once
 // The SF Symbols that neither Segoe icon font has an object for (bookmark, paw, bed, cutlery,
-// dumbbell, bandage, baseball, takeaway bag, theatre masks), drawn as Kite's own geometry: simple
-// original shapes, each sized and placed to the ink the Mac's symbol makes at the same point
-// size (measured from the Mac's renders, docs/windows.md). Nothing here is Apple's outline.
+// dumbbell, bandage, baseball, takeaway bag, theatre masks), and the briefcase, whose Segoe
+// glyph lacks the Mac's band and clasp, drawn as Kite's own geometry: simple original shapes,
+// each sized and placed to the ink the Mac's symbol makes at the same point size (measured from
+// the Mac's renders, docs/windows.md). Nothing here is Apple's outline.
 //
 // A shape is layers of filled figures in points for a 12.5 pt icon (the space bar's), its origin
 // on the point the icon is centred on; it scales with the icon's size. Each layer is added to
@@ -98,7 +99,7 @@ float InkedArea(const SymbolShape& shape, float step = 0.02f);
 
 // The shape for an SF Symbol name, for the names drawn this way; none for every other.
 const SymbolShape* SymbolShapeFor(std::string_view name);
-// The names drawn this way, in the Icon tab's order.
+// The names drawn this way, in the Icon tab's order, then "briefcase".
 const std::vector<std::string_view>& DrawnSymbols();
 // The size shapes are designed at (the bar's icon size).
 inline constexpr float kSymbolShapeSize = 12.5f;

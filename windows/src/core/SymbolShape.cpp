@@ -515,8 +515,27 @@ SymbolShape TheaterMasks() {
     return ShapeBuilder().Append(back.Build()).Append(gap.Build()).Append(face).Build();
 }
 
+SymbolShape Briefcase() {
+    // The test sessions' Work icon, an outline: a handle over a rounded body, a band across it
+    // dipping to the middle and a clasp hanging from that. Fitted to the Mac's coverage in its 2x
+    // bar (review/w9d-mac rest.png, greyed on dark, where nothing but the symbol is drawn): no
+    // pixel more than a fifth off. Box -7.5..7.15 x -5.9..6.5, strokes 1.35 (the body) and 1.2
+    // (the handle).
+    ShapeBuilder b;
+    b.RoundRect(-3.45f, -5.9f, 3.1f, -2.55f, 1.65f);
+    b.Cut().RoundRect(-2.25f, -4.7f, 1.9f, -1.35f, 0.7f);
+    b.Add().RoundRect(-7.5f, -3.55f, 7.15f, 6.5f, 1.9f);
+    b.Cut().RoundRect(-6.15f, -2.2f, 5.8f, 5.15f, 0.55f);
+    // The band: 1.25 deep between two parabolas from wall to wall, from -1.2 at the walls to 0.15
+    // in the middle (each a quadratic through (-0.175, 1.5) as a cubic), and the clasp below it.
+    b.Add().Move(-7.5f, -1.2f).Cubic(-2.6167f, 0.6f, 2.2667f, 0.6f, 7.15f, -1.2f).Line(7.15f, 0.05f);
+    b.Cubic(2.2667f, 1.85f, -2.6167f, 1.85f, -7.5f, 0.05f).Close();
+    b.RoundedPolygon({C{-1.9f, 0.15f, 0}, C{1.55f, 0.15f, 0}, C{1.55f, 2.5f, 0.7f}, C{-1.9f, 2.5f, 0.7f}});
+    return b.Build();
+}
+
 const std::vector<DrawnSymbol>& Drawn() {
-    // In the Icon tab's order.
+    // In the Icon tab's order, then the briefcase (not in the tab).
     static const std::vector<DrawnSymbol> drawn = {
         {"bookmark.fill", Bookmark()},
         {"pawprint.fill", Pawprint()},
@@ -527,6 +546,7 @@ const std::vector<DrawnSymbol>& Drawn() {
         {"baseball.fill", Baseball()},
         {"takeoutbag.and.cup.and.straw.fill", TakeoutBagAndCup()},
         {"theatermasks.fill", TheaterMasks()},
+        {"briefcase", Briefcase()},
     };
     return drawn;
 }

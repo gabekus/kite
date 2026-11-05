@@ -24,7 +24,9 @@ namespace {
 
 // The Mac's briefcase at 12.5pt semibold inks 15pt wide (30px in its 2x capture of the bar).
 constexpr float kBriefcaseInkPerPoint = 15.0f / 12.5f;
-constexpr char16_t kBriefcase = u'\uE821';  // in both fonts (the PC's cmap check)
+// The calibration's glyph, in both fonts (the PC's cmap check). The briefcase itself draws as
+// Kite's own shape (core/SymbolShape.h); its glyph still sizes every other.
+constexpr char16_t kBriefcase = u'\uE821';
 // Outlines are made at this em and scaled down, so their bounds keep their precision.
 constexpr float kOutlineEm = 100;
 // What the worker will decode: Kite's own pictures are 128px PNGs of a few tens of KB.

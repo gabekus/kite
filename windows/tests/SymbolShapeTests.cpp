@@ -71,6 +71,9 @@ TEST(eachDrawnSymbolInksTheMacsBoxWithItsWeight) {
         {"baseball.fill", -6.5f, 6.5f, -6.5f, 6.5f, 101.6f},
         {"takeoutbag.and.cup.and.straw.fill", -8, 8, -7.0f, 7.59f, 165.9f},
         {"theatermasks.fill", -11.0f, 10.6f, -7.5f, 7.0f, 183.6f},
+        // review/w9d-mac rest.png and w9b-mac two-spaces.png (the same box lit and greyed); the
+        // area from the dark one, where no grain adds to it.
+        {"briefcase", -7.5f, 7.0f, -6.0f, 6.5f, 87.1f},
     };
     CHECK(DrawnSymbols().size() == std::size(mac));
     if (DrawnSymbols().size() != std::size(mac)) return;
@@ -126,6 +129,23 @@ TEST(aDrawnSymbolsHolesAndGapsShowThrough) {
     CHECK(pinned("fork.knife", -3.25f, -5.5f, -3.25f, -3.0f));
     CHECK(pinned("pawprint.fill", 0.25f, -4.4f, -1.75f, -4.4f) && Covers(*SymbolShapeFor("pawprint.fill"), -4.95f, -0.7f));
     CHECK(!Covers(*SymbolShapeFor("pawprint.fill"), -1.75f, -2.0f));  // between a toe and the pad
+}
+
+TEST(theBriefcaseHasTheMacsBandAndClaspAtBothSizes) {
+    // What Segoe's glyph lacks: the band across the body, higher at the walls than in the middle,
+    // and the clasp hanging from it, with the body clear above and below and the handle open.
+    const SymbolShape& bag = *SymbolShapeFor("briefcase");
+    CHECK(!Covers(bag, -0.2f, -4.0f) && Covers(bag, -0.2f, -5.4f));   // the handle's opening, its top
+    CHECK(!Covers(bag, -4.5f, -1.8f) && Covers(bag, -4.5f, 0.2f));    // over the band, the band
+    CHECK(Covers(bag, -5.9f, -0.5f) && !Covers(bag, -0.2f, -0.5f));   // it dips to the middle
+    CHECK(Covers(bag, 0, 2.0f) && !Covers(bag, -3.0f, 1.8f));         // the clasp, beside it
+    CHECK(!Covers(bag, 0, 3.2f) && Covers(bag, 0, 6.0f));             // under the clasp, the body's foot
+    CHECK(Covers(bag, -7.2f, 3.0f) && !Covers(bag, -5.9f, 3.0f));     // a wall and the inside
+    // The header's 15pt is the bar's shape scaled by 1.2 (the painter's size / 12.5): the Mac's
+    // 15pt header (review/w9b-mac two-spaces.png, 2x, ink more than half covered) is 17.5 x 15.0.
+    const ShapeBounds b = BoundsOf(bag);
+    const float header = 15.0f / kSymbolShapeSize;
+    CHECK(Near(b.Width() * header, 17.5f, 0.25f) && Near(b.Height() * header, 15.0f, 0.25f));
 }
 
 TEST(aRoundedPolygonsRepeatedCornerCountsOnce) {
