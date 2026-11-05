@@ -47,6 +47,7 @@
 #include "shell/MemoryPressure.h"
 #include "shell/Renderer.h"
 #include "shell/SidebarView.h"
+#include "shell/SpaceIconPickerView.h"
 #include "shell/TouchpadInput.h"
 
 namespace kite {
@@ -133,6 +134,10 @@ public:
     // `text` typed over it when given; `focused` draws it as the window with the keyboard does
     // (a quiet capture's window never has it).
     std::wstring HoldRename(size_t index, const std::optional<std::string>& text, bool focused = false);
+    // For a capture: Change Space Icon…'s picker open for space `index` (from 0, selected first)
+    // on `tab`, chosen with a click on its segment; with `cell`, that cell clicked (its icon
+    // set) and the picker closed with Escape.
+    std::wstring HoldIconPicker(size_t index, IconPickerTab tab, std::optional<size_t> cell = std::nullopt);
     // For a capture: what Capture composes over the frame next, space `index`'s menu opened
     // over its cell in the bar (Windows' own menu, read back as it shows).
     void HoldSpaceMenu(size_t index) { heldMenu_ = index; }
@@ -170,6 +175,10 @@ private:
     static constexpr UINT kSpaceIconsMessage = WM_APP + 6;
     // Posted by the memory watch (MemoryPressure.h), wParam the MemoryPressure level.
     static constexpr UINT kMemoryPressureMessage = WM_APP + 7;
+    // Change Space Icon… from the space's menu: the picker opens 0.15 s after it closes, on the
+    // space it selected (the Mac's openPicker(after: 0.15)). Timers 5 to 11 are other
+    // checkpoints' (in review); this is the next.
+    static constexpr UINT_PTR kIconPickerTimer = 12;
 
     BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
                             SessionWriter* writer, std::unique_ptr<Renderer> renderer);
@@ -274,6 +283,17 @@ private:
     void DeleteSpace(std::string spaceID);
     // A space dropped in the bar at `index` among the others (the Mac's moveSpace).
     void MoveSpace(const std::string& spaceID, size_t index);
+    // Change Space Icon… (the Mac's requestIconPicker): the space selected, then its header's
+    // picker, at once from the header's icon or 0.15 s on from the menu.
+    void RequestIconPicker(const std::string& spaceID, bool fromMenu);
+    // The picker for the selected space `spaceID`, hanging from its header's icon.
+    void ShowIconPicker(const std::string& spaceID);
+    // A cell or the bin (the picker's pick): the icon set, the picture it replaced deleted.
+    void PickIcon(const std::string& spaceID, const std::string& icon);
+    void CloseIconPicker();
+    // The smoke test's icon picker: opened from the menu and the header's icon, an emoji, a
+    // search, a category, a symbol and the bin picked, and the ways it closes.
+    std::wstring SmokeTestIconPicker();
     void ArchiveTab();
     void ReopenClosedTab();
     void MakeCommands();
@@ -354,6 +374,10 @@ private:
     std::unique_ptr<SidebarView> sidebar_;
     std::unique_ptr<CaptionButtonsView> caption_;
     std::unique_ptr<CommandBarView> commandBar_;
+    // Change Space Icon…'s popover (after the sidebar, whose painter it borrows, so it goes first),
+    // and the space the menu asked it for, waiting on kIconPickerTimer.
+    std::unique_ptr<SpaceIconPickerView> iconPicker_;
+    std::optional<std::string> pendingIconPicker_;
     std::wstring barError_;
     // Frames while something animates (before the window in destruction: it posts to it).
     std::unique_ptr<FrameClock> clock_;

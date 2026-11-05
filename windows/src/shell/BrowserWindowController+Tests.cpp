@@ -373,6 +373,8 @@ std::wstring BrowserWindowController::SmokeTest() {
         // And editing them: drags in the bar, the menu, renaming, New Folder, Delete Space.
         if (std::wstring problem = SmokeTestSpaceEditing(); !problem.empty()) return problem;
     }
+    // Change Space Icon…'s picker.
+    if (std::wstring problem = SmokeTestIconPicker(); !problem.empty()) return L"the icon picker: " + problem;
     // The lost-GPU path, once: the renderer, swap chain and composition target are rebuilt and
     // draw again (a real device removal can't be caused from a test).
     DropCompositor();
@@ -408,6 +410,13 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
         POINT origin{};
         problem = sidebar_->RenderTip(*tip, tipPixels, origin);
         if (problem.empty()) ComposeOver(pixels, tipPixels, origin);
+    }
+    if (problem.empty() && iconPicker_ && iconPicker_->IsOpen()) {
+        // The icon picker's window over the browser window's, kept inside it in a capture.
+        Pixels picker;
+        POINT origin{};
+        problem = iconPicker_->Render(picker, origin);
+        if (problem.empty()) ComposeOver(pixels, picker, origin);
     }
     if (problem.empty() && heldMenu_) {
         // The space's menu as a right-click on its cell opens it, read back from Windows' menu
@@ -659,6 +668,146 @@ std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
         if (std::wstring problem = RunToRest(L"A dropped swipe"); !problem.empty()) return problem;
         if (state_.selectedSpaceID != selected || ids() != order) return L"a dropped swipe moved the selection";
     }
+    frames_.clear();
+    return {};
+}
+
+namespace {
+
+// A click (press and release) in the icon picker's window at `at` (its client px).
+void ClickPicker(HWND picker, POINT at) {
+    SendMessageW(picker, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(at.x, at.y));
+    SendMessageW(picker, WM_LBUTTONUP, 0, MAKELPARAM(at.x, at.y));
+}
+
+}  // namespace
+
+std::wstring BrowserWindowController::HoldIconPicker(size_t index, IconPickerTab tab, std::optional<size_t> cell) {
+    if (index >= state_.spaces.size()) return L"there's no such space";
+    const std::string id = state_.spaces[index].id;
+    const bool switches = state_.selectedSpaceID != id;
+    // From the header's icon (at once), after its space is selected and its page at rest.
+    if (switches) {
+        state_.SelectSpace(id);
+        SelectionMoved();
+        if (std::wstring problem = RunToRest(L"Change Space Icon"); !problem.empty()) return problem;
+    }
+    RequestIconPicker(id, false);
+    if (!iconPicker_->IsOpen()) return L"the icon picker didn't open";
+    if (iconPicker_->State()->tab != tab) {
+        const IconPickerLayout layout = LayOutIconPicker(iconPicker_->State()->tab, !state_.spaces[index].icon.empty());
+        const auto segment = static_cast<size_t>(std::find(std::begin(kIconPickerTabs), std::end(kIconPickerTabs), tab) - std::begin(kIconPickerTabs));
+        const PickerRect& r = layout.segments[segment];
+        ClickPicker(iconPicker_->Window(), iconPicker_->ContentToClient((r.left + r.right) / 2, (r.top + r.bottom) / 2));
+        if (iconPicker_->State()->tab != tab) return L"a click on the picker's tab didn't show it";
+    }
+    if (!cell) return {};
+    const std::optional<POINT> at = iconPicker_->CellCentre(*cell);
+    if (!at) return L"the picker has no such cell";
+    const std::string before = state_.spaces[index].icon;
+    ClickPicker(iconPicker_->Window(), *at);
+    if (state_.spaces[index].icon == before) return L"a click on the picker's cell didn't change the icon";
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+    if (iconPicker_->IsOpen()) return L"Escape didn't close the picker";
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestIconPicker() {
+    const size_t index = state_.SelectedSpaceIndex();
+    const std::string id = state_.selectedSpaceID;
+    const std::string original = state_.spaces[index].icon;
+    const auto icon = [&] { return state_.spaces[index].icon; };
+    const auto open = [&] { return iconPicker_->IsOpen() && iconPicker_->SpaceID() == id; };
+    // From the space's menu: 0.15 s after it, the picker for that space, on the icon's tab.
+    state_.SetSpaceIcon(id, "");
+    StateChanged();
+    RunSpaceMenuItem(id, SpaceMenuItem::Command::ChangeIcon);
+    if (iconPicker_->IsOpen()) return L"it opened before the menu's 0.15 s";
+    if (!RunUntil(open, 2)) return L"Change Space Icon\u2026 didn't open it";
+    if (iconPicker_->State()->tab != IconPickerTab::Emoji) return L"it didn't open on the Emoji tab";
+    if (!IsWindowVisible(iconPicker_->Window())) return L"its window isn't shown";
+    // The whole catalog, but only the rows in view drawn.
+    if (iconPicker_->RowsDrawn() == 0 || iconPicker_->RowsDrawn() > 6) return L"the emoji grid drew rows out of view";
+    // The pointer over the grid draws nothing (the Mac's plain buttons have no hover).
+    const size_t draws = iconPicker_->Draws();
+    HWND picker = iconPicker_->Window();
+    for (size_t i = 0; i < 14; ++i) {
+        const POINT at = *iconPicker_->CellCentre(i);
+        SendMessageW(picker, WM_MOUSEMOVE, 0, MAKELPARAM(at.x, at.y));
+    }
+    if (iconPicker_->Draws() != draws) return L"moving over the grid drew";
+    // An emoji: the space has it at once, and the picker stays open with its bin.
+    ClickPicker(picker, *iconPicker_->CellCentre(2));
+    if (icon() != AllEmoji()[2] || !open()) return L"a click on an emoji didn't set it";
+    // A held cell draws only itself.
+    const POINT cellAt = *iconPicker_->CellCentre(4);
+    const size_t before = iconPicker_->Draws();
+    SendMessageW(picker, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(cellAt.x, cellAt.y));
+    if (iconPicker_->Draws() != before + 1) return L"a press on a cell drew more than the cell";
+    SendMessageW(picker, WM_LBUTTONUP, 0, MAKELPARAM(cellAt.x, cellAt.y));
+    if (icon() != AllEmoji()[4]) return L"letting go on a cell didn't set it";
+    // Search, typed as the keyboard would (the window keeps the keyboard): four grinning faces,
+    // and the third is 🤩.
+    for (const wchar_t c : std::wstring(L"grinning")) SendMessageW(window_.Handle(), WM_CHAR, c, 0);
+    if (iconPicker_->State()->query != "grinning") return L"typing didn't search";
+    ClickPicker(picker, *iconPicker_->CellCentre(2));
+    if (icon() != "\xF0\x9F\xA4\xA9") return L"a search's third emoji isn't \U0001F929";
+    // A category's button clears Search and scrolls to its first emoji; the wheel scrolls on.
+    const IconPickerLayout emoji = LayOutIconPicker(IconPickerTab::Emoji, true);
+    const PickerRect& animals = emoji.categories[1];
+    ClickPicker(picker, iconPicker_->ContentToClient((animals.left + animals.right) / 2, (animals.top + animals.bottom) / 2));
+    if (!iconPicker_->State()->query.empty() || iconPicker_->State()->scroll != 22 * icon_picker_metrics::kRowPitch) {
+        return L"Animals & Nature's button didn't scroll to it";
+    }
+    POINT wheel = iconPicker_->ContentToClient(100, emoji.grid.top + 50);
+    ClientToScreen(picker, &wheel);
+    SendMessageW(window_.Handle(), WM_MOUSEWHEEL, MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA)), MAKELPARAM(wheel.x, wheel.y));
+    if (iconPicker_->State()->scroll <= 22 * icon_picker_metrics::kRowPitch) return L"the wheel didn't scroll the grid";
+    if (iconPicker_->RowsDrawn() > 2 * 10 + 6) return L"the grid kept rows far from view";
+    // The Icon tab: a symbol, drawn as Windows draws it, set as symbol:NAME.
+    const PickerRect& iconTab = emoji.segments[1];
+    ClickPicker(picker, iconPicker_->ContentToClient((iconTab.left + iconTab.right) / 2, (iconTab.top + iconTab.bottom) / 2));
+    if (iconPicker_->State()->tab != IconPickerTab::Icon) return L"the Icon tab didn't show";
+    // Image is there, disabled.
+    const PickerRect& imageTab = emoji.segments[2];
+    ClickPicker(picker, iconPicker_->ContentToClient((imageTab.left + imageTab.right) / 2, (imageTab.top + imageTab.bottom) / 2));
+    if (iconPicker_->State()->tab != IconPickerTab::Icon) return L"the disabled Image tab showed";
+    ClickPicker(picker, *iconPicker_->CellCentre(1));
+    if (icon() != "symbol:bookmark.fill") return L"a click on a symbol didn't set it";
+    // The bin: no icon, and no bin.
+    const IconPickerLayout symbols = LayOutIconPicker(IconPickerTab::Icon, true);
+    ClickPicker(picker, iconPicker_->ContentToClient((symbols.remove->left + symbols.remove->right) / 2, (symbols.remove->top + symbols.remove->bottom) / 2));
+    if (!icon().empty() || !open()) return L"the bin didn't take the icon off";
+    // Escape closes it.
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+    if (iconPicker_->IsOpen()) return L"Escape didn't close it";
+    // From the header's icon, at once, on the tab of the icon it has.
+    state_.SetSpaceIcon(id, "symbol:leaf.fill");
+    StateChanged();
+    if (std::wstring problem = Draw(); !problem.empty()) return problem;
+    const std::optional<POINT> header = sidebar_->HeaderIconCentre();
+    if (!header) return L"the header has no icon";
+    SendMouse(window_.Handle(), WM_LBUTTONDOWN, *header, MK_LBUTTON);
+    SendMouse(window_.Handle(), WM_LBUTTONUP, *header, 0);
+    if (!open() || iconPicker_->State()->tab != IconPickerTab::Icon) return L"a click on the header's icon didn't open it on the Icon tab";
+    // A press elsewhere in the window closes it.
+    if (const std::optional<POINT> name = sidebar_->HeaderNameCentre()) {
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, POINT{name->x, name->y + 300}, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, POINT{name->x, name->y + 300}, 0);
+    }
+    if (iconPicker_->IsOpen()) return L"a press elsewhere didn't close it";
+    // Another space shown closes it (the header it hangs from goes).
+    if (state_.spaces.size() > 1) {
+        RequestIconPicker(id, false);
+        RunCommand(index + 1 < state_.spaces.size() ? "nextSpace" : "previousSpace");
+        if (iconPicker_->IsOpen()) return L"another space shown didn't close it";
+        if (std::wstring problem = RunToRest(L"A switch closing the picker"); !problem.empty()) return problem;
+        state_.SelectSpace(id);
+        SelectionMoved();
+        if (std::wstring problem = RunToRest(L"Back"); !problem.empty()) return problem;
+    }
+    state_.SetSpaceIcon(id, original);
+    StateChanged();
     frames_.clear();
     return {};
 }

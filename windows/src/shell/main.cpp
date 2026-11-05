@@ -34,6 +34,12 @@
 //   Kite.exe --capture FILE.png --rename-space N
 //                            the same with space N's header renaming it (Rename Space…), its name
 //                            all selected.
+//   Kite.exe --capture FILE.png --icon-picker N,emoji|icon
+//                            the same with Change Space Icon…'s picker open for space N (selected
+//                            first) on that tab, hanging from its header's icon.
+//   Kite.exe --capture FILE.png --pick-icon N,emoji|icon,CELL
+//                            the same after a click on that tab's cell CELL (from 0) set space N's
+//                            icon, and Escape closed the picker.
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
@@ -213,7 +219,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // value (core/CommandLine.h).
     kite::command_line::Spec spec;
     spec.flags = {"--smoke-test", "--backdrop-test"};
-    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--save-log"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--save-log", "--icon-picker", "--pick-icon"};
     if (const auto problem = kite::command_line::Check(utf8, spec)) return Fail(true, Widen(*problem), kUsage);
     if (HasFlag(args, L"--backdrop-test")) {
         // Touches no profile, so it needs no KITE_SUPPORT_PATH.
@@ -313,6 +319,38 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         *out = option.value ? place(*option.value) : std::nullopt;
         if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a space's place, from 1", kUsage);
         if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+    }
+    // Change Space Icon…'s picker: a space's place, its tab, and for a pick the cell clicked.
+    struct HeldPicker {
+        size_t index;
+        kite::IconPickerTab tab;
+        std::optional<size_t> cell;
+    };
+    std::optional<HeldPicker> heldPicker;
+    for (const wchar_t* flag : {L"--icon-picker", L"--pick-icon"}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        const bool pick = std::wstring(flag) == L"--pick-icon";
+        std::vector<std::wstring> parts;
+        if (option.value) {
+            size_t start = 0;
+            for (size_t comma; (comma = option.value->find(L',', start)) != std::wstring::npos; start = comma + 1) {
+                parts.push_back(option.value->substr(start, comma - start));
+            }
+            parts.push_back(option.value->substr(start));
+        }
+        const std::optional<size_t> index = parts.empty() ? std::nullopt : place(parts[0]);
+        const bool tabOk = parts.size() >= 2 && (parts[1] == L"emoji" || parts[1] == L"icon");
+        std::optional<size_t> cell;
+        if (pick && parts.size() == 3 && !parts[2].empty() && parts[2].size() <= 4 &&
+            std::all_of(parts[2].begin(), parts[2].end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; })) {
+            cell = static_cast<size_t>(std::stoi(parts[2]));
+        }
+        if (!index || !tabOk || parts.size() != (pick ? 3u : 2u) || (pick && !cell) || heldPicker) {
+            return Fail(quiet, std::wstring(flag) + (pick ? L" takes N,emoji|icon,CELL" : L" takes N,emoji|icon") + L" (one of --icon-picker and --pick-icon)", kUsage);
+        }
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+        heldPicker = HeldPicker{*index, parts[1] == L"emoji" ? kite::IconPickerTab::Emoji : kite::IconPickerTab::Icon, cell};
     }
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
@@ -500,6 +538,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (swipe) captureError = controller->HoldSwipe(*swipe);
         if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
         if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
+        if (captureError.empty() && heldPicker) captureError = controller->HoldIconPicker(heldPicker->index, heldPicker->tab, heldPicker->cell);
         if (heldMenu) controller->HoldSpaceMenu(*heldMenu);
         if (captureError.empty()) captureError = controller->Capture(pixels, barText, tipIndex);
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);

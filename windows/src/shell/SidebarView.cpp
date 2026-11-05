@@ -405,6 +405,31 @@ void SidebarView::PicturesArrived() {
     ScheduleDraw();
 }
 
+void SidebarView::SetIconPickerSpace(const std::optional<std::string>& spaceID) {
+    if (spaceID == pickerSpace_) return;
+    const std::optional<std::string> old = pickerSpace_;
+    pickerSpace_ = spaceID;
+    for (const std::optional<std::string>& id : {old, spaceID}) {
+        if (!id) continue;
+        if (auto page = pages_.find(*id); page != pages_.end()) page->second.dirty = true;
+    }
+    ScheduleDraw();
+}
+
+std::optional<D2D1_RECT_F> SidebarView::HeaderIconRect(const std::string& spaceID) {
+    if (spaceID != model_.spaceID || model_.rows.empty() || model_.rows.front().kind != SidebarRow::Kind::Header) return std::nullopt;
+    const SidebarRow& header = model_.rows.front();
+    const float top = std::max(M::kHeaderAreaHeight + header.top - scroll_ + M::kHeaderIconTop, M::kHeaderAreaHeight - M::kHeaderIconSize);
+    return Rect(M::kHeaderIconX, top, M::kHeaderIconX + M::kHeaderIconSize, top + M::kHeaderIconSize);
+}
+
+std::optional<POINT> SidebarView::HeaderIconCentre() {
+    const std::optional<D2D1_RECT_F> icon = HeaderIconRect(model_.spaceID);
+    if (!icon) return std::nullopt;
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    return POINT{std::lround(((icon->left + icon->right) / 2 + PageOffset()) * scale), std::lround((icon->top + icon->bottom) / 2 * scale)};
+}
+
 void SidebarView::InvalidateSelectedPage() {
     if (auto found = pages_.find(model_.spaceID); found != pages_.end()) found->second.dirty = true;
     ScheduleDraw();
@@ -768,7 +793,7 @@ void SidebarView::DrawFavicon(ID2D1DeviceContext* context, const SidebarRow& row
 D2D1_RECT_F SidebarView::HeaderNameRect(const SidebarRow& row, float top) {
     // As DrawRow lays the header out: the name from the icon's slot (or its place, with no
     // icon), up to the chevron's slot and the gaps, as wide as its text.
-    const float x = row.icon.empty() ? M::kHeaderIconX : M::kHeaderTextX;
+    const float x = HeaderShowsIcon(row) ? M::kHeaderTextX : M::kHeaderIconX;
     float end = width_ - M::kPadding;
     if (row.hasPinned) end -= (M::kIconInset - M::kPadding) + M::kHeaderIconSize + kHeaderGap;
     end -= kHeaderGap;
@@ -832,8 +857,23 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
         // no stand-in.
         float x = M::kHeaderIconX;
         const D2D1_RECT_F iconBox = Rect(x, top + M::kHeaderIconTop, x + M::kHeaderIconSize, top + M::kHeaderIconTop + M::kHeaderIconSize);
-        if (!row.icon.empty()) {
-            if (row.look.kind == SpaceIconLook::Kind::Dot) {
+        if (HeaderShowsIcon(row)) {
+            if (row.icon.empty()) {
+                // The picker is open for an icon-less space: a dashed square for it to hang from,
+                // 24pt in the slot, 4.5pt corners, labelColor at 35%, dashes of 3 and 2.
+                const float side = 24, cx = (iconBox.left + iconBox.right) / 2, cy = (iconBox.top + iconBox.bottom) / 2;
+                ComPtr<ID2D1Factory> factory;
+                context->GetFactory(factory.GetAddressOf());
+                const float dashes[] = {3, 2};
+                ComPtr<ID2D1StrokeStyle> dashed;
+                if (SUCCEEDED(factory->CreateStrokeStyle(D2D1::StrokeStyleProperties(D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_FLAT,
+                                                                                    D2D1_LINE_JOIN_MITER, 10, D2D1_DASH_STYLE_CUSTOM, 0),
+                                                         dashes, 2, dashed.GetAddressOf()))) {
+                    brush_->SetColor(Primary(0.35f));
+                    const D2D1_RECT_F square{cx - side / 2 + 0.5f, cy - side / 2 + 0.5f, cx + side / 2 - 0.5f, cy + side / 2 - 0.5f};
+                    context->DrawRoundedRectangle(D2D1::RoundedRect(square, 4.5f, 4.5f), brush_.Get(), 1, dashed.Get());
+                }
+            } else if (row.look.kind == SpaceIconLook::Kind::Dot) {
                 // Blank.
             } else if (row.look.kind != SpaceIconLook::Kind::Emoji) {
                 // A symbol in the theme's accent, or a picture (SpaceIconImageView, never greyed here).
@@ -1253,6 +1293,9 @@ void SidebarView::Perform(const SidebarTap& tap) {
         break;
     case Action::CloseTab:
         if (actions_.closeTab) actions_.closeTab(tap.id);
+        break;
+    case Action::ChangeIcon:
+        if (actions_.changeIcon) actions_.changeIcon(tap.id);
         break;
     case Action::None:
         break;

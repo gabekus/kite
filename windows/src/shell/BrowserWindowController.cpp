@@ -162,6 +162,8 @@ std::wstring BrowserWindowController::Init() {
     bar.suggestions = [this](std::string_view text, CommandBarMode mode) { return CommandBarSuggestions(text, state_, mode); };
     bar.commit = [this](const CommandSuggestion& row, CommandBarMode mode) { Commit(row, mode); };
     bar.opened = [this] {
+        // The bar over the window is a press outside the icon picker.
+        CloseIconPicker();
         BlockPages(true);
         sidebar_->ClearHover();  // the bar takes the pointer while it's open
         // And the keyboard: a rename ends, keeping what was typed, as its field editor would.
@@ -180,8 +182,23 @@ std::wstring BrowserWindowController::Init() {
     // The space tip is a window of its own: it goes when the window moves or is minimized,
     // rather than stay where the cell was (or come back with the window). Chromium's start adds
     // its own to these.
-    window_.onMove = [this] { sidebar_->HideTip(); };
-    window_.onMinimize = [this] { sidebar_->HideTip(); };
+    // So is the icon picker, which closes (NSPopover moves with its window; Kite's doesn't yet).
+    window_.onMove = [this] {
+        sidebar_->HideTip();
+        CloseIconPicker();
+    };
+    window_.onMinimize = [this] {
+        sidebar_->HideTip();
+        CloseIconPicker();
+    };
+
+    // Change Space Icon…'s popover, a window of its own over the browser window's.
+    SpaceIconPickerView::Callbacks picker;
+    picker.pick = [this](const std::string& spaceID, const std::string& icon) { PickIcon(spaceID, icon); };
+    picker.closed = [this](const std::string&) { sidebar_->SetIconPickerSpace(std::nullopt); };
+    iconPicker_ = SpaceIconPickerView::Create(window_.Handle(), sidebar_->DWrite(), sidebar_->Painter(), std::move(picker), options_.capture, error);
+    if (!iconPicker_) return L"Kite couldn't make the icon picker: " + error;
+    iconPicker_->UseCompositor(compositor_.get());
     // A hover's redraw found the GPU gone: rebuild and draw everything.
     caption_->onDeviceLost = [this] { Draw(); };
 
@@ -213,6 +230,7 @@ std::wstring BrowserWindowController::Init() {
     actions.spaceMenu = [this](const std::string& spaceID, POINT screen) { ShowSpaceMenu(spaceID, screen); };
     actions.renameSpace = [this](const std::string& spaceID, const std::string& name) { RenameSpace(spaceID, name); };
     actions.beginRenaming = [this](const std::string& spaceID) { BeginRenaming(spaceID); };
+    actions.changeIcon = [this](const std::string& spaceID) { RequestIconPicker(spaceID, false); };
     sidebar_->SetActions(std::move(actions));
     if (options_.smokeTest || options_.capture) askToDelete_ = [](const SpaceDeletion&) { return false; };
     else askToDelete_ = [this](const SpaceDeletion& deletion) { return AskToDeleteSpace(window_.Handle(), deletion); };
@@ -568,6 +586,12 @@ void BrowserWindowController::SaveNow() {
 }
 
 void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save) {
+    // The icon picker hangs from its space's header: it closes once that space isn't the one
+    // shown (another selected, or it was deleted), as the header it hangs from goes.
+    if (const std::optional<std::string> picking = iconPicker_ ? iconPicker_->SpaceID() : std::nullopt;
+        picking && *picking != state_.selectedSpaceID) {
+        CloseIconPicker();
+    }
     // A rename ends once its space isn't the one shown (another selected, or it was deleted),
     // keeping what was typed, as leaving the field does: renamed here, in this update, so the
     // sidebar's Update stays a picture of the session.
@@ -809,6 +833,7 @@ bool BrowserWindowController::PageCommand(const std::string& command) {
 void BrowserWindowController::DropCompositor() {
     // The views let go of the compositor's device first, then the compositor goes (so the
     // next draw rebuilds it).
+    if (iconPicker_) iconPicker_->UseCompositor(nullptr);
     sidebar_->UseCompositor(nullptr);
     caption_->UseCompositor(nullptr);
     if (commandBar_) commandBar_->UseCompositor(nullptr);
@@ -823,6 +848,7 @@ std::wstring BrowserWindowController::Rebuild() {
     if (renderer_) compositor_ = Compositor::Create(window_.Handle(), *renderer_, problem);
     if (compositor_) {
         sidebar_->UseCompositor(compositor_.get());
+        if (iconPicker_) iconPicker_->UseCompositor(compositor_.get());
         caption_->UseCompositor(compositor_.get());
         if (commandBar_) commandBar_->UseCompositor(compositor_.get());
     }
@@ -860,8 +886,10 @@ std::wstring BrowserWindowController::DrawAt(double time, Pixels* readBack) {
 }
 
 void BrowserWindowController::OnSize() {
-    // The space tip is a window of its own: it goes rather than stay where the cell was.
+    // The space tip is a window of its own: it goes rather than stay where the cell was. The
+    // icon picker closes.
     sidebar_->HideTip();
+    CloseIconPicker();
 #ifdef KITE_HAS_CEF
     // The page first, so CEF's thread moves it while Kite draws.
     if (chromium_) chromium_->SetBounds(ContentBounds());
@@ -903,6 +931,36 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         OpenCommandBar(CommandBarMode::NewTab);
     }
 #endif
+    // The icon picker is AppKit's transient popover: a press anywhere else in the window, or
+    // another app coming forward, closes it (the press goes on to what it's over).
+    if (iconPicker_ && iconPicker_->IsOpen()) {
+        switch (message) {
+        case WM_LBUTTONDOWN:
+        case WM_RBUTTONDOWN:
+        case WM_MBUTTONDOWN:
+        case WM_NCLBUTTONDOWN:
+        case WM_NCRBUTTONDOWN: CloseIconPicker(); break;
+        case WM_ACTIVATE:
+            if (LOWORD(wParam) == WA_INACTIVE) CloseIconPicker();
+            break;
+        case WM_MOUSEWHEEL:
+            if (iconPicker_->HandleWheel(wParam, lParam)) {
+                result = 0;
+                return true;
+            }
+            break;
+        default: break;
+        }
+    }
+    if (message == WM_TIMER && wParam == SpaceIconPickerView::kCaretTimer && iconPicker_ && iconPicker_->HandleTimer(wParam)) return true;
+    if (message == WM_TIMER && wParam == kIconPickerTimer) {
+        KillTimer(window_.Handle(), kIconPickerTimer);
+        // Still the space shown (the Mac's iconPickerRequest == spaceID).
+        if (const std::optional<std::string> id = std::exchange(pendingIconPicker_, std::nullopt); id && *id == state_.selectedSpaceID) {
+            ShowIconPicker(*id);
+        }
+        return true;
+    }
     if ((message == WM_CHAR || message == WM_SYSCHAR) && dropCharacter_) {
         dropCharacter_ = false;
         result = 0;
@@ -918,7 +976,7 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         const auto pressed =
             ShortcutOfKey(static_cast<UINT>(wParam), GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_MENU) < 0, GetKeyState(VK_SHIFT) < 0);
         const ShortcutTarget* target = pressed ? FindShortcut(shortcuts_, *pressed) : nullptr;
-        const bool editing = (commandBar_ && commandBar_->IsOpen()) || sidebar_->Renaming();
+        const bool editing = (commandBar_ && commandBar_->IsOpen()) || sidebar_->Renaming() || (iconPicker_ && iconPicker_->IsOpen());
         if (target && !(editing && EditsText(*pressed)) && CommandEnabled(target->command->id)) {
             // The character TranslateMessage made of it goes too (Alt+K's WM_SYSCHAR would beep).
             dropCharacter_ = true;
@@ -929,6 +987,11 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     }
     if (commandBar_ && commandBar_->HandleMessage(message, wParam, lParam, result)) {
         if (message == WM_LBUTTONDOWN) sidebar_->ForgetActivation();
+        return true;
+    }
+    // The icon picker's Search and Escape, while it's open (the window keeps the keyboard).
+    if (iconPicker_ && iconPicker_->HandleKey(message, wParam, lParam)) {
+        result = 0;
         return true;
     }
     // The header's rename field, when a space is renamed: its keys, characters and focus.

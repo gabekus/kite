@@ -5,6 +5,11 @@
 
 #include "shell/BrowserWindowController.h"
 
+#include <filesystem>
+#include <system_error>
+#include <utility>
+
+#include "core/SpaceIconPicker.h"
 #include "shell/SpaceMenu.h"
 
 namespace kite {
@@ -35,8 +40,8 @@ void BrowserWindowController::RunSpaceMenuItem(const std::string& spaceID, Space
         StateChanged();
         break;
     case Command::Delete: DeleteSpace(spaceID); break;
+    case Command::ChangeIcon: RequestIconPicker(spaceID, true); break;
     // Disabled on Windows until they're ported (SpaceMenu).
-    case Command::ChangeIcon:
     case Command::Describe:
     case Command::EditTheme:
     case Command::SetProfile:
@@ -92,6 +97,70 @@ void BrowserWindowController::MoveSpace(const std::string& spaceID, size_t index
     if (state_.SpaceIndex(spaceID) == index) return;
     state_.MoveSpace(spaceID, index);
     StateChanged();
+}
+
+// MARK: Change Space Icon… (SpaceIconPicker.swift, BrowserStore.requestIconPicker)
+
+void BrowserWindowController::RequestIconPicker(const std::string& spaceID, bool fromMenu) {
+    if (!state_.SpaceIndex(spaceID)) return;
+    // The popover takes the keyboard: a rename ends, keeping what was typed.
+    sidebar_->EndRenaming(true);
+    KillTimer(window_.Handle(), kIconPickerTimer);
+    pendingIconPicker_.reset();
+    // requestIconPicker: its space selected (the sidebar is always shown on Windows yet).
+    if (state_.selectedSpaceID != spaceID) {
+        state_.SelectSpace(spaceID);
+        SelectionMoved();
+    }
+    // The keyboard, when Kite is the window in front (a quiet test run never activates).
+    if (GetForegroundWindow() == window_.Handle()) SetFocus(window_.Handle());
+    if (!fromMenu) return ShowIconPicker(spaceID);
+    // From the menu, once it's gone (openPicker(after: 0.15)).
+    pendingIconPicker_ = spaceID;
+    SetTimer(window_.Handle(), kIconPickerTimer, 150, nullptr);
+}
+
+void BrowserWindowController::ShowIconPicker(const std::string& spaceID) {
+    const auto index = state_.SpaceIndex(spaceID);
+    std::optional<IconPickerState> picker = kite::OpenIconPicker(state_, spaceID);
+    if (!index || !picker || !iconPicker_) return;
+    sidebar_->HideTip();
+    // The header keeps its icon's slot while it's open (a dashed square for none), so the
+    // picker hangs from where the icon is.
+    sidebar_->SetIconPickerSpace(spaceID);
+    const std::optional<D2D1_RECT_F> anchor = sidebar_->HeaderIconRect(spaceID);
+    if (!anchor) {
+        sidebar_->SetIconPickerSpace(std::nullopt);
+        return;
+    }
+    if (std::wstring problem = iconPicker_->Open(std::move(*picker), state_.spaces[*index].icon,
+                                                 PickerRect{anchor->left, anchor->top, anchor->right, anchor->bottom}, window_.Dpi(),
+                                                 dark_.value_or(true));
+        !problem.empty()) {
+        sidebar_->SetIconPickerSpace(std::nullopt);
+        OutputDebugStringW((L"Kite: the icon picker couldn't open: " + problem + L"\n").c_str());
+        if (iconPicker_->DeviceLost()) Draw();
+    }
+}
+
+void BrowserWindowController::PickIcon(const std::string& spaceID, const std::string& icon) {
+    const std::optional<IconPick> pick = PickSpaceIcon(state_, spaceID, icon);
+    if (!pick) return;
+    // SpaceIconImages.discard: the picture it replaced, once no space shows it (a file's
+    // removal, not a read or a write).
+    if (pick->discard && !options_.spaceIcons.empty()) {
+        std::error_code ignored;
+        std::filesystem::remove(options_.spaceIcons / std::filesystem::path(std::u8string(pick->discard->begin(), pick->discard->end())), ignored);
+    }
+    // The bar's cell and the header show it at once, and it's saved.
+    StateChanged();
+    if (iconPicker_) iconPicker_->SpaceChanged(pick->icon);
+}
+
+void BrowserWindowController::CloseIconPicker() {
+    KillTimer(window_.Handle(), kIconPickerTimer);
+    pendingIconPicker_.reset();
+    if (iconPicker_) iconPicker_->Close();
 }
 
 }  // namespace kite

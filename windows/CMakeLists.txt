@@ -132,6 +132,7 @@ if(WIN32)
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
     src/shell/SpaceIconPainter.cpp
+    src/shell/SpaceIconPickerView.cpp
     src/shell/SpaceMenu.cpp
     src/shell/SpaceRenameField.cpp
     src/shell/SpaceTipView.cpp
