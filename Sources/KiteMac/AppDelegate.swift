@@ -61,6 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     static var sessionURL: URL { supportDirectory.appendingPathComponent("session.json") }
+    /// Each tab's back/forward list, so tabs keep it across relaunches.
+    static let tabHistory = TabHistoryStore(directory: supportDirectory.appendingPathComponent("Tab History", isDirectory: true))
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Release builds check for updates (8-hourly, installing on quit); others do nothing.
@@ -114,6 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         windows.normalWindowClosing = { [weak self] controller in self?.normalWindowClosing(controller) }
         windows.restore()
+        forgetClosedTabsHistory()
         if let backup = store.recoveredFromBackup {
             let date = DateFormatter.localizedString(from: backup.date, dateStyle: .medium, timeStyle: .short)
             windowController.showToast("Kite restored your tabs from a backup made \(date)")
@@ -595,10 +598,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func saveSession() {
+        // Before CEF closes the browsers (`willTerminate`): their history goes with them.
+        for controller in allBrowserControllers where !controller.isIncognito { controller.pool.saveAllHistory() }
+        Self.tabHistory.flush()
         store?.saveNow()
         history?.flush()
         DownloadsModel.shared.saveNow()
         BoostsModel.shared.flush()
+    }
+
+    /// The main window and every other one, once each.
+    private var allBrowserControllers: [BrowserWindowController] {
+        var all = windowController.map { [$0] } ?? []
+        for controller in windows?.all ?? [] where !all.contains(where: { $0 === controller }) { all.append(controller) }
+        return all
+    }
+
+    /// Tab history files of tabs closed for good, here or while Kite last ran.
+    private func forgetClosedTabsHistory() {
+        var kept = Set<UUID>()
+        for controller in allBrowserControllers where !controller.isIncognito {
+            let state = controller.store.state
+            kept.formUnion(state.allTabIDs)
+            kept.formUnion(state.recentlyClosed.map(\.tab.id))
+        }
+        Self.tabHistory.removeAll(except: kept)
+    }
+
+    /// Delete Browsing Data took history: no tab wakes or relaunches with its back/forward list.
+    func forgetTabHistory() {
+        for controller in allBrowserControllers { controller.pool.forgetSavedHistory() }
+        Self.tabHistory.removeAll()
     }
 
     /// Kite → About Kite: AppKit's standard panel (WindowPresenter keeps a test-safe run's behind).
@@ -611,8 +641,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsWindowController.shared.show()
     }
 
-    /// Chromium's Energy Saver (30fps on low battery). Off unless the user turns it on.
+    /// Chromium's Energy Saver (30fps on battery below 20%). On unless the user turns it off, as in Chrome.
     static let energySaverKey = "chromiumEnergySaver"
+    static var energySaverSetting: Bool { UserDefaults.standard.object(forKey: energySaverKey) as? Bool ?? true }
 
     @objc func toggleEnergySaver(_ sender: Any?) {
         #if canImport(CEFBridge)

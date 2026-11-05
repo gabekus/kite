@@ -1222,6 +1222,8 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
 @implementation KCBrowser {
     CefRefPtr<CefBrowser> _browser;
     NSURL* _pendingURL;
+    /// Restored in place of loading _pendingURL, once the browser exists.
+    NSData* _pendingNavigationState;
     BOOL _pendingFocus;
     BOOL _hidden;
     double _zoomFactor;
@@ -1263,7 +1265,15 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
 }
 
 - (instancetype)initWithURL:(NSURL*)url delegate:(id<KCBrowserDelegate>)delegate context:(KCRequestContext*)context {
+    return [self initWithURL:url delegate:delegate context:context navigationState:nil];
+}
+
+- (instancetype)initWithURL:(NSURL*)url
+                   delegate:(id<KCBrowserDelegate>)delegate
+                    context:(KCRequestContext*)context
+            navigationState:(NSData*)navigationState {
     if ((self = [self initPopupWithDelegate:delegate])) {
+        _pendingNavigationState = navigationState;
         CefWindowInfo windowInfo;
         windowInfo.SetAsChild((__bridge CefWindowHandle)_view, CefRect(0, 0, 800, 600));
         CefBrowserSettings settings;
@@ -1336,6 +1346,8 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
     if (_pendingURL) {
         NSURL* url = _pendingURL;
         _pendingURL = nil;
+        NSData* navigationState = _pendingNavigationState;
+        _pendingNavigationState = nil;
         // A browser that hasn't navigated has no renderer yet, so a script registered
         // now can miss the first document; it runs again at load start (the script
         // guards against running twice).
@@ -1345,7 +1357,7 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
             [self addDocumentScript:script navigation:_navigationCount completion:nil];
             _runScriptAtLoadStart = YES;
         }
-        [self loadURL:url];
+        if (!navigationState || ![self restoreNavigationState:navigationState]) [self loadURL:url];
     }
     if (_zoomFactor != 1) self.zoomFactor = _zoomFactor;
     if (_audioMuted) browser->GetHost()->SetAudioMuted(true);
@@ -1380,6 +1392,28 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
         return;
     }
     _browser->GetMainFrame()->LoadURL(url.absoluteString.UTF8String);
+}
+
+- (NSData*)navigationState {
+#ifdef KITE_CEF_NAVIGATION_STATE
+    if (!_browser) return nil;
+    CefRefPtr<CefBinaryValue> state = _browser->GetHost()->GetNavigationState();
+    if (!state || state->GetSize() == 0) return nil;
+    NSMutableData* data = [NSMutableData dataWithLength:state->GetSize()];
+    state->GetData(data.mutableBytes, data.length, 0);
+    return data;
+#else
+    return nil;
+#endif
+}
+
+/// False when the state doesn't parse, or the CEF build can't restore one.
+- (BOOL)restoreNavigationState:(NSData*)state {
+#ifdef KITE_CEF_NAVIGATION_STATE
+    return _browser->GetHost()->RestoreNavigationState(CefBinaryValue::Create(state.bytes, state.length));
+#else
+    return NO;
+#endif
 }
 
 - (void)goBack { if (_browser) _browser->GoBack(); }

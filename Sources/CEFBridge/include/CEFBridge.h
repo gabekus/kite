@@ -35,8 +35,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (class, nonatomic, readonly) BOOL isInitialized;
 + (BOOL)initializeWithSettings:(KCRuntimeSettings *)settings;
 /// Chromium's Energy Saver, which drops pages to 30fps on battery below 20%.
-/// Off by default so pages run at the display's full rate. Can be set before
-/// or after initializing.
+/// On by default, as in Chrome. Can be set before or after initializing.
 @property (class, nonatomic) BOOL energySaverEnabled;
 /// Runs the Cocoa event loop with CEF integrated. Returns after quit.
 + (void)runMessageLoop;
@@ -244,9 +243,18 @@ NS_SWIFT_UI_ACTOR
 - (instancetype)initWithURL:(nullable NSURL *)url
                    delegate:(id<KCBrowserDelegate>)delegate
                     context:(nullable KCRequestContext *)context;
+/// `navigationState` (another browser's `navigationState`) brings back that browser's back/forward list and
+/// loads its current page in place of `url`.
+- (instancetype)initWithURL:(nullable NSURL *)url
+                   delegate:(id<KCBrowserDelegate>)delegate
+                    context:(nullable KCRequestContext *)context
+            navigationState:(nullable NSData *)navigationState;
 - (instancetype)init NS_UNAVAILABLE;
 
 @property (nonatomic, readonly) NSView *view;
+/// The back/forward list, with each page's scroll position and form contents, for a new browser to restore.
+/// Nil before the browser exists, and from a CEF build without Kite's patch (scripts/build-cef.sh applies it).
+@property (nonatomic, readonly, nullable) NSData *navigationState;
 @property (nonatomic, weak, nullable) id<KCBrowserDelegate> delegate;
 @property (nonatomic, readonly) BOOL isLoading;
 @property (nonatomic, readonly) BOOL canGoBack;

@@ -39,9 +39,10 @@ final class ChromiumEngine: WebEngine {
     }
 
     func makePage(url: URL?, restoring state: Any?) -> WebPage {
-        // CEF has no equivalent of WebKit's interactionState, so a revived tab reloads its URL.
+        // A revived tab gets its back/forward list back; with a stock CEF build (no state) it reloads its URL.
         ChromiumPage(
-            browser: KCBrowser(url: url, delegate: ChromiumDelegateProxy.placeholder, context: context),
+            browser: KCBrowser(url: url, delegate: ChromiumDelegateProxy.placeholder, context: context,
+                               navigationState: state as? Data),
             adblocker: adblocker,
             appliesBoosts: appliesBoosts
         )
@@ -432,7 +433,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         }
     }
 
-    func hibernationState() -> Any? { nil }
+    func hibernationState() -> Any? { browser.navigationState }
 
     func checkBusy(_ completion: @escaping (Bool) -> Void) {
         if mediaInUse { return completion(true) }
