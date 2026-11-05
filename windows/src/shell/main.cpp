@@ -535,16 +535,23 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         }
     }
     kite::SessionWriter writer(session, maySave, std::move(clock));
-    // A write still stuck as Kite ends (a disk that hangs past kQuitFlush): the process ends
-    // there, without the C++ library's teardown running under the writer's thread. The file is
-    // the old one or the new one (the write is atomic); the run is a failed save.
+    // A write still stuck as Kite ends (a disk that hangs past kQuitFlush), the session's or
+    // history's: the process ends there, without the C++ library's teardown running under the
+    // writer's thread. The file is the old one or the new one (the writes are atomic); the run is
+    // a failed save.
     const auto endStuck = [quiet] {
-        const std::wstring message = L"Kite: the session's last write didn't finish; Kite ended without waiting for it\n";
+        const std::wstring message = L"Kite: a last write (the session or history) didn't finish; Kite ended without waiting for it\n";
         OutputDebugStringW(message.c_str());
         if (quiet) WriteUtf8(STD_ERROR_HANDLE, message);
         TerminateProcess(GetCurrentProcess(), kSaveFailed);
     };
     writer.OnStuck(endStuck);
+    // Browsing history (core/HistoryStore.h): every profile's file read and written on history's
+    // own worker, once this launch is Kite's (Start, below: a second launch, which hands over to
+    // the running Kite, never opens its history). Until a file is in, visits are kept and
+    // replayed over it. Like the session's writer, it outlives the window.
+    kite::HistoryStores history(supportDirectory);
+    history.OnStuck(endStuck);
     // As the Mac does once per launch, the session as found (read, recovered or a fresh one, as
     // BrowserStore.init) is kept as a launch backup: before the auto-archive, as the Mac's is
     // before its first pass, but handed over only once this launch is Kite's (not a second one
@@ -577,7 +584,7 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     options.quiet = quiet;
     if (occlusionLogOption.value) options.occlusionLog = *occlusionLogOption.value;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
-    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, problem);
+    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, &history, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
     kite::perf::Mark("window-created");
     if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar: " + controller->CommandBarError(), kWindowFailed);
@@ -643,6 +650,8 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     }
 #endif
     if (found) writer.BackUpLaunch(std::move(*found));
+    // This launch is Kite's (or a capture's): history's files may be read now.
+    history.Start();
 
     controller->Show(showCommand);
     kite::perf::Mark("shown");
@@ -672,14 +681,18 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
 
     controller->RunMessageLoop();
     kite::perf::Mark("loop-end");
-    // The window's close handed over the last save; wait for it now that the window is gone (no
-    // frozen window), for kQuitFlush at most (the atomic write leaves the old file or the new
-    // one). Before Chromium shuts down: until then this Kite holds the profile, so a launch in
-    // the meantime hands over to it rather than read a session.json about to be replaced.
-    const std::string saveError = writer.Flush(kQuitFlush);
+    // The window's close handed over the last saves, the session's and history's; wait for them
+    // now that the window is gone (no frozen window), kQuitFlush at most for both (the atomic
+    // writes leave the old file or the new one). Before Chromium shuts down: until then this Kite
+    // holds the profile, so a launch in the meantime hands over to it rather than read a file
+    // about to be replaced.
+    const kite::Deadline quitDeadline = kite::DeadlineAfter(kQuitFlush);
+    const std::string saveError = writer.Flush(quitDeadline);
+    const std::string historyError = history.Flush(quitDeadline);
     // Still writing after that: end here, before Chromium's shutdown or a dialog, while the
     // stuck write may yet rename (no other Kite can have the profile until this one is gone).
-    if (writer.Writing()) endStuck();
+    if (writer.Writing() || history.Writing()) endStuck();
+    if (!historyError.empty()) OutputDebugStringW((L"Kite: " + Widen(historyError) + L"\n").c_str());
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
     if (frameLogOption.value) {
         if (problem = controller->SaveFrameLog(*frameLogOption.value); !problem.empty()) {
@@ -709,6 +722,8 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     if (!saveError.empty()) {
         return Fail(quiet, L"Couldn't save the session: " + Widen(saveError), kSaveFailed);
     }
+    // A test run fails on it; otherwise the next change or launch tries again, as on the Mac.
+    if (quiet && !historyError.empty()) return Fail(quiet, L"Couldn't save history: " + Widen(historyError), kSaveFailed);
     return kOk;
 }
 

@@ -139,26 +139,45 @@ size_t RemoveStaleTemps(const fs::path& directory, std::chrono::seconds age) {
     return removed;
 }
 
-std::optional<std::string> Read(const fs::path& file) {
+std::optional<std::string> Read(const fs::path& file) { return Read(file, std::string().max_size()); }
+
+std::optional<std::string> Read(const fs::path& file, size_t maxBytes, bool* tooLarge) {
+    if (tooLarge) *tooLarge = false;
+    std::string text;
+    char buffer[16384];
+    bool ok = true;
 #ifdef _WIN32
     std::FILE* in = nullptr;
     if (_wfopen_s(&in, file.c_str(), L"rb") != 0 || !in) return std::nullopt;
-    std::string text;
-    char buffer[16384];
-    for (size_t got; (got = std::fread(buffer, 1, sizeof buffer, in)) > 0;) text.append(buffer, got);
-    const bool ok = !std::ferror(in);
+    for (size_t got; (got = std::fread(buffer, 1, sizeof buffer, in)) > 0;) {
+        if (got > maxBytes - text.size()) {
+            ok = false;
+            if (tooLarge) *tooLarge = true;
+            break;
+        }
+        text.append(buffer, got);
+    }
+    if (std::ferror(in)) ok = false;
     std::fclose(in);
-    if (!ok) return std::nullopt;
-    return text;
 #else
     std::error_code error;
     if (!fs::is_regular_file(file, error)) return std::nullopt;
     std::ifstream in(file, std::ios::binary);
     if (!in) return std::nullopt;
-    std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-    if (in.bad()) return std::nullopt;
-    return text;
+    while (in.read(buffer, sizeof buffer) || in.gcount() > 0) {
+        const size_t got = static_cast<size_t>(in.gcount());
+        if (got > maxBytes - text.size()) {
+            ok = false;
+            if (tooLarge) *tooLarge = true;
+            break;
+        }
+        text.append(buffer, got);
+        if (!in) break;
+    }
+    if (in.bad()) ok = false;
 #endif
+    if (!ok) return std::nullopt;
+    return text;
 }
 
 }  // namespace kite::store_file
