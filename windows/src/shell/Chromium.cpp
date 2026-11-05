@@ -272,7 +272,8 @@ struct Chromium::Shared {
     }
 
     void FocusShown() {
-        if (inputBlocked) return;
+        // Nor while Kite's find field has it: a page made after Ctrl+F (its Attach) leaves it there.
+        if (inputBlocked || kiteKeepsKeyboard) return;
         auto it = pages.find(shown);
         if (it != pages.end() && it->second.browser) it->second.browser->GetHost()->SetFocus(true);
     }
