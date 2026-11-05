@@ -30,7 +30,8 @@ public static class KiteCheck {
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowExW(uint ex, string cls, string title, uint style,
       int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
   [DllImport("user32.dll")] static extern IntPtr DefWindowProcW(IntPtr h, uint m, IntPtr w, IntPtr l);
-  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int cy, uint flags);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern bool DestroyWindow(IntPtr h);
   [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
   [DllImport("user32.dll")] static extern bool PeekMessageW(out MSG m, IntPtr h, uint min, uint max, uint remove);
@@ -51,7 +52,9 @@ public static class KiteCheck {
     RegisterClassW(ref c);
     IntPtr h = CreateWindowExW(0x08000008, "KiteCoveredLaunchCheck", "Kite covered-launch check", 0x80000000,
         GetSystemMetrics(76), GetSystemMetrics(77), GetSystemMetrics(78), GetSystemMetrics(79), IntPtr.Zero, IntPtr.Zero, c.instance, IntPtr.Zero);
-    ShowWindow(h, 4);  // SW_SHOWNOACTIVATE
+    // Shown by SetWindowPos, not ShowWindow, whose first call takes the launcher's show state
+    // instead (hidden, for a runner's shell). HWND_TOPMOST, SWP_NOACTIVATE | SWP_SHOWWINDOW.
+    SetWindowPos(h, (IntPtr)(-1), GetSystemMetrics(76), GetSystemMetrics(77), GetSystemMetrics(78), GetSystemMetrics(79), 0x0010 | 0x0040);
     return h;
   }
   public static void Pump() { MSG m; while (PeekMessageW(out m, IntPtr.Zero, 0, 0, 1)) DispatchMessageW(ref m); }
@@ -101,7 +104,7 @@ setInterval(() => { log += 'F' + Date.now() + ':' + frames + ' '; document.title
 
   if ($Cover) {
     $cover = [KiteCheck]::MakeCover()
-    if ($cover -eq [IntPtr]::Zero) { throw "couldn't make the cover window" }
+    if ($cover -eq [IntPtr]::Zero -or -not [KiteCheck]::IsWindowVisible($cover)) { throw "couldn't show the cover window" }
     Pump 300
   }
   $env:KITE_SUPPORT_PATH = $profileDir
