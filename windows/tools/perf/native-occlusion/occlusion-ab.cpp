@@ -1,5 +1,8 @@
 // occlusion-ab: Kite for Windows with and without Chromium's native window occlusion tracker
-// (--disable-features=CalculateNativeWinOcclusion), for docs/windows-native-occlusion.md.
+// (CalculateNativeWinOcclusion), for docs/windows-native-occlusion.md. Kite turns it off by
+// default (core/ChromiumSwitches.h, P12b); the "on" arm turns it back on with
+// --chromium-switches "--enable-features=CalculateNativeWinOcclusion", which needs a Kite from
+// P12b on (an older one refuses it; its default was on).
 // Measurement only: not built with Kite and never shipped. kiteperf measures whole processes;
 // this adds what the question needs and kiteperf doesn't have: the browser process's threads by
 // name, an app's window moving near and over Kite, and whether the page reads as hidden.
@@ -12,13 +15,21 @@
 //                [--out runs.jsonl] [--any-display]
 //
 // Each run launches Kite.exe (kitecore.exe beside it makes the session) on a fresh %TEMP% test
-// profile holding one local page, in a job object, with --perf-log so it's a quiet run (behind
-// other windows, never a dialog), and with --chromium-switches for the "off" arm. Arms alternate,
-// on then off, `--runs` times. Phases, after 15 s for the page to load:
-//   idle       nothing happens (--idle seconds)
+// profile holding one local page, in a job object, with --perf-log and --perf-control so it's a
+// quiet run (behind other windows, never a dialog), with --occlusion-log for Kite's own verdicts,
+// and with --chromium-switches for the "on" arm (the "off" arm is Kite's default). Arms
+// alternate, on then off, `--runs` times. Phases, after 15 s for the page to load:
+//   idle       nothing happens (--idle seconds); Kite's own occlusion is off, so the page draws
+//              wherever Kite is (a quiet run opens behind other windows, usually covered)
+// Then Kite's occlusion is turned on (--perf-control's {"occlusion":"on"}, as kiteperf's covered
+// phase does), so it starts from a page that has been shown, and stays on for:
 //   nearMover  our 300x200 window slides back and forth right of Kite, 60 moves a second
 //   covered    our black window sits just above Kite, covering it (--phase seconds)
 //   overMover  the cover goes; our window slides over Kite, 60 moves a second
+//   lockNotice Kite's window alone is told the session locked (WM_WTSSESSION_CHANGE,
+//              WTS_SESSION_LOCK, posted), and unlocked at the end: Kite's own occlusion's lock
+//              path without locking anything. Chromium's tracker listens on a window of its own,
+//              so it never hears of it: this phase measures Kite's occlusion only.
 // Our windows are captioned, opaque, unowned app windows (WS_POPUP and tool windows are ones
 // Chromium's tracker skips), made WS_EX_NOACTIVATE and moved with SWP_NOACTIVATE: nothing here
 // activates a window, moves the pointer or sends input. A 40x40 one sits at the bottom of the
@@ -27,17 +38,25 @@
 // Chromium's tracker forces every page to occluded while the display is off, and the desktop's
 // other windows are what it reacts to, so by default a run waits for the display to be on (it
 // never wakes it), keeps it on while it runs, and a run whose display went off is left out of
-// the medians. --any-display runs regardless. Results: one JSON line per run (--out), and a
-// markdown table of the medians on stdout. Only the job's processes are ever ended.
+// the medians. --any-display runs regardless (a run whose display was off throughout shows what
+// display off does). Results: one JSON line per run (--out), and a markdown table of the medians
+// on stdout. Only the job's processes are ever ended.
+//
+// The page logs into its title, which Kite saves in the session on closing: each change of
+// document.visibilityState, and (the animating page) every 2 s how many requestAnimationFrame
+// callbacks have run, each at its time. Per phase that gives the share of it the page was
+// `hidden` and its rAF rate (from the samples inside the phase).
 
 #include <windows.h>
 
 #include <dwmapi.h>
 #include <intrin.h>
 #include <winternl.h>
+#include <wtsapi32.h>
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -50,6 +69,7 @@
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "ntdll.lib")
 #pragma comment(lib, "user32.lib")
+#pragma comment(lib, "wtsapi32.lib")
 
 namespace {
 
@@ -58,7 +78,7 @@ namespace fs = std::filesystem;
 // The thread ui/aura/native_window_occlusion_tracker_win.cc runs on: a COM STA task runner
 // (MayBlock, USER_VISIBLE), which base names this way.
 constexpr wchar_t kTrackerThread[] = L"ThreadPoolSingleThreadCOMSTASharedForegroundBlocking";
-constexpr wchar_t kOffSwitch[] = L"--disable-features=CalculateNativeWinOcclusion";
+constexpr wchar_t kOnSwitch[] = L"--enable-features=CalculateNativeWinOcclusion";
 
 std::string Narrow(const std::wstring& w) {
     if (w.empty()) return {};
@@ -327,6 +347,13 @@ void Slide(HWND w, int x0, int y, DWORD ms) {
     if (timer) CloseHandle(timer);
 }
 
+// A --perf-control request (WM_COPYDATA, 'KPRF', UTF-8 JSON): whether Kite took it.
+bool Control(HWND kite, const char* json) {
+    COPYDATASTRUCT data{0x4B505246, static_cast<DWORD>(std::strlen(json)), const_cast<char*>(json)};
+    DWORD_PTR answer = 0;
+    return SendMessageTimeoutW(kite, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&data), SMTO_ABORTIFHUNG, 5000, &answer) && answer == 1;
+}
+
 // The TSC's rate: QueryThreadCycleTime counts its ticks.
 double TscPerMs() {
     LARGE_INTEGER f, q0, q1;
@@ -339,14 +366,17 @@ double TscPerMs() {
     return static_cast<double>(t1 - t0) / (static_cast<double>(q1.QuadPart - q0.QuadPart) * 1000.0 / f.QuadPart);
 }
 
+// Both pages' titles: "vis:" then words, each a kind and a time in ms since the Unix epoch:
+// V or H (visibilityState became visible or hidden) and, on the animating page, F (then ":" and
+// the requestAnimationFrame callbacks run so far).
 const char kStaticPage[] = R"(<!doctype html>
 <meta charset="utf-8"><title>vis:</title>
-<p>occlusion-ab: document.visibilityState changes go in the title (V or H, then epoch seconds).</p>
+<p>occlusion-ab: document.visibilityState changes go in the title (V or H, then epoch ms).</p>
 <script>
 let log = '', last = '';
 function rec() {
   const s = document.visibilityState === 'visible' ? 'V' : 'H';
-  if (s !== last) { last = s; log += s + Math.round(Date.now() / 1000) + ' '; document.title = 'vis:' + log; }
+  if (s !== last) { last = s; log += s + Date.now() + ' '; document.title = 'vis:' + log; }
 }
 document.addEventListener('visibilitychange', rec); rec(); setInterval(rec, 1000);
 </script>
@@ -357,20 +387,73 @@ const char kAnimPage[] = R"(<!doctype html>
 <style>#s{width:120px;height:120px;background:#e35;animation:r 1s linear infinite}@keyframes r{to{transform:rotate(360deg)}}</style>
 <div id="s"></div><canvas id="c" width="400" height="200"></canvas>
 <script>
-// A CSS spin and a requestAnimationFrame canvas; the title has visibilityState's changes (V or H,
-// then epoch seconds) and the frames rAF ran.
+// A CSS spin and a requestAnimationFrame canvas; the title has visibilityState's changes and,
+// every 2 s, the frames rAF has run.
 let log = '', last = '', frames = 0;
-function rec() {
+function vis() {
   const s = document.visibilityState === 'visible' ? 'V' : 'H';
-  if (s !== last) { last = s; log += s + Math.round(Date.now() / 1000) + ' '; }
-  document.title = 'vis:' + log + 'f' + frames;
+  if (s !== last) { last = s; log += s + Date.now() + ' '; document.title = 'vis:' + log; }
 }
+function sample() { vis(); log += 'F' + Date.now() + ':' + frames + ' '; document.title = 'vis:' + log; }
 const g = document.getElementById('c').getContext('2d');
 function draw(t) { frames++; g.fillStyle = `hsl(${(t / 10) % 360} 80% 50%)`; g.fillRect(0, 0, 400, 200); requestAnimationFrame(draw); }
 requestAnimationFrame(draw);
-document.addEventListener('visibilitychange', rec); rec(); setInterval(rec, 1000);
+document.addEventListener('visibilitychange', vis); vis(); setInterval(sample, 2000);
 </script>
 )";
+
+// Now, in ms since the Unix epoch (the page's Date.now()).
+double EpochMs() {
+    FILETIME ft;
+    GetSystemTimePreciseAsFileTime(&ft);
+    const ULONGLONG t = (static_cast<ULONGLONG>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+    return static_cast<double>(t - 116444736000000000ULL) / 10000.0;
+}
+
+// The page's title log (see the pages): visibility changes and rAF samples, in order.
+struct PageLog {
+    std::vector<std::pair<double, bool>> visibility;  // time, hidden
+    std::vector<std::pair<double, double>> frames;    // time, rAF callbacks so far
+
+    // Over [start, end]: the share of it the page was hidden (-1 with no visibility known) and
+    // its rAF rate between the first and last samples inside it (-1 with fewer than two, or
+    // over less than 4 s).
+    void Phase(double start, double end, double& hiddenPct, double& rafFps) const {
+        hiddenPct = rafFps = -1;
+        if (end > start && !visibility.empty() && visibility.front().first <= start) {
+            double hidden = 0;
+            for (size_t i = 0; i < visibility.size(); ++i) {
+                const double from = std::max(visibility[i].first, start);
+                const double to = std::min(i + 1 < visibility.size() ? visibility[i + 1].first : end, end);
+                if (visibility[i].second && to > from) hidden += to - from;
+            }
+            hiddenPct = 100.0 * hidden / (end - start);
+        }
+        const std::pair<double, double>* first = nullptr;
+        const std::pair<double, double>* last = nullptr;
+        for (const auto& f : frames) {
+            if (f.first < start || f.first > end) continue;
+            if (!first) first = &f;
+            last = &f;
+        }
+        if (first && last && last->first - first->first >= 4000) rafFps = (last->second - first->second) * 1000.0 / (last->first - first->first);
+    }
+};
+
+PageLog ParsePageLog(const std::string& text) {
+    PageLog log;
+    std::istringstream words(text);
+    for (std::string w; words >> w;) {
+        if (w.size() < 2) continue;
+        if (w[0] == 'V' || w[0] == 'H') {
+            log.visibility.push_back({std::atof(w.c_str() + 1), w[0] == 'H'});
+        } else if (w[0] == 'F') {
+            const size_t colon = w.find(':');
+            if (colon != std::string::npos) log.frames.push_back({std::atof(w.substr(1, colon - 1).c_str()), std::atof(w.c_str() + colon + 1)});
+        }
+    }
+    return log;
+}
 
 struct Options {
     fs::path kite;
@@ -389,6 +472,8 @@ struct PhaseResult {
     double kiteMs = 0, kiteCsw = 0;          // every Kite process alive at both ends
     double browserMs = 0, browserCsw = 0;    // Kite.exe
     double trackerMs = 0, trackerCsw = 0;    // its threads named kTrackerThread
+    double startMs = 0, endMs = 0;           // Unix epoch ms, as the page logs them
+    double hiddenPct = -1, rafFps = -1;      // from the page's title; -1 unknown
     std::map<std::string, std::pair<double, double>> byType;  // ms, cs
     std::vector<std::pair<std::string, std::pair<double, double>>> topThreads;
 };
@@ -434,8 +519,9 @@ RunResult RunOnce(const Options& o, const std::string& arm, int index, double ts
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof limits);
     SetEnvironmentVariableW(L"KITE_SUPPORT_PATH", profile.c_str());
-    std::wstring cmd = L"\"" + o.kite.wstring() + L"\" --perf-log \"" + (profile / L"perf-log.jsonl").wstring() + L"\"";
-    if (arm == "off") cmd += L" --chromium-switches \"" + std::wstring(kOffSwitch) + L"\"";
+    std::wstring cmd = L"\"" + o.kite.wstring() + L"\" --perf-log \"" + (profile / L"perf-log.jsonl").wstring() + L"\" --perf-control --occlusion-log \"" +
+                       (profile / L"occlusion.jsonl").wstring() + L"\"";
+    if (arm == "on") cmd += L" --chromium-switches \"" + std::wstring(kOnSwitch) + L"\"";
     STARTUPINFOW si{sizeof si};
     si.dwFlags = STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_SHOWNOACTIVATE;
@@ -461,7 +547,7 @@ RunResult RunOnce(const Options& o, const std::string& arm, int index, double ts
     };
     std::vector<Raw> raws;
     RECT k{};
-    bool foreground = false;
+    bool foreground = false, occlusionOn = false;
     if (kite) {
         Pump(15000);
         foreground = GetAncestor(GetForegroundWindow(), GA_ROOT) == kite;
@@ -473,7 +559,9 @@ RunResult RunOnce(const Options& o, const std::string& arm, int index, double ts
             const int before = DisplayState();
             const auto pids = JobPids(job);
             raw.a = Take(pids);
+            raw.r.startMs = EpochMs();
             body();
+            raw.r.endMs = EpochMs();
             raw.b = Take(pids);
             raw.r.displayOn = before == 1 && DisplayState() == 1;
             LARGE_INTEGER f;
@@ -483,6 +571,7 @@ RunResult RunOnce(const Options& o, const std::string& arm, int index, double ts
             std::fprintf(stderr, "%s %s\n", label.c_str(), name);
         };
         phase("idle", [&] { Pump(o.idleMs); });
+        occlusionOn = Control(kite, R"({"occlusion":"on"})");
         phase("nearMover", [&] {
             // Right of Kite, or left of it when the screen ends first; never over it.
             const int screenRight = GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN);
@@ -502,6 +591,13 @@ RunResult RunOnce(const Options& o, const std::string& arm, int index, double ts
             PlaceAbove(mover, kite, RECT{k.left + 260, k.top + 150, k.left + 560, k.top + 350});
             Slide(mover, k.left + 260, k.top + 150, o.phaseMs);
             ShowWindow(mover, SW_HIDE);
+        });
+        phase("lockNotice", [&] {
+            DWORD session = 0;
+            ProcessIdToSessionId(browser, &session);
+            PostMessageW(kite, WM_WTSSESSION_CHANGE, WTS_SESSION_LOCK, session);
+            Pump(o.phaseMs);
+            PostMessageW(kite, WM_WTSSESSION_CHANGE, WTS_SESSION_UNLOCK, session);
         });
     } else {
         std::fprintf(stderr, "%s: no Kite window\n", label.c_str());
@@ -538,11 +634,25 @@ RunResult RunOnce(const Options& o, const std::string& arm, int index, double ts
         const size_t at = session.find("\"title\":\"vis:");
         if (at != std::string::npos) visibility = session.substr(at + 13, session.find('"', at + 13) - at - 13);
     }
+    // Kite's own occlusion verdicts (--occlusion-log), "verdict@seconds" from its start.
+    std::string verdicts;
+    {
+        std::ifstream in(profile / L"occlusion.jsonl", std::ios::binary);
+        for (std::string line; std::getline(in, line);) {
+            const size_t at = line.find("\"verdict\":\"");
+            const size_t t = line.find("\"t\":");
+            if (at == std::string::npos || t == std::string::npos) continue;
+            verdicts += (verdicts.empty() ? "" : " ") + line.substr(at + 11, line.find('"', at + 11) - at - 11) + "@" +
+                        line.substr(t + 4, line.find(',', t) - t - 4);
+        }
+    }
     fs::remove_all(profile, ec);
+    const PageLog pageLog = ParsePageLog(visibility);
 
     for (Raw& raw : raws) {
         PhaseResult& r = raw.r;
         const double s = r.seconds;
+        pageLog.Phase(r.startMs, r.endMs, r.hiddenPct, r.rafFps);
         for (const auto& [pid, cycles] : raw.b.processCycles) {
             const auto a = raw.a.processCycles.find(pid);
             if (a == raw.a.processCycles.end()) continue;
@@ -571,15 +681,18 @@ RunResult RunOnce(const Options& o, const std::string& arm, int index, double ts
         if (r.topThreads.size() > 6) r.topThreads.resize(6);
     }
 
-    result.ok = kite && closed && raws.size() == 4;
+    result.ok = kite && closed && raws.size() == 5 && occlusionOn;
+    if (kite && !occlusionOn) std::fprintf(stderr, "%s: Kite refused {\"occlusion\":\"on\"} (a build from before P2?)\n", label.c_str());
     std::string json = "{\"label\":" + Quote(label) + ",\"arm\":" + Quote(arm) + ",\"page\":" + Quote(o.page) + ",\"ok\":" + (result.ok ? "true" : "false") +
                        ",\"exit\":" + std::to_string(exitCode) + ",\"kiteForeground\":" + (foreground ? "true" : "false") + ",\"pageVisibility\":" +
-                       Quote(visibility) + ",\"phases\":[";
+                       Quote(visibility) + ",\"occlusionVerdicts\":" + Quote(verdicts) + ",\"phases\":[";
     for (size_t i = 0; i < raws.size(); ++i) {
         const PhaseResult& r = raws[i].r;
         json += std::string(i ? "," : "") + "{\"phase\":" + Quote(r.name) + ",\"s\":" + Fixed(r.seconds) + ",\"displayOn\":" + (r.displayOn ? "true" : "false") +
                 ",\"kiteMsPerS\":" + Fixed(r.kiteMs, 2) + ",\"kiteCswPerS\":" + Fixed(r.kiteCsw) + ",\"browserMsPerS\":" + Fixed(r.browserMs, 2) +
                 ",\"browserCswPerS\":" + Fixed(r.browserCsw) + ",\"trackerMsPerS\":" + Fixed(r.trackerMs, 3) + ",\"trackerCswPerS\":" + Fixed(r.trackerCsw) +
+                ",\"pageHiddenPct\":" + (r.hiddenPct < 0 ? std::string("null") : Fixed(r.hiddenPct)) +
+                ",\"rafFps\":" + (r.rafFps < 0 ? std::string("null") : Fixed(r.rafFps)) +
                 ",\"byType\":{";
         bool first = true;
         for (const auto& [type, v] : r.byType) {
@@ -662,24 +775,26 @@ int wmain(int argc, wchar_t** argv) {
     std::printf("Kite for Windows, Chromium's native occlusion tracker on and off (%s page; medians of %zu and %zu runs, %d left out; ms/s from CPU cycles)\n\n",
                 o.page.c_str(), kept["on"].size(), kept["off"].size(), dropped);
     std::printf("| phase | metric | on | off | off - on |\n|---|---|---:|---:|---:|\n");
-    const char* const phaseNames[] = {"idle", "nearMover", "covered", "overMover"};
+    const char* const phaseNames[] = {"idle", "nearMover", "covered", "overMover", "lockNotice"};
     struct Metric {
         const char* name;
         double PhaseResult::*field;
     };
     const Metric metrics[] = {{"Kite CPU ms/s", &PhaseResult::kiteMs},          {"Kite cs/s", &PhaseResult::kiteCsw},
                               {"browser CPU ms/s", &PhaseResult::browserMs},    {"browser cs/s", &PhaseResult::browserCsw},
-                              {"tracker thread CPU ms/s", &PhaseResult::trackerMs}, {"tracker thread cs/s", &PhaseResult::trackerCsw}};
-    for (size_t p = 0; p < 4; ++p) {
+                              {"tracker thread CPU ms/s", &PhaseResult::trackerMs}, {"tracker thread cs/s", &PhaseResult::trackerCsw},
+                              {"page hidden %", &PhaseResult::hiddenPct},       {"page rAF fps", &PhaseResult::rafFps}};
+    for (size_t p = 0; p < std::size(phaseNames); ++p) {
         for (const Metric& m : metrics) {
             double med[2] = {};
             int column = 0;
             for (const char* arm : {"on", "off"}) {
                 std::vector<double> v;
                 for (const RunResult& r : kept[arm])
-                    if (p < r.phases.size()) v.push_back(r.phases[p].*m.field);
-                med[column++] = Median(v);
+                    if (p < r.phases.size() && r.phases[p].*m.field >= 0) v.push_back(r.phases[p].*m.field);
+                med[column++] = v.empty() ? -1 : Median(v);
             }
+            if (med[0] < 0 && med[1] < 0) continue;  // the static page has no rAF samples
             std::printf("| %s | %s | %s | %s | %s |\n", phaseNames[p], m.name, Fixed(med[0], 2).c_str(), Fixed(med[1], 2).c_str(), Fixed(med[1] - med[0], 2).c_str());
         }
     }

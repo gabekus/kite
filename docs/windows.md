@@ -168,7 +168,8 @@ resize and reflow them. That leans on Chromium's window layout, so `--smoke-test
 if the widget isn't found; W10's off-screen pages replace it with `WasHidden`.
 A covered Kite (and a locked, display-off or other-desktop one) hides its
 shown page the same way (P2, "A window no one can see draws nothing" below):
-Chromium's own occlusion tracking covers only its top-level windows.
+Chromium's own occlusion tracker covers only its top-level windows, never
+these child-window pages, and Kite turns it off (P12b).
 `windows/helix/pages/popup-opener.html` logs the page's `visibilityState`,
 resizes and opener messages in its title to check all this (on Gabe's PC,
 not in CI). CEF runs its own UI
@@ -1370,6 +1371,17 @@ Windows that means:
     window when they could be stale: the end of a lock or display-off, the
     pointer on a covered Kite, Kite's activation, any cloak event, and the
     heartbeat's whole passes.
+  - **Chromium's own tracker is off** (P12b, docs/windows-native-occlusion.md):
+    Kite's browser process gets `--disable-features=CalculateNativeWinOcclusion`, merged
+    into CEF's own `disable-features` (`core/ChromiumSwitches.h`; `kitecore
+    chromium-switches` prints the result). In CEF 156 that tracker can't see Kite's pages
+    (child windows), so it never hid a covered Kite, and its thread woke about 1,800 times a
+    second (18 ms/s of CPU) whenever any app's window animated anywhere on the desktop. What
+    it did do for Kite, hide the pages on lock and display off, Kite's own occlusion does.
+    `--smoke-test` fails unless the feature is off and not also on. On a test profile,
+    `--chromium-switches "--enable-features=CalculateNativeWinOcclusion"` turns it back on
+    (the A/B tool, and a check after a CEF update: Chromium's main maps a child widget to its
+    root window, so a later CEF's tracker may see Kite).
   - **Off for test runs.** `--smoke-test` and `--frame-log` run without
     occlusion, so their checks of the slide and the crossfade can't pass
     unseen, and so does `--perf-control` until kiteperf asks for it in its
@@ -1388,6 +1400,15 @@ Windows that means:
     sharing it while covered) shows its card. While a recorder runs, a covered
     Kite draws (the verdict is visible, so there's no heartbeat); the watcher
     waits on the recorder's process, and its exit runs a pass.
+    A page made while Kite can't be seen isn't hidden. That happens when Kite opens behind
+    other windows, covered from its first pass, as a quiet `--perf-log` run does. Kite hides the
+    page's windows as the browser attaches, but the page turns `visible` about 0.15 s later
+    (measured: `hidden`, then `visible`, rAF at about 350 fps with the widget still hidden).
+    The verdict never changes, so nothing hides it again. It draws until the verdict goes to
+    visible and back; a lock or display off doesn't stop it, since the verdict was already
+    hidden. Chromium's tracker, on before P12b, did stop it on lock and display off. P12b
+    found this (docs/windows-native-occlusion.md); it's to fix. Showing and hiding the page's
+    host and widget windows once it's loaded does hide it.
 
 ## Measuring performance
 
@@ -1433,7 +1454,10 @@ behind other windows, without asking for the focus, and never shows a dialog, as
   (`OnBeforeCommandLineProcessing`), from an allow-list (`shell/PerfProtocol.h`): the GPU
   backend and rasterization (always in the sandboxed GPU process), throttling and backgrounding,
   the renderer limit, and four features that can be turned off by name, to measure Kite with one
-  and without. Nothing that weakens the sandbox, site isolation or web security, opens a
+  and without; and `--enable-features=CalculateNativeWinOcclusion`, which turns Chromium's
+  native occlusion tracker back on (off by default, P12b) and takes it out of
+  `disable-features`, so it's never both. One switch turning a feature on and another turning
+  it off is refused. Nothing that weakens the sandbox, site isolation or web security, opens a
   debugging port, or changes a path or a launched process. Chromium reads nothing else of
   Kite.exe's command line.
 

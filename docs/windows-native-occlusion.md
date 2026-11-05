@@ -1,13 +1,121 @@
-# Chromium's native occlusion tracker in Kite for Windows (P12a)
+# Chromium's native occlusion tracker in Kite for Windows (P12a, P12b)
 
-A measurement for a decision: should Kite for Windows turn off Chromium's own window occlusion
-tracker (`--disable-features=CalculateNativeWinOcclusion`)? It's a Chromium switch, so it's
-Gabe's call (perf plan row P12). Nothing here changes Kite's switches.
+**Off by default since P12b.** Kite for Windows turns off Chromium's own window occlusion
+tracker: its browser process gets `--disable-features=CalculateNativeWinOcclusion`. Gabe made
+the call (perf plan row P12) on P12a's measurement below, and P2 (#379), Kite's own occlusion,
+does the one thing the tracker did for Kite. "P12b: off, with P2" below is the check that it
+does.
 
-This stacks on #363 (kiteperf), which stacks on #359 (`--chromium-switches` for test profiles).
-The measurement tool is `windows/tools/perf/native-occlusion/occlusion-ab.cpp`.
+- **Where.** `core/ChromiumSwitches.h` works out the switches and
+  `KiteApp::OnBeforeCommandLineProcessing` (`shell/Chromium.cpp`) applies them. The feature goes
+  after whatever `disable-features` CEF already has, never replacing it. CEF 156 turns off five
+  features of its own, and Kite's helpers get all six:
+  `--disable-features=AutofillActorMode,CalculateNativeWinOcclusion,EnableHangWatcher,GlicActorUi,KillOnInvalidNavigationHeaders,LensOverlay`.
+  `kitecore chromium-switches` prints what Kite gives Chromium.
+- **Checked.** `--smoke-test` reads Chromium's command line back and fails unless the tracker
+  is off and not also on (or on and not off, when a run turned it on). CI runs it both ways.
+- **The measurement tool** is `windows/tools/perf/native-occlusion/occlusion-ab.cpp`. Its "on"
+  arm turns the tracker back on and its "off" arm is Kite's default.
 
-## Short answer
+## Turning it back on
+
+On a test profile (a `KITE_SUPPORT_PATH` holding a `kite-test-profile` file, as for every
+measurement hook in docs/windows.md, Measuring performance):
+
+```powershell
+Kite.exe --perf-log run.jsonl --chromium-switches "--enable-features=CalculateNativeWinOcclusion"
+kiteperf.exe --kite Kite.exe --chromium-switches "--enable-features=CalculateNativeWinOcclusion" ...
+```
+
+- `--enable-features=CalculateNativeWinOcclusion` is on `--chromium-switches`' allow-list
+  (`shell/PerfProtocol.h`). It's the only feature that can be turned on there.
+- It also takes the feature out of `disable-features`, so Chromium never gets it both on and
+  off. Chromium would read that as off.
+- A request that turns it on in one switch and off in another is refused.
+- It's for the A/B tool, and for a check after a CEF update (below: Chromium's main branch may
+  let the tracker see Kite's window). The default profile can't turn it on, so users can't
+  either. Shipping it on again means changing `DefaultDisabledFeatures()` in
+  `core/ChromiumSwitches.cpp`.
+
+## P12b: off, with P2
+
+Does P2 cover what the tracker did, with the tracker off? Kite at P12b, Release, CEF 156.0.7,
+on Gabe's PC (Windows 11 26200, 2560×1440), 2026-11-05, with `occlusion-ab` (Re-running it,
+below):
+
+- 3 runs per arm, alternating, and the tables give medians. "on" is the tracker turned back
+  on (`--enable-features`), "off" is Kite's default. Both arms have P2: off for idle, on from
+  then on (kiteperf's way of turning it on).
+- **The display was on for every phase of every run.** The tool checks it per phase and kept
+  it from idling off.
+- **The desktop was in use.** A quiet run opens at the bottom of the z-order, and Gabe's
+  maximized windows covered it. So once P2 was on, its verdict was covered from its first
+  pass in every run (each run's `--occlusion-log`).
+- No run took the foreground (`kiteForeground` false in all 12).
+
+Animating page (a CSS spin and a `requestAnimationFrame` canvas):
+
+| phase | Kite CPU ms/s on | off | tracker cs/s on | off | page hidden % on | off | rAF fps on | off |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| idle (P2 off) | 463.2 | 462.8 | 0.3 | 0 | 0 | 0 | 349.3 | 349.6 |
+| nearMover | 24.3 | 4.8 | 1,843 | 0 | 100 | 100 | 0 | 0 |
+| covered | 10.0 | 10.6 | 3.5 | 0 | 100 | 100 | 0 | 0 |
+| overMover | 27.0 | 8.4 | 1,852 | 0 | 100 | 100 | 0 | 0 |
+| lockNotice | 4.7 | 2.6 | 0.9 | 0 | 100 | 100 | 0 | 0 |
+
+Static page (30 s idle):
+
+| phase | Kite CPU ms/s on | off | browser cs/s on | off | tracker cs/s on | off | page hidden % on | off |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| idle (P2 off) | 5.5 | 5.4 | 76 | 78 | 0.2 | 0 | 0 | 0 |
+| nearMover | 22.7 | 3.7 | 2,053 | 49 | 1,835 | 0 | 100 | 100 |
+| covered | 7.9 | 7.4 | 44 | 43 | 3.5 | 0 | 100 | 100 |
+| overMover | 24.2 | 3.5 | 2,088 | 69 | 1,839 | 0 | 100 | 100 |
+| lockNotice | 2.4 | 2.3 | 25 | 26 | 0 | 0 | 100 | 100 |
+
+Reading them:
+
+- **The tracker's cost is gone.** Under an app window moving 60 times a second, beside Kite or
+  over it, the tracker took 1,835–1,852 cs/s and about 18 ms/s with it on, and nothing with it
+  off. Kite's CPU there went from 22.7–27.0 to 3.5–8.4 ms/s.
+- **Covered: P2 hides the page.** Once P2 was on, the page was `hidden` for the rest of the
+  run and `requestAnimationFrame` stopped, in both arms. Kite's CPU for the animating page went
+  from 463 ms/s (idle, P2 off) to 10 ms/s covered. The tracker made no difference there, since
+  it can't see Kite. A kiteperf run agrees (one run, Kite's default): anim 666.1 ms/s,
+  covered 6.2.
+- **Lock: what could be measured.** lockNotice posts `WM_WTSSESSION_CHANGE` with
+  `WTS_SESSION_LOCK` to Kite's window, and the unlock at the end. Nothing is locked, and
+  Chromium's tracker, which listens on a window of its own, never hears it.
+  - P2's verdict went to locked and back to covered in every run, at the phase's start and
+    end (`covered@0.05 locked@66.3 covered@86.3`), and the page stayed `hidden` with no frames.
+  - But the page was hidden already (covered). So this shows the lock path keeps a page hidden
+    and comes back cleanly. It doesn't show that a lock hides a page Kite was showing.
+  - That needs a Kite nothing covers before the lock. Gabe's desktop had no such place, and
+    these runs never raise Kite over his windows.
+  - The session was never actually locked.
+- **Display off: not measured.** The display stayed on, and nothing here turns it off. What
+  covers it:
+  - P2 listens for `GUID_SESSION_DISPLAY_STATUS` (`shell/Occlusion.cpp`), and its tests take
+    the verdict to DisplayOff and Locked and back (`OcclusionTests.cpp`:
+    `lockDisplayAndCloakHideAndComeBack`, `lockedOrDisplayOffHooksNothingAndIgnoresEvents`).
+  - Any hidden verdict hides the page the same way, through `SetOccluded`. That's the path
+    the covered phase measured.
+  - P12a measured what's at stake: 5 ms/s with the tracker on, 431 with it off, before P2.
+- **The gap: a page made while Kite can't be seen.** In a Kite that opened covered, with P2
+  on from its start, the page isn't hidden (docs/windows.md, P2's Known gaps). Measured with
+  this tool before it turned P2 on after idle, one run per arm:
+  - P2's verdict was covered from 0.15 s, then locked through lockNotice.
+  - The page stayed `visible` at about 350 fps in every phase, at 441–494 ms/s.
+  - Kite hides the page's windows as the browser attaches, but the page turns `visible`
+    about 0.15 s later, and with the verdict unchanged nothing hides it again.
+  - Chromium's tracker did hide such a page on lock and display off: P12a's display-off runs
+    were such runs, and their "on" arm stayed `hidden`. With the tracker off, a Kite that
+    opened covered and stayed covered keeps a page running through a lock or display off until
+    P2 handles this case.
+  - Showing and hiding the page's host and widget windows once it has loaded does hide it
+    (tried from outside the process: rAF stopped at once).
+
+## Short answer (P12a)
 
 - **The busy thread is Chromium's tracker.** The thread is
   `ThreadPoolSingleThreadCOMSTASharedForegroundBlocking`. With the feature on, it takes
@@ -21,7 +129,8 @@ The measurement tool is `windows/tools/perf/native-occlusion/occlusion-ab.cpp`.
   display off, an animating page ran `requestAnimationFrame` at about 357 fps, and Kite went
   from 5 to 431 ms of CPU a second.
 - **Recommendation: turn it off together with P2 (#379), not before.** P2 hides the page on
-  lock and display off itself, and also when Kite is covered or on another desktop.
+  lock and display off itself, and also when Kite is covered or on another desktop. P12b did,
+  after P2 landed.
 
 ## What the tracker is
 
@@ -78,11 +187,13 @@ into its title, read back from the session Kite saves on closing:
 
 That's the one thing Kite gets from the tracker today, and turning it off loses it.
 
-## Numbers
+## Numbers (P12a, before P2)
 
 Kite for Windows at perf/P0b-kiteperf (1618b7f5), Release, CEF 156.0.7 / Chromium
-156.0.8078.17, on Gabe's PC (Windows 11 26200, 2560×1440). "on" is Chromium's default; "off"
-is `--chromium-switches "--disable-features=CalculateNativeWinOcclusion"`.
+156.0.8078.17, on Gabe's PC (Windows 11 26200, 2560×1440). "on" was Chromium's default then;
+"off" was `--chromium-switches "--disable-features=CalculateNativeWinOcclusion"`. Neither arm
+had P2. The P12a tool's phases were idle, nearMover, covered and overMover, with Kite's own
+occlusion not yet there; today's tool adds lockNotice and turns P2 on after idle.
 
 - The arms alternated, on then off, 3 runs each, and the tables give medians. Each run is a
   fresh test profile with one local page, 60 s idle (30 s for the animating page), then 20 s for
@@ -154,7 +265,7 @@ page.
   ignores, and it has no moving window. Both arms passed the idle check (no presents, no
   commits).
 
-## Display state
+## Display state (P12a)
 
 The display was off for every run. This PC's monitor was off from idle the whole session,
 except about a minute at 20:50, which ended before a run could start. That doesn't make the
@@ -177,7 +288,8 @@ tracker dormant, so the A/B is still a valid measure of its cost:
   is off. P2 (#379) covers both itself: it hides the shown page's widget on
   `WTS_SESSION_LOCK` and on `GUID_SESSION_DISPLAY_STATUS` off, as well as when Kite is cloaked
   or covered. Without P2, turning the tracker off is a regression for an animating page left
-  open overnight.
+  open overnight. (P12b found one case P2 misses: a page made while Kite can't be seen. See
+  "P12b: off, with P2".)
 - **Nothing else in Kite reads it.** No Kite code reads page visibility, Chromium's occlusion
   state or `WasHidden`. Background tabs and a minimized Kite are hidden by hiding their widget
   windows (docs/windows.md, Rendering), which doesn't involve the tracker.
@@ -188,10 +300,10 @@ tracker dormant, so the A/B is still a valid measure of its cost:
 - **A CEF upgrade** may make the tracker work for child windows (above). The switch would then
   turn off something that works. P2 would still cover the same cases.
 
-## Recommendation
+## Recommendation (P12a)
 
 Turn the tracker off on Windows, in the same change as P2 (#379) or after it lands, never
-before.
+before. (P12b did, after P2 landed.)
 
 - **With P2,** turning it off loses nothing. P2 covers lock and display off itself, and covered
   and cloaked too, which Chromium's tracker can't do for Kite. It saves about 18 ms of CPU and
@@ -202,7 +314,8 @@ before.
   pages keep running: 431 ms/s of CPU for one animating page, where the tracker kept it at 5.
 - **The switch itself:** add `--disable-features=CalculateNativeWinOcclusion` in
   `OnBeforeCommandLineProcessing`, beside P2. If Kite ever sets other `disable-features`,
-  merge the lists into one switch: a second `--disable-features` replaces the first.
+  merge the lists into one switch: a second `--disable-features` replaces the first. (P12b
+  merges it with CEF's own list, `core/ChromiumSwitches.h`.)
 - **This is Windows only.** The tracker and the switch don't exist on the Mac, which uses
   AppKit's occlusion (perf plan P12 says "both platforms" for the audit as a whole).
 - **Re-check after a CEF upgrade.** If Chromium's `GA_ROOT` mapping arrives, the tracker would
@@ -216,9 +329,18 @@ From a Visual Studio developer prompt, with Kite built (Release):
 ```powershell
 cd windows\tools\perf\native-occlusion
 cl /nologo /O2 /EHsc /std:c++20 /W4 /DUNICODE /D_UNICODE /DNOMINMAX occlusion-ab.cpp
-.\occlusion-ab.exe --kite ..\..\..\build\Release\Kite.exe --runs 3 --out static.jsonl
-.\occlusion-ab.exe --kite ..\..\..\build\Release\Kite.exe --runs 3 --page anim --idle 30 --out anim.jsonl
+.\occlusion-ab.exe --kite ..\..\..\build\Release\Kite.exe --runs 3 --idle 30 --out static.jsonl
+.\occlusion-ab.exe --kite ..\..\..\build\Release\Kite.exe --runs 3 --page anim --idle 20 --out anim.jsonl
 ```
+
+- It needs a Kite from P12b on: its "on" arm passes
+  `--chromium-switches "--enable-features=CalculateNativeWinOcclusion"`, which an older Kite
+  refuses. Its "off" arm passes nothing.
+- It runs Kite with `--perf-control`, so Kite's own occlusion is off for idle (the page draws
+  wherever Kite is) and turned on after it, from a page that has been shown (see the gap
+  under "P12b"). With `--occlusion-log`, each run's line has Kite's verdicts.
+- Per phase it also gives the share of the phase the page was `hidden` and its rAF rate, from
+  the page's own log in its title.
 
 - It waits for the display to be on and never wakes it. It keeps the display on while a run
   goes, and leaves out of the medians any run whose display went off. Pass `--any-display` to
@@ -227,10 +349,9 @@ cl /nologo /O2 /EHsc /std:c++20 /W4 /DUNICODE /D_UNICODE /DNOMINMAX occlusion-ab
   line has per-process-type and per-thread numbers, and the page's visibility history.
 - Nothing in it takes the focus or sends input. Kite is a quiet `--perf-log` run, and the tool's
   own windows are `WS_EX_NOACTIVATE`, moved with `SWP_NOACTIVATE`.
-- Until #366 lands, Kite itself can still take the foreground when the PC has been idle
-  longer than Windows' foreground lock timeout (docs/windows.md, Measuring performance). The
-  runs here used a build with #366's page style patched in for that reason.
-- kiteperf's `idle` and `covered` phases give the whole-process view with
-  `--chromium-switches "--disable-features=CalculateNativeWinOcclusion"`. Its cover is a tool
-  window, which the tracker ignores by design, so kiteperf alone can't show the tracker's cost
-  under a moving window.
+- #366 (quiet runs never activate) has landed, so Kite itself can't take the foreground in
+  these runs. P12a's runs used a build with its page style patched in.
+- kiteperf's `idle` and `covered` phases give the whole-process view, with
+  `--chromium-switches "--enable-features=CalculateNativeWinOcclusion"` for the old default.
+  Its cover is a tool window, which the tracker ignores by design, so kiteperf alone can't show
+  the tracker's cost under a moving window.
