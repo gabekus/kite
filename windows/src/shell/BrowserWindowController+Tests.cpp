@@ -473,6 +473,8 @@ std::wstring BrowserWindowController::SmokeTestWindow() {
     if (std::wstring problem = SmokeTestFavorites(); !problem.empty()) return problem;
     // Pin Tab, renaming a tab and a folder, New Folder, Duplicate Tab, Back to Pinned URL and Reset.
     if (std::wstring problem = SmokeTestTabEditing(); !problem.empty()) return problem;
+    // A middle click on a tab's row closes it, as its close button does.
+    if (std::wstring problem = SmokeTestMiddleClick(); !problem.empty()) return problem;
     // And the caption buttons their glyphs.
     Pixels buttons;
     if (std::wstring problem = caption_->Draw(&buttons); !problem.empty()) return L"the caption buttons couldn't draw: " + problem;
@@ -1108,6 +1110,204 @@ std::wstring BrowserWindowController::SmokeTestTabEditing() {
     RunCommand("resetSpace");
     if (state_.FindTabByID(original)->url != "data:text/html,duplicate") return done(L"Reset all tabs in this Space didn't take the tab home");
     SendMouse(window_.Handle(), WM_MOUSELEAVE, POINT{}, 0);
+    return done({});
+}
+
+std::wstring BrowserWindowController::SmokeTestMiddleClick() {
+    // Everything here is undone at the end: the session as it was, the pages it made closed, the
+    // page that showed shown again.
+    const BrowserState before = state_;
+    const HWND window = window_.Handle();
+    const auto done = [&](std::wstring problem) {
+        SendMouse(window, WM_MOUSELEAVE, POINT{}, 0);
+        sidebar_->ClearHover();
+        if (sidebar_->Renaming()) sidebar_->TakeRename();
+        std::vector<std::string> made;
+        for (const Tab* tab : state_.SelectedSpace().AllTabs()) {
+            if (!before.FindTabByID(tab->id)) made.push_back(tab->id);
+        }
+        state_ = before;
+        ShowPage();
+        for (const std::string& id : made) PageGone(id);
+        StateChanged();
+        return problem;
+    };
+    const auto rowOf = [&](SidebarRow::Kind kind, const std::string& id) -> std::optional<size_t> {
+        const std::vector<SidebarRow>& rows = sidebar_->Rows();
+        for (size_t i = 0; i < rows.size(); ++i) {
+            if (rows[i].kind == kind && rows[i].id == id) return i;
+        }
+        return std::nullopt;
+    };
+    // Its page as Chromium has it (made or being made, not closed); without Chromium, no pages to check.
+    const auto hasPage = [&](const std::string& id) {
+#ifdef KITE_HAS_CEF
+        return !chromium_ || chromium_->HasPage(id);
+#else
+        (void)id;
+        return true;
+#endif
+    };
+    const auto pageGone = [&](const std::string& id) {
+#ifdef KITE_HAS_CEF
+        return !chromium_ || !chromium_->HasPage(id);
+#else
+        (void)id;
+        return true;
+#endif
+    };
+    // A middle click as the mouse sends it: pressed at `down`, moved to `up` and let go there.
+    const auto middleClick = [&](POINT down, POINT up) {
+        SendMouse(window, WM_MOUSEMOVE, down, 0);
+        SendMouse(window, WM_MBUTTONDOWN, down, MK_MBUTTON);
+        if (down.x != up.x || down.y != up.y) SendMouse(window, WM_MOUSEMOVE, up, MK_MBUTTON);
+        SendMouse(window, WM_MBUTTONUP, up, 0);
+    };
+
+    // A Today tab with its page on the card.
+    const std::string tab = state_.OpenTab("data:text/html,middle", std::nullopt, true);
+    StateChanged();
+    ShowPage();
+    if (!hasPage(tab)) return done(L"the middle-click test's tab got no page");
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    const auto row = rowOf(SidebarRow::Kind::Tab, tab);
+    const auto newTabRow = rowOf(SidebarRow::Kind::NewTab, state_.SelectedSpace().id);
+    const std::optional<POINT> at = row ? sidebar_->RowCentre(*row) : std::nullopt;
+    const std::optional<POINT> newTabAt = newTabRow ? sidebar_->RowCentre(*newTabRow) : std::nullopt;
+    if (!at || !newTabAt) return done(L"the middle-click test's tab or New Tab isn't in view");
+    const size_t tabsBefore = state_.SelectedSpace().AllTabs().size();
+
+    // Pressed on its row, then moved off onto New Tab and let go there: nothing closes or opens,
+    // and the press itself draws nothing.
+    SendMouse(window, WM_MOUSEMOVE, *at, 0);
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return done(L"the hovered row couldn't draw: " + problem);
+    const size_t draws = sidebar_->PageDraws();
+    SendMouse(window, WM_MBUTTONDOWN, *at, MK_MBUTTON);
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    if (sidebar_->PageDraws() != draws) return done(L"a middle press on a tab's row drew its page");
+    if (GetCapture() != window) return done(L"a middle press on a tab's row didn't take the mouse");
+    SendMouse(window, WM_MOUSEMOVE, *newTabAt, MK_MBUTTON);
+    SendMouse(window, WM_MBUTTONUP, *newTabAt, 0);
+    if (GetCapture() == window) return done(L"letting go of a middle press kept the mouse");
+    if (!state_.FindTabByID(tab) || !hasPage(tab) || state_.SelectedSpace().AllTabs().size() != tabsBefore) {
+        return done(L"a middle press moved off its row did something");
+    }
+
+    // Pressed and let go on its row: the tab closes and its page goes, as its close button does.
+    middleClick(*at, *at);
+    if (state_.FindTabByID(tab) || rowOf(SidebarRow::Kind::Tab, tab)) return done(L"a middle click on a Today tab's row didn't close it");
+    if (!pageGone(tab)) return done(L"a middle click on a Today tab's row left its page");
+    if (state_.archived.empty() || state_.archived.back().tab.id != tab) return done(L"a middle-clicked tab wasn't archived");
+
+    // Two more Today tabs (the second selected, on top) for the cases below.
+    const auto centreOf = [&](const std::string& id) -> std::optional<POINT> {
+        const auto r = rowOf(SidebarRow::Kind::Tab, id);
+        return r ? sidebar_->RowCentre(*r) : std::nullopt;
+    };
+    const std::string other = state_.OpenTab("data:text/html,middle-other", std::nullopt, true);
+    const std::string renamed = state_.OpenTab("data:text/html,middle-renamed", std::nullopt, true);
+    StateChanged();
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    std::optional<POINT> otherAt = centreOf(other), renamedAt = centreOf(renamed);
+    if (!otherAt || !renamedAt) return done(L"the middle-click test's tabs aren't in view");
+
+    // A press whose mouse capture is taken (another window takes it), or that the sidebar drops (the
+    // command bar opening), then let go on its row: nothing closes, and the mouse isn't kept.
+    SendMouse(window, WM_MOUSEMOVE, *otherAt, 0);
+    SendMouse(window, WM_MBUTTONDOWN, *otherAt, MK_MBUTTON);
+    ReleaseCapture();
+    SendMouse(window, WM_MBUTTONUP, *otherAt, 0);
+    if (!state_.FindTabByID(other) || GetCapture() == window) return done(L"a middle press that lost the mouse still closed its tab");
+    SendMouse(window, WM_MBUTTONDOWN, *otherAt, MK_MBUTTON);
+    sidebar_->ClearHover();
+    SendMouse(window, WM_MBUTTONUP, *otherAt, 0);
+    if (!state_.FindTabByID(other) || GetCapture() == window) return done(L"a middle press the sidebar dropped still closed its tab");
+
+    // A second press whose first never let go replaces it: let go on the second row, that tab
+    // closes, not the first's. (Then opened again where it was, for what follows.)
+    SendMouse(window, WM_MBUTTONDOWN, *otherAt, MK_MBUTTON);
+    SendMouse(window, WM_MBUTTONDOWN, *renamedAt, MK_MBUTTON);
+    SendMouse(window, WM_MBUTTONUP, *renamedAt, 0);
+    if (state_.FindTabByID(renamed) || !state_.FindTabByID(other) || GetCapture() == window) {
+        return done(L"a second middle press didn't replace the first");
+    }
+    if (state_.ReopenClosed(renamed) != renamed) return done(L"the middle-clicked tab didn't reopen");
+    StateChanged();
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    otherAt = centreOf(other);
+    renamedAt = centreOf(renamed);
+    if (!otherAt || !renamedAt) return done(L"the middle-click test's tabs aren't in view");
+
+    // While a tab is renamed: a middle click on its row does nothing (its close button is hidden),
+    // and one on another row ends the rename, keeping what was typed, then closes that row's tab.
+    state_.Select(renamed);
+    StateChanged();
+    RunCommand("renameCurrentTab");
+    for (wchar_t c : std::wstring_view(L"Kept")) SendMessageW(window, WM_CHAR, c, 0);
+    // In its field, and in its row left of the field (over the favicon), as a left press there.
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    const POINT renamedIcon{std::lround((sidebar_metrics::kPadding + sidebar_metrics::kIconInset) * scale), renamedAt->y};
+    for (const POINT point : {*renamedAt, renamedIcon}) {
+        middleClick(point, point);
+        if (!state_.FindTabByID(renamed) || sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Tab, renamed}) {
+            return done(L"a middle click on the row being renamed closed it or ended the rename");
+        }
+    }
+    middleClick(*otherAt, *otherAt);
+    if (sidebar_->Renaming() || !state_.FindTabByID(renamed) || state_.FindTabByID(renamed)->DisplayTitle() != "Kept") {
+        return done(L"a middle click on another row didn't end the rename, keeping what was typed");
+    }
+    if (state_.FindTabByID(other)) return done(L"a middle click that ended a rename didn't close its own row's tab");
+
+    // A space's cell in the bar: nothing.
+    if (const std::optional<POINT> cell = sidebar_->SpaceCellCentre(state_.SelectedSpaceIndex())) {
+        const std::string spaceID = state_.SelectedSpace().id;
+        const size_t count = state_.SelectedSpace().AllTabs().size();
+        middleClick(*cell, *cell);
+        if (state_.SelectedSpace().id != spaceID || state_.SelectedSpace().AllTabs().size() != count || GetCapture() == window) {
+            return done(L"a middle click on a space's cell did something");
+        }
+    } else {
+        return done(L"the selected space has no cell in the bar");
+    }
+
+    // A pinned tab: it unloads, as its close button does: its row stays, its page goes.
+    const std::string pinned = state_.OpenTab("data:text/html,middle-pinned", std::nullopt, true);
+    StateChanged();
+    RunCommand("pinTab");
+    ShowPage();
+    if (!hasPage(pinned)) return done(L"the middle-click test's pinned tab got no page");
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    const auto pinnedRow = rowOf(SidebarRow::Kind::Tab, pinned);
+    const std::optional<POINT> pinnedAt = pinnedRow ? sidebar_->RowCentre(*pinnedRow) : std::nullopt;
+    if (!pinnedAt) return done(L"the middle-click test's pinned tab isn't in view");
+    middleClick(*pinnedAt, *pinnedAt);
+    const auto location = state_.Location(pinned);
+    if (!location || location->section != TabSection::Pinned || !rowOf(SidebarRow::Kind::Tab, pinned)) {
+        return done(L"a middle click on a pinned tab's row didn't keep it, as its close button does");
+    }
+    if (!pageGone(pinned)) return done(L"a middle click on a pinned tab's row didn't unload its page");
+
+    // A favorite (a blank one, which its close button would remove for good): nothing.
+    std::vector<Tab> grid = state_.Favorites();
+    Tab favorite;
+    favorite.id = NewUuid();
+    favorite.url = "about:blank";
+    favorite.title = "Kite middle-click favorite";
+    grid.push_back(favorite);
+    const size_t index = grid.size() - 1;
+    state_.SetFavorites(grid);
+    StateChanged();
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the favorites couldn't draw: " + problem);
+    const std::optional<POINT> favoriteAt = sidebar_->FavoriteCentre(index);
+    if (!favoriteAt) return done(L"the middle-click test's favorite has no pane");
+    const std::optional<std::string> selected = state_.SelectedSpace().selectedTabID;
+    middleClick(*favoriteAt, *favoriteAt);
+    const std::vector<Tab> after = state_.Favorites();
+    if (after.size() != grid.size() || after.back().id != favorite.id || state_.SelectedSpace().selectedTabID != selected) {
+        return done(L"a middle click on a favorite did something");
+    }
+    if (GetCapture() == window) return done(L"a middle click on a favorite kept the mouse");
     return done({});
 }
 

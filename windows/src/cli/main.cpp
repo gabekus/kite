@@ -48,7 +48,10 @@
 // pane, it selects that favorite (in the space you're in); on the empty state's close button, it
 // dismisses it (the one-shot flag, written to the profile).
 // `collapse` is View → Collapse / Expand Pinned Tabs for a space. `click … --double` is the
-// second press of a double-click there (a tab's row renames, in the window).
+// second press of a double-click there (a tab's row renames, in the window). `click … --button middle`
+// is a middle click (pressed and let go at the point): on a tab's row it closes the tab as its close
+// button does (a Windows addition, not the Mac's), printing whether it went ("removed") or, pinned,
+// only unloaded; anywhere else, nothing. A close button's click prints the same `outcome`.
 // The tab edits (Tabs and the command bar's commands, and the sidebar's buttons): `tab pin` is Pin
 // Tab / Unpin Tab (Ctrl+D) and prints where the tab is now (pinned or unpinned, or favorite);
 // `favorite` is Add to / Remove from Favorites, likewise; `rename` renames it (no NAME, or a blank
@@ -180,7 +183,7 @@ int Usage() {
         "       kitecore [--profile DIR] suggest TEXT... [--current]\n"
         "       kitecore [--profile DIR] sidebar [SPACE_ID] [--page back,forward,loading] [--hidden]\n"
         "       kitecore [--profile DIR] collapse SPACE_ID\n"
-        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]] [--page back,forward,loading] [--double]\n"
+        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]] [--page back,forward,loading] [--double] [--button left|middle]\n"
         "       kitecore [--profile DIR] open TEXT... [--space ID] [--background]\n"
         "       kitecore [--profile DIR] select TAB_ID\n"
         "       kitecore [--profile DIR] tab next|prev|NUMBER\n"
@@ -335,6 +338,16 @@ void AddLook(json::Object& o, const SpaceIconLook& look, LookIn in = LookIn::Bar
 
 // Ids typed in either case, like UUID(uuidString:).
 std::string Id(const std::string& text) { return NormalizeUuid(text).value_or(text); }
+
+// What closing a tab did, as `close` and a click's `outcome` print it.
+const char* OutcomeName(CloseOutcome outcome) {
+    switch (outcome) {
+    case CloseOutcome::Removed: return "removed";
+    case CloseOutcome::Unloaded: return "unloaded";
+    case CloseOutcome::NotFound: return "notFound";
+    }
+    return "notFound";
+}
 
 std::optional<double> ParseSeconds(const std::string& text) {
     double value = 0;
@@ -730,12 +743,17 @@ int main(int argc, char** argv) {
     PageStatus page;
     bool hidden = false;
     int clicks = 1;
+    bool middle = false;
     if (args[0] == "sidebar" || args[0] == "click") {
         for (size_t i = 1; i < args.size(); ++i) {
             if (args[i] == "--hidden" && args[0] == "sidebar") {
                 hidden = true;
             } else if (args[i] == "--double" && args[0] == "click") {
                 clicks = 2;
+            } else if (args[i] == "--button" && args[0] == "click" && i + 1 < args.size()) {
+                if (args[i + 1] == "middle") middle = true;
+                else if (args[i + 1] != "left") return Usage();
+                args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
             } else if (args[i] == "--page" && i + 1 < args.size()) {
                 std::string_view rest = args[i + 1];
                 while (!rest.empty()) {
@@ -1038,7 +1056,26 @@ int main(int argc, char** argv) {
         const float listTop = SidebarListTop(tray);
         // The space bar along the bottom: a click on a space's cell selects it (pressed and let
         // go at the point, as the window's).
-        if (const auto button = values[0] >= 0 && values[0] < 240 ? TopRowItemAt(topRow, values[0], values[1]) : std::nullopt) {
+        if (middle) {
+            // A middle click (Windows' close-a-tab click): a tab's row closes as its close button
+            // does; anything else (the top row, the bar, a favorite, a folder, the header) takes nothing.
+            const auto press = values[0] >= 0 && values[0] < 240 && !TopRowItemAt(topRow, values[0], values[1]) &&
+                                       !(values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) &&
+                                       !InFavorites(tray, 240, values[0], values[1])
+                                   ? SidebarMiddlePressAt(rows, 240, values[2], values[3], values[0], values[1], listTop)
+                                   : std::nullopt;
+            json::Object out{{"target", std::string(press ? "row" : "none")}};
+            if (press) {
+                out.emplace("id", press->id);
+                const SidebarTap tap = SidebarMiddleRelease(*press, rows, 240, values[2], values[3], values[0], values[1], listTop);
+                out.emplace("action", std::string(tap.action == SidebarTap::Action::CloseTab ? "closeTab" : "none"));
+                if (tap.action == SidebarTap::Action::CloseTab) {
+                    out.emplace("outcome", std::string(OutcomeName(state.Close(tap.id))));
+                    changed = true;
+                }
+            }
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (const auto button = values[0] >= 0 && values[0] < 240 ? TopRowItemAt(topRow, values[0], values[1]) : std::nullopt) {
             // A top-row button: the command the window runs (nothing for a disabled one). Toggle
             // Sidebar and the page's commands are the window's, so nothing here changes.
             const TopRowItem& item = topRow[*button];
@@ -1101,7 +1138,10 @@ int main(int argc, char** argv) {
                 case SidebarTap::Action::SelectTab: state.Select(tap.id); changed = true; break;
                 case SidebarTap::Action::SetFolderExpanded: state.SetFolderExpanded(tap.id, tap.expanded); changed = true; break;
                 case SidebarTap::Action::TogglePinnedSection: TogglePinnedSection(state, tap.id); changed = true; break;
-                case SidebarTap::Action::CloseTab: state.Close(tap.id); changed = true; break;
+                case SidebarTap::Action::CloseTab:
+                    out.emplace("outcome", std::string(OutcomeName(state.Close(tap.id))));
+                    changed = true;
+                    break;
                 case SidebarTap::Action::ResetTab:
                     if (const auto url = state.ResetTab(tap.id)) out.emplace("url", *url);
                     changed = true;
@@ -1242,7 +1282,7 @@ int main(int argc, char** argv) {
         // Ctrl+W on a tab: prints whether it was removed (and archived) or only unloaded.
         const CloseOutcome outcome = state.Close(Id(args[1]));
         if (outcome == CloseOutcome::NotFound) return kNotFound;
-        std::puts(outcome == CloseOutcome::Removed ? "removed" : "unloaded");
+        std::puts(OutcomeName(outcome));
         changed = true;
     } else if (command == "reopen" && args.size() <= 2) {
         // Ctrl+Shift+T, or Undo Archive Tab for one tab: prints the tab that came back.

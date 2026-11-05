@@ -129,6 +129,8 @@ public:
     // pageClosed, and Show makes a new one if it comes back. A page still being made closes
     // once it exists. Back/forward history goes with it (the Mac keeps none either here).
     void Close(const std::string& tabID);
+    // Whether the tab has a page, made or being made, that Kite hasn't closed (the smoke test).
+    bool HasPage(const std::string& tabID) const;
     // Moves the shown page, after the window is resized (and shows it again after a minimize).
     void SetBounds(const RECT& bounds);
     // The window was minimized: the shown page is hidden too, so Chromium stops drawing it.

@@ -460,6 +460,10 @@ private:
     // keystroke drawing only the field) and from Rename Current Tab…, a folder renamed, New Folder,
     // Duplicate, Back to Pinned URL from its button and Reset all tabs, all undone after.
     std::wstring SmokeTestTabEditing();
+    // The smoke test's middle clicks: one on a Today tab's row closes it and its page, one moved off
+    // the row closes nothing, a pinned tab's unloads (its row stays, its page goes), and one on a
+    // favorite does nothing.
+    std::wstring SmokeTestMiddleClick();
     // Back to Pinned URL on the shown (live) page: the selected tab pinned, its page sent elsewhere,
     // then reset, waiting for the page to report it's home; unpinned again after.
     std::wstring SmokeTestLiveReset();

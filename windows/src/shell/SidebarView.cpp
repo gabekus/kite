@@ -1344,7 +1344,7 @@ std::optional<std::pair<SidebarView::RenameTarget, std::string>> SidebarView::Ta
     std::pair<RenameTarget, std::string> taken{renameTarget_, rename_->Text()};
     renamePressed_ = false;
     rename_.reset();
-    if (GetCapture() == window_ && !press_ && !barPress_) ReleaseCapture();
+    if (GetCapture() == window_ && !press_ && !barPress_ && !middlePress_) ReleaseCapture();
     InvalidateSelectedPage();  // its draw's commit takes the field's visuals away too
     return taken;
 }
@@ -1491,17 +1491,19 @@ void SidebarView::ClearHover() {
     if (barDragging_) DropSpace(D2D1_POINT_2F{-1, -1});
     renamePressed_ = false;
     // A press it drops lets go of the mouse too.
-    if ((press_ || barPress_ || topPress_ || favoritePress_) && GetCapture() == window_) {
+    if ((press_ || barPress_ || topPress_ || favoritePress_ || middlePress_) && GetCapture() == window_) {
         press_.reset();
         barPress_.reset();
         topPress_.reset();
         favoritePress_.reset();
+        middlePress_.reset();
         ReleaseCapture();
     }
     press_.reset();
     barPress_.reset();
     topPress_.reset();
     favoritePress_.reset();
+    middlePress_.reset();
     activating_ = false;
     RefreshHover();
 }
@@ -1785,6 +1787,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         if (barDragging_) DropSpace(D2D1_POINT_2F{-1, -1});
         renamePressed_ = false;
         topPress_.reset();
+        middlePress_.reset();
         if (press_ || barPress_ || favoritePress_) {
             press_.reset();
             barPress_.reset();
@@ -1816,6 +1819,58 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         POINT screen = at;
         ClientToScreen(window_, &screen);
         actions_.spaceMenu(*space, screen);
+        return true;
+    }
+    case WM_MBUTTONDOWN: {
+        // Windows' middle click on a tab's row closes it on release over that row (Chrome's and
+        // Edge's; the Mac has none), as its close button does. Only a tab's row with a close button
+        // takes it: favorites, folders, the header, the bar and the top row don't. It draws
+        // nothing until the close does. During another button's press it's ignored; a middle press
+        // whose release never came is replaced by this one.
+        const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+        if (p.x < 0 || p.x >= width_) return false;
+        if (press_ || barPress_ || topPress_ || favoritePress_ || renamePressed_) return true;
+        middlePress_.reset();
+        // While something is renamed, as a left press: in its field (or on Done), or elsewhere in a
+        // renamed tab's or folder's row (InRenamedRow), it does nothing and the field keeps editing
+        // (the row's close button is hidden while it renames, and closing a Today tab would lose
+        // what was typed). Anywhere else it ends the rename, keeping what was typed, and goes on as
+        // a press.
+        if (rename_) {
+            const D2D1_POINT_2F q = OnPage(p);
+            const auto done = rename_->DoneBox();
+            const bool onDone = done && q.x >= done->left && q.x < done->right && q.y >= done->top && q.y < done->bottom;
+            if (rename_->InField(q.x, q.y) || onDone || InRenamedRow(q)) {
+                if (GetCapture() == window_) ReleaseCapture();
+                return true;
+            }
+            EndRenaming(true);  // the rename's action rebuilds the rows
+        }
+        if (TopRowItemAt(topRow_->Items(), p.x, p.y) || BarPoint(p) || InFavorites(favorites_->Tray(), width_, p.x, p.y)) {
+            if (GetCapture() == window_) ReleaseCapture();
+            return true;
+        }
+        const D2D1_POINT_2F q = OnPage(p);
+        middlePress_ = SidebarMiddlePressAt(model_.rows, width_, Height(), scroll_, q.x, q.y, listTop_);
+        // A replaced press's capture carries over to the new one.
+        if (middlePress_ && GetCapture() != window_) SetCapture(window_);
+        else if (!middlePress_ && GetCapture() == window_) ReleaseCapture();
+        return true;
+    }
+    case WM_MBUTTONUP: {
+        if (!middlePress_) {
+            const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+            return p.x >= 0 && p.x < width_;
+        }
+        const SidebarPress press = *middlePress_;
+        middlePress_.reset();
+        if (GetCapture() == window_ && !press_ && !barPress_ && !topPress_ && !favoritePress_ && !renamePressed_) ReleaseCapture();
+        const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+        const D2D1_POINT_2F q = OnPage(p);
+        const SidebarTap tap = p.x < 0 || p.x >= width_
+                                   ? SidebarTap{}
+                                   : SidebarMiddleRelease(press, model_.rows, width_, Height(), scroll_, q.x, q.y, listTop_);
+        Perform(tap);  // the close button's closeTab, or nothing
         return true;
     }
     case WM_MOUSEHWHEEL: {
