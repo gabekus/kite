@@ -47,8 +47,10 @@
 // report did and when the app would save. `clear` drops the finished ones, `remove` one item.
 // `downloads location` prints a profile's download settings (default: every profile's) and the
 // folder its downloads go to (`usesDownloadsFolder` for the user's Downloads, which Kite.exe looks
-// up); with a FOLDER (stored absolute) it saves there, `ask` asks every time, `folder` stops
-// asking, `downloads` goes back to the Downloads folder (Settings › Profiles › Download location).
+// up); with a FOLDER (stored absolute; the Downloads folder's own path, given as FOLDER, is
+// stored as that path, since kitecore doesn't look the folder up: `downloads` stores none) it
+// saves there, `ask` asks every time, `folder` stops asking, `downloads` goes back to the
+// Downloads folder (Settings › Profiles › Download location).
 
 #include <algorithm>
 #include <charconv>

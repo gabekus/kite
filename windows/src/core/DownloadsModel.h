@@ -17,6 +17,7 @@
 // Not ported: the source tab titles kept for Tidy Downloads (Arc Max), which isn't on Windows,
 // and WebKit's downloads (Windows has one engine).
 
+#include <cstdint>
 #include <optional>
 #include <set>
 #include <string>
@@ -40,6 +41,31 @@ public:
 
 private:
     std::optional<double> dueAt_;
+};
+
+// The parked pages' stall check (shell/Chromium.cpp): a page kept for its downloads after its
+// tab closed goes once they've made no progress for kStallMs, so a stalled one can't keep a page
+// for ever. Its timer runs only while a page is parked, and stops the moment none is, so an idle
+// Kite has no wakeups from it.
+struct ParkedStallCheck {
+    static constexpr uint64_t kStallMs = 10 * 60 * 1000;  // no progress this long: cancelled
+    static constexpr uint64_t kEveryMs = 60 * 1000;       // how often it looks
+    enum class Timer { Leave, Start, Stop };
+    bool running = false;
+    // The parked pages are now `parked` many: what to do with the timer.
+    Timer Parked(size_t parked) {
+        if (parked > 0 && !running) {
+            running = true;
+            return Timer::Start;
+        }
+        if (parked == 0 && running) {
+            running = false;
+            return Timer::Stop;
+        }
+        return Timer::Leave;
+    }
+    // Whether a download that last moved at `progressedAt` has stalled at `now` (ms, any clock).
+    static bool Stalled(uint64_t progressedAt, uint64_t now) { return now > progressedAt && now - progressedAt > kStallMs; }
 };
 
 class DownloadsModel {

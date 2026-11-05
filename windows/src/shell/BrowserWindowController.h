@@ -77,12 +77,13 @@ public:
         // Where downloads go for a profile that chose no folder (core/ProfileSettings.h's
         // DefaultDownloadFolder: a test run's own folder, never the user's Downloads).
         std::filesystem::path downloadFolder;
-        // --save-log only (KITE_TEST_CLOSE_TAB_MS): the selected tab closes this long after the
-        // window shows, as its close button would.
+        // --save-log on a test profile only (KITE_TEST_CLOSE_TAB_MS): this long after the window
+        // shows, the shown page gets a click's user activation, and its tab closes 0.5 s later, as
+        // its close button would.
         std::optional<unsigned> testCloseTabMs;
-        // --save-log only (KITE_TEST_AUTOMATIC_DOWNLOADS=1): a page may start many downloads with
-        // no click (Chromium::AllowAutomaticDownloads), for the live check of a burst.
-        bool testAutomaticDownloads = false;
+        // --save-log on a test profile only (KITE_TEST_AUTOMATIC_DOWNLOADS=ORIGIN, a local test
+        // server): its pages may start many downloads with no click, for the live check of a burst.
+        std::optional<std::string> testAutomaticDownloads;
         // --save-log: each save handed to the writer (when, and what it cost the UI thread) is
         // kept for SaveSaveLog.
         bool saveLog = false;
@@ -279,6 +280,7 @@ private:
     };
     DownloadCost downloadCost_;
     bool askingToQuit_ = false;   // "Downloads in progress" is open
+    bool testGestureGiven_ = false;  // the test tab close's click, before the close
     bool quitConfirmed_ = false;  // asked (or nothing to ask): the window closes
     SaveSchedule saveSchedule_;
     // What saving cost Kite's UI thread (the copy handed to the writer), for the save log.

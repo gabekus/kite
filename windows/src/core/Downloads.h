@@ -218,8 +218,10 @@ std::string SafeDownloadName(std::string_view name);
 // "name 3.ext"... while `taken` says a path is used (a file there, or reserved by a download
 // still running, since Chromium creates the file only once data arrives). None after
 // kUniqueNameTries names (the Mac tries for ever). `maxPath`: the whole path's limit in UTF-16
-// units (Windows' MAX_PATH less its terminator, 259, where long paths aren't on), which a long
-// name in a deep folder is shortened to fit, as Chrome does; 0 for none.
+// units (Windows' MAX_PATH less its terminator, 259), which a long name in a deep folder is
+// shortened to fit, as Chrome does (CEF's Alloy writes the target itself, no .crdownload beside
+// it: checked on the PC); 0 for none. A shortened name is never a device name ("AUXreport.pdf"
+// cut to "AUX.pdf" is "_AU.pdf"), and an extension over 32 units goes before the name does.
 inline constexpr int kUniqueNameTries = 1000;
 std::optional<std::filesystem::path> UniqueDownloadPath(std::string_view name, const std::filesystem::path& directory,
                                                         const std::function<bool(const std::filesystem::path&)>& taken,
@@ -228,10 +230,16 @@ std::optional<std::filesystem::path> UniqueDownloadPath(std::string_view name, c
 // The paths given to downloads still running, so no two get one (KCBrowser.mm's LiveDownloads'
 // paths): Chromium creates a download's file only once data arrives, so a burst of same-name
 // downloads would all find the same name free on the disk. Reserve finds and holds a path in one
-// step, so two at once never get the same one. Paths compare as Windows' names do, without case
-// (Unicode case folding). Any thread.
+// step, so two at once never get the same one. Paths compare as `same` says: Windows' names
+// don't care about case, and the shell passes CompareStringOrdinal's ignore-case comparison,
+// which answers as NTFS does (checked: a and A are one name; ſ and s, ı and I, ς and σ, µ and μ,
+// which case folding joins, are two). Without one, Unicode case folding, which errs towards
+// numbering a name that didn't need it, never towards sharing one. Any thread.
 class DownloadReservations {
 public:
+    using SamePath = std::function<bool(const std::filesystem::path&, const std::filesystem::path&)>;
+    explicit DownloadReservations(SamePath same = {});
+
     // A free path for `owner` (a download), held until Release: `name` made unique in `directory`
     // against the disk (`exists`, asked without the lock held) and every path held. Its own
     // earlier one doesn't count (Chromium asking again for a restarted download). None when no
@@ -241,11 +249,13 @@ public:
     // Holds the path the download really uses (the Save As dialog may have moved it).
     void Hold(const std::string& owner, const std::filesystem::path& path);
     void Release(const std::string& owner);
-    // Whether someone other than `except` holds `path`.
+    // For the tests: whether someone other than `except` holds `path`, and how many are held.
     bool Held(const std::filesystem::path& path, const std::string& except = {}) const;
     size_t Count() const;
 
 private:
+    bool Same(const std::filesystem::path& a, const std::filesystem::path& b) const;
+    SamePath same_;
     mutable std::mutex mutex_;
     std::map<std::string, std::filesystem::path> held_;
 };

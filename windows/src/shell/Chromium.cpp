@@ -28,6 +28,7 @@
 #include "include/cef_task.h"
 #include "include/cef_v8.h"
 #include "core/Json.h"
+#include "core/DownloadsModel.h"
 #include "core/LiveTabPolicy.h"
 #include "core/Uuid.h"
 #include "shell/Keys.h"
@@ -177,7 +178,9 @@ struct Chromium::Shared {
     std::vector<LiveDownload> liveDownloads;
     // The paths given to downloads still running, by download (DownloadKey): reserved as each
     // one's free name is found, so a burst of same-name downloads gets a path each.
-    DownloadReservations reservations;
+    DownloadReservations reservations{[](const std::filesystem::path& a, const std::filesystem::path& b) {
+        return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_EQUAL;
+    }};
     // Downloads whose name is being found on CEF's file thread, with Chromium's callback (held
     // here rather than in the task, so a shutdown lets go of them before CEF goes).
     std::map<std::string, CefRefPtr<CefBeforeDownloadCallback>> resolving;
@@ -196,23 +199,32 @@ struct Chromium::Shared {
     // downloads (it hands them to another page of the profile only if one is there as it goes,
     // seen both ways on the PC). `window`: a page past DoClose (it closed itself), whose window
     // is destroyed then; else one Kite closed, which CloseBrowser closes then. A parked page opens
-    // no popups or tabs, and one whose downloads haven't moved for kStallMs is cancelled and goes.
+    // no popups or tabs, shows no dialogs (Leave Page is answered Leave), and one whose downloads
+    // haven't moved for ParkedStallCheck::kStallMs is cancelled and goes.
     struct Parked {
         CefRefPtr<CefBrowser> browser;
         HWND window = nullptr;
     };
     std::vector<Parked> parked;
-    static constexpr ULONGLONG kStallMs = 10 * 60 * 1000;
-    static constexpr int64_t kStallCheckMs = 60 * 1000;
-    bool stallCheckArmed = false;  // Kite's UI thread
-    // Under downloadsMutex: which browsers are parked (CEF's thread asks, for popups and stalls),
-    // and what each parked page was as it went (the save log: its address and whether it was muted).
+    // The stall check's timer on Kite's window (BrowserWindowController hands its WM_TIMER to
+    // Chromium::HandleTimer), running only while a page is parked (ParkedStallCheck).
+    ParkedStallCheck stallCheck;  // Kite's UI thread
+    // Under downloadsMutex: which browsers are parked (CEF's thread asks, for popups, dialogs and
+    // stalls), and, for --save-log only (logParked), what each parked page was as it went.
     std::set<int> parkedIDs;
+    bool logParked = false;
     std::vector<std::pair<std::string, bool>> parkedLog;
+    std::atomic<int> parkedLeavesAnswered{0};  // Leave Page dialogs a parked page asked for
 
     bool IsParked(int browser) const {
         std::lock_guard lock(downloadsMutex);
         return parkedIDs.contains(browser);
+    }
+    // Any thread: the page is parked from now on (before it's quietened, so the Leave Page dialog
+    // its navigation asks for is answered as a parked page's).
+    void MarkParked(int browser) {
+        std::lock_guard lock(downloadsMutex);
+        parkedIDs.insert(browser);
     }
     // Kite's thread. Parks a page (or gives a parked one the window it now has to destroy).
     void Park(const CefRefPtr<CefBrowser>& browser, HWND pageWindow) {
@@ -222,11 +234,8 @@ struct Chromium::Shared {
             return;
         }
         parked.push_back({browser, pageWindow});
-        {
-            std::lock_guard lock(downloadsMutex);
-            parkedIDs.insert(browser->GetIdentifier());
-        }
-        ArmStallCheck();
+        MarkParked(browser->GetIdentifier());
+        FollowParked();
     }
     // CEF's thread: a page that's parked plays nothing and runs nothing (its camera, microphone,
     // sound and scripts go with the navigation); its downloads belong to its profile, not the
@@ -235,44 +244,52 @@ struct Chromium::Shared {
         browser->GetHost()->SetAudioMuted(true);
         if (const CefRefPtr<CefFrame> frame = browser->GetMainFrame()) frame->LoadURL("about:blank");
     }
-    // Closes a parked page now, on CEF's thread, noting what it was.
+    // Closes a parked page now, on CEF's thread, noting what it was for --save-log.
     void CloseParked(const Parked& page) {
+        bool log = false;
         {
             std::lock_guard lock(downloadsMutex);
             parkedIDs.erase(page.browser->GetIdentifier());
+            log = logParked;
         }
-        RunOnCefUIThread([this, page] {
-            {
-                std::lock_guard lock(downloadsMutex);
+        RunOnCefUIThread([this, page, log] {
+            if (log) {
                 const CefRefPtr<CefFrame> frame = page.browser->GetMainFrame();
-                parkedLog.emplace_back(frame ? frame->GetURL().ToString() : std::string(), page.browser->GetHost()->IsAudioMuted());
+                std::pair<std::string, bool> entry(frame ? frame->GetURL().ToString() : std::string(), page.browser->GetHost()->IsAudioMuted());
+                std::lock_guard lock(downloadsMutex);
+                parkedLog.push_back(std::move(entry));
             }
             if (page.window) DestroyWindow(page.window);
             else page.browser->GetHost()->CloseBrowser(true);
         });
     }
-    // Kite's thread: while a page is parked, once a minute, its downloads that haven't moved for
-    // kStallMs are cancelled (their page then goes, ReleaseParked). Nothing runs while none is.
-    void ArmStallCheck() {
-        if (stallCheckArmed || parked.empty() || closing) return;
-        stallCheckArmed = true;
-        CefPostDelayedTask(TID_UI, new FunctionTask([this] {
-            std::vector<CefRefPtr<CefDownloadItemCallback>> stalled;
-            {
-                std::lock_guard lock(downloadsMutex);
-                const ULONGLONG now = GetTickCount64();
-                for (const LiveDownload& download : liveDownloads) {
-                    if (download.running && download.callback && parkedIDs.contains(download.browser) && now - download.progressedAt > kStallMs) {
-                        stalled.push_back(download.callback);
-                    }
+    // Kite's thread: the stall check's timer runs exactly while a page is parked.
+    void FollowParked() {
+        switch (stallCheck.Parked(closing ? 0 : parked.size())) {
+        case ParkedStallCheck::Timer::Start:
+            SetTimer(window, Chromium::kStallTimer, static_cast<UINT>(ParkedStallCheck::kEveryMs), nullptr);
+            break;
+        case ParkedStallCheck::Timer::Stop: KillTimer(window, Chromium::kStallTimer); break;
+        case ParkedStallCheck::Timer::Leave: break;
+        }
+    }
+    // Kite's thread, the timer's tick: a parked page's downloads that haven't moved for kStallMs
+    // are cancelled (CefDownloadItemCallback may be called on any thread); their page then goes.
+    int stallTicks = 0;  // the timer's ticks (Kite's thread), for the save log
+    void CancelStalled() {
+        ++stallTicks;
+        std::vector<CefRefPtr<CefDownloadItemCallback>> stalled;
+        {
+            std::lock_guard lock(downloadsMutex);
+            const ULONGLONG now = GetTickCount64();
+            for (const LiveDownload& download : liveDownloads) {
+                if (download.running && download.callback && parkedIDs.contains(download.browser) &&
+                    ParkedStallCheck::Stalled(download.progressedAt, now)) {
+                    stalled.push_back(download.callback);
                 }
             }
-            for (const auto& callback : stalled) callback->Cancel();
-            Post([this] {
-                stallCheckArmed = false;
-                ArmStallCheck();
-            });
-        }), kStallCheckMs);
+        }
+        for (const auto& callback : stalled) callback->Cancel();
     }
 
     LiveDownload* FindLiveDownload(const std::string& context, uint32_t id) {
@@ -312,6 +329,7 @@ struct Chromium::Shared {
             CloseParked(*it);
             it = parked.erase(it);
         }
+        FollowParked();
     }
 
     // The settings for a download from `profile` (DownloadLocation.settings; a profile Kite
@@ -602,7 +620,9 @@ public:
     CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
     // Only in a quiet run, which shows no dialog: otherwise Chromium's own.
     CefRefPtr<CefDialogHandler> GetDialogHandler() override { return shared_->quiet ? this : nullptr; }
-    CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return shared_->quiet ? this : nullptr; }
+    // Always: a parked page's dialogs are answered here too (its tab has closed); others go on to
+    // Chromium's own unless the run is quiet.
+    CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
@@ -693,6 +713,7 @@ public:
             if (park) {
                 if (const HWND widget = FindPageWidget(hwnd)) ShowWindow(widget, SW_HIDE);
                 ShowWindow(hwnd, SW_HIDE);
+                shared_->MarkParked(browser->GetIdentifier());
                 Chromium::Shared::Quieten(browser);
             } else {
                 RunOnCefUIThread([hwnd] { DestroyWindow(hwnd); });
@@ -854,8 +875,11 @@ public:
             // openOrSavePanel), and Chromium cancels the download. Refused, it no longer holds
             // its page open.
             LogSkippedModal(L"save panel: " + suggestedName.ToWString());
-            std::lock_guard lock(shared_->downloadsMutex);
-            if (auto* live = shared_->FindLiveDownload(context, id)) live->running = false;
+            {
+                std::lock_guard lock(shared_->downloadsMutex);
+                if (auto* live = shared_->FindLiveDownload(context, id)) live->running = false;
+            }
+            shared_->Post([shared = shared_] { shared->ReleaseParked(); });
             return false;
         }
         Resolve(shared_, context, id, suggestedName.ToString(), std::move(settings), std::move(fallback), callback);
@@ -905,9 +929,11 @@ public:
                         return;
                     }
                     if (!path) {
-                        // kUniqueNameTries names taken: the callback goes unused, which cancels it.
+                        // kUniqueNameTries names taken: the callback goes unused, which cancels it,
+                        // and a page parked meanwhile may go.
                         live->running = false;
                         OutputDebugStringW(L"Kite: no free name for a download; cancelled\n");
+                        shared->Post([shared] { shared->ReleaseParked(); });
                         return;
                     }
                 }
@@ -986,8 +1012,14 @@ public:
     }
 
     // alert, confirm and prompt are suppressed: they return at once, as a dismissed one does.
-    bool OnJSDialog(CefRefPtr<CefBrowser>, const CefString&, JSDialogType type, const CefString& message, const CefString&,
+    bool OnJSDialog(CefRefPtr<CefBrowser> browser, const CefString&, JSDialogType type, const CefString& message, const CefString&,
                     CefRefPtr<CefJSDialogCallback>, bool& suppressMessage) override {
+        // A parked page's tab has closed: nothing it says is shown.
+        if (shared_->IsParked(browser->GetIdentifier())) {
+            suppressMessage = true;
+            return false;
+        }
+        if (!shared_->quiet) return false;  // Chromium's own dialog
         const wchar_t* kind = type == JSDIALOGTYPE_CONFIRM ? L"confirm" : type == JSDIALOGTYPE_PROMPT ? L"prompt" : L"alert";
         LogSkippedModal(std::wstring(L"javascript ") + kind + L": " + message.ToWString());
         suppressMessage = true;
@@ -997,7 +1029,15 @@ public:
     // Leave Page? Left, as the Mac's forced close and quit answer it (KCBrowser.mm's
     // OnBeforeUnloadDialog), and like it on a later turn of CEF's thread: answering inside this
     // call slowed Chromium's teardown there.
-    bool OnBeforeUnloadDialog(CefRefPtr<CefBrowser>, const CefString&, bool isReload, CefRefPtr<CefJSDialogCallback> callback) override {
+    bool OnBeforeUnloadDialog(CefRefPtr<CefBrowser> browser, const CefString&, bool isReload, CefRefPtr<CefJSDialogCallback> callback) override {
+        // A parked page leaves, as the Mac's closed pages do (KCBrowser.mm's OnBeforeUnloadDialog):
+        // its tab is gone, so there's no one to ask, and Stay would keep it running on its page.
+        if (shared_->IsParked(browser->GetIdentifier())) {
+            ++shared_->parkedLeavesAnswered;
+            RunOnCefUIThread([callback] { callback->Continue(true, CefString()); });
+            return true;
+        }
+        if (!shared_->quiet) return false;  // Chromium's own dialog
         LogSkippedModal(isReload ? L"reload page dialog" : L"leave page dialog");
         RunOnCefUIThread([callback] { callback->Continue(true, CefString()); });
         return true;
@@ -1300,6 +1340,7 @@ bool Chromium::Shutdown() {
     }
     for (const auto& page : shared_->parked) shared_->CloseParked(page);
     shared_->parked.clear();
+    shared_->FollowParked();
     // Messages are pumped while waiting: the page windows' teardown on CEF's thread sends
     // messages to this one (their input queues are attached), and a bare wait stalled
     // OnBeforeClose until the timeout, then shut down under live browsers.
@@ -1514,6 +1555,7 @@ bool Chromium::MayCloseWindow() {
         // Pages kept for their downloads go too (quitting cancels those downloads first).
         for (const auto& page : shared_->parked) shared_->CloseParked(page);
         shared_->parked.clear();
+        shared_->FollowParked();
         // A browser that never answers mustn't keep the window open: after this the close
         // goes ahead, and Shutdown's bounded wait covers the rest. The timer repeats (it goes
         // with the window), since its tick and GetTickCount64's can disagree by one step.
@@ -1568,13 +1610,42 @@ void Chromium::CancelDownloads(std::vector<DownloadKey> downloads, std::function
     });
 }
 
-void Chromium::AllowAutomaticDownloads() {
-    RunOnCefUIThread([] {
+void Chromium::AllowAutomaticDownloads(const std::string& origin) {
+    RunOnCefUIThread([origin] {
         if (CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext()) {
-            context->SetContentSetting(CefString(), CefString(), CEF_CONTENT_SETTING_TYPE_AUTOMATIC_DOWNLOADS, CEF_CONTENT_SETTING_VALUE_ALLOW);
+            context->SetContentSetting(origin, origin, CEF_CONTENT_SETTING_TYPE_AUTOMATIC_DOWNLOADS, CEF_CONTENT_SETTING_VALUE_ALLOW);
         }
     });
 }
+
+bool Chromium::HandleTimer(UINT_PTR id) {
+    if (id != kStallTimer) return false;
+    shared_->CancelStalled();
+    return true;
+}
+
+bool Chromium::TestUserGesture() {
+    auto it = shared_->pages.find(shared_->shown);
+    if (it == shared_->pages.end() || !it->second.browser) return false;
+    RunOnCefUIThread([browser = it->second.browser] {
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("expression", "document.title = 'clicked'");
+        params->SetBool("userGesture", true);
+        browser->GetHost()->ExecuteDevToolsMethod(0, "Runtime.evaluate", params);
+    });
+    return true;
+}
+
+void Chromium::LogParkedPages() {
+    std::lock_guard lock(shared_->downloadsMutex);
+    shared_->logParked = true;
+}
+
+int Chromium::ParkedLeavePagesAnswered() const { return shared_->parkedLeavesAnswered; }
+
+bool Chromium::StallCheckRunning() const { return shared_->stallCheck.running; }
+
+int Chromium::StallCheckTicks() const { return shared_->stallTicks; }
 
 std::vector<std::pair<std::string, bool>> Chromium::ParkedPages() const {
     std::lock_guard lock(shared_->downloadsMutex);

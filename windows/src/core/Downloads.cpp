@@ -647,12 +647,27 @@ std::optional<std::filesystem::path> UniqueDownloadPath(std::string_view name, c
         const size_t folderUnits = Utf16Length(std::u32string_view(folderPoints.data(), folderPoints.size()));
         room = folderUnits + 1 < maxPath ? std::min<size_t>(room, maxPath - folderUnits - 1) : 1;
     }
-    // The base gives way to the number and the extension, keeping at least one character.
+    // The base gives way to the number and the extension, keeping at least one character; an
+    // extension over 32 units goes first when they don't fit (SafeDownloadName's rule). A base cut
+    // down to a device name ("AUXreport" to "AUX") is marked as SafeDownloadName marks one.
     const auto fit = [&](const std::string& number) {
+        std::u32string ending = tail;
         std::u32string kept(basePoints.begin(), basePoints.end());
-        while (kept.size() > 1 && Utf16Length(kept) + number.size() + Utf16Length(tail) > room) kept.pop_back();
-        while (kept.size() > 1 && (kept.back() == U' ' || kept.back() == U'.')) kept.pop_back();
-        return directory / utf8(unicode::Encode(kept) + number + unicode::Encode(tail));
+        if (Utf16Length(ending) > 32 && Utf16Length(kept) + number.size() + Utf16Length(ending) > room) ending.clear();
+        const auto shorten = [&] {
+            while (kept.size() > 1 && Utf16Length(kept) + number.size() + Utf16Length(ending) > room) kept.pop_back();
+            while (kept.size() > 1 && (kept.back() == U' ' || kept.back() == U'.')) kept.pop_back();
+        };
+        shorten();
+        if (number.empty()) {
+            std::u32string_view stem = std::u32string_view(kept).substr(0, kept.find(U'.'));
+            while (!stem.empty() && stem.back() == U' ') stem.remove_suffix(1);
+            if (IsDeviceName(unicode::Encode(stem))) {
+                kept.insert(kept.begin(), U'_');
+                shorten();
+            }
+        }
+        return directory / utf8(unicode::Encode(kept) + number + unicode::Encode(ending));
     };
     std::filesystem::path candidate = fit("");
     for (int n = 2; taken(candidate); ++n) {
@@ -665,13 +680,19 @@ std::optional<std::filesystem::path> UniqueDownloadPath(std::string_view name, c
 
 namespace {
 
-// Windows' names don't care about case: compared by their Unicode case folding.
+// Without the shell's comparison: by Unicode case folding.
 std::u32string FoldedPath(const std::filesystem::path& path) {
     const auto text = path.lexically_normal().u8string();
     return unicode::Folded(std::string_view(reinterpret_cast<const char*>(text.data()), text.size()));
 }
 
 }  // namespace
+
+DownloadReservations::DownloadReservations(SamePath same) : same_(std::move(same)) {}
+
+bool DownloadReservations::Same(const std::filesystem::path& a, const std::filesystem::path& b) const {
+    return same_ ? same_(a, b) : FoldedPath(a) == FoldedPath(b);
+}
 
 std::optional<std::filesystem::path> DownloadReservations::Reserve(const std::string& owner, std::string_view name,
                                                                    const std::filesystem::path& directory,
@@ -684,10 +705,9 @@ std::optional<std::filesystem::path> DownloadReservations::Reserve(const std::st
         name, directory,
         [&](const std::filesystem::path& candidate) {
             if (exists(candidate)) return true;
-            const std::u32string folded = FoldedPath(candidate);
             std::lock_guard lock(mutex_);
             for (const auto& [other, path] : held_) {
-                if (other != owner && FoldedPath(path) == folded) return true;
+                if (other != owner && Same(path, candidate)) return true;
             }
             held_[owner] = candidate;
             return false;
@@ -706,10 +726,9 @@ void DownloadReservations::Release(const std::string& owner) {
 }
 
 bool DownloadReservations::Held(const std::filesystem::path& path, const std::string& except) const {
-    const std::u32string folded = FoldedPath(path);
     std::lock_guard lock(mutex_);
     for (const auto& [owner, held] : held_) {
-        if (owner != except && FoldedPath(held) == folded) return true;
+        if (owner != except && Same(held, path)) return true;
     }
     return false;
 }

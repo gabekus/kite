@@ -12,6 +12,7 @@
 #include <atomic>
 
 #ifdef _WIN32
+#include <windows.h>
 #include <share.h>
 #include <stdio.h>
 #endif
@@ -603,8 +604,72 @@ TEST(aBurstOfSameNameDownloadsGetsAPathEach) {
     auto restarted = reservations.Reserve(first, "same.bin", folder.dir, [](const fs::path&) { return false; });
     CHECK(restarted && *restarted == firstPath && reservations.Count() == 10);
     // A name the disk has is never handed out, and the Save As path is held as the real one.
+    auto skipped = reservations.Reserve(first, "same.bin", folder.dir, [&](const fs::path& p) { return p == firstPath; });
+    CHECK(skipped && *skipped != firstPath && !reservations.Held(firstPath));
     reservations.Hold(first, folder.dir / "elsewhere.bin");
     CHECK(reservations.Held(folder.dir / "elsewhere.bin") && !reservations.Held(firstPath));
+}
+
+TEST(reservedNamesCompareAsTheShellSays) {
+    // Without a comparison, names compare by case folding; with one, its answer counts.
+    const fs::path folder = "D:/Downloads";
+    const auto never = [](const fs::path&) { return false; };
+    DownloadReservations folded;
+    CHECK(folded.Reserve("a", "Report.pdf", folder, never) == folder / "Report.pdf");
+    CHECK(folded.Reserve("b", "REPORT.PDF", folder, never) == folder / "REPORT 2.PDF");
+    DownloadReservations exact([](const fs::path& a, const fs::path& b) { return a == b; });
+    CHECK(exact.Reserve("a", "Report.pdf", folder, never) == folder / "Report.pdf");
+    CHECK(exact.Reserve("b", "REPORT.PDF", folder, never) == folder / "REPORT.PDF");
+#ifdef _WIN32
+    // The shell's comparison (CompareStringOrdinal, ignoring case) says what the disk says: a file
+    // made under one name is or isn't found under the other. Checked for plain case and for the
+    // pairs case folding joins but NTFS keeps apart on this PC (ſ and s, ı and I, ς and σ, µ and μ).
+    const auto windows = [](const fs::path& a, const fs::path& b) {
+        return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_EQUAL;
+    };
+    TempFolder disk;
+    for (const auto& [one, other] : std::vector<std::pair<std::wstring, std::wstring>>{
+             {L"abc.txt", L"ABC.txt"}, {L"\u017Fet.txt", L"SET.txt"}, {L"\u0131d.txt", L"ID.txt"},
+             {L"\u03C2.txt", L"\u03C3.txt"}, {L"\u00B5.txt", L"\u03BC.txt"}}) {
+        { std::ofstream(disk.dir / one) << "x"; }
+        std::error_code error;
+        const bool sameOnDisk = fs::exists(disk.dir / other, error);
+        CHECK(windows(fs::path(one), fs::path(other)) == sameOnDisk);
+        fs::remove(disk.dir / one, error);
+    }
+    DownloadReservations ntfs(windows);
+    CHECK(ntfs.Reserve("a", "report.pdf", folder, never) == folder / "report.pdf");
+    CHECK(ntfs.Reserve("b", "REPORT.pdf", folder, never) == folder / "REPORT 2.pdf");
+#endif
+}
+
+TEST(aShortenedNameIsNeverADeviceName) {
+    // A deep folder leaves room for 7 units: "AUXreport.pdf" would be "AUX.pdf".
+    const fs::path deep = fs::path("D:/") / std::string(40, 'd');
+    const size_t folderUnits = deep.u8string().size();
+    const auto never = [](const fs::path&) { return false; };
+    auto aux = UniqueDownloadPath("AUXreport.pdf", deep, never, folderUnits + 1 + 7);
+    CHECK(aux && aux->filename() == "_AU.pdf");
+    auto con = UniqueDownloadPath("CONTRACT.pdf", deep, never, folderUnits + 1 + 7);
+    CHECK(con && con->filename() == "_CO.pdf");
+    // A long extension goes before the name does.
+    auto longExtension = UniqueDownloadPath("notes." + std::string(40, 'x'), deep, never, folderUnits + 1 + 20);
+    CHECK(longExtension && longExtension->filename() == "notes");
+}
+
+TEST(theStallCheckRunsOnlyWhileAPageIsParked) {
+    using T = ParkedStallCheck::Timer;
+    ParkedStallCheck check;
+    CHECK(check.Parked(0) == T::Leave);
+    CHECK(check.Parked(1) == T::Start && check.running);
+    CHECK(check.Parked(2) == T::Leave);
+    CHECK(check.Parked(1) == T::Leave);
+    CHECK(check.Parked(0) == T::Stop && !check.running);
+    CHECK(check.Parked(0) == T::Leave);
+    CHECK(check.Parked(3) == T::Start);
+    CHECK(!ParkedStallCheck::Stalled(1000, 1000 + ParkedStallCheck::kStallMs));
+    CHECK(ParkedStallCheck::Stalled(1000, 1001 + ParkedStallCheck::kStallMs));
+    CHECK(!ParkedStallCheck::Stalled(5000, 4000));  // a clock that went back isn't a stall
 }
 
 TEST(theDownloadFolderNeverLeavesATestProfile) {

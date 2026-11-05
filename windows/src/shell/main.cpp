@@ -31,10 +31,11 @@
 //                            statistics to FILE as JSON: the live check of saving as it changes.
 //                            KITE_TEST_SLOW_BACKUP_MS=N makes each backup take N ms more
 //                            (the live check of a relaunch while Kite quits), and
-//                            KITE_TEST_CLOSE_TAB_MS=N closes the selected tab N ms after the
-//                            window shows (the live check of a page kept for its downloads), and
-//                            KITE_TEST_AUTOMATIC_DOWNLOADS=1 lets a page start many downloads
-//                            with no click (the live check of a burst). It logs the
+//                            KITE_TEST_CLOSE_TAB_MS=N gives the shown page a click's user
+//                            activation N ms after the window shows and closes its tab 0.5 s later (the live check of a page kept for its downloads), and
+//                            KITE_TEST_AUTOMATIC_DOWNLOADS=http://127.0.0.1:PORT lets that local
+//                            origin's pages start many downloads with no click (the live check
+//                            of a burst). These switches act only on a test profile. It logs the
 //                            downloads too (Chromium's reports, what each cost the UI thread,
 //                            downloads.json's writes): the live check of the download engine.
 //
@@ -316,8 +317,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // The live check of a relaunch while Kite quits: a --save-log run (a test profile) with
     // KITE_TEST_SLOW_BACKUP_MS set takes that long over each backup (the clock the writer dates
     // them by), so the wait at quit lasts long enough for a relaunch to land in it.
+    // The test switches below act only in a --save-log run on a test profile: never on
+    // %LOCALAPPDATA%\Kite, even when KITE_SUPPORT_PATH names it.
+    const bool testProfile = kite::IsTestProfile(supportDirectory, kite::EnvironmentPath("LOCALAPPDATA"));
+    const bool testSwitches = saveLogOption.present && testProfile;
     std::function<double()> clock = kite::SessionBackups::Now;
-    if (const DWORD slowMs = saveLogOption.present ? GetEnvironmentVariableW(L"KITE_TEST_SLOW_BACKUP_MS", nullptr, 0) : 0; slowMs) {
+    if (const DWORD slowMs = testSwitches ? GetEnvironmentVariableW(L"KITE_TEST_SLOW_BACKUP_MS", nullptr, 0) : 0; slowMs) {
         std::wstring value(slowMs, L'\0');
         value.resize(GetEnvironmentVariableW(L"KITE_TEST_SLOW_BACKUP_MS", value.data(), slowMs));
         if (auto ms = ParseInt(value); ms && *ms <= 60'000) {
@@ -381,19 +386,23 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (testDownloads && !testDownloads->empty() && !testDownloads->is_absolute()) {
         return Fail(quiet, L"KITE_TEST_DOWNLOADS_PATH must be an absolute path", kUsage);
     }
-    options.downloadFolder = kite::DefaultDownloadFolder(
-        testDownloads, kite::IsTestProfile(supportDirectory, kite::EnvironmentPath("LOCALAPPDATA")), quiet, supportDirectory, UserDownloads());
+    options.downloadFolder = kite::DefaultDownloadFolder(testDownloads, testProfile, quiet, supportDirectory, UserDownloads());
     // The live check of a page kept for its downloads: a --save-log run (a test profile) with
     // KITE_TEST_CLOSE_TAB_MS set closes its selected tab that long after the window shows.
-    if (const DWORD closeMs = saveLogOption.present ? GetEnvironmentVariableW(L"KITE_TEST_CLOSE_TAB_MS", nullptr, 0) : 0; closeMs) {
+    if (const DWORD closeMs = testSwitches ? GetEnvironmentVariableW(L"KITE_TEST_CLOSE_TAB_MS", nullptr, 0) : 0; closeMs) {
         std::wstring value(closeMs, L'\0');
         value.resize(GetEnvironmentVariableW(L"KITE_TEST_CLOSE_TAB_MS", value.data(), closeMs));
         if (auto ms = ParseInt(value); ms && *ms <= 600'000) options.testCloseTabMs = static_cast<unsigned>(*ms);
     }
-    // And KITE_TEST_AUTOMATIC_DOWNLOADS=1 lets a page start many downloads with no click (the
-    // live check of a burst of same-name downloads).
-    if (wchar_t flag[4] = {}; saveLogOption.present && GetEnvironmentVariableW(L"KITE_TEST_AUTOMATIC_DOWNLOADS", flag, 4) == 1 && flag[0] == L'1') {
-        options.testAutomaticDownloads = true;
+    // And KITE_TEST_AUTOMATIC_DOWNLOADS=http://127.0.0.1:PORT lets that local origin's pages start
+    // many downloads with no click (the live check of a burst of same-name downloads); only a
+    // loopback origin, so the profile's setting can't open up any other site.
+    if (const DWORD length = testSwitches ? GetEnvironmentVariableW(L"KITE_TEST_AUTOMATIC_DOWNLOADS", nullptr, 0) : 0; length) {
+        std::wstring value(length, L'\0');
+        value.resize(GetEnvironmentVariableW(L"KITE_TEST_AUTOMATIC_DOWNLOADS", value.data(), length));
+        if (value.starts_with(L"http://127.0.0.1:") && value.find_first_of(L"/?#", 17) == std::wstring::npos) {
+            options.testAutomaticDownloads = Narrow(value);
+        }
     }
     auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer,
                                                             downloadsWriter ? &*downloadsWriter : nullptr, problem);

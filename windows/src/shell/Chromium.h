@@ -166,9 +166,23 @@ public:
     // and whether it was muted (it's put on about:blank, muted, when it's kept). For the save log.
     std::vector<std::pair<std::string, bool>> ParkedPages() const;
     // A test profile's live check of a burst of downloads (--save-log with
-    // KITE_TEST_AUTOMATIC_DOWNLOADS): the default profile lets a page start many downloads with
-    // no click, which Chromium otherwise stops after the first.
-    void AllowAutomaticDownloads();
+    // KITE_TEST_AUTOMATIC_DOWNLOADS=ORIGIN): pages from `origin` (a local test server) may start
+    // many downloads with no click, which Chromium otherwise stops after the first.
+    void AllowAutomaticDownloads(const std::string& origin);
+    // The parked pages' stall check runs on a timer of Kite's window (the controller's timer 11),
+    // only while a page is parked. The window hands its WM_TIMER here: true when it was this one.
+    static constexpr UINT_PTR kStallTimer = 11;
+    bool HandleTimer(UINT_PTR id);
+    bool StallCheckRunning() const;
+    int StallCheckTicks() const;  // how often it ran (the save log)
+    // --save-log: each parked page's address and whether it was muted are kept (ParkedPages),
+    // and how many Leave Page dialogs parked pages asked for (each answered Leave).
+    void LogParkedPages();
+    // A test run's stand-in for a click (the test tab close): the shown page runs a script as if
+    // the user had clicked (DevTools' Runtime.evaluate with userGesture), which gives it the user
+    // activation Chromium wants before a page may ask Leave Page. False with no page shown.
+    bool TestUserGesture();
+    int ParkedLeavePagesAnswered() const;
     // Runs what CEF's thread handed over. MainWindow::kWakeMessage calls it.
     void RunPending();
     // False when a page's Chromium widget window wasn't where Kite looks for it, so hidden

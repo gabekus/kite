@@ -47,18 +47,22 @@ constexpr UINT kSpaceIconsMessage = WM_APP + 6;
 constexpr UINT kMemoryPressureMessage = WM_APP + 7;
 // downloads.json's save, armed by a change (DownloadsSaveSchedule) and gone once it fires.
 constexpr UINT_PTR kDownloadsSaveTimer = 8;
-// --save-log with KITE_TEST_CLOSE_TAB_MS: the selected tab closes, as its close button would
-// (a test profile's live check of a page kept for its downloads). Test runs only.
+// --save-log on a test profile with KITE_TEST_CLOSE_TAB_MS: the shown page gets a click's user
+// activation, and half a second later its tab closes, as its close button would (the live check
+// of a page kept for its downloads, and of its Leave Page). Test runs only.
 constexpr UINT_PTR kTestCloseTabTimer = 9;
 // This window's timers, across the open checkpoints, so none is used twice: 1 smoke, 2 archive,
 // 3 settle, 4 session save (W11), 5 history (W25a), 6 Arc merge (W33a), 7 sidebar toggle (W12),
-// 8 downloads save, 9 the test tab close (W20a, --save-log only); 0x4B42 and up are the views'.
+// 8 downloads save, 9 the test tab close (W20a, --save-log only), 10 find (W21), 11 the parked
+// pages' stall check (W20a, Chromium::kStallTimer); 0x4B42 and up are the views' and
+// Chromium's own (0x4B43 its close deadline).
 //
-// Posted by the downloads writer's worker once it has read downloads.json.
 // Kite's WM_APP messages, across the open checkpoints, so none is used twice: +1 wake
 // (MainWindow), +2/+3 redraw (CommandBarView, SidebarView), +4 favicons, +5 frames, +6 space
 // icons, +7 memory pressure, +8 history (W25a), +9 Arc read and +10 Arc saved (W15), +11
 // downloads read, +12/+13 occlusion (P2), +14 favorites, +15 W9c2, +16 polish, +20 perf request.
+//
+// Posted by the downloads writer's worker once it has read downloads.json.
 constexpr UINT kDownloadsReadMessage = WM_APP + 11;
 
 // Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
@@ -404,6 +408,10 @@ std::wstring BrowserWindowController::SaveSaveLog(const std::filesystem::path& f
         json::Array parked;
         for (const auto& [url, muted] : chromium_->ParkedPages()) parked.push_back(json::Object{{"url", url}, {"muted", muted}});
         downloads.emplace("parked", json::Value(std::move(parked)));
+        downloads.emplace("parkedLeavePagesAnswered", chromium_->ParkedLeavePagesAnswered());
+        // Whether the stall check's timer was still running at the end (it must stop with the last parked page).
+        downloads.emplace("stallCheckRunning", chromium_->StallCheckRunning());
+        downloads.emplace("stallCheckTicks", chromium_->StallCheckTicks());
     }
 #endif
     if (downloadsWriter_) {
@@ -1004,8 +1012,19 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         DownloadsRead();
         return true;
     }
+#ifdef KITE_HAS_CEF
+    if (message == WM_TIMER && chromium_ && chromium_->HandleTimer(wParam)) return true;
+#endif
     if (message == WM_TIMER && wParam == kTestCloseTabTimer) {
         KillTimer(window_.Handle(), kTestCloseTabTimer);
+#ifdef KITE_HAS_CEF
+        // First a click's user activation for the page (so it may ask Leave Page), then the close.
+        if (!testGestureGiven_ && chromium_ && chromium_->TestUserGesture()) {
+            testGestureGiven_ = true;
+            SetTimer(window_.Handle(), kTestCloseTabTimer, 500, nullptr);
+            return true;
+        }
+#endif
         if (const Tab* tab = state_.SelectedTab()) CloseTab(tab->id);
         return true;
     }
@@ -1367,7 +1386,8 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     // Each profile's download folder and Ask, as each download starts (read once: nothing on
     // Windows changes them yet; Settings comes with W31a).
     chromium_->SetDownloadLocations(DownloadLocations(), options_.downloadFolder);
-    if (options_.saveLog && options_.testAutomaticDownloads) chromium_->AllowAutomaticDownloads();
+    if (options_.saveLog && options_.testAutomaticDownloads) chromium_->AllowAutomaticDownloads(*options_.testAutomaticDownloads);
+    if (options_.saveLog) chromium_->LogParkedPages();
     window_.onWake = [this] { chromium_->RunPending(); };
     window_.onMinimize = [this] {
         sidebar_->HideTip();
