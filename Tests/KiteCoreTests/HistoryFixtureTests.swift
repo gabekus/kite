@@ -32,6 +32,8 @@ import Testing
         #expect(history.entries["https://ja.wikipedia.org/wiki/%E5%87%A7"]?.title == "凧 - Wikipedia")
     }
 
+    // macOS only: the vectors pin Apple's NSURL, and swift-corelibs NSURL returns nil for some.
+    #if os(macOS)
     /// Tests/Fixtures/history-url-keys.json: a URL as Chromium can report it, and the key history
     /// keeps for it, which is NSURL's absoluteString (the Mac's CEF bridge makes its URLs with
     /// NSURL(string:)). Kite for Windows makes the same keys itself (History::Normalized), and its
@@ -54,6 +56,7 @@ import Testing
             #expect(history.entries.keys.sorted() == [pair.key], "\(pair.raw)")
         }
     }
+    #endif
 
     @Test func readsKiteForWindowsWriting() throws {
         // What windows/src/core/History.cpp's EncodeFile writes for the fixture.
