@@ -36,6 +36,7 @@ endif()
 # The model (the Windows counterpart of KiteCore): standard C++ only, unit-tested headless.
 add_library(KiteCoreWin STATIC
   src/core/CommandBar.cpp
+  src/core/CommandLine.cpp
   src/core/Json.cpp
   src/core/KeyBindings.cpp
   src/core/Models.cpp
@@ -180,6 +181,7 @@ enable_testing()
 add_executable(KiteCoreTests
   tests/main.cpp
   tests/CommandBarTests.cpp
+  tests/CommandLineTests.cpp
   tests/JsonTests.cpp
   tests/KeyBindingsTests.cpp
   tests/ModelTests.cpp
@@ -207,6 +209,8 @@ target_link_libraries(gen-theme-golden PRIVATE KiteCoreWin)
 target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../Tests/Fixtures"
                                                KITE_STATES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/helix/states")
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)
+add_test(NAME chromium-ignores-kites-command-line
+  COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/shell/Chromium.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ChromiumSettingsCheck.cmake)
 add_test(NAME kitecore-cli
   COMMAND ${CMAKE_COMMAND} -DKITECORE=$<TARGET_FILE:kitecore> -DWORK=${CMAKE_CURRENT_BINARY_DIR}/kitecore-cli-test
           -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/KitecoreCliTest.cmake)
