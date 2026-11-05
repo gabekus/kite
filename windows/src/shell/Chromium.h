@@ -179,6 +179,7 @@ public:
     // own Focus() (checked again on CEF's thread as it runs), and not from Chromium's focus of a page
     // whose windows BlockInput(false) is enabling again (the command bar closing under Ctrl+F).
     void KeepKeyboard(bool keep);
+    bool KeepsKeyboard() const;
     // Test-only: whether a click at `client` (client px) would reach the shown page's window,
     // asked of its region the way Windows hit-tests (the smoke test's check of the hole).
     bool PageTakesClickAt(POINT client) const;
@@ -213,6 +214,8 @@ public:
     // The parked pages' stall check runs on a timer of Kite's window (the controller's timer 11),
     // only while a page is parked. The window hands its WM_TIMER here: true when it was this one.
     static constexpr UINT_PTR kStallTimer = 11;
+    // The window's timer for a page's close deadline (a view's id: 0x4B42 and up).
+    static constexpr UINT_PTR kCloseDeadlineTimer = 0x4B43;
     bool HandleTimer(UINT_PTR id);
     bool StallCheckRunning() const;
     int StallCheckTicks() const;  // how often it ran (the save log)

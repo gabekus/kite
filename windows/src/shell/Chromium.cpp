@@ -53,7 +53,7 @@ constexpr char kEnergySaverPref[] = "performance_tuning.battery_saver_mode.state
 
 // How long closing the window waits for the browsers before it goes ahead anyway.
 constexpr UINT kCloseDeadlineMs = 5'000;
-constexpr UINT_PTR kCloseDeadlineTimer = 0x4B43;  // 'KC'; BrowserWindowController's timers are small numbers
+constexpr UINT_PTR kCloseDeadlineTimer = Chromium::kCloseDeadlineTimer;  // 'KC'; BrowserWindowController's timers are small numbers
 
 // Tells the browser process which renderer hosts each tab's main frame. CEF has no
 // browser-side accessor for a browser's render process id, so the renderer sends its own, from
@@ -1775,6 +1775,8 @@ void Chromium::SetOverlayHole(const RECT& hole, int cornerRadius) {
 }
 
 void Chromium::KeepKeyboard(bool keep) { shared_->kiteKeepsKeyboard = keep; }
+
+bool Chromium::KeepsKeyboard() const { return shared_->kiteKeepsKeyboard; }
 
 bool Chromium::PageTakesClickAt(POINT client) const {
     auto it = shared_->pages.find(shared_->shown);

@@ -456,8 +456,10 @@ private:
     // Mac one first responder a window): the command bar's while it's open, else a rename's, else
     // the find bar's, else none (the page's). GiveKeyboard takes it from the others before `to`
     // takes it, so their carets go first: opening the command bar takes it from both, a rename
-    // from the find field, and Ctrl+F or a press in the find field ends a rename.
-    enum class KeyboardField { None, CommandBar, Rename, Find };
+    // from the find field, and Ctrl+F or a press in the find field ends a rename. The icon
+    // picker's Search has it from Change Space Icon…'s request (the menu's 0.15 s included) until
+    // the picker closes; anything else taking it closes the picker.
+    enum class KeyboardField { None, CommandBar, Rename, Find, IconPicker };
     KeyboardField KeyboardOwner() const;
     // With `focusFindField` false (a press in it), the find field takes it itself, the caret
     // where the press is rather than its text all selected.
@@ -492,6 +494,9 @@ private:
     // A cell or the bin (the picker's pick): the icon set, the picture it replaced deleted.
     void PickIcon(const std::string& spaceID, const std::string& icon);
     void CloseIconPicker();
+    // The picker no longer holds the keyboard: a page may take it back, and gets it when nothing
+    // of Kite's has it and Kite's window does (unless another field is taking it now).
+    void ReleaseIconPickerKeyboard();
     // The smoke test's icon picker: opened from the menu and the header's icon, an emoji, a
     // search, a category, a symbol and the bin picked, and the ways it closes.
     std::wstring SmokeTestIconPicker();
@@ -729,6 +734,20 @@ private:
     // and the space the menu asked it for, waiting on kIconPickerTimer.
     std::unique_ptr<SpaceIconPickerView> iconPicker_;
     std::optional<std::string> pendingIconPicker_;
+    // The picker holds the keyboard (KeyboardField::IconPicker): set as it's asked for, before the
+    // window takes the focus, so onFocus never hands it to the page meanwhile.
+    bool iconPickerKeyboard_ = false;
+    // GiveKeyboard is moving the keyboard to another field: the picker it closes doesn't hand
+    // the keyboard to the page.
+    bool givingKeyboard_ = false;
+    // Kite's window takes the focus when it's the one in front (a quiet run never is). For the
+    // smoke test's check of the order the keyboard moves in, `testFocus_` delivers the WM_SETFOCUS
+    // SetFocus would, without the activation (a quiet run never comes to the front).
+    void TakeFocusIfInFront();
+    bool testFocus_ = false;
+    // How often onFocus has handed the keyboard on to the page (the smoke test's check that it
+    // didn't while a field of Kite's was taking it).
+    size_t pageFocusHandoffs_ = 0;
     std::wstring barError_;
     std::unique_ptr<FindBarView> findBar_;
     std::string findTabID_;  // the tab the find bar is open on

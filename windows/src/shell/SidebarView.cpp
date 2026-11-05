@@ -1119,8 +1119,11 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
                         dy = (overhang.top - overhang.bottom) / 2;
                     }
                     brush_->SetColor(Primary(1));
+                    // One line (the format doesn't wrap), clipped to the slot, as the bar's cells are.
+                    context->PushAxisAlignedClip(iconBox, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
                     context->DrawTextLayout(D2D1::Point2F(iconBox.left + dx, iconBox.top + dy), layout.Get(), brush_.Get(),
                                             D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                    context->PopAxisAlignedClip();
                 }
             }
             x = M::kHeaderTextX;

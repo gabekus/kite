@@ -1316,6 +1316,38 @@ std::wstring BrowserWindowController::SmokeTestIconPicker() {
         SelectionMoved();
         if (std::wstring problem = RunToRest(L"Back"); !problem.empty()) return problem;
     }
+#ifdef KITE_HAS_CEF
+    // The keyboard is the picker's from its request: Kite's window taking the focus then (as it
+    // does in front; here its WM_SETFOCUS, with no activation) doesn't hand it on to the page
+    // (onFocus), and a page can't take it back on CEF's thread meanwhile (KeepKeyboard), from the
+    // header's icon or through the menu's 0.15 s. Escape gives it up.
+    if (chromium_) {
+        const auto keepsKeyboard = [&](const wchar_t* path, size_t handoffs) -> std::wstring {
+            const std::wstring from = std::wstring(L" the picker opened from ") + path;
+            RunUntil([] { return false; }, 0.3);
+            if (!open() || KeyboardOwner() != KeyboardField::IconPicker) return L"the keyboard isn't" + from + L"'s";
+            if (pageFocusHandoffs_ != handoffs) return L"Kite's window gave the page the keyboard as it opened" + from;
+            if (!chromium_->KeepsKeyboard()) return L"a page could take the keyboard back from" + from;
+            SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+            if (iconPicker_->IsOpen() || KeyboardOwner() != KeyboardField::None || chromium_->KeepsKeyboard()) {
+                return L"Escape didn't give up the keyboard of" + from;
+            }
+            return {};
+        };
+        size_t handoffs = pageFocusHandoffs_;
+        testFocus_ = true;
+        RequestIconPicker(id, false);
+        testFocus_ = false;
+        if (std::wstring problem = keepsKeyboard(L"the header's icon", handoffs); !problem.empty()) return problem;
+        handoffs = pageFocusHandoffs_;
+        testFocus_ = true;
+        RunSpaceMenuItem(id, SpaceMenuItem::Command::ChangeIcon);
+        testFocus_ = false;
+        if (KeyboardOwner() != KeyboardField::IconPicker || !chromium_->KeepsKeyboard()) return L"the menu's request didn't hold the keyboard for its 0.15 s";
+        if (!RunUntil(open, 2)) return L"Change Space Icon… didn't open it";
+        if (std::wstring problem = keepsKeyboard(L"the menu", handoffs); !problem.empty()) return problem;
+    }
+#endif
     state_.SetSpaceIcon(id, original);
     StateChanged();
     frames_.clear();

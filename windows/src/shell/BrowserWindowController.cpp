@@ -237,6 +237,8 @@ std::wstring BrowserWindowController::Init() {
     // closes the old one as it opens).
     picker.closed = [this](const std::string& spaceID) {
         if (sidebar_->IconPickerSpace() == spaceID && pendingIconPicker_ != spaceID) sidebar_->SetIconPickerSpace(std::nullopt);
+        // A request still waiting (a new picker replacing this one) keeps the keyboard.
+        if (!pendingIconPicker_) ReleaseIconPickerKeyboard();
     };
     iconPicker_ = SpaceIconPickerView::Create(window_.Handle(), sidebar_->DWrite(), sidebar_->Painter(), std::move(picker), options_.capture, error);
     if (!iconPicker_) return L"Kite couldn't make the icon picker: " + error;
@@ -1131,6 +1133,7 @@ void BrowserWindowController::ShowFind() {
 }
 
 BrowserWindowController::KeyboardField BrowserWindowController::KeyboardOwner() const {
+    if (iconPickerKeyboard_) return KeyboardField::IconPicker;
     if (commandBar_ && commandBar_->IsOpen()) return KeyboardField::CommandBar;
     if (sidebar_->Renaming()) return KeyboardField::Rename;
     if (findBar_ && findBar_->HasKeyboard()) return KeyboardField::Find;
@@ -1146,8 +1149,13 @@ void BrowserWindowController::GiveKeyboard(KeyboardField to, bool focusFindField
 #endif
         if (commandBar_ && commandBar_->IsOpen()) commandBar_->Hide();
     }
-    // Change Space Icon…'s popover is transient: another field taking the keyboard closes it.
-    if (to != KeyboardField::None) CloseIconPicker();
+    // Change Space Icon…'s popover is transient: another field taking the keyboard closes it
+    // (without handing the keyboard to the page on the way).
+    if (to != KeyboardField::None && to != KeyboardField::IconPicker) {
+        givingKeyboard_ = true;
+        CloseIconPicker();
+        givingKeyboard_ = false;
+    }
     // The others, so their system carets go before `to` makes its own.
     if (to != KeyboardField::Find && findBar_) findBar_->LoseKeyboard();
     if (to != KeyboardField::Rename) sidebar_->EndRenaming(true);
@@ -1201,7 +1209,9 @@ void BrowserWindowController::UpdateFindHole() {
     if (!chromium_) return;
     const bool open = findBar_ && findBar_->IsOpen();
     chromium_->SetOverlayHole(open ? findBar_->Frame() : RECT{}, open ? static_cast<int>(std::lround(findBar_->CornerRadiusPx())) : 0);
-    chromium_->KeepKeyboard(open && findBar_->HasKeyboard());
+    // The find field's keyboard, or the icon picker's (from its request until it closes): a page
+    // doesn't take it back meanwhile.
+    chromium_->KeepKeyboard((open && findBar_->HasKeyboard()) || iconPickerKeyboard_);
 #endif
 }
 
@@ -1608,9 +1618,9 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         constexpr UINT_PTR ids[] = {kSmokeTimer,      kArchiveTimer,       kSettleTimer,      kSaveTimer,          kHistoryTimer,
                                     kArcMergeTimer,   kToggleTimer,        kDownloadsSaveTimer, kTestCloseTabTimer, kIconPickerTimer,
 #ifdef KITE_HAS_CEF
-                                    Chromium::kStallTimer,
+                                    Chromium::kStallTimer, Chromium::kCloseDeadlineTimer,
 #endif
-                                    0x4B43,           CommandBarView::kCaretTimer, SidebarView::kTipTimer, SidebarView::kDropTimer,
+                                    CommandBarView::kCaretTimer, SidebarView::kTipTimer, SidebarView::kDropTimer,
                                     RenameField::kCaretTimer, FindBarView::kCaretTimer, SpaceIconPickerView::kCaretTimer};
         for (size_t i = 0; i < std::size(ids); ++i) {
             for (size_t j = i + 1; j < std::size(ids); ++j) {
@@ -1717,7 +1727,7 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         const auto pressed =
             ShortcutOfKey(static_cast<UINT>(wParam), GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_MENU) < 0, GetKeyState(VK_SHIFT) < 0);
         const ShortcutTarget* target = pressed ? FindShortcut(shortcuts_, *pressed) : nullptr;
-        const bool editing = KeyboardOwner() != KeyboardField::None || (iconPicker_ && iconPicker_->IsOpen());
+        const bool editing = KeyboardOwner() != KeyboardField::None;
         if (target && !(editing && EditsText(*pressed)) && CommandEnabled(target->command->id)) {
             // The character TranslateMessage made of it goes too (Alt+K's WM_SYSCHAR would beep).
             dropCharacter_ = true;
