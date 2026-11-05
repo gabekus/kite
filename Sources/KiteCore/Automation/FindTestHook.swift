@@ -57,16 +57,23 @@ public enum FindTestHook: Equatable, Sendable {
         case showFind(askOnPage: Bool)
         /// The field's string value set, then the search its text-change delegate runs on a keystroke.
         case setQuery(String)
+        /// The fallback's (the page never loaded): only the field's text, no search, so no find result can come
+        /// back and contradict the fallback's ready line.
+        case setTextOnly(String)
     }
 
     /// Ask on Page for the hooked bar: always off. The plain find bar is what the captures show whatever the test
     /// app's saved defaults hold, and its Ask button (which runs Claude) is never there to be reached.
     public static let asksOnPage = false
 
-    public var steps: [Step] {
+    public var steps: [Step] { steps(fallback: false) }
+
+    /// `fallback`: the page never loaded, so a query's text goes in without a search.
+    public func steps(fallback: Bool) -> [Step] {
         switch self {
         case .open: return [.showFind(askOnPage: Self.asksOnPage)]
-        case .query(let text): return [.showFind(askOnPage: Self.asksOnPage), .setQuery(text)]
+        case .query(let text):
+            return [.showFind(askOnPage: Self.asksOnPage), fallback ? .setTextOnly(text) : .setQuery(text)]
         }
     }
 

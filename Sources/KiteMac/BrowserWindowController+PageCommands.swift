@@ -41,7 +41,7 @@ extension BrowserWindowController {
     @discardableResult
     func applyFindTestHook(_ hook: FindTestHook, fallback: Bool = false) -> Bool {
         guard WindowPresenter.testSafe, shownPage != nil else { return false }
-        for step in hook.steps {
+        for step in hook.steps(fallback: fallback) {
             switch step {
             case .showFind(let askOnPage):
                 openFind(askEnabled: askOnPage)
@@ -63,6 +63,14 @@ extension BrowserWindowController {
                 }
                 bar.setQuery(text)
                 // As after typing it: the caret after the last character, nothing selected.
+                if let editor = bar.field.currentEditor() as? NSTextView {
+                    editor.setSelectedRange(NSRange(location: (bar.field.stringValue as NSString).length, length: 0))
+                }
+            case .setTextOnly(let text):
+                // The fallback: the page never loaded, so no search and no result callback; the runner's fallback
+                // line is the only ready line.
+                guard let bar = findBar else { return false }
+                bar.setTextWithoutSearching(text)
                 if let editor = bar.field.currentEditor() as? NSTextView {
                     editor.setSelectedRange(NSRange(location: (bar.field.stringValue as NSString).length, length: 0))
                 }

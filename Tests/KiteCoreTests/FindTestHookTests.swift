@@ -141,6 +141,11 @@ struct FindTestHookTests {
         }
         // In time for the script, whose 30 s wait starts only once Kite's socket answers.
         #expect(FindTestHook.pageLoadTimeout <= 20)
+        // A fallback query only puts its text in the field: no searching step, so no result line can follow.
+        #expect(FindTestHook.query("domain").steps(fallback: true) == [.showFind(askOnPage: false), .setTextOnly("domain")])
+        #expect(!FindTestHook.query("zqxj").steps(fallback: true).contains(.setQuery("zqxj")))
+        #expect(FindTestHook.open.steps(fallback: true) == FindTestHook.open.steps)
+        #expect(FindTestHook.query("domain").steps == [.showFind(askOnPage: false), .setQuery("domain")])
     }
 
     @Test func pageMilestonesGiveOnlyAnErrorsDomainAndCode() {
@@ -283,5 +288,43 @@ struct FindTestHookSourceTests {
         let apply = try body(of: "func applyFindTestHook(_ hook: FindTestHook, fallback: Bool = false) -> Bool {",
                              in: try source("BrowserWindowController+PageCommands.swift"))
         #expect(apply.contains("if hook == .open, open, !fallback { FindTestHookRunner.log(FindTestHook.openLine) }"))
+    }
+
+    @Test func aFallbackQueryWritesNoResultLine() throws {
+        // A result line after the fallback's would contradict it: the fallback only puts the text in the field.
+        let commands = try source("BrowserWindowController+PageCommands.swift")
+        let apply = try body(of: "func applyFindTestHook(_ hook: FindTestHook, fallback: Bool = false) -> Bool {", in: commands)
+        #expect(apply.contains("for step in hook.steps(fallback: fallback) {"))
+        let textOnly = try #require(apply.range(of: "case .setTextOnly(let text):"))
+        let fallbackCase = apply[textOnly.upperBound...]
+        #expect(fallbackCase.contains("bar.setTextWithoutSearching(text)"))
+        for banned in ["onResult", "setQuery(", "resultLine", "search(", "step(", "onSearch"] {
+            #expect(!fallbackCase.contains(banned), "\(banned)")
+        }
+        // The one place results are logged is the searching step's callback, before the fallback's case.
+        #expect(apply.components(separatedBy: "FindTestHook.resultLine(").count - 1 == 1)
+        let searching = try #require(apply.range(of: "case .setQuery(let text):"))
+        let logged = try #require(apply.range(of: "FindTestHook.resultLine("))
+        #expect(searching.upperBound <= logged.lowerBound && logged.upperBound <= textOnly.lowerBound)
+        // setTextWithoutSearching sets the text only: no search, no find, nothing reported.
+        let bar = try source("Views/FindBar.swift")
+        let textWithoutSearching = try body(of: "func setTextWithoutSearching(_ text: String) {", in: bar)
+        #expect(textWithoutSearching.contains("field.stringValue = text"))
+        for banned in ["search()", "step(", "onSearch", "onResult", "show("] {
+            #expect(!textWithoutSearching.contains(banned), "\(banned)")
+        }
+        // And the bar's only result report is show(_:)'s, which only the page's find completion calls.
+        #expect(bar.components(separatedBy: "onResult?(").count - 1 == 1)
+        #expect(try body(of: "func show(_ result: FindResult) {", in: bar).contains("onResult?(result, countLabel.stringValue)"))
+    }
+
+    @Test func kitesFallbackComesInsideTheScriptsWait() throws {
+        // The script waits FIND_READY_SECONDS once Kite's socket answers (a few seconds after launch); Kite's timer
+        // starts at launch, so its fallback line must come with room to spare.
+        let script = try String(contentsOf: Self.mac.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("scripts/mac-reference-captures.sh"), encoding: .utf8)
+        let line = try #require(script.split(whereSeparator: \.isNewline).first { $0.hasPrefix("FIND_READY_SECONDS=") })
+        let seconds = try #require(Double(line.dropFirst("FIND_READY_SECONDS=".count)))
+        #expect(FindTestHook.pageLoadTimeout + 5 <= seconds)
     }
 }
