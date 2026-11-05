@@ -28,6 +28,7 @@
 #include <wrl/client.h>
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -110,7 +111,8 @@ private:
 
     float Scale() const { return static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI; }
     // The layout, the cells and where the frame goes, for the state now; then the window there.
-    void Relayout();
+    // `cells`: the grid's, when the caller has them (a search's).
+    void Relayout(std::optional<std::vector<std::string>> cells = std::nullopt);
     void PlaceWindow();
     IconPickerPlacement Placement(bool inOwner) const;
     // A point of the window's client area (px) in the content's points.
@@ -172,13 +174,14 @@ private:
     std::vector<bool> rowsDrawn_;
     bool gridAttached_ = false;  // the grid's clip is in the tree (the Emoji tab)
     bool deviceLost_ = false;
-    // Each emoji cell's layout and where it draws in its frame (its ink centred), made once per
-    // cell while the cells stay the same.
+    // Each emoji's layout and where it draws in its frame (its ink centred), made once, by the
+    // emoji (every cell is the same size), and kept while the picker lives (the catalog's 1101 at
+    // most).
     struct CellText {
         Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
         float x = 0, y = 0;
     };
-    std::vector<std::optional<CellText>> cellTexts_;
+    std::map<std::string, std::optional<CellText>> cellTexts_;
 
     // What's open.
     std::optional<IconPickerState> state_;

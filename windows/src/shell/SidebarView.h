@@ -206,6 +206,8 @@ public:
     // On the pictures' message: the bar's cells and the headers showing those that arrived draw again.
     void PicturesArrived();
 
+    // The selected list scrolled (the wheel, a touchpad): the header the picker hangs from moved.
+    std::function<void()> onListScrolled;
     // The icon picker open for a space (SpaceHeaderRowCell's pickerOpen): its header keeps the
     // icon's slot, a dashed square where an icon-less space has none, for the picker to hang from.
     void SetIconPickerSpace(const std::optional<std::string>& spaceID);
@@ -216,6 +218,10 @@ public:
     std::optional<D2D1_RECT_F> HeaderIconRect(const std::string& spaceID);
     // The header's icon's middle, client px (for the tests' presses).
     std::optional<POINT> HeaderIconCentre();
+    // Whether a point (client px) is on the selected header's icon button: its icon, or the
+    // picker's placeholder while that shows (a press there is the button's, not a press outside
+    // the picker).
+    bool OverHeaderIcon(POINT client) const;
     // The sidebar's painter and text factory, which the icon picker draws with too.
     SpaceIconPainter* Painter() const { return icons_.get(); }
     IDWriteFactory* DWrite() const { return dwrite_.Get(); }
@@ -394,6 +400,9 @@ private:
     std::optional<std::string> pickerSpace_;  // the space whose icon picker is open
     // Whether a header keeps its icon's slot: it has an icon, or its picker is open.
     bool HeaderShowsIcon(const SidebarRow& row) const { return !row.icon.empty() || pickerSpace_ == row.id; }
+    // The selected page's rows as presses see them: the picker's placeholder is the icon button's
+    // (SpaceHeaderRowCell's iconButton holds it), so it's hit as an icon is.
+    std::vector<SidebarRow> PressRows() const;
 
     // Pointer.
     Actions actions_;

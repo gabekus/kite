@@ -547,7 +547,7 @@ space; the pointer over another space's cell shows its rounded backing, a small
 visual of its own that moves with the pointer and the scroll, so hovering and
 scrolling draw nothing. The Library and + symbols are drawn from the Mac's
 measured archivebox and plus (Segoe Fluent's glyphs differ in size and shape),
-and the emoji is set so it draws the Mac's 14.5pt, centred on its ink. Cells sit
+and the emoji is set so it draws the Mac's 14.5pt, centred on its ink; the header's at the same factor, 17.4pt of ink at 15 as the Mac's systemFont(ofSize: 15) draws (W9e: 36px at 2x, where Segoe's own 15pt inked 30). Cells sit
 on whole pixels at every scale (core snaps them), so they draw where they take
 clicks. Known differences: in the 2pt where two cells overlap only the later
 cell's backing shows (the Mac shows both).
@@ -767,9 +767,11 @@ and leaves the popover open; replacing a picture deletes its file once no space 
 (SpaceIconImages.discard). While the picker is open an icon-less header keeps the icon's slot,
 a dashed 24pt square, to hang it from, from the request on (a menu's 0.15 s included). A
 right-click on the header's icon opens the space's menu, as one on the rest of the header does
-(`HeaderMenuSpace`). It closes on Escape, a press anywhere else in the
-window, the page or another app taking the keyboard, the command bar, another space shown, and
-the window moving, resizing or minimizing.
+(`HeaderMenuSpace`); a press on the header's icon, or its placeholder, is the icon button's,
+which opens the picker again. It closes on Escape, a press anywhere else in the window, the page
+or another app taking the keyboard, the command bar, another space shown, the sidebar hidden
+(Change Space Icon… shows a hidden sidebar first), the list scrolled (the header it hangs from
+moves), and the window moving, resizing or minimizing.
 
 It's a window of its own (owned, never activated, so the browser window keeps the keyboard and
 passes Search its keys), drawn by DirectComposition in its own target: the frame and controls in
@@ -777,9 +779,9 @@ one surface (the Icon tab's grid too), the emoji grid in a virtual surface as ta
 in a clip, scrolled by moving it. Only the rows in view draw, as they come into view, and rows
 more than 10 from view are trimmed away; a held cell draws only itself; moving over the grid
 draws nothing; nothing runs while it's idle but Search's caret blink, which Windows' caret
-timeout ends; each emoji's text layout is made once while the cells stay the same. Its
+timeout ends; each emoji's text layout is made once, by the emoji, so a search reuses them. Its
 redraws' failures report a lost GPU, which rebuilds everything as the caption buttons' do. It
-lays out at its own monitor's scale (WM_DPICHANGED) and stays on the anchor's monitor.
+lays out at its own monitor's scale (WM_DPICHANGED, and its window's DPI checked as it opens) and stays on the anchor's monitor.
 Replacing a picture deletes its file on the UI thread, as the Mac does: one DeleteFile of a name
 core checked, an exception to the no-file-I/O rule (docs/windows-architecture.md) that only a
 Mac profile's picture icon can reach. Emoji are Segoe UI Emoji's colour glyphs at 22pt scaled as the bar's (Apple's
@@ -806,8 +808,6 @@ header's icon has no "Change Space Icon" tooltip yet. Segoe UI Emoji has no coun
 header) draw as the two letters of their regional indicators, each clipped to its 33.5pt cell
 (the pairs fit: `--icon-picker 1,emoji,7`); and Windows 10's Segoe UI Emoji lacks Unicode 13
 and 14's emoji (🫠, 🥲, 🫶, 🪴 and others), which draw as its fallback boxes there.
-
-
 
 ## Saving the session
 

@@ -1,4 +1,3 @@
-cmake_minimum_required(VERSION 3.24)
 # Drives kitecore against a fresh profile: ctest runs it with -DKITECORE=<path> -DWORK=<dir>.
 # A script run with -P has no policy version of its own: without this line an older CMake runs it
 # with CMP0054 OLD, and a quoted string in if() ("reload") reads a variable of that name.

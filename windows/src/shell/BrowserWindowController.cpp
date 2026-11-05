@@ -234,6 +234,9 @@ std::wstring BrowserWindowController::Init() {
     iconPicker_->UseCompositor(compositor_.get());
     // One of its own redraws found the GPU gone: rebuild and draw everything (it closes).
     iconPicker_->onDeviceLost = [this] { Draw(); };
+    // The list scrolling takes the header it hangs from away: it closes, as it does when the
+    // window moves (NSPopover would follow its view; Kite's doesn't yet).
+    sidebar_->onListScrolled = [this] { CloseIconPicker(); };
     // A hover's redraw found the GPU gone: rebuild and draw everything.
     caption_->onDeviceLost = [this] { Draw(); };
 
@@ -1436,8 +1439,14 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         return true;
     }(), "two of the window's WM_APP messages share an id");
     static_assert([] {
-        constexpr UINT_PTR ids[] = {kSmokeTimer,  kArchiveTimer, kSettleTimer, kSaveTimer, kHistoryTimer, kArcMergeTimer, kToggleTimer,
-                                    kIconPickerTimer, CommandBarView::kCaretTimer, SidebarView::kTipTimer, SidebarView::kDropTimer,
+        // Every timer on the window: the controller's, Chromium's (its stall watch, and its close
+        // deadline, 0x4B43 in Chromium.cpp) and the views'.
+        constexpr UINT_PTR ids[] = {kSmokeTimer,      kArchiveTimer,       kSettleTimer,      kSaveTimer,          kHistoryTimer,
+                                    kArcMergeTimer,   kToggleTimer,        kDownloadsSaveTimer, kTestCloseTabTimer, kIconPickerTimer,
+#ifdef KITE_HAS_CEF
+                                    Chromium::kStallTimer,
+#endif
+                                    0x4B43,           CommandBarView::kCaretTimer, SidebarView::kTipTimer, SidebarView::kDropTimer,
                                     SpaceRenameField::kCaretTimer, SpaceIconPickerView::kCaretTimer};
         for (size_t i = 0; i < std::size(ids); ++i) {
             for (size_t j = i + 1; j < std::size(ids); ++j) {
@@ -1498,6 +1507,10 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     if (iconPicker_ && iconPicker_->IsOpen()) {
         switch (message) {
         case WM_LBUTTONDOWN:
+            // Not on the header's icon (or its placeholder): that button opens the picker again
+            // as it's let go (NSPopover's outside click, then the button's action).
+            if (!sidebar_->OverHeaderIcon(POINT{static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))})) CloseIconPicker();
+            break;
         case WM_RBUTTONDOWN:
         case WM_MBUTTONDOWN:
         case WM_NCLBUTTONDOWN:

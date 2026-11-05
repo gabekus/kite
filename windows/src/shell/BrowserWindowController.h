@@ -250,7 +250,8 @@ private:
     // The window's timers and posted messages. The timers' ids on this window, shared out across
     // the checkpoints so two never collide (the ones not in this branch yet are reserved):
     //   1 smoke, 2 archive, 3 settle, 4 session save (W11), 5 history (W25a), 6 Arc merge (W33a),
-    //   7 sidebar toggle (W12), 8 downloads save (W20a), 12 Change Space Icon…'s 0.15 s (W9e).
+    //   7 sidebar toggle (W12), 8 downloads save (W20a), 9 a test's tab close, 11 Chromium's stall
+    //   watch, 12 Change Space Icon…'s 0.15 s (W9e).
     // 0x4B42 and up are the views' (the command bar's caret, Chromium's close deadline, the
     // sidebar's tip and drop, the rename field's caret; 0x4B49 the icon picker's caret, W9e). The WM_APP messages, each its own: +1
     // MainWindow::kWakeMessage, +2 the command bar's redraw, +3 the sidebar's redraw, +4 favicons,
@@ -288,8 +289,8 @@ private:
     // Posted by the memory watch (MemoryPressure.h), wParam the MemoryPressure level.
     static constexpr UINT kMemoryPressureMessage = WM_APP + 7;
     // Change Space Icon… from the space's menu: the picker opens 0.15 s after it closes, on the
-    // space it selected (the Mac's openPicker(after: 0.15)). Timers 8 to 11 are reserved for
-    // other checkpoints (in review); this is the next.
+    // space it selected (the Mac's openPicker(after: 0.15)). The next id after the others' (the
+    // list above; Filter checks none overlap).
     static constexpr UINT_PTR kIconPickerTimer = 12;
     // Posted by history's worker when a profile's file has been read (HistoryStores::SetWake).
     static constexpr UINT kHistoryMessage = WM_APP + 8;

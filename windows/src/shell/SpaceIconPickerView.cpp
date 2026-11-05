@@ -280,6 +280,16 @@ std::wstring SpaceIconPickerView::Open(IconPickerState state, const std::string&
         return problem;
     }
     PlaceWindow();
+    // Shown on a monitor of another scale than the owner's: no WM_DPICHANGED comes when a hidden
+    // window that was last there already has that scale, so it's asked.
+    if (const UINT actual = GetDpiForWindow(window_); state_ && actual && actual != dpi_) {
+        dpi_ = actual;
+        Relayout();
+        frameDirty_ = true;
+        rowsDrawn_.clear();
+        RedrawOrReport();
+        if (state_) PlaceWindow();
+    }
     return {};
 }
 
@@ -302,7 +312,6 @@ void SpaceIconPickerView::Close() {
     gridSurface_.Reset();
     frameWidth_ = frameHeight_ = gridWidth_ = gridHeight_ = 0;
     rowsDrawn_.clear();
-    cellTexts_.clear();
     if (callbacks_.closed) callbacks_.closed(spaceID);
 }
 
@@ -317,16 +326,13 @@ void SpaceIconPickerView::SpaceChanged(const std::string& icon) {
     RedrawOrReport();
 }
 
-void SpaceIconPickerView::Relayout() {
+void SpaceIconPickerView::Relayout(std::optional<std::vector<std::string>> cells) {
     if (!state_) return;
     const std::vector<std::string> before = std::move(cells_);
     layout_ = LayOutIconPicker(state_->tab, !icon_.empty());
-    cells_ = IconPickerCells(*state_);
+    cells_ = cells ? std::move(*cells) : IconPickerCells(*state_);
     // Other cells: the grid's rows draw again (its surface is made again at its new height).
-    if (cells_ != before) {
-        rowsDrawn_.clear();
-        cellTexts_.assign(cells_.size(), std::nullopt);
-    }
+    if (cells_ != before) rowsDrawn_.clear();
     placement_ = Placement(keepInOwner_);
     if (layout_.search) search_.SetVisibleWidth(layout_.search->Width() - 2 * kFieldTextInset);
     search_.KeepCaretVisible();
@@ -548,8 +554,8 @@ void SpaceIconPickerView::PaintEmoji(ID2D1DeviceContext* context, size_t first, 
             const size_t index = row * layout_.columns + column;
             if (index >= cells_.size()) return;
             const PickerRect frame = IconPickerCellFrame(layout_, index, layout_.grid.top);  // the grid's own points
-            if (cellTexts_.size() != cells_.size()) cellTexts_.assign(cells_.size(), std::nullopt);
-            std::optional<CellText>& text = cellTexts_[index];
+            // By the emoji, so a search's cells reuse what the whole grid made.
+            std::optional<CellText>& text = cellTexts_[cells_[index]];
             if (!text) {
                 const std::wstring emoji = Widen(cells_[index]);
                 CellText made;
@@ -894,8 +900,7 @@ void SpaceIconPickerView::QueryEdited(TextEditing::Change change) {
     if (!state_ || change == TextEditing::Change::None) return;
     if (change == TextEditing::Change::Text) {
         search_.Relayout();
-        SetIconPickerQuery(*state_, Narrow(search_.Edit().Text()));
-        Relayout();
+        Relayout(SetIconPickerQuery(*state_, Narrow(search_.Edit().Text())));
     } else {
         search_.KeepCaretVisible();
     }

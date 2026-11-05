@@ -69,6 +69,10 @@ float TextTop(float height, float line) {
 // Folder rows' trailing chevron (chevron.right, 9pt bold) is about this wide; its slot and
 // gap stay reserved even while it's hidden (the Mac shows it on hover).
 constexpr float kFolderChevronWidth = 6.5f;
+// The header's emoji: the Mac's 15pt systemFont (Apple Color Emoji) inks 17.4pt, which Segoe UI
+// Emoji does at this size, the space bar's factor (Apple's 14.5pt ink at 12.5 against Segoe's
+// 12.75): 36px in the Mac's 2x capture of the header, 30px before at Segoe's own 15pt.
+constexpr float kHeaderEmojiFontSize = M::kHeaderIconFontSize * 14.5f / 12.75f;
 // The header's chevron button and the gap around its Spacer (HStack spacing 2).
 constexpr float kHeaderGap = M::kHeaderTextX - M::kHeaderIconX - M::kHeaderIconSize;
 // FaviconImageView: corners of 19% of its side; the globe at 60% and Kite's page symbols at 80%.
@@ -137,7 +141,7 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kDoneFontSize, view->doneFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_REGULAR, M::kTabFontSize, view->tabFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kTabFontSize, view->folderFormat_)) ||
-        FAILED(hr = format(L"Segoe UI Emoji", DWRITE_FONT_WEIGHT_REGULAR, M::kHeaderIconFontSize, view->emojiFormat_)) ||
+        FAILED(hr = format(L"Segoe UI Emoji", DWRITE_FONT_WEIGHT_REGULAR, kHeaderEmojiFontSize, view->emojiFormat_)) ||
         FAILED(hr = format(installed(L"Segoe Fluent Icons") ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets", DWRITE_FONT_WEIGHT_REGULAR,
                            M::kIconSize, view->iconFormat_))) {
         error = HResultMessage(L"CreateTextFormat", hr);
@@ -568,6 +572,19 @@ std::optional<D2D1_RECT_F> SidebarView::HeaderIconRect(const std::string& spaceI
     const SidebarRow& header = model_.rows.front();
     const float top = std::max(listTop_ + header.top - scroll_ + M::kHeaderIconTop, listTop_ - M::kHeaderIconSize);
     return Rect(M::kHeaderIconX, top, M::kHeaderIconX + M::kHeaderIconSize, top + M::kHeaderIconSize);
+}
+
+std::vector<SidebarRow> SidebarView::PressRows() const {
+    std::vector<SidebarRow> rows = model_.rows;
+    if (!rows.empty() && rows.front().kind == SidebarRow::Kind::Header && rows.front().icon.empty() && pickerSpace_ == rows.front().id) {
+        rows.front().icon = std::string(kSymbolIconPrefix);  // a slot with nothing in it, but a slot
+    }
+    return rows;
+}
+
+bool SidebarView::OverHeaderIcon(POINT client) const {
+    const D2D1_POINT_2F q = OnPage(PointOf(client));
+    return SidebarHitTest(PressRows(), width_, Height(), scroll_, q.x, q.y, listTop_).target == SidebarHit::Target::HeaderIcon;
 }
 
 std::optional<POINT> SidebarView::HeaderIconCentre() {
@@ -1049,8 +1066,16 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
                 ComPtr<IDWriteTextLayout> layout;
                 if (SUCCEEDED(dwrite_->CreateTextLayout(icon.c_str(), static_cast<UINT32>(icon.size()), emojiFormat_.Get(), M::kHeaderIconSize,
                                                         M::kHeaderIconSize, layout.GetAddressOf()))) {
+                    // Its ink in the middle of the slot, as the bar centres its emoji (the larger
+                    // size would otherwise sit by the line's ascent and descent).
+                    DWRITE_OVERHANG_METRICS overhang{};
+                    float dx = 0, dy = 0;
+                    if (SUCCEEDED(layout->GetOverhangMetrics(&overhang))) {
+                        dx = (overhang.left - overhang.right) / 2;
+                        dy = (overhang.top - overhang.bottom) / 2;
+                    }
                     brush_->SetColor(Primary(1));
-                    context->DrawTextLayout(D2D1::Point2F(iconBox.left, iconBox.top), layout.Get(), brush_.Get(),
+                    context->DrawTextLayout(D2D1::Point2F(iconBox.left + dx, iconBox.top + dy), layout.Get(), brush_.Get(),
                                             D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
                 }
             }
@@ -1455,6 +1480,7 @@ void SidebarView::SetScroll(float scroll) {
     const float snapped = std::min(std::round(scrollExact_ * scale) / scale, limit);
     if (snapped == scroll_) return;
     scroll_ = snapped;
+    if (onListScrolled) onListScrolled();
     InvalidateSelectedPage();
     RefreshHover();
 }
@@ -1608,7 +1634,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             return true;
         }
         const D2D1_POINT_2F q = OnPage(p);
-        press_ = SidebarPressAt(model_.rows, width_, Height(), scroll_, q.x, q.y, clicks_, activating, listTop_);
+        press_ = SidebarPressAt(PressRows(), width_, Height(), scroll_, q.x, q.y, clicks_, activating, listTop_);
         if (press_) SetCapture(window_);
         return true;
     }
@@ -1676,7 +1702,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         // As the Mac's mouseUp: on release, over what was pressed, wherever its row is now.
         const D2D1_POINT_2F q = OnPage(p);
         const SidebarTap tap =
-            p.x < 0 || p.x >= width_ ? SidebarTap{} : SidebarRelease(press, model_.rows, width_, Height(), scroll_, q.x, q.y, listTop_);
+            p.x < 0 || p.x >= width_ ? SidebarTap{} : SidebarRelease(press, PressRows(), width_, Height(), scroll_, q.x, q.y, listTop_);
         RefreshHover();
         // A click on the current space's name renames it in place (SpaceHeaderRowCell.tapped(at:)).
         if (tap.action == SidebarTap::Action::None && press.target == SidebarHit::Target::Row && press.kind == SidebarRow::Kind::Header &&

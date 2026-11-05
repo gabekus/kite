@@ -1000,6 +1000,15 @@ std::wstring BrowserWindowController::SmokeTestIconPicker() {
     if (!IsWindowVisible(iconPicker_->Window())) return L"its window isn't shown";
     // The whole catalog, but only the rows in view drawn.
     if (iconPicker_->RowsDrawn() == 0 || iconPicker_->RowsDrawn() > 6) return L"the emoji grid drew rows out of view";
+    // The placeholder is the icon's button (the space has no icon): a click on it opens the picker
+    // again and renames nothing.
+    {
+        const std::optional<POINT> square = sidebar_->HeaderIconCentre();
+        if (!square) return L"the header has no placeholder to click";
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, *square, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, *square, 0);
+        if (!open() || sidebar_->Renaming() || sidebar_->IconPickerSpace() != id) return L"a click on the placeholder didn't open the picker again";
+    }
     // The pointer over the grid draws nothing (the Mac's plain buttons have no hover).
     const size_t draws = iconPicker_->Draws();
     HWND picker = iconPicker_->Window();
