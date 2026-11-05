@@ -73,7 +73,9 @@
 // titles or addresses. Arc's unnamed spaces stay out, as the Mac's dialog starts, unless Arc
 // has no named space (then they're all there is) or --include-unnamed; --leave-out-unnamed
 // leaves them out either way. The session is saved first, then keybindings.json and
-// LinkRouting.json; the summary prints once all of it is written. With --profile or
+// LinkRouting.json, then each Arc profile's history into its Kite profile's history (found:
+// historyRows, historyPages; imported: historyPages, historyPagesNew; skipped: history* by
+// reason); the summary prints once all of it is written. With --profile or
 // KITE_SUPPORT_PATH, KITE_ARC_DATA_PATH stands in for Arc's folder, as in the Mac's test runs.
 // `profile` lists, makes, renames and deletes Kite profiles (core/Profiles.h). A deleted one's
 // folder name is free again once its Chromium folder is gone, which kitecore never deletes.
@@ -1084,7 +1086,14 @@ int main(int argc, char** argv) {
         }
         const auto arcDirectory = arc_import::ArcDirectory(profile ? profile : EnvironmentPath("KITE_SUPPORT_PATH"),
                                                            EnvironmentPath("KITE_ARC_DATA_PATH"), EnvironmentPath("LOCALAPPDATA"));
-        auto plan = picked ? arc_import::ReadPicked(*picked, arcDirectory) : arc_import::ReadAuto(arcDirectory);
+        std::variant<arc_import::Plan, arc_import::LoadError> plan = arc_import::LoadError{};
+        try {
+            plan = picked ? arc_import::ReadPicked(*picked, arcDirectory) : arc_import::ReadAuto(arcDirectory);
+        } catch (const std::exception& e) {
+            plan = arc_import::ReadFailed(e.what());
+        } catch (...) {
+            plan = arc_import::ReadFailed(nullptr);
+        }
         if (auto* error = std::get_if<arc_import::LoadError>(&plan)) {
             std::fprintf(stderr, "kitecore: %s %s\n", error->message.c_str(), error->detail.c_str());
             return kNotFound;
@@ -1096,6 +1105,19 @@ int main(int argc, char** argv) {
             return kSaveFailed;
         }
         arc_import::WriteProfileFiles(imported, std::get<std::filesystem::path>(resolved));
+        // Then each Arc profile's history, into the stores the app keeps (history.json, and
+        // Chromium/<dir>/Kite History.json for another profile), written before the summary.
+        HistoryStores stores(std::get<std::filesystem::path>(resolved));
+        stores.Start();
+        if (!arc_import::MergeHistories(imported, stores, std::chrono::seconds(60))) {
+            std::fputs("kitecore: history: the profiles' history files weren't read within 60 s, so Arc's history wasn't merged\n", stderr);
+            return kSaveFailed;
+        }
+        stores.SaveNow();
+        if (std::string error = stores.Flush(DeadlineAfter(std::chrono::seconds(60))); !error.empty()) {
+            std::fprintf(stderr, "kitecore: history: %s\n", error.c_str());
+            return kSaveFailed;
+        }
         std::puts(json::Write(arc_import::Summary(imported)).c_str());
         return kOk;
     } else if (command == "profile" && args.size() >= 2) {

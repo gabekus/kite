@@ -5,7 +5,8 @@
 #include <algorithm>
 #include <charconv>
 #include <cstring>
-#include <set>
+#include <functional>
+#include <limits>
 
 namespace kite::sqlite {
 
@@ -44,75 +45,119 @@ bool Varint(std::string_view bytes, size_t& at, uint64_t& out) {
     return true;
 }
 
+// What the walk hands on for each row: its rowid and record bytes, or no bytes for a record over
+// the cap (left unread). False stops the walk.
+using CellVisitor = std::function<bool(int64_t rowid, const std::string* record)>;
+
 class Reader {
 public:
-    explicit Reader(std::string_view file) : file_(file) {}
+    explicit Reader(PageSource& source) : source_(source) {}
 
     bool Open() {
-        if (file_.size() < 100 || std::memcmp(file_.data(), "SQLite format 3\0", 16) != 0) return false;
-        pageSize_ = static_cast<size_t>(BigEndian(file_, 16, 2));
+        std::string header;
+        if (source_.Size() < 100 || !source_.Read(0, 100, header)) return false;
+        if (std::memcmp(header.data(), "SQLite format 3\0", 16) != 0) return false;
+        pageSize_ = static_cast<size_t>(BigEndian(header, 16, 2));
         if (pageSize_ == 1) pageSize_ = 65536;
         if (pageSize_ < 512 || pageSize_ > 65536 || (pageSize_ & (pageSize_ - 1)) != 0) return false;
-        usable_ = pageSize_ - static_cast<unsigned char>(file_[20]);
+        usable_ = pageSize_ - static_cast<unsigned char>(header[20]);
         if (usable_ < 480) return false;
         // Text in UTF-8 (1), or 0 in a database with nothing in it yet.
-        const uint64_t encoding = BigEndian(file_, 56, 4);
+        const uint64_t encoding = BigEndian(header, 56, 4);
         if (encoding != 1 && encoding != 0) return false;
-        pageCount_ = file_.size() / pageSize_;
+        pageCount_ = source_.Size() / pageSize_;
+        // One bit a page: 256 KB for a 1 GiB file of 512-byte pages, the smallest there are.
+        used_.assign(static_cast<size_t>(pageCount_) + 1, false);
         return pageCount_ > 0;
     }
 
-    // Every row of the table b-tree rooted at `root`: its rowid and record bytes.
-    bool Rows(uint64_t root, std::vector<std::pair<int64_t, std::string>>& out) { return Walk(root, 0, out); }
+    // Every row of the table b-tree rooted at `root`, in rowid order, to `visit`. False for a
+    // broken file; a visit that returns false ends it early, which isn't one (stopped()).
+    bool Rows(uint64_t root, const CellVisitor& visit, size_t maxRecord, const std::atomic<bool>* cancel) {
+        visit_ = &visit;
+        maxRecord_ = maxRecord;
+        cancel_ = cancel;
+        stopped_ = false;
+        return Walk(root, 0);
+    }
+    bool Stopped() const { return stopped_; }
 
 private:
-    std::optional<std::string_view> Page(uint64_t number) const {
-        if (number < 1 || number > pageCount_) return std::nullopt;
-        return file_.substr(static_cast<size_t>(number - 1) * pageSize_, pageSize_);
+    // Page `number` into `out`: one read of the source.
+    bool Page(uint64_t number, std::string& out) {
+        if (number < 1 || number > pageCount_) return false;
+        return source_.Read((number - 1) * pageSize_, pageSize_, out);
     }
 
-    // Each page is read once in the whole read, as a b-tree page or an overflow page: a page
-    // reached twice (a loop, a child or overflow chain shared by two cells) is a broken file.
-    bool Use(uint64_t number) { return pages_.insert(number).second; }
-
-    bool Walk(uint64_t number, int depth, std::vector<std::pair<int64_t, std::string>>& out) {
-        if (depth > 64 || !Use(number)) return false;
-        auto page = Page(number);
-        if (!page) return false;
-        const size_t header = number == 1 ? 100 : 0;
-        if (page->size() < header + 8) return false;
-        const unsigned char type = static_cast<unsigned char>((*page)[header]);
-        const size_t cells = static_cast<size_t>(BigEndian(*page, header + 3, 2));
-        const bool interior = type == 0x05;
-        if (!interior && type != 0x0D) return false;
-        const size_t pointers = header + (interior ? 12 : 8);
-        if (pointers + cells * 2 > usable_) return false;
-        std::set<size_t> offsets;
-        for (size_t i = 0; i < cells; ++i) {
-            size_t at = static_cast<size_t>(BigEndian(*page, pointers + i * 2, 2));
-            // Cells sit after the pointer array, each at its own place.
-            if (at < pointers + cells * 2 || at >= usable_ || !offsets.insert(at).second) return false;
-            if (interior) {
-                if (at + 4 > usable_) return false;
-                if (!Walk(BigEndian(*page, at, 4), depth + 1, out)) return false;
-                continue;
-            }
-            std::string_view cellBytes = page->substr(0, usable_);
-            uint64_t payload = 0, rowid = 0;
-            if (!Varint(cellBytes, at, payload) || !Varint(cellBytes, at, rowid)) return false;
-            std::string record;
-            if (!Payload(cellBytes, at, payload, record)) return false;
-            out.emplace_back(static_cast<int64_t>(rowid), std::move(record));
-        }
-        if (interior) return Walk(BigEndian(*page, header + 8, 4), depth + 1, out);
+    // Each page is read once in the whole read (the schema's walk and the table's, which share
+    // this reader), as a b-tree page or an overflow page: a page reached twice (a loop, a child
+    // or overflow chain shared by two cells, a table inside the schema's tree) is a broken file.
+    bool Use(uint64_t number) {
+        if (number < 1 || number > pageCount_ || used_[static_cast<size_t>(number)]) return false;
+        used_[static_cast<size_t>(number)] = true;
         return true;
     }
 
-    // A table leaf cell's payload: what's on the page, then the overflow chain.
-    bool Payload(std::string_view page, size_t at, uint64_t size, std::string& out) {
+    bool Walk(uint64_t number, int depth) {
+        if (depth > 64 || !Use(number)) return false;
+        // This level's page, kept while its children are read: one page per level.
+        std::string page;
+        if (!Page(number, page)) return false;
+        const size_t header = number == 1 ? 100 : 0;
+        if (page.size() < header + 8) return false;
+        const unsigned char type = static_cast<unsigned char>(page[header]);
+        const size_t cells = static_cast<size_t>(BigEndian(page, header + 3, 2));
+        const bool interior = type == 0x05;
+        if (!interior && type != 0x0D) return false;
+        if (!interior && cancel_ && cancel_->load()) {
+            stopped_ = true;
+            return true;
+        }
+        const size_t pointers = header + (interior ? 12 : 8);
+        if (pointers + cells * 2 > usable_) return false;
+        // Cells sit after the pointer array, each at its own place: checked before any is read,
+        // so a pointer repeated many times can't make the same record be read again and again.
+        std::vector<size_t> offsets(cells);
+        for (size_t i = 0; i < cells; ++i) {
+            offsets[i] = static_cast<size_t>(BigEndian(page, pointers + i * 2, 2));
+            if (offsets[i] < pointers + cells * 2 || offsets[i] >= usable_) return false;
+        }
+        {
+            std::vector<size_t> sorted = offsets;
+            std::sort(sorted.begin(), sorted.end());
+            if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) return false;
+        }
+        const std::string_view cellBytes = std::string_view(page).substr(0, static_cast<size_t>(usable_));
+        for (size_t i = 0; i < cells; ++i) {
+            size_t at = offsets[i];
+            if (interior) {
+                if (at + 4 > usable_) return false;
+                if (!Walk(BigEndian(page, at, 4), depth + 1)) return false;
+                if (stopped_) return true;
+                continue;
+            }
+            uint64_t payload = 0, rowid = 0;
+            if (!Varint(cellBytes, at, payload) || !Varint(cellBytes, at, rowid)) return false;
+            if (payload > maxRecord_) {
+                // Too long to keep: what's on this page is still checked, the overflow unread.
+                if (!Payload(cellBytes, at, payload, nullptr)) return false;
+                if (!(*visit_)(static_cast<int64_t>(rowid), nullptr)) stopped_ = true;
+            } else {
+                if (!Payload(cellBytes, at, payload, &record_)) return false;
+                if (!(*visit_)(static_cast<int64_t>(rowid), &record_)) stopped_ = true;
+            }
+            if (stopped_) return true;
+        }
+        if (interior) return Walk(BigEndian(page, header + 8, 4), depth + 1);
+        return true;
+    }
+
+    // A table leaf cell's payload: what's on the page, then the overflow chain. With no `out`,
+    // only the part on the page is checked.
+    bool Payload(std::string_view page, size_t at, uint64_t size, std::string* out) {
         // Every record together can't be more than the file holds.
         recordBytes_ += size;
-        if (size > file_.size() || recordBytes_ > file_.size()) return false;
+        if (size > source_.Size() || recordBytes_ > source_.Size()) return false;
         const uint64_t x = usable_ - 35;
         uint64_t local = size;
         if (size > x) {
@@ -121,22 +166,27 @@ private:
             local = k <= x ? k : m;
         }
         if (at + local > page.size()) return false;
-        out.assign(page.substr(at, static_cast<size_t>(local)));
+        if (local < size && at + local + 4 > page.size()) return false;
+        if (!out) return true;
+        out->assign(page.substr(at, static_cast<size_t>(local)));
         if (local == size) return true;
-        if (at + local + 4 > page.size()) return false;
         uint64_t next = BigEndian(page, static_cast<size_t>(at + local), 4);
-        while (out.size() < size) {
-            auto overflow = Page(next);
-            if (!overflow || !Use(next)) return false;
-            const size_t take = static_cast<size_t>(std::min<uint64_t>(size - out.size(), usable_ - 4));
-            out.append(overflow->substr(4, take));
-            next = BigEndian(*overflow, 0, 4);
+        while (out->size() < size) {
+            if (!Use(next) || !Page(next, overflow_)) return false;
+            const size_t take = static_cast<size_t>(std::min<uint64_t>(size - out->size(), usable_ - 4));
+            out->append(overflow_, 4, take);
+            next = BigEndian(overflow_, 0, 4);
         }
         return true;
     }
 
-    std::string_view file_;
-    std::set<uint64_t> pages_;
+    PageSource& source_;
+    std::vector<bool> used_;
+    std::string record_, overflow_;
+    const CellVisitor* visit_ = nullptr;
+    const std::atomic<bool>* cancel_ = nullptr;
+    size_t maxRecord_ = std::numeric_limits<size_t>::max();
+    bool stopped_ = false;
     uint64_t recordBytes_ = 0;
     size_t pageSize_ = 0;
     uint64_t usable_ = 0;
@@ -264,7 +314,9 @@ SqlValue Literal(const std::vector<Token>& def, size_t at) {
 
 }  // namespace
 
-std::optional<size_t> Table::Column(std::string_view name) const {
+std::optional<size_t> Table::Column(std::string_view name) const { return ColumnIndex(columns, name); }
+
+std::optional<size_t> ColumnIndex(const std::vector<std::string>& columns, std::string_view name) {
     for (size_t i = 0; i < columns.size(); ++i) {
         if (EqualsIgnoringCase(columns[i], name)) return i;
     }
@@ -324,45 +376,120 @@ bool IsHotJournal(std::string_view journal) {
     return journal.size() >= sizeof kMagic && std::memcmp(journal.data(), kMagic, sizeof kMagic) == 0;
 }
 
-std::optional<Table> ReadTable(std::string_view file, std::string_view name) {
-    Reader reader(file);
+bool MemoryPages::Read(uint64_t offset, size_t size, std::string& out) {
+    if (offset > bytes_.size() || size > bytes_.size() - offset) return false;
+    out.assign(bytes_.substr(static_cast<size_t>(offset), size));
+    return true;
+}
+
+FilePages::FilePages(const std::filesystem::path& file) {
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(file, error)) return;
+    const auto size = std::filesystem::file_size(file, error);
+    if (error) return;
+    in_.open(file, std::ios::binary);
+    if (!in_) return;
+    size_ = static_cast<uint64_t>(size);
+    open_ = true;
+}
+
+bool FilePages::Read(uint64_t offset, size_t size, std::string& out) {
+    if (!open_ || offset > size_ || size > size_ - offset) return false;
+    out.resize(size);
+    in_.clear();
+    in_.seekg(static_cast<std::streamoff>(offset));
+    in_.read(out.data(), static_cast<std::streamsize>(size));
+    // A file cut short since it was opened reads short: that's a read that failed.
+    if (static_cast<size_t>(in_.gcount()) != size) return false;
+    bytesRead_ += size;
+    return true;
+}
+
+std::optional<Scan> ScanTable(PageSource& source, std::string_view name,
+                              const std::function<bool(const std::vector<std::string>& columns)>& columns,
+                              const std::function<bool(std::vector<SqlValue>& values)>& row, const ScanOptions& options) {
+    Reader reader(source);
     if (!reader.Open()) return std::nullopt;
-    std::vector<std::pair<int64_t, std::string>> schema;
-    if (!reader.Rows(1, schema)) return std::nullopt;
+    // The schema (sqlite_schema: type, name, tbl_name, rootpage, sql) is small: page 1's tree.
     std::optional<uint64_t> root;
     std::string sql;
-    for (const auto& [rowid, bytes] : schema) {
-        auto values = Record(bytes);
-        // sqlite_schema: type, name, tbl_name, rootpage, sql.
-        if (!values || values->size() < 5) continue;
+    const CellVisitor schema = [&](int64_t, const std::string* bytes) {
+        if (!bytes) return true;
+        auto values = Record(*bytes);
+        if (!values || values->size() < 5) return true;
         auto* type = std::get_if<std::string>(&(*values)[0]);
         auto* tableName = std::get_if<std::string>(&(*values)[1]);
         auto* page = std::get_if<int64_t>(&(*values)[3]);
         auto* text = std::get_if<std::string>(&(*values)[4]);
         if (type && *type == "table" && tableName && EqualsIgnoringCase(*tableName, name) && page && *page > 0 && text) {
             root = static_cast<uint64_t>(*page);
-            sql = *text;
-            break;
+            sql = std::move(*text);
+            return false;
         }
-    }
+        return true;
+    };
+    // A schema row is a CREATE statement: one past kMaxSchemaRecordBytes isn't one Chromium wrote,
+    // and is left unread (so a crafted 1 GiB overflow chain there costs nothing).
+    if (!reader.Rows(1, schema, kMaxSchemaRecordBytes, options.cancel)) return std::nullopt;
+    if (reader.Stopped() && !root) return std::nullopt;  // cancelled
     if (!root) return std::nullopt;
     auto definitions = ParseColumns(sql);
     if (!definitions || definitions->empty()) return std::nullopt;
-    std::vector<std::pair<int64_t, std::string>> rows;
-    if (!reader.Rows(*root, rows)) return std::nullopt;
-    Table table;
-    for (const ColumnDefinition& d : *definitions) table.columns.push_back(d.name);
-    for (const auto& [rowid, bytes] : rows) {
-        auto values = Record(bytes);
-        if (!values || values->size() > definitions->size()) return std::nullopt;
+    std::vector<std::string> names;
+    for (const ColumnDefinition& d : *definitions) names.push_back(d.name);
+    Scan scan;
+    if (!columns(names)) {
+        scan.stopped = true;
+        return scan;
+    }
+
+    bool broken = false;
+    const CellVisitor cells = [&](int64_t rowid, const std::string* bytes) {
+        if (!bytes) {
+            ++scan.oversized;
+            return true;
+        }
+        auto values = Record(*bytes);
+        if (!values || values->size() > definitions->size()) {
+            broken = true;
+            return false;
+        }
         // A row written before ALTER TABLE ADD COLUMN has fewer values: the rest take their DEFAULT.
         for (size_t i = values->size(); i < definitions->size(); ++i) values->push_back((*definitions)[i].defaultValue);
         for (size_t i = 0; i < definitions->size(); ++i) {
             if ((*definitions)[i].rowidAlias && std::holds_alternative<std::monostate>((*values)[i])) (*values)[i] = rowid;
         }
-        table.rows.push_back(std::move(*values));
-    }
+        ++scan.rows;
+        return row(*values);
+    };
+    if (!reader.Rows(*root, cells, options.maxRecordBytes, options.cancel) || broken) return std::nullopt;
+    scan.stopped = reader.Stopped();
+    return scan;
+}
+
+std::optional<Table> ReadTable(std::string_view file, std::string_view name) {
+    MemoryPages source(file);
+    Table table;
+    auto scan = ScanTable(
+        source, name,
+        [&](const std::vector<std::string>& columns) {
+            table.columns = columns;
+            return true;
+        },
+        [&](std::vector<SqlValue>& values) {
+            table.rows.push_back(std::move(values));
+            return true;
+        });
+    if (!scan) return std::nullopt;
     return table;
+}
+
+std::optional<Journal> HeaderJournal(std::string_view header) {
+    if (header.size() < 20 || std::memcmp(header.data(), "SQLite format 3\0", 16) != 0) return std::nullopt;
+    const unsigned char write = static_cast<unsigned char>(header[18]), read = static_cast<unsigned char>(header[19]);
+    if (write == 1 && read == 1) return Journal::Rollback;
+    if (write == 2 && read == 2) return Journal::WriteAheadLog;
+    return std::nullopt;
 }
 
 }  // namespace kite::sqlite
