@@ -1269,6 +1269,43 @@ std::optional<D2D1_POINT_2F> SidebarView::BarPoint(D2D1_POINT_2F p) const {
     return b;
 }
 
+std::optional<SidebarMenuTarget> SidebarView::MenuTargetAt(D2D1_POINT_2F p) const {
+    using K = SidebarMenuTarget::Kind;
+    if (p.x < 0 || p.x >= width_) return std::nullopt;
+    // The bar is over the favorites (SidebarColumnView's subviews), and both over the page.
+    if (const auto b = BarPoint(p)) {
+        if (const std::optional<std::string> space = bar_->SpaceAt(b->x, b->y)) return SidebarMenuTarget{K::Space, *space, false};
+        return std::nullopt;
+    }
+    // The tray takes the whole band: a pane has the favorite's menu; the rest (the empty state's
+    // close button) is an ordinary press.
+    if (InFavorites(favorites_->Tray(), width_, p.x, p.y)) {
+        const std::optional<FavoritePress> pane = FavoritePressAt(favorites_->Tray(), p.x, p.y);
+        if (!pane || pane->target != FavoritePress::Target::Pane) return std::nullopt;
+        return SidebarMenuTarget{K::Favorite, pane->tabID, false};
+    }
+    if (TopRowItemAt(topRow_->Items(), p.x, p.y)) return std::nullopt;
+    const D2D1_POINT_2F q = OnPage(p);
+    return SidebarMenuTargetAt(model_.rows, width_, Height(), scroll_, q.x, q.y, listTop_);
+}
+
+void SidebarView::OpenMenu(const SidebarMenuTarget& target, POINT at) {
+    using K = SidebarMenuTarget::Kind;
+    if (target.kind == K::None) return;
+    HideTip();
+    POINT screen = at;
+    ClientToScreen(window_, &screen);
+    // The menu's loop holds the pointer: the hover it leaves is the menu's to clear (RefreshHover
+    // on the next move).
+    if (target.kind == K::Space) {
+        if (actions_.spaceMenu) actions_.spaceMenu(target.id, screen);
+        return;
+    }
+    if (!actions_.rowMenu) return;
+    const SidebarMenuKind kind = target.kind == K::Tab ? SidebarMenuKind::Tab : target.kind == K::Folder ? SidebarMenuKind::Folder : SidebarMenuKind::Favorite;
+    actions_.rowMenu(kind, target.id, screen);
+}
+
 void SidebarView::ForgetActivation() {
     activating_ = false;
 }
@@ -1491,7 +1528,8 @@ void SidebarView::ClearHover() {
     if (barDragging_) DropSpace(D2D1_POINT_2F{-1, -1});
     renamePressed_ = false;
     // A press it drops lets go of the mouse too.
-    if ((press_ || barPress_ || topPress_ || favoritePress_ || middlePress_) && GetCapture() == window_) {
+    if ((press_ || barPress_ || topPress_ || favoritePress_ || middlePress_ || menuPress_) && GetCapture() == window_) {
+        menuPress_.reset();
         press_.reset();
         barPress_.reset();
         topPress_.reset();
@@ -1652,6 +1690,22 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         // (the Mac's row isn't a responder, so its field editor stays, and tapped(at:) ignores a
         // renaming row; its close and Back to Pinned URL are hidden). Anywhere else it ends the
         // rename (keeping what was typed) and goes on as a press.
+        // A Ctrl+press on a row, pane or cell is a right-click there (SidebarRowCell's, FavoritePaneView's
+        // and SpaceCellView's mouseDown: "⌃-click is a right-click"), its menu opening on release as a
+        // right-click's does; on New Tab, which has none, it's spent. A row's own buttons (a close
+        // button, Back to Pinned URL, the header's chevron and icon) take it as an ordinary press, as
+        // AppKit's buttons do, and so do rows and panes when it's the click that brings the window
+        // forward (they don't accept first mouse; the bar's cells do). In an open rename field it's the
+        // field's (the Mac's field editor has the press first).
+        menuPress_.reset();
+        std::optional<SidebarMenuTarget> control;
+        if (wParam & MK_CONTROL) {
+            control = MenuTargetAt(p);
+            // Only the bar's cells take the activating click (acceptsFirstMouse): not the header, whose
+            // menu is the space's too but which is an ordinary row.
+            if (control && (control->button || (activating && !BarPoint(p)))) control.reset();
+        }
+        const bool toMenu = control.has_value();
         if (rename_) {
             const D2D1_POINT_2F q = OnPage(p);
             if (rename_->Press(q.x, q.y, (wParam & MK_SHIFT) != 0)) {
@@ -1660,8 +1714,14 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
                 ScheduleDraw();
                 return true;
             }
-            if (InRenamedRow(q)) return true;
-            EndRenaming(true);
+            if (InRenamedRow(q) && !toMenu) return true;
+            // A menu ends the rename itself as it opens (keeping what was typed).
+            if (!toMenu) EndRenaming(true);
+        }
+        if (toMenu) {
+            menuPress_ = control;
+            SetCapture(window_);
+            return true;
         }
         // A top-row button (SymbolButton): it takes the click that brings the window forward too,
         // and acts on release over it; a disabled one takes the press and does nothing.
@@ -1704,6 +1764,17 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         return true;
     }
     case WM_LBUTTONUP: {
+        if (menuPress_) {
+            // A Ctrl+click's menu: let go over what it pressed (its buttons too), as a click is; let go
+            // anywhere else, nothing.
+            const SidebarMenuTarget pressed = *menuPress_;
+            menuPress_.reset();
+            if (GetCapture() == window_) ReleaseCapture();
+            const POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            const std::optional<SidebarMenuTarget> target = MenuTargetAt(PointOf(at));
+            if (target && target->kind == pressed.kind && target->id == pressed.id) OpenMenu(pressed, at);
+            return true;
+        }
         if (topPress_) {
             const TopRowButton pressed = *topPress_;
             topPress_.reset();
@@ -1786,6 +1857,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         // The mouse went elsewhere mid-drag (another window took it): the cell goes back.
         if (barDragging_) DropSpace(D2D1_POINT_2F{-1, -1});
         renamePressed_ = false;
+        menuPress_.reset();
         topPress_.reset();
         middlePress_.reset();
         if (press_ || barPress_ || favoritePress_) {
@@ -1800,25 +1872,14 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         return p.x >= 0 && p.x < width_ && !press_ && !barPress_;
     }
     case WM_RBUTTONUP: {
-        // The space's menu, from its cell in the bar or its header (menu(for:) and the header's
-        // contextMenu(at:)), on release as Windows' context menus open. A favorite's menu comes
-        // with W17.
-        if (press_ || barPress_ || favoritePress_) return true;
+        // A menu, on release as Windows' context menus open: the space's from its cell in the bar
+        // or its header (menu(for:) and the header's contextMenu(at:)), a favorite's from its pane
+        // (FavoritePaneView's menu(for:)), a tab's or a folder's from its row (contextMenu(at:)).
+        if (press_ || barPress_ || favoritePress_ || menuPress_) return true;
         const POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         const D2D1_POINT_2F p = PointOf(at);
         if (p.x < 0 || p.x >= width_) return false;
-        std::optional<std::string> space;
-        if (const auto b = BarPoint(p)) {
-            space = bar_->SpaceAt(b->x, b->y);
-        } else if (const SidebarHit hit = HitAt(p); hit.target == SidebarHit::Target::Row && hit.row < model_.rows.size() &&
-                                                  model_.rows[hit.row].kind == SidebarRow::Kind::Header) {
-            space = model_.rows[hit.row].id;
-        }
-        if (!space || !actions_.spaceMenu) return true;
-        HideTip();
-        POINT screen = at;
-        ClientToScreen(window_, &screen);
-        actions_.spaceMenu(*space, screen);
+        if (const std::optional<SidebarMenuTarget> target = MenuTargetAt(p)) OpenMenu(*target, at);
         return true;
     }
     case WM_MBUTTONDOWN: {

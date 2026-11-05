@@ -27,6 +27,7 @@
 #include "shell/Keys.h"
 #include "shell/PerfLog.h"
 #include "shell/QuitDialog.h"
+#include "shell/SidebarMenus.h"
 #include "shell/SpaceMenu.h"
 #include "shell/Text.h"
 
@@ -251,6 +252,8 @@ std::wstring BrowserWindowController::Init() {
     // Editing spaces (+Spaces.cpp): a drop in the bar, the space menu, the header's rename.
     actions.moveSpace = [this](const std::string& spaceID, size_t index) { MoveSpace(spaceID, index); };
     actions.spaceMenu = [this](const std::string& spaceID, POINT screen) { ShowSpaceMenu(spaceID, screen); };
+    // The rows' and favorites' menus (+SidebarMenus.cpp).
+    actions.rowMenu = [this](SidebarMenuKind kind, const std::string& id, POINT screen) { ShowRowMenu(kind, id, screen); };
     actions.renameSpace = [this](const std::string& spaceID, const std::string& name) { RenameSpace(spaceID, name); };
     actions.beginRenaming = [this](const std::string& spaceID) { BeginRenaming(spaceID); };
     // Tabs and folders (+Tabs.cpp): their row's rename, a double-click on a tab, Back to Pinned URL.
@@ -270,6 +273,11 @@ std::wstring BrowserWindowController::Init() {
     sidebar_->SetActions(std::move(actions));
     if (options_.quiet) askToDelete_ = [](const SpaceDeletion&) { return false; };
     else askToDelete_ = [this](const SpaceDeletion& deletion) { return AskToDeleteSpace(window_.Handle(), deletion); };
+    if (options_.quiet) askToDeleteFolder_ = [](const FolderDeletion&) { return false; };
+    else askToDeleteFolder_ = [this](const FolderDeletion& deletion) { return AskToDeleteFolder(window_.Handle(), deletion); };
+    showRowMenu_ = [this](const std::vector<SidebarMenuItem>& items, POINT screen) {
+        return ShowSidebarMenu(window_.Handle(), items, screen, dark_.value_or(true));
+    };
 
     MakeCommands();
     // View › Hide Sidebar and the Mac's File › Import from Arc…: in the window's system menu

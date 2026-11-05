@@ -79,6 +79,7 @@ add_library(KiteCoreWin STATIC
   src/core/TouchpadPhases.cpp
   src/core/LiveTabPolicy.cpp
   src/core/Sidebar.cpp
+  src/core/SidebarContextMenu.cpp
   src/core/SidebarTopRow.cpp
   src/core/TabClosing.cpp
   src/core/TabEditing.cpp
@@ -147,6 +148,7 @@ if(WIN32)
     src/shell/BrowserWindowController.cpp
     src/shell/BrowserWindowController+Chromium.cpp
     src/shell/BrowserWindowController+Spaces.cpp
+    src/shell/BrowserWindowController+SidebarMenus.cpp
     src/shell/BrowserWindowController+Tabs.cpp
     src/shell/BrowserWindowController+Tests.cpp
     src/shell/BrowserWindowControllerArcImport.cpp
@@ -173,6 +175,8 @@ if(WIN32)
     src/shell/SpaceBarView.cpp
     src/shell/SpaceIconPainter.cpp
     src/shell/SpaceMenu.cpp
+    src/shell/ContextMenu.cpp
+    src/shell/SidebarMenus.cpp
     src/shell/SpaceTipView.cpp
     src/shell/TextEditing.cpp
     src/shell/TextField.cpp
@@ -350,6 +354,7 @@ add_executable(KiteCoreTests
   tests/ModelTests.cpp
   tests/LiveTabPolicyTests.cpp
   tests/SessionSaveTests.cpp
+  tests/SidebarContextMenuTests.cpp
   tests/SidebarTests.cpp
   tests/SidebarTopRowTests.cpp
   tests/SpaceBarTests.cpp

@@ -424,8 +424,7 @@ unchanged from W8).
   empty state and its close button), and `kitecore click` on a pane selects it,
   on the close button dismisses the empty state.
 - **Not yet:** dragging tiles and the drop gap (W18b, which also shows the tray
-  while a drag is on with no favorites), the tile's menu and its Ctrl+click
-  (W17), Add to / Remove from Favorites (W14, W17), the preview cards over a
+  while a drag is on with no favorites), the preview cards over a
   hovered favorite (FavoritePreviewCard, W38), accessibility for the panes (W35c),
   and hiding the tray while Create a Space shows (the Mac's `creating`, W9f).
   Corners are circular rather than continuous, as in the rest of the sidebar.
@@ -1133,8 +1132,8 @@ nothing (the Mac's split is one SplitRowCell, with no doubleTapped). A folder's 
 placeholder, and a blank name keeps the old one. The fields are visuals in their page, clipped to
 the list, so a keystroke draws only the field (the smoke test checks the page doesn't draw). A
 favorite or a split's pane has no row to rename in: the Mac's Rename Tab… dialog for those, and
-for a hidden sidebar, comes with ArcDialog (W19), a beep until then. A folder's rename has no
-way in yet but `--rename-row`: the Mac's is its menu's Rename… (W17).
+for a hidden sidebar, comes with ArcDialog (W19), a beep until then. A folder's rename comes in by
+its menu's Rename… (W17), as on the Mac.
 
 `kitecore tab pin|favorite|rename|duplicate|reset|reset-all|separate|reveal|pinned-url|replace-pin`
 and `kitecore folder new|rename|delete|move` (a folder by id or name) do the same headless;
@@ -1142,13 +1141,73 @@ and `kitecore folder new|rename|delete|move` (a folder by id or name) do the sam
 the page lists a row, and `click … --double` is a double-click's second press.
 `--capture FILE --rename-row N` opens row N's field (from 1, as `sidebar` lists the selected
 space's rows), `--hover-row N` rests the pointer on row N, and `--run-command ID` runs a command
-first (`pinTab` on a pinned tab is the "after unpin" state). Until W17's menus, a folder New Folder
-makes can't be renamed, deleted or filled from the window (only by kitecore, or a drag once W18a
-lands). Not yet: the rows' context menus
-(Pin/Unpin, Rename…, Back to Pinned URL, Separate From Pinned Tab, Edit Pinned Page, a folder's
-Rename… and Delete: W17, whose model is here and in kitecore), Undo (W16: `EditState` is where
-it records), the command bar's command rows (the commands are there to bind, not to search),
-Back to Pinned URL's tooltip, and the "Pin Tab"/"Unpin Tab" retitling (no menu shows it).
+first (`pinTab` on a pinned tab is the "after unpin" state). The rows' menus (W17, below) rename,
+delete and fill folders from the window; a folder is filled by kitecore until W18a's drag. Not yet:
+Undo (W16: `EditState` is where it records), the command bar's command rows (the commands are there
+to bind, not to search), Back to Pinned URL's tooltip, and the "Pin Tab"/"Unpin Tab" retitling of
+the shortcut (the tab's menu has it).
+
+## The sidebar's row menus
+
+A right-click on a tab's row, a folder's row or a favorite's pane opens its menu (W17), ported
+from the Mac's TabRowCell, FolderRowCell and FavoritePaneView menus (SidebarListCells.swift,
+SidebarFavorites.swift) with their items, order, words, separators and enabled states
+(`core/SidebarContextMenu.h`, which also has SidebarContextMenu.swift's edits: Archive Other Tabs /
+Below / Above, a folder's Duplicate, New Nested Folder…, Turn “Name” into Space, and LinkFormat's
+Markdown links). As on the Mac, a Ctrl+click is a right-click there (and on a space's cell or its
+header, the space's menu), opening the menu when it's let go over the row it pressed; the empty
+sidebar, the divider and the address field have none, and the gaps between pills take nothing. New
+Tab has no menu: a right-click there opens nothing and a Ctrl+click is spent (the Mac's mouseDown
+hands it to rightMouseDown, which finds no menu), never opening the command bar. A right-click on
+one of a row's own buttons (a tab's close or Back to Pinned URL, the header's chevron and, with W9e,
+its icon) passes the menu up to the row, as AppKit's buttons pass rightMouseDown on; a Ctrl+click
+presses the button instead, as the Mac's SymbolButtons (controlClickShowsMenu false) and the
+header's icon button do. Rows and panes don't take a Ctrl+click that brings the window forward (they
+don't accept first mouse); the space bar's cells do. Known trade-off: Ctrl+click as the Mac's
+Control-click spends the gesture a ⌘-click's Windows counterpart would use for selecting several
+rows, which Kite doesn't have; if multi-select comes, it needs another gesture (Shift+click, say).
+
+- **A tab's:** Add to Favorites, Pin Tab or Unpin Tab, Back to Pinned URL and Separate From
+  Pinned Tab (a pinned tab off its page), Edit Pinned Page ▸ (Edit…, Replace Pinned URL with
+  Current; a pinned tab with a pinned URL), Copy Link and Copy link as Markdown (greyed out with
+  no page), Rename… (the row's field), then Add Split View on the tab on screen or Open in Split
+  View on another, Duplicate, Move to ▸ (the spaces), then Close Tab (Unload Tab when pinned) and,
+  for a Today tab, Archive Other Tabs, Archive Tabs Below and Archive Tabs Above, each greyed out
+  with nothing on its side.
+- **A folder's:** Duplicate (not for Claude's folders), Delete, New Nested Folder… (made open at
+  the folder's end, its rename opened), Turn “Name” into Space (a plain folder with tabs, never one
+  named Claude), Copy All Links and Copy All Links as Markdown (greyed out with no links), Rename….
+  Delete asks first in Arc's words ("Delete your “Name” folder?", "Deleting this folder will
+  archive the tabs inside it.", Delete Folder and Cancel; a task dialog, always light, as Delete
+  Space's), then archives the tabs inside, their pages closing (the selection, if it was there,
+  goes to the space's first tab). A live folder's menu is Refresh (disabled: live folders don't
+  refresh on Windows yet; its status line, filters and Repositories ▸ aren't built) and Delete Live
+  Folder, which works as the Mac's does without its refresher: it asks Arc's question ("Delete your
+  GitHub Live Folder?", "You can restore this folder at any time by right-clicking the sidebar.",
+  Delete and Cancel), then removes the folder and its tabs unarchived and records the source in the
+  session's `liveFoldersTurnedOff`, so a live folder the Mac made isn't stuck on Windows.
+- **A favorite's:** Remove from Favorites, Edit Pinned Page ▸ (with a pinned URL), Copy Link (always
+  enabled, as the Mac's), Unload Tab.
+
+The menu is Windows' own, through `shell/ContextMenu` (W9d's machinery, moved out of SpaceMenu for
+both): TrackPopupMenuEx on the right button's release (a Ctrl+click's on the left button's), dark
+in a dark space through uxtheme's ordinals 135 and 136 as the space's menu is. It's built as it
+opens, from the session as it is then, and nothing is kept while it's closed; a rename open ends
+first, keeping what was typed. Disabled until their checkpoints: Edit Pinned Page › Edit… (Arc's
+dialog, W19), Add Split View and Open in Split View (W36), Move to ▸ and its spaces (moving between
+spaces and profiles, with Arc's cross-profile warning: W18b), and a live folder's Refresh. Never shown, as on a Mac
+where nothing plays and Claude drives no tab: Stop Claude, Mute Tab / Unmute Tab (Windows doesn't
+follow pages' sound yet) and the Peek badge. Not yet: the split row's menu (Windows shows no split
+rows), Tidy Tabs' Remove header, the "Archived N tabs" and "Folder deleted" toasts (W16), Undo
+(W16), and a keyboard way in (the Mac has none: its sidebar never takes the keyboard, so the Menu
+key and Shift+F10 open nothing there until the sidebar's accessibility, W35c).
+
+`kitecore menu tab|favorite TAB_ID|folder FOLDER` prints a menu as `space menu` prints the space's,
+with its `line` in the Mac's KITE_TEST_CONTEXT_MENU format; `--pick TITLE` (or "Submenu ▸ Item")
+runs an item as the window does. `kitecore click X Y --button right` says which menu a right-click
+there opens. `--capture FILE --row-menu N` (a row from 1, as `sidebar` lists them) and
+`--favorite-menu N` (a pane from 1) open one as a right-click on its middle does, read back from
+Windows' menu like `--space-menu`'s, and print its line to stderr.
 
 ## Middle-click to close (a Windows addition)
 
