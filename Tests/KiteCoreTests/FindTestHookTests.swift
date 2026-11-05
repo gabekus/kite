@@ -80,8 +80,79 @@ struct FindTestHookTests {
             == "KITE_TEST_FIND: ready: \"domain\", found, 2 matches, active 1, counter \"1/2\"")
         #expect(FindTestHook.resultLine(query: "zqxj", found: false, matches: nil, activeMatch: nil, counter: "Not Found")
             == "KITE_TEST_FIND: ready: \"zqxj\", not found, counter \"Not Found\"")
-        #expect(!FindTestHook.timeoutLine.contains("ready"))
+        #expect(!FindTestHook.timeoutLine(FindTestHook.Wait()).contains("ready"))
         #expect(!FindTestHook.refusedLine("x").contains("ready"))
+        #expect(!FindTestHook.armedLine(.open, coveredPagesAnswer: true, windowVisible: false).contains("ready"))
+    }
+
+    @Test func aLookAtTheSelectedTabRunsOnlyOnceItsPageHasLoaded() {
+        // For a load that finished before the hook was armed (or a notification that didn't match).
+        let tab = UUID()
+        #expect(FindTestHook.runs(selectedTab: tab, pageShown: true, pageLoading: false, progress: 1))
+        #expect(!FindTestHook.runs(selectedTab: tab, pageShown: true, pageLoading: false, progress: 0))   // not started
+        #expect(!FindTestHook.runs(selectedTab: tab, pageShown: true, pageLoading: true, progress: 1))
+        #expect(!FindTestHook.runs(selectedTab: tab, pageShown: true, pageLoading: nil, progress: nil))
+        #expect(!FindTestHook.runs(selectedTab: tab, pageShown: false, pageLoading: false, progress: 1))
+        #expect(!FindTestHook.runs(selectedTab: nil, pageShown: true, pageLoading: false, progress: 1))
+    }
+
+    @Test func aFindHookKeepsCoveredPagesAnswering() {
+        // A test-safe window is behind the user's windows, where WebKit stops an occluded window's page.
+        #expect(FindTestHook.keepsCoveredPagesAnswering(environment: ["KITE_TEST_FIND": "domain"], testSafe: true))
+        #expect(FindTestHook.keepsCoveredPagesAnswering(environment: ["KITE_TEST_FIND_OPEN": "1"], testSafe: true))
+        #expect(!FindTestHook.keepsCoveredPagesAnswering(environment: [:], testSafe: true))
+        #expect(!FindTestHook.keepsCoveredPagesAnswering(environment: ["KITE_TEST_FIND": "domain"], testSafe: false))
+        #expect(!FindTestHook.keepsCoveredPagesAnswering(environment: ["KITE_TEST_FIND": "a\nb"], testSafe: true))
+    }
+
+    @Test func theDiagnosticLinesSayWhatTheHookSaw() {
+        #expect(FindTestHook.armedLine(.query("domain"), coveredPagesAnswer: true, windowVisible: false)
+            == "KITE_TEST_FIND: armed: query \"domain\"; waiting up to 20 s for the selected tab's page to load "
+            + "(covered pages answer: yes, window visible: no)")
+        #expect(FindTestHook.armedLine(.open, coveredPagesAnswer: false, windowVisible: true).hasPrefix("KITE_TEST_FIND: armed: open, empty;"))
+        var wait = FindTestHook.Wait()
+        wait.loads = 3
+        wait.selectedLoads = 1
+        wait.selectedTab = true
+        wait.pageShown = true
+        wait.pageLoading = true
+        wait.progress = 0.1
+        wait.webViewLoading = true
+        wait.webViewProgress = 0.1
+        wait.webViewHasURL = true
+        wait.windowOrderedIn = true
+        wait.screens = 1
+        wait.contentProcessEnds = 2
+        #expect(FindTestHook.timeoutLine(wait)
+            == "KITE_TEST_FIND: no page finished loading in 20 s, so the find bar opens without it (finished loads seen: 3, "
+            + "of the selected tab: 1; selected tab: yes, page shown: yes, loading: yes, progress: 0.10; web view loading: "
+            + "yes, web view progress: 0.10, web view URL set: yes, content process ended: 2 times; window visible: no, "
+            + "ordered in: yes, on a screen: no, screens: 1)")
+        #expect(FindTestHook.timeoutLine(FindTestHook.Wait()).contains("loading: unknown, progress: unknown; web view loading: unknown"))
+    }
+
+    @Test func whenThePageNeverLoadsTheBarOpensAnywayAndSaysSo() {
+        // The capture script waits for "KITE_TEST_FIND: ready"; the fallback's line starts so too, and says why.
+        #expect(FindTestHook.fallbackLine(.open) == "KITE_TEST_FIND: ready (fallback, the page never loaded): open, empty")
+        #expect(FindTestHook.fallbackLine(.query("domain"))
+            == "KITE_TEST_FIND: ready (fallback, the page never loaded): \"domain\" set, no find result")
+        for hook in [FindTestHook.open, .query("zqxj")] {
+            #expect(FindTestHook.fallbackLine(hook).hasPrefix("KITE_TEST_FIND: ready"))
+        }
+        // In time for the script, whose 30 s wait starts only once Kite's socket answers.
+        #expect(FindTestHook.pageLoadTimeout <= 20)
+        // A fallback query only puts its text in the field: no searching step, so no result line can follow.
+        #expect(FindTestHook.query("domain").steps(fallback: true) == [.showFind(askOnPage: false), .setTextOnly("domain")])
+        #expect(!FindTestHook.query("zqxj").steps(fallback: true).contains(.setQuery("zqxj")))
+        #expect(FindTestHook.open.steps(fallback: true) == FindTestHook.open.steps)
+        #expect(FindTestHook.query("domain").steps == [.showFind(askOnPage: false), .setQuery("domain")])
+    }
+
+    @Test func pageMilestonesGiveOnlyAnErrorsDomainAndCode() {
+        #expect(FindTestHook.pageLine("started") == "KITE_TEST_FIND: page: started")
+        #expect(FindTestHook.pageLine("failed before commit", error: ("NSURLErrorDomain", -1003))
+            == "KITE_TEST_FIND: page: failed before commit (NSURLErrorDomain -1003)")
+        #expect(!FindTestHook.pageLine("finished").contains("ready"))
     }
 }
 
@@ -111,7 +182,7 @@ struct FindTestHookSourceTests {
         let setQuery = try body(of: "func setQuery(_ text: String) {", in: bar)
         #expect(setQuery.contains("field.stringValue = text"))
         #expect(setQuery.contains("search()"))
-        let apply = try body(of: "func applyFindTestHook(_ hook: FindTestHook) {", in: try source("BrowserWindowController+PageCommands.swift"))
+        let apply = try body(of: "func applyFindTestHook(_ hook: FindTestHook, fallback: Bool = false) -> Bool {", in: try source("BrowserWindowController+PageCommands.swift"))
         #expect(apply.contains("bar.setQuery(text)"))
         // ⌘F's own path (showFind is openFind with the saved Ask on Page setting), with the step's Ask on Page.
         #expect(apply.contains("openFind(askEnabled: askOnPage)"))
@@ -119,7 +190,7 @@ struct FindTestHookSourceTests {
 
     @Test func theHookedBarIgnoresTheSavedAskOnPageSetting() throws {
         let commands = try source("BrowserWindowController+PageCommands.swift")
-        let apply = try body(of: "func applyFindTestHook(_ hook: FindTestHook) {", in: commands)
+        let apply = try body(of: "func applyFindTestHook(_ hook: FindTestHook, fallback: Bool = false) -> Bool {", in: commands)
         let openFind = try body(of: "private func openFind(askEnabled: Bool) {", in: commands)
         #expect(!apply.contains("AskOnPage.isEnabled"))
         #expect(!apply.contains("showFind(nil)"))   // the saved setting's path (its Step is still .showFind(askOnPage:))
@@ -163,7 +234,7 @@ struct FindTestHookSourceTests {
     }
 
     @Test func theHookIsTestSafeOnlyAndSendsNoKeys() throws {
-        let apply = try body(of: "func applyFindTestHook(_ hook: FindTestHook) {", in: try source("BrowserWindowController+PageCommands.swift"))
+        let apply = try body(of: "func applyFindTestHook(_ hook: FindTestHook, fallback: Bool = false) -> Bool {", in: try source("BrowserWindowController+PageCommands.swift"))
         let runner = try source("Diagnostics/FindTestHookRunner.swift")
         #expect(apply.contains("guard WindowPresenter.testSafe"))
         let start = try body(of: "static func start(", in: runner)
@@ -185,5 +256,75 @@ struct FindTestHookSourceTests {
             }
         }
         #expect(try source("AppDelegate.swift").contains("FindTestHookRunner.start(in: windowController)"))
+    }
+
+    @Test func aFindHooksPageAnswersBehindOtherWindowsOnTestSafeRunsOnly() throws {
+        // The cause of W21's first headless run: the covered test window's page never finished loading.
+        let webKit = try source("Engine/WebKitEngine.swift")
+        #expect(webKit.contains("if PageContextMenuItems.testMode != nil || FindTestHookRunner.configured != nil, webView.responds(to: setOcclusion) {"))
+        let runner = try source("Diagnostics/FindTestHookRunner.swift")
+        let declaration = try #require(runner.range(of: "nonisolated static let configured = "))
+        let configured = runner[declaration.upperBound...].prefix { $0 != ")" }
+        #expect(configured.hasPrefix("FindTestHook.from(environment: ProcessInfo.processInfo.environment,"))
+        #expect(configured.hasSuffix("testSafe: WindowPresenter.testSafe"))
+        // Armed and timed-out lines, so a run that doesn't open the bar says why.
+        #expect(try body(of: "static func start(", in: runner).contains("log(FindTestHook.armedLine("))
+        #expect(try body(of: "private func poll(until deadline: Date) {", in: runner).contains("Self.log(FindTestHook.timeoutLine(wait))"))
+    }
+
+    @Test func aPageThatNeverLoadsStillGetsTheBarAndSaysWhereTheLoadStopped() throws {
+        let runner = try source("Diagnostics/FindTestHookRunner.swift")
+        let poll = try body(of: "private func poll(until deadline: Date) {", in: runner)
+        // The same hook (test-safe, no keys), marked as a fallback, and its own ready line only when the bar is open.
+        #expect(poll.contains("if controller.applyFindTestHook(hook, fallback: true) { Self.log(FindTestHook.fallbackLine(hook)) }"))
+        // Page milestones are logged only on a run with a find hook.
+        #expect(try body(of: "static func logPage(", in: runner).contains("guard configured != nil else { return }"))
+        let webKit = try source("Engine/WebKitEngine.swift")
+        for milestone in ["\"started\"", "\"committed\"", "\"finished\"", "\"failed before commit\", error: error",
+                          "\"failed\", error: error", "\"content process ended\""] {
+            #expect(webKit.contains("FindTestHookRunner.logPage(\(milestone))"), "\(milestone)")
+        }
+        // The fallback doesn't also write the normal ready line for an empty bar.
+        let apply = try body(of: "func applyFindTestHook(_ hook: FindTestHook, fallback: Bool = false) -> Bool {",
+                             in: try source("BrowserWindowController+PageCommands.swift"))
+        #expect(apply.contains("if hook == .open, open, !fallback { FindTestHookRunner.log(FindTestHook.openLine) }"))
+    }
+
+    @Test func aFallbackQueryWritesNoResultLine() throws {
+        // A result line after the fallback's would contradict it: the fallback only puts the text in the field.
+        let commands = try source("BrowserWindowController+PageCommands.swift")
+        let apply = try body(of: "func applyFindTestHook(_ hook: FindTestHook, fallback: Bool = false) -> Bool {", in: commands)
+        #expect(apply.contains("for step in hook.steps(fallback: fallback) {"))
+        let textOnly = try #require(apply.range(of: "case .setTextOnly(let text):"))
+        let fallbackCase = apply[textOnly.upperBound...]
+        #expect(fallbackCase.contains("bar.setTextWithoutSearching(text)"))
+        for banned in ["onResult", "setQuery(", "resultLine", "search(", "step(", "onSearch"] {
+            #expect(!fallbackCase.contains(banned), "\(banned)")
+        }
+        // The one place results are logged is the searching step's callback, before the fallback's case.
+        #expect(apply.components(separatedBy: "FindTestHook.resultLine(").count - 1 == 1)
+        let searching = try #require(apply.range(of: "case .setQuery(let text):"))
+        let logged = try #require(apply.range(of: "FindTestHook.resultLine("))
+        #expect(searching.upperBound <= logged.lowerBound && logged.upperBound <= textOnly.lowerBound)
+        // setTextWithoutSearching sets the text only: no search, no find, nothing reported.
+        let bar = try source("Views/FindBar.swift")
+        let textWithoutSearching = try body(of: "func setTextWithoutSearching(_ text: String) {", in: bar)
+        #expect(textWithoutSearching.contains("field.stringValue = text"))
+        for banned in ["search()", "step(", "onSearch", "onResult", "show("] {
+            #expect(!textWithoutSearching.contains(banned), "\(banned)")
+        }
+        // And the bar's only result report is show(_:)'s, which only the page's find completion calls.
+        #expect(bar.components(separatedBy: "onResult?(").count - 1 == 1)
+        #expect(try body(of: "func show(_ result: FindResult) {", in: bar).contains("onResult?(result, countLabel.stringValue)"))
+    }
+
+    @Test func kitesFallbackComesInsideTheScriptsWait() throws {
+        // The script waits FIND_READY_SECONDS once Kite's socket answers (a few seconds after launch); Kite's timer
+        // starts at launch, so its fallback line must come with room to spare.
+        let script = try String(contentsOf: Self.mac.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("scripts/mac-reference-captures.sh"), encoding: .utf8)
+        let line = try #require(script.split(whereSeparator: \.isNewline).first { $0.hasPrefix("FIND_READY_SECONDS=") })
+        let seconds = try #require(Double(line.dropFirst("FIND_READY_SECONDS=".count)))
+        #expect(FindTestHook.pageLoadTimeout + 5 <= seconds)
     }
 }

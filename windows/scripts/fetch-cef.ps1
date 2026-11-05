@@ -1,5 +1,6 @@
 # Downloads the pinned CEF (Chromium Embedded Framework) build for Windows x64 into
-# windows\ThirdParty\cef and builds its static C++ wrapper (libcef_dll_wrapper.lib).
+# windows\ThirdParty\cef and builds its static C++ wrapper (libcef_dll_wrapper.lib) for
+# the sandbox's bootstrap (docs/windows.md, "Chromium's sandbox").
 # The Windows twin of scripts/fetch-cef.sh: same CEF version, so both shells run
 # the same Chromium. The minimal distribution is a large download (a few hundred MB
 # unpacked); run it only when you mean to.
@@ -70,23 +71,35 @@ if ((Test-Path $Stamp) -and ((Get-Content $Stamp -Raw).Trim() -eq $CefVersion)) 
     Remove-Item $Archive
 }
 
-# libcef_dll_wrapper: CEF's C++ API on top of its C ABI. Built for Release (/MT) and Debug
-# (/MTd), so either configuration of Kite links against a wrapper with the same CRT
-# (otherwise LNK2038). They land in build-release and build-debug; Kite picks by $<CONFIG>.
+# libcef_dll_wrapper: CEF's C++ API on top of its C ABI, built for the sandbox's bootstrap
+# (USE_SANDBOX, which pins it to CEF_API_VERSION_LAST; Kite.dll is built for the same). Built
+# for Release (/MT) and Debug (/MTd), so either configuration of Kite links against a wrapper
+# with the same CRT (otherwise LNK2038), and with Control Flow Guard (/guard:cf), as Kite.dll
+# is, since every call between Kite.dll and libcef.dll goes through it. They land in
+# build-sandbox-cfg-release and build-sandbox-cfg-debug; Kite picks by $<CONFIG>. The names
+# change with how the wrapper is built, so a checkout from before, sharing this CEF folder,
+# keeps its own (build-release, build-debug, build-sandbox-*) beside them.
 foreach ($config in $Configs) {
-    $buildDir = Join-Path $Dest ("build-" + $config.ToLower())
+    $buildDir = Join-Path $Dest ("build-sandbox-cfg-" + $config.ToLower())
     $wrapper = Join-Path $buildDir 'libcef_dll_wrapper\libcef_dll_wrapper.lib'
     if (Test-Path $wrapper) { continue }
-    # Quoted: PowerShell splits an unquoted -DNAME=3.5 at the dot. USE_SANDBOX off until W6b
-    # (bootstrap.exe): with it on, the wrapper is built against a fixed CEF API version while
-    # Kite.exe isn't, and the two must match.
+    # Quoted: PowerShell splits an unquoted -DNAME=3.5 at the dot.
     cmake -S $Dest -B $buildDir -G Ninja `
         "-DCMAKE_BUILD_TYPE=$config" `
         '-DPROJECT_ARCH=x86_64' `
-        '-DUSE_SANDBOX=OFF' `
+        '-DUSE_SANDBOX=ON' `
         '-DCMAKE_POLICY_VERSION_MINIMUM=3.5'
     if ($LASTEXITCODE -ne 0) { throw "cmake configure ($config) failed" }
-    cmake --build $buildDir --target libcef_dll_wrapper
-    if ($LASTEXITCODE -ne 0) { throw "cmake build ($config) failed" }
+    # /guard:cf through cl.exe's CL variable: CEF's CMake empties CMAKE_CXX_FLAGS under Ninja
+    # (cef_variables.cmake) and has no option of its own for it. tests/KiteBinariesTest.cmake
+    # checks every object got it.
+    $savedCL = $env:CL
+    $env:CL = '/guard:cf'
+    try {
+        cmake --build $buildDir --target libcef_dll_wrapper
+        if ($LASTEXITCODE -ne 0) { throw "cmake build ($config) failed" }
+    } finally {
+        $env:CL = $savedCL
+    }
 }
 Write-Host "CEF ready at $Dest"

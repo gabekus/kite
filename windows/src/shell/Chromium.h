@@ -22,20 +22,27 @@
 
 #include <windows.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
+#include "core/Downloads.h"
 #include "core/KeyBindings.h"
+#include "core/ProfileSettings.h"
 
 namespace kite {
 
 // When Chromium started this process as one of its helpers (renderer, GPU, utility), runs it
-// and returns its exit code; returns -1 in the browser process. First thing in wWinMain,
-// before Kite parses the command line (helpers get Chromium's own switches).
-int RunChromiumSubprocess(HINSTANCE instance);
+// and returns its exit code; returns -1 in the browser process. First thing in RunWinMain,
+// before Kite parses the command line (helpers get Chromium's own switches). `sandboxInfo` is
+// what CEF's bootstrap (Kite.exe) set the sandbox up with; the helper is already in it.
+int RunChromiumSubprocess(HINSTANCE instance, void* sandboxInfo);
 
 // What the pages report, on Kite's UI thread.
 struct PageEvents {
@@ -43,7 +50,9 @@ struct PageEvents {
     std::function<void(const std::string& tabID, const std::string& title)> titleChanged;
     // The page's favicon: the first it lists, or empty for none (the Mac's faviconDidChange).
     std::function<void(const std::string& tabID, const std::string& url)> faviconChanged;
-    std::function<void(const std::string& tabID, bool loading)> loadingChanged;
+    // The page started or stopped loading, or its history moved (the Mac's navigationState:
+    // OnLoadingStateChange's isLoading, canGoBack and canGoForward).
+    std::function<void(const std::string& tabID, bool loading, bool canGoBack, bool canGoForward)> loadingChanged;
     // A page opened a popup or a target=_blank link: Kite hosts it in a new tab with this id,
     // keeping window.opener (sign-in popups need it), as the Mac does. `url` may be empty
     // (window.open('') before the opener writes to it).
@@ -79,6 +88,15 @@ struct PageEvents {
     // What Find found in the tab's page (CefFindHandler::OnFindResult): the matches so far, the
     // active one (1-based, 0 before one is), and whether this is the search's last report.
     std::function<void(const std::string& tabID, int count, int activeMatch, bool final)> findResult;
+    // A download moved along (the Mac's KCDownloadDidUpdateNotification): Chromium's report,
+    // its context "" for the default profile and the folder for another. Chrome Web Store
+    // packages never come here. Coalesced on CEF's thread, so however often Chromium reports,
+    // Kite's thread gets each download's latest once per wake.
+    std::function<void(const DownloadUpdate& update)> downloadUpdated;
+    // The renderer process now hosting the tab's main frame, as it reports itself from each new
+    // script context there (the Mac's kite.rendererPID, for its Task Manager; here
+    // --smoke-test checks that renderer's sandbox).
+    std::function<void(const std::string& tabID, DWORD pid)> rendererStarted;
 };
 
 class Chromium {
@@ -88,8 +106,17 @@ public:
     // Starts Chromium with its profiles under `root` (the Mac's <support>/Chromium): the
     // default profile in root\Default, a space's other profile in root\<directory>.
     // AlreadyRunning: another Kite has this profile and has been told to come forward.
-    static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
-                             std::unique_ptr<Chromium>& out, std::wstring& error);
+    // `sandboxInfo` is the bootstrap's (RunWinMain): every helper runs in Chromium's sandbox.
+    // Pages are always made without activating their windows (SetAsPage in Chromium.cpp), so
+    // one made while Kite is behind another app leaves it there. `quiet`: a quiet run (main.cpp's
+    // `quiet`), which never comes to the front: the pages never take the focus or activate,
+    // and show no dialogs (file choosers cancelled, JavaScript and Leave Page dialogs answered,
+    // window.print() and Developer Tools skipped), each with a KITE_TEST_MODAL line; a download
+    // whose profile asks where to save is cancelled the same way.
+    // `switches` ("name" or "name=value", no leading dashes) go on the browser process's
+    // command line (--chromium-switches, test profiles only).
+    static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, void* sandboxInfo, PageEvents events,
+                             bool quiet, std::vector<std::string> switches, std::unique_ptr<Chromium>& out, std::wstring& error);
     // Shuts Chromium down (or does nothing if it already has); the destructor calls it too.
     ~Chromium();
     Chromium(const Chromium&) = delete;
@@ -145,8 +172,10 @@ public:
     // come to Kite's window while the rest of the page keeps taking input. It follows the shown
     // page; whoever moves the card (a resize, later the sidebar's toggle and splits) sets it again.
     void SetOverlayHole(const RECT& hole, int cornerRadius);
-    // While Kite's own field has the keyboard (the find bar's), a page doesn't take it back on a
-    // navigation, as the Mac's field stays first responder while the page loads.
+    // While Kite's own field has the keyboard (the find bar's), a page doesn't take it back: not on
+    // a navigation (as the Mac's field stays first responder while the page loads), not from Kite's
+    // own Focus() (checked again on CEF's thread as it runs), and not from Chromium's focus of a page
+    // whose windows BlockInput(false) is enabling again (the command bar closing under Ctrl+F).
     void KeepKeyboard(bool keep);
     // Test-only: whether a click at `client` (client px) would reach the shown page's window,
     // asked of its region the way Windows hit-tests (the smoke test's check of the hole).
@@ -161,6 +190,38 @@ public:
     // unless it's playing sound, using the camera or microphone, tied to a popup, or shown
     // again before it answers. Their tabs stay and load again when next shown (pageDiscarded).
     void DiscardHiddenPages();
+    // Where each profile's downloads go (DownloadLocation.installForChromium): its settings by
+    // profile folder (one not listed reads Default's), and the folder for a profile that chose
+    // none (or whose chosen one has gone). Read on CEF's thread as each download starts.
+    void SetDownloadLocations(std::map<std::string, ProfileSettings> byProfile, std::filesystem::path defaultFolder);
+    // Cancels live downloads, by engine id and context (KCBrowser.cancelDownload). `gone` runs on
+    // Kite's thread for each one Chromium had already let go (it finished in between).
+    using DownloadKey = std::pair<int64_t, std::string>;
+    void CancelDownloads(std::vector<DownloadKey> downloads, std::function<void(const DownloadKey&)> gone = nullptr);
+    // Chromium's download reports so far, and how many reached Kite's thread (the rest were
+    // folded into a later one): for the save log.
+    std::pair<uint64_t, uint64_t> DownloadReports() const;
+    // Each page that was kept for its downloads after its tab closed, as it went: its address
+    // and whether it was muted (it's put on about:blank, muted, when it's kept). For the save log.
+    std::vector<std::pair<std::string, bool>> ParkedPages() const;
+    // A test profile's live check of a burst of downloads (--save-log with
+    // KITE_TEST_AUTOMATIC_DOWNLOADS=ORIGIN): pages from `origin` (a local test server) may start
+    // many downloads with no click, which Chromium otherwise stops after the first.
+    void AllowAutomaticDownloads(const std::string& origin);
+    // The parked pages' stall check runs on a timer of Kite's window (the controller's timer 11),
+    // only while a page is parked. The window hands its WM_TIMER here: true when it was this one.
+    static constexpr UINT_PTR kStallTimer = 11;
+    bool HandleTimer(UINT_PTR id);
+    bool StallCheckRunning() const;
+    int StallCheckTicks() const;  // how often it ran (the save log)
+    // --save-log: each parked page's address and whether it was muted are kept (ParkedPages),
+    // and how many Leave Page dialogs parked pages asked for (each answered Leave).
+    void LogParkedPages();
+    // A test run's stand-in for a click (the test tab close): the shown page runs a script as if
+    // the user had clicked (DevTools' Runtime.evaluate with userGesture), which gives it the user
+    // activation Chromium wants before a page may ask Leave Page. False with no page shown.
+    bool TestUserGesture();
+    int ParkedLeavePagesAnswered() const;
     // Runs what CEF's thread handed over. MainWindow::kWakeMessage calls it.
     void RunPending();
     // False when a page's Chromium widget window wasn't where Kite looks for it, so hidden

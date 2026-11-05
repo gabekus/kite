@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <initializer_list>
+#include <utility>
 #include <vector>
 
 #include "shell/Errors.h"
@@ -33,18 +35,23 @@ constexpr float kCloseCenterX = 283.5f;
 constexpr float kButtonSize = 20;
 constexpr float kFieldFontSize = 13;
 constexpr float kCounterFontSize = 11.5f;
-// FindInPageView's NSShadow: blur 5 (a Gaussian of σ 2.5), 3pt down.
+// FindInPageView's NSShadow: blur 5 (a Gaussian of Ïƒ 2.5), 3pt down.
 constexpr float kShadowSigma = 2.5f;
 constexpr float kShadowY = 3;
-constexpr float kShadowMargin = 12;  // room for it around the bar: 3σ and the offset
+constexpr float kShadowMargin = 12;  // room for it around the bar: 3Ïƒ and the offset
 }  // namespace M
 
-// Segoe Fluent Icons (Windows 11) and Segoe MDL2 Assets (Windows 10) share these: the
-// counterparts of the Mac's SF Symbols magnifyingglass, arrow.up, arrow.down and xmark.
+// Segoe Fluent Icons (Windows 11) and Segoe MDL2 Assets (Windows 10) share it: the counterpart
+// of the Mac's SF Symbols magnifyingglass.
 constexpr wchar_t kSearchGlyph = 0xE721;
-constexpr wchar_t kUpGlyph = 0xE74A;
-constexpr wchar_t kDownGlyph = 0xE74B;
-constexpr wchar_t kCloseGlyph = 0xE711;
+// The arrows and close are Kite's own strokes, at the box, weight and centre the Mac's SF Symbols
+// draw at (arrow.up and arrow.down 13pt medium, xmark 11pt semibold), measured in the Mac's 2x
+// reference (review/w21-mac): each arrow 10 x 12pt, the X 9pt square, 1.6pt and 1.55pt strokes with round
+// ends. Segoe's glyphs are about half that weight.
+constexpr float kStroke = 1.6f;       // the arrows
+constexpr float kCloseStroke = 1.55f;  // the X (xmark is lighter for its size)
+constexpr float kArrowWidth = 10, kArrowHeight = 12;
+constexpr float kCloseSize = 9;
 
 D2D1_COLOR_F Srgb(int r, int g, int b, float a = 1) { return D2D1_COLOR_F{r / 255.0f, g / 255.0f, b / 255.0f, a}; }
 
@@ -99,9 +106,7 @@ std::unique_ptr<FindBarView> FindBarView::Create(HWND window, Callbacks callback
     const wchar_t* text = view->textFamily_.c_str();
     if (FAILED(hr = format(text, M::kFieldFontSize, DWRITE_FONT_WEIGHT_REGULAR, view->fieldFormat_)) ||
         FAILED(hr = format(text, M::kCounterFontSize, DWRITE_FONT_WEIGHT_MEDIUM, view->counterFormat_)) ||
-        FAILED(hr = format(iconFamily, 13, DWRITE_FONT_WEIGHT_NORMAL, view->iconFormat_)) ||
-        FAILED(hr = format(iconFamily, 12, DWRITE_FONT_WEIGHT_NORMAL, view->arrowFormat_)) ||
-        FAILED(hr = format(iconFamily, 10, DWRITE_FONT_WEIGHT_NORMAL, view->closeFormat_))) {
+        FAILED(hr = format(iconFamily, 13, DWRITE_FONT_WEIGHT_NORMAL, view->iconFormat_))) {
         error = HResultMessage(L"CreateTextFormat", hr);
         return nullptr;
     }
@@ -111,10 +116,8 @@ std::unique_ptr<FindBarView> FindBarView::Create(HWND window, Callbacks callback
         ComPtr<IDWriteTextFormat3> variable;
         if (SUCCEEDED(view->counterFormat_->QueryInterface(IID_PPV_ARGS(variable.GetAddressOf())))) variable->SetFontAxisValues(&medium, 1);
     }
-    for (IDWriteTextFormat* icons : {view->iconFormat_.Get(), view->arrowFormat_.Get(), view->closeFormat_.Get()}) {
-        icons->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        icons->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    }
+    view->iconFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    view->iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     view->counterFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     const std::wstring placeholder = Widen(ask_on_page::Placeholder(false, false));
     view->field_.SetFormat(view->dwrite_.Get(), view->fieldFormat_.Get(), placeholder);
@@ -135,6 +138,7 @@ void FindBarView::UseCompositor(Compositor* compositor) {
     surface_.Reset();
     brush_.Reset();
     shadow_.Reset();
+    roundStroke_.Reset();
     surfaceWidth_ = surfaceHeight_ = 0;
     shadowWidth_ = -1;
     shadowDpi_ = 0;
@@ -430,7 +434,8 @@ bool FindBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, LRES
                 if (callbacks_.takeKeyboard) callbacks_.takeKeyboard();
                 keyboard_ = true;
             }
-            if (GetFocus() != window_) SetFocus(window_);
+            // A real click has activated the window by now; a quiet test run is never brought forward.
+            if (GetForegroundWindow() == window_ && GetFocus() != window_) SetFocus(window_);
             FocusChanged();
             SetCapture(window_);
             Edited(field_.Press(p.x, (wParam & MK_SHIFT) != 0));  // draws once, with the caret
@@ -548,6 +553,65 @@ void FindBarView::Glyph(ID2D1DeviceContext* context, IDWriteTextFormat* format, 
                       D2D1_DRAW_TEXT_OPTIONS_NONE);
 }
 
+ID2D1StrokeStyle* FindBarView::RoundStroke(ID2D1DeviceContext* context) {
+    if (roundStroke_) return roundStroke_.Get();
+    ComPtr<ID2D1Factory> factory;
+    context->GetFactory(factory.GetAddressOf());
+    ComPtr<ID2D1Factory1> factory1;
+    if (!factory || FAILED(factory.As(&factory1))) return nullptr;
+    D2D1_STROKE_STYLE_PROPERTIES1 round{};
+    round.startCap = round.endCap = round.dashCap = D2D1_CAP_STYLE_ROUND;
+    round.lineJoin = D2D1_LINE_JOIN_ROUND;
+    round.miterLimit = 10;
+    round.dashStyle = D2D1_DASH_STYLE_SOLID;
+    round.transformType = D2D1_STROKE_TRANSFORM_TYPE_NORMAL;
+    factory1->CreateStrokeStyle(round, nullptr, 0, roundStroke_.GetAddressOf());
+    return roundStroke_.Get();
+}
+
+// One geometry each, so where its strokes meet (the arrow's tip, the X's middle) the colour's
+// alpha isn't laid down twice.
+void FindBarView::Strokes(ID2D1DeviceContext* context, std::initializer_list<std::pair<D2D1_POINT_2F, D2D1_POINT_2F>> lines, float width,
+                          D2D1_COLOR_F color) {
+    ComPtr<ID2D1Factory> factory;
+    context->GetFactory(factory.GetAddressOf());
+    ComPtr<ID2D1PathGeometry> path;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (!factory || FAILED(factory->CreatePathGeometry(path.GetAddressOf())) || FAILED(path->Open(sink.GetAddressOf()))) return;
+    for (const auto& [from, to] : lines) {
+        sink->BeginFigure(from, D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(to);
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+    }
+    if (FAILED(sink->Close())) return;
+    brush_->SetColor(color);
+    context->DrawGeometry(path.Get(), brush_.Get(), width, RoundStroke(context));
+}
+
+void FindBarView::Arrow(ID2D1DeviceContext* context, float centerX, bool up, D2D1_COLOR_F color) {
+    // The box holds the round ends: the lines stop half a stroke inside it.
+    const float half = kStroke / 2;
+    const float centerY = static_cast<float>(kFindBarHeight) / 2;
+    const float sign = up ? 1.0f : -1.0f;
+    const float tipY = centerY - sign * (kArrowHeight / 2 - half);
+    const float tailY = centerY + sign * (kArrowHeight / 2 - half);
+    const float arm = kArrowWidth / 2 - half;  // the head's arms at 45°
+    const D2D1_POINT_2F tip{centerX, tipY};
+    Strokes(context,
+            {{tip, D2D1::Point2F(centerX, tailY)}, {tip, D2D1::Point2F(centerX - arm, tipY + sign * arm)},
+             {tip, D2D1::Point2F(centerX + arm, tipY + sign * arm)}},
+            kStroke, color);
+}
+
+void FindBarView::Cross(ID2D1DeviceContext* context, float centerX, D2D1_COLOR_F color) {
+    const float reach = kCloseSize / 2 - kCloseStroke / 2;
+    const float centerY = static_cast<float>(kFindBarHeight) / 2;
+    Strokes(context,
+            {{D2D1::Point2F(centerX - reach, centerY - reach), D2D1::Point2F(centerX + reach, centerY + reach)},
+             {D2D1::Point2F(centerX - reach, centerY + reach), D2D1::Point2F(centerX + reach, centerY - reach)}},
+            kCloseStroke, color);
+}
+
 void FindBarView::DrawContent(ID2D1DeviceContext* context) {
     const float scale = Scale();
     const float margin = static_cast<float>(marginPx_) / scale;
@@ -583,12 +647,12 @@ void FindBarView::DrawContent(ID2D1DeviceContext* context) {
         if (pressedOver_ && pressed_ == button) color.a *= 0.5f;
         return color;
     };
-    Glyph(context, arrowFormat_.Get(), kUpGlyph, x(M::kPreviousCenterX), tint(Button::Previous));
-    Glyph(context, arrowFormat_.Get(), kDownGlyph, x(M::kNextCenterX), tint(Button::Next));
+    Arrow(context, x(M::kPreviousCenterX), true, tint(Button::Previous));
+    Arrow(context, x(M::kNextCenterX), false, tint(Button::Next));
     const auto divider = static_cast<float>(find_bar_style::DividerHeight(h));
     brush_->SetColor(kDivider);
     context->FillRectangle(D2D1::RectF(x(M::kDividerX), (h - divider) / 2, x(M::kDividerX) + 1, (h + divider) / 2), brush_.Get());
-    Glyph(context, closeFormat_.Get(), kCloseGlyph, x(M::kCloseCenterX), tint(Button::Close));
+    Cross(context, x(M::kCloseCenterX), tint(Button::Close));
     context->SetTransform(base);
 }
 
@@ -639,7 +703,7 @@ std::wstring FindBarView::Draw(Pixels* readBack, POINT* origin) {
     fieldVisual_->SetOffsetY(static_cast<float>(marginPx_));
     std::wstring error;
     if (!EnsureShadow(error)) return error;
-    error = compositor_->DrawSurface(surface_.Get(), width, height, dpi_, [this](ID2D1DeviceContext* context) { DrawContent(context); },
+    error = compositor_->DrawSurface(perf::View::FindBar, surface_.Get(), width, height, dpi_, [this](ID2D1DeviceContext* context) { DrawContent(context); },
                                      readBack, hr);
     if (!error.empty()) {
         deviceLost_ = IsDeviceLost(hr);

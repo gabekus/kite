@@ -2,6 +2,8 @@
 
 #include "core/SessionSaveDelay.h"
 
+#include <algorithm>
+
 namespace kite {
 
 double Seconds(SessionSaveDelay delay) {
@@ -31,6 +33,12 @@ std::optional<double> PendingSave::Arm(SessionSaveDelay delay) {
     auto seconds = Rearm(delay, pending);
     if (seconds) pending = delay;
     return seconds;
+}
+
+double CappedDebounce::Changed(double now) {
+    const double since = pendingSince.value_or(now);
+    pendingSince = since;
+    return std::max(0.0, std::min(quiet, since + maxWait - now));
 }
 
 std::optional<double> SaveSchedule::Changed(SessionSaveDelay delay, double now) {

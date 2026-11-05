@@ -57,6 +57,24 @@ const Value* Value::Find(std::string_view key) const {
     return it == object->end() ? nullptr : &it->second;
 }
 
+const Value* Member(const Value* object, std::string_view key) { return object ? object->Find(key) : nullptr; }
+
+const Value* ObjectMember(const Value* object, std::string_view key) {
+    const Value* v = Member(object, key);
+    return v && v->AsObject() ? v : nullptr;
+}
+
+const std::string* StringMember(const Value* object, std::string_view key) {
+    const Value* v = Member(object, key);
+    return v ? v->AsString() : nullptr;
+}
+
+std::optional<Value> ParseValue(std::string_view text) {
+    auto parsed = Parse(text);
+    if (auto* value = std::get_if<Value>(&parsed)) return std::move(*value);
+    return std::nullopt;
+}
+
 bool Value::operator==(const Value& other) const {
     if (data_.index() != other.data_.index()) return false;
     if (auto* a = AsArray()) return *a == *other.AsArray();
@@ -311,7 +329,7 @@ private:
     ParseError error_;
 };
 
-void WriteString(std::string& out, const std::string& s) {
+void WriteString(std::string& out, std::string_view s) {
     static const char kHex[] = "0123456789abcdef";
     out += '"';
     for (size_t i = 0; i < s.size(); ++i) {
@@ -322,7 +340,7 @@ void WriteString(std::string& out, const std::string& s) {
             if (length == 0) {
                 out += "\xEF\xBF\xBD";
             } else {
-                out.append(s, i, length);
+                out.append(s.substr(i, length));
                 i += length - 1;
             }
             continue;
@@ -399,5 +417,9 @@ std::string Write(const Value& value) {
     WriteValue(out, value);
     return out;
 }
+
+void Append(std::string& out, const Value& value) { WriteValue(out, value); }
+
+void AppendString(std::string& out, std::string_view text) { WriteString(out, text); }
 
 }  // namespace kite::json

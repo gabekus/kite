@@ -25,6 +25,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <initializer_list>
 #include <utility>
 
 #include "core/FindBar.h"
@@ -132,6 +133,13 @@ private:
     bool EnsureShadow(std::wstring& error);
     void DrawContent(ID2D1DeviceContext* context);
     void Glyph(ID2D1DeviceContext* context, IDWriteTextFormat* format, wchar_t glyph, float centerX, D2D1_COLOR_F color);
+    // The arrows (pointing up or down) and close, as strokes centred at `centerX` (bar points).
+    void Arrow(ID2D1DeviceContext* context, float centerX, bool up, D2D1_COLOR_F color);
+    void Cross(ID2D1DeviceContext* context, float centerX, D2D1_COLOR_F color);
+    void Strokes(ID2D1DeviceContext* context, std::initializer_list<std::pair<D2D1_POINT_2F, D2D1_POINT_2F>> lines, float width,
+                 D2D1_COLOR_F color);
+    // Round caps and joins, made from the compositor's Direct2D factory once.
+    ID2D1StrokeStyle* RoundStroke(ID2D1DeviceContext* context);
     LOGFONTW FieldFont() const;
 
     HWND window_;
@@ -139,7 +147,7 @@ private:
     Compositor* compositor_ = nullptr;
 
     Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_;
-    Microsoft::WRL::ComPtr<IDWriteTextFormat> fieldFormat_, counterFormat_, iconFormat_, arrowFormat_, closeFormat_;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> fieldFormat_, counterFormat_, iconFormat_;
     Microsoft::WRL::ComPtr<IDWriteTextLayout> counter_;
     float counterWidth_ = 0;
     std::wstring textFamily_;
@@ -150,6 +158,7 @@ private:
     Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> surface_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> shadow_;
+    Microsoft::WRL::ComPtr<ID2D1StrokeStyle1> roundStroke_;
     UINT surfaceWidth_ = 0, surfaceHeight_ = 0;
     float shadowWidth_ = -1;
     UINT shadowDpi_ = 0;

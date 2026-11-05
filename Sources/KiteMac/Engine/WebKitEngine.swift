@@ -174,10 +174,11 @@ final class WebKitPage: NSObject, WebPage {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         observe()
-        // The right-click test hook needs the page to answer while the test window is covered;
-        // WebKit stops serving an occluded window's page (private WKWebView setting).
+        // The right-click and find-bar test hooks need the page to answer while the test window is covered;
+        // WebKit stops serving an occluded window's page (private WKWebView setting). Without this a find hook's
+        // page never finishes loading behind the other windows (FindTestHook.keepsCoveredPagesAnswering).
         let setOcclusion = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
-        if PageContextMenuItems.testMode != nil, webView.responds(to: setOcclusion) {
+        if PageContextMenuItems.testMode != nil || FindTestHookRunner.configured != nil, webView.responds(to: setOcclusion) {
             typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
             unsafeBitCast(webView.method(for: setOcclusion), to: Setter.self)(webView, setOcclusion, false)
         }
@@ -485,13 +486,32 @@ extension WebKitPage: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        FindTestHookRunner.logPage("finished")
         webView.evaluateJavaScript(Self.faviconScript) { [weak self] result, _ in
             guard let href = result as? String else { return }
             self?.onEvent?(.favicon(URL(string: href)))
         }
     }
 
+    // Logged on a run with a find hook only (FindTestHookRunner.logPage), to see where a headless load stops.
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        FindTestHookRunner.logPage("started")
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        FindTestHookRunner.logPage("committed")
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        FindTestHookRunner.logPage("failed before commit", error: error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        FindTestHookRunner.logPage("failed", error: error)
+    }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        FindTestHookRunner.logPage("content process ended")
         webView.reload()
     }
 }

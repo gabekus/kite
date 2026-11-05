@@ -28,7 +28,8 @@ their own PR, never as a side effect of a checkpoint.
   `core` or `shell`. They build into their own output folder, apart from the
   shipped files. Other programs under `windows/tools` (test or measurement tools,
   say) aren't in this layer.
-- `windows/resources`: the process manifest both executables embed.
+- `windows/resources`: the process manifest and the app icon both executables
+  embed, through `Kite.rc`, which both toolchains build.
 - `windows/tools/perf` (and every other folder of `windows/tools` but
   `windows/tools/build`): test and measurement executables only, such as
   `kiteperf`. They are never linked into Kite.exe and never shipped. They may

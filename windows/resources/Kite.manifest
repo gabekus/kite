@@ -14,7 +14,9 @@
       <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
     </application>
   </compatibility>
-  <!-- Common Controls 6: the task dialog (Delete Space's question) -->
+  <!-- Common Controls 6: the task dialog (Delete Space's question, the quit's "Downloads in
+       progress"), and as CEF's bootstrap.exe, which Kite.exe is made from
+       (tools/build/StampBootstrap.cpp), has it for Chromium's and the bootstrap's own dialogs. -->
   <dependency>
     <dependentAssembly>
       <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>

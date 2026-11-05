@@ -84,7 +84,7 @@ std::unique_ptr<Compositor> Compositor::Create(HWND hwnd, Renderer& renderer, st
         FAILED(hr = c.overlayRoot_->AddVisual(c.overlay_.Get(), TRUE, c.pageOverlay_.Get())) ||
         FAILED(hr = c.backdrop_->SetContent(c.swapChain_.Get())) || FAILED(hr = c.root_->AddVisual(c.backdrop_.Get(), FALSE, nullptr)) ||
         FAILED(hr = c.root_->AddVisual(c.chrome_.Get(), TRUE, c.backdrop_.Get())) || FAILED(hr = c.target_->SetRoot(c.root_.Get())) ||
-        FAILED(hr = c.overlayTarget_->SetRoot(c.overlayRoot_.Get())) || FAILED(hr = c.device_->Commit())) {
+        FAILED(hr = c.overlayTarget_->SetRoot(c.overlayRoot_.Get())) || FAILED(hr = c.Commit())) {
         error = HResultMessage(L"building the composition tree", hr);
         return nullptr;
     }
@@ -102,7 +102,7 @@ std::unique_ptr<Compositor> Compositor::Create(HWND hwnd, Renderer& renderer, st
     return compositor;
 }
 
-std::wstring Compositor::DrawSurface(IDCompositionVirtualSurface* surface, UINT width, UINT height, UINT dpi, const Content& content,
+std::wstring Compositor::DrawSurface(perf::View view, IDCompositionVirtualSurface* surface, UINT width, UINT height, UINT dpi, const Content& content,
                                      Pixels* readBack, HRESULT& hr) {
     const float scale = static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
     const D2D1_BITMAP_PROPERTIES1 targetProps =
@@ -135,6 +135,7 @@ std::wstring Compositor::DrawSurface(IDCompositionVirtualSurface* surface, UINT 
     if (FAILED(hr = surface->BeginDraw(nullptr, IID_PPV_ARGS(update.GetAddressOf()), &offset))) {
         return HResultMessage(L"starting to draw a surface", hr);
     }
+    perf::CountSurfaceDraw(view);
     hr = render(update.Get(), offset);
     const HRESULT ended = surface->EndDraw();
     if (FAILED(hr)) return HResultMessage(L"drawing a surface", hr);
@@ -208,6 +209,7 @@ std::wstring Compositor::Draw(UINT width, UINT height, const ThemeUniforms& unif
         if (auto pixels = renderer_.ReadBack(buffer.Get(), readBackError)) *readBack = std::move(*pixels);
     }
     // Sync interval 1: one frame per vblank at the display's own rate, no cap of ours.
+    perf::CountPresent();
     if (FAILED(hr = swapChain_->Present(1, 0))) return fail(L"Present", hr);
     presented_ = true;
     lastUniforms_ = uniforms;

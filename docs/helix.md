@@ -45,8 +45,8 @@ for as long as it needs to. An agent can't override a gate.
      `KITE_SUPPORT_PATH=<fresh profile>` and `KITE_WINDOW_SIZE=W,H`, captured
      with `kite ui capture`. The sidebar width comes from the dev bundle's
      defaults, so reset it first: `defaults delete dev.gabek.Kite.dev SidebarWidth`.
-   - Windows (any monitor): `Kite.exe --capture out.png --window-size W,H
-     --capture-scale 2` with `KITE_SUPPORT_PATH` set the same way. Kite lays
+   - Windows (any monitor): `Kite.exe --capture C:\…\out.png --window-size W,H
+     --capture-scale 2` (absolute paths) with `KITE_SUPPORT_PATH` set the same way. Kite lays
      the window out at 2× whatever the monitor's scale (a 200% display isn't
      needed) and saves the frame the window presents, so the pixels line up
      with the Mac's. A capture draws over the solid material fallback, while

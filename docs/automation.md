@@ -221,8 +221,15 @@ What works with Kite in the background (checked on a test build behind other win
   its query the way the field takes a keystroke: the field's string value, then the search its text-change
   delegate runs (`FindBar.setQuery`). No key events and no input method; Return is never pressed, so Ask on Page
   never asks. It writes `KITE_TEST_FIND: ready: open, empty`, or `KITE_TEST_FIND: ready: "text", found, 2
-  matches, active 1, counter "1/2"` for each find result (WebKit reports found or not, no counts), and gives up
-  with a line after 30 s without a load. A real profile ignores both (`FindTestHook`).
+  matches, active 1, counter "1/2"` for each find result (WebKit reports found or not, no counts). A real profile
+  ignores both (`FindTestHook`). It writes `KITE_TEST_FIND: armed: …` when it starts waiting. After 20 s without a
+  load it writes what it saw (loads, the selected tab's loading and progress, the web view's own state, how often
+  its content process ended, whether the window is visible, ordered in and on a screen, and how many screens),
+  opens the bar anyway and writes `KITE_TEST_FIND: ready (fallback, the page never loaded): …`. A query then shows
+  no result. With a find hook, WebKit's navigation milestones go to stderr as `KITE_TEST_FIND: page: started` (and
+  `committed`, `finished`, `failed (domain code)`, `content process ended`), and a page's window occlusion detection
+  is off, as with `KITE_TEST_CONTEXT_MENU`. Pages on the headless Mac runner have so far never loaded at all: the
+  page area of every reference it took is blank.
 - `menu`: AppKit ignores fn when matching a key against the menu bar, so a system item on fn E (Emoji &
   Symbols) or fn F (Enter Full Screen) fires on a plain "e" or "f" that reaches the menu bar, and is flagged.
 

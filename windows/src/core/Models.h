@@ -10,6 +10,7 @@
 // editing them (SpaceEditing.cpp), and splits as data (closing keeps them whole). Not yet:
 // making splits, profiles, live folders, Tidy Tabs. Those arrive as Helix checkpoints (docs/helix.md).
 
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -18,6 +19,7 @@
 #include <vector>
 
 #include "core/Json.h"
+#include "core/ProfileSettings.h"
 
 namespace kite {
 
@@ -175,6 +177,9 @@ struct BrowserState {
     // twelveHours (the default, as Arc's), twentyFourHours, sevenDays, thirtyDays.
     std::string archiveAfter = "twelveHours";
     std::string searchEngine = "google";
+    // Each profile's download folder, Ask and search suggestions, by its dataStoreID; a
+    // profile with the defaults has no entry (core/ProfileSettings.h).
+    std::map<std::string, ProfileSettings> profileSettings;
     json::Object extra;  // everything else the Mac stores
 
     // Personal (with one tab when seedURL is set) and Work, like BrowserState.makeDefault().
@@ -185,6 +190,14 @@ struct BrowserState {
     // A profile folder's name in the lists: "Default" for the default one (Profile.defaultName),
     // else its `profiles` entry's name (the default's when it has gone, as profile(_:)).
     std::string ProfileName(const std::string& directory) const;
+    // The dataStoreID of the profile in `directory` (profile(_:).dataStoreID): the zero UUID for
+    // the default one, one that has gone, or none (an incognito window's).
+    std::string DataStoreID(const std::optional<std::string>& directory) const;
+    // The settings of the profile in `directory` (ProfileSettings.swift's settings(ofProfile:));
+    // none (an incognito window) reads the default profile's, as Arc does.
+    ProfileSettings Settings(const std::optional<std::string>& directory) const;
+    // Changes them; settings back at the defaults leave no entry (updateSettings(ofProfile:)).
+    void UpdateSettings(const std::optional<std::string>& directory, const std::function<void(ProfileSettings&)>& change);
     std::string SelectedProfileDirectory() const { return ProfileDirectory(SelectedSpaceIndex()); }
     // The favorites grid of the current space's profile, shown above the pinned tabs.
     const std::vector<Tab>& Favorites() const;

@@ -1,11 +1,11 @@
 #pragma once
 // When the session is written after a change: a port of KiteCore's SessionSaveDelay.swift
-// (SessionSaveDelay, PendingSave; its CappedDebounce is history.json's and comes with
-// history), plus SaveSchedule, the timer the Mac's BrowserStore.scheduleSave arms with them.
-// Sidebar changes and navigations save a second after the last one. A page's title and
-// favicon change all the time (a page can set document.title every second), so they wait
-// longer and don't push back a save that's already waiting: a page that never stops ticking
-// still gets saved. Quitting and closing the window save at once.
+// (SessionSaveDelay, PendingSave, and CappedDebounce, which history.json's saves use), plus
+// SaveSchedule, the timer the Mac's BrowserStore.scheduleSave arms with them. Sidebar changes
+// and navigations save a second after the last one. A page's title and favicon change all the
+// time (a page can set document.title every second), so they wait longer and don't push back
+// a save that's already waiting: a page that never stops ticking still gets saved. Quitting
+// and closing the window save at once.
 
 #include <optional>
 #include <string_view>
@@ -36,6 +36,21 @@ struct PendingSave {
     // The save happened (or was cancelled for an immediate one).
     void Saved() { pending.reset(); }
     bool operator==(const PendingSave&) const = default;
+};
+
+// A trailing debounce that still saves at least every `maxWait` seconds while changes keep
+// coming: history.json (core/HistoryStore.h) while a page's title ticks.
+struct CappedDebounce {
+    double quiet = 0;
+    double maxWait = 0;
+    // When the first change not yet saved came in; none when everything is saved.
+    std::optional<double> pendingSince;
+
+    // A change at `now` (seconds on any steady clock): how long to arm the save timer for.
+    double Changed(double now);
+    // The save happened.
+    void Saved() { pendingSince.reset(); }
+    bool operator==(const CappedDebounce&) const = default;
 };
 
 // The session's save timer as BrowserStore drives it: PendingSave's rules with the time the

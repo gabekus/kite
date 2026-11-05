@@ -23,8 +23,10 @@ public enum FindTestHook: Equatable, Sendable {
     public static let logPrefix = "KITE_TEST_FIND:"
     /// The longest query taken. The capture script allows far less (its text rule).
     public static let maxQueryLength = 100
-    /// How long the hook waits for the shown page to finish loading before it gives up.
-    public static let pageLoadTimeout: Double = 30
+    /// How long the hook waits for the shown page to finish loading before it opens the bar anyway. Under the capture
+    /// script's FIND_READY_SECONDS (30), which only starts once Kite's socket answers, so the fallback's ready line
+    /// comes in time.
+    public static let pageLoadTimeout: Double = 20
 
     /// The hook to run, or nil: off unless `testSafe`, and off for an empty or unacceptable value. A query wins over
     /// `KITE_TEST_FIND_OPEN`.
@@ -55,16 +57,23 @@ public enum FindTestHook: Equatable, Sendable {
         case showFind(askOnPage: Bool)
         /// The field's string value set, then the search its text-change delegate runs on a keystroke.
         case setQuery(String)
+        /// The fallback's (the page never loaded): only the field's text, no search, so no find result can come
+        /// back and contradict the fallback's ready line.
+        case setTextOnly(String)
     }
 
     /// Ask on Page for the hooked bar: always off. The plain find bar is what the captures show whatever the test
     /// app's saved defaults hold, and its Ask button (which runs Claude) is never there to be reached.
     public static let asksOnPage = false
 
-    public var steps: [Step] {
+    public var steps: [Step] { steps(fallback: false) }
+
+    /// `fallback`: the page never loaded, so a query's text goes in without a search.
+    public func steps(fallback: Bool) -> [Step] {
         switch self {
         case .open: return [.showFind(askOnPage: Self.asksOnPage)]
-        case .query(let text): return [.showFind(askOnPage: Self.asksOnPage), .setQuery(text)]
+        case .query(let text):
+            return [.showFind(askOnPage: Self.asksOnPage), fallback ? .setTextOnly(text) : .setQuery(text)]
         }
     }
 
@@ -72,6 +81,85 @@ public enum FindTestHook: Equatable, Sendable {
     public static func runs(finishedTab: UUID?, selectedTab: UUID?, pageShown: Bool, pageLoading: Bool) -> Bool {
         guard let finishedTab, finishedTab == selectedTab else { return false }
         return pageShown && !pageLoading
+    }
+
+    /// Whether a look at the selected tab (polled, for a load that finished before the hook was armed, or one whose
+    /// notification didn't match) finds its page loaded: shown, not loading, and its progress at 1.
+    public static func runs(selectedTab: UUID?, pageShown: Bool, pageLoading: Bool?, progress: Double?) -> Bool {
+        guard selectedTab != nil, pageShown, pageLoading == false, let progress else { return false }
+        return progress >= 1
+    }
+
+    /// Whether this run's pages keep answering in a covered window. A test-safe window sits behind the user's
+    /// windows, and WebKit stops serving an occluded window's page (its window occlusion detection): the selected
+    /// page never finishes loading, so the hook would never run, and a find would never come back. With a find hook
+    /// a page's occlusion detection is off, as `KITE_TEST_CONTEXT_MENU` already turns it off. It only keeps the
+    /// page drawing and answering behind the other windows; nothing comes to the front.
+    public static func keepsCoveredPagesAnswering(environment: [String: String], testSafe: Bool) -> Bool {
+        from(environment: environment, testSafe: testSafe) != nil
+    }
+
+    /// The stderr line when the hook starts waiting for the page.
+    public static func armedLine(_ hook: FindTestHook, coveredPagesAnswer: Bool, windowVisible: Bool) -> String {
+        let what: String
+        switch hook {
+        case .open: what = "open, empty"
+        case .query(let text): what = "query \(quote(text))"
+        }
+        return "\(logPrefix) armed: \(what); waiting up to \(Int(pageLoadTimeout)) s for the selected tab's page to load "
+            + "(covered pages answer: \(coveredPagesAnswer ? "yes" : "no"), window visible: \(windowVisible ? "yes" : "no"))"
+    }
+
+    /// What the hook saw while it waited, for the line it writes when it gives up.
+    public struct Wait: Equatable, Sendable {
+        /// Finished-load notifications from the window's pages, and how many were the selected tab's.
+        public var loads = 0
+        public var selectedLoads = 0
+        public var selectedTab = false
+        public var pageShown = false
+        public var pageLoading: Bool?
+        public var progress: Double?
+        public var windowVisible = false
+        /// The web view's own state (WebKit), read straight from it: the store only hears what the page reports.
+        public var webViewLoading: Bool?
+        public var webViewProgress: Double?
+        public var webViewHasURL: Bool?
+        /// Whether the window is ordered in (`isVisible`, covered or not) and on a screen, and how many screens.
+        public var windowOrderedIn = false
+        public var windowOnScreen = false
+        public var screens = 0
+        /// Times the page's web content process ended (WebKit reloads it each time).
+        public var contentProcessEnds = 0
+
+        public init() {}
+    }
+
+    /// The stderr line when no page finished loading in time. The bar opens anyway (`fallbackLine`).
+    public static func timeoutLine(_ wait: Wait) -> String {
+        func flag(_ value: Bool?) -> String { value.map { $0 ? "yes" : "no" } ?? "unknown" }
+        func amount(_ value: Double?) -> String { value.map { String(format: "%.2f", $0) } ?? "unknown" }
+        return "\(logPrefix) no page finished loading in \(Int(pageLoadTimeout)) s, so the find bar opens without it "
+            + "(finished loads seen: \(wait.loads), of the selected tab: \(wait.selectedLoads); selected tab: "
+            + "\(flag(wait.selectedTab)), page shown: \(flag(wait.pageShown)), loading: \(flag(wait.pageLoading)), "
+            + "progress: \(amount(wait.progress)); web view loading: \(flag(wait.webViewLoading)), web view progress: "
+            + "\(amount(wait.webViewProgress)), web view URL set: \(flag(wait.webViewHasURL)), content process ended: "
+            + "\(wait.contentProcessEnds) times; window visible: \(flag(wait.windowVisible)), ordered in: "
+            + "\(flag(wait.windowOrderedIn)), on a screen: \(flag(wait.windowOnScreen)), screens: \(wait.screens))"
+    }
+
+    /// The ready line when the page never loaded and the bar opened anyway: the capture can go ahead, but a query
+    /// shows no result (no counter, no match), which this line and NOTES.md say.
+    public static func fallbackLine(_ hook: FindTestHook) -> String {
+        switch hook {
+        case .open: return "\(logPrefix) ready (fallback, the page never loaded): open, empty"
+        case .query(let text): return "\(logPrefix) ready (fallback, the page never loaded): \(quote(text)) set, no find result"
+        }
+    }
+
+    /// A page milestone, for a run with a find hook (WebKit's navigation delegate): `started`, `committed`,
+    /// `finished`, `failed`, `content process ended`. Errors give only their domain and code, never a URL or text.
+    public static func pageLine(_ milestone: String, error: (domain: String, code: Int)? = nil) -> String {
+        "\(logPrefix) page: \(milestone)" + (error.map { " (\($0.domain) \($0.code))" } ?? "")
     }
 
     /// The stderr line once the bar is open with an empty field.
@@ -84,11 +172,6 @@ public enum FindTestHook: Equatable, Sendable {
         if let activeMatch { parts.append("active \(activeMatch)") }
         parts.append("counter \(quote(counter))")
         return parts.joined(separator: ", ")
-    }
-
-    /// The stderr line when no page finished loading in time; the bar stays closed.
-    public static var timeoutLine: String {
-        "\(logPrefix) no page finished loading in \(Int(pageLoadTimeout)) s, so the find bar wasn't opened"
     }
 
     /// The stderr line for a value a test-safe run doesn't take.
