@@ -125,15 +125,15 @@ final class FindTestHookRunner {
         return (webView.value(forKey: "_webProcessIdentifier") as? NSNumber)?.intValue
     }
 
-    /// Right after WebKitPage asks WebKit to load (and again 2 s later), on a run with a find hook only: whether the
-    /// load took and whether the page has a web content process. W21's headless runs ended with no URL, no load and
-    /// no navigation callback, so this says whether WebKit dropped the load at once or later.
     /// A tab's page being made, on a run with a find hook only: whether it loads a URL or restores a saved state.
     static func logPageMade(hasURL: Bool, restoredFrom source: PageRestore.Source) {
         guard configured != nil else { return }
         log(FindTestHook.pageMadeLine(hasURL: hasURL, restoredFrom: source))
     }
 
+    /// Right after WebKitPage asks WebKit to load (and again 2 s later), on a run with a find hook only: whether the
+    /// load took and whether the page has a web content process. W21's headless runs ended with no URL, no load and
+    /// no navigation callback, so this says whether WebKit dropped the load at once or later.
     static func logLoadAsked(_ webView: WKWebView) {
         guard configured != nil else { return }
         func line(_ when: String) -> String {
