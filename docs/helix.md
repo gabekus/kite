@@ -124,7 +124,12 @@ request that could reach past that, before anything runs:
   first mouse, so `cmd+t` is the one that works headless), into a visible `CommandBarField`: Kite's own command bar, which acts
   only on Return, and Return can't be sent. Text also needs a base with the script's `TEXT_FLOOR`
   (fix/test-safe-text-input), where a test-safe run inserts it into the bar's field editor without
-  key events, so the input method (and a Japanese input source's candidate window) never sees it.
+  key events, so the input method (and a Japanese input source's candidate window) never sees it;
+- the find bar's hooks, except `KITE_TEST_FIND` with a value under the same text rule or
+  `KITE_TEST_FIND_OPEN` set to exactly `1`, one of them per state, on a base with the script's
+  `FIND_FLOOR` (fix/test-find-hooks). On that base a test-safe run opens the bar as ⌘F does and sets
+  its query through the field's own path, without key events. A state with either hook waits for Kite's
+  `KITE_TEST_FIND: ready` line before its steps, and fails, uncaptured, without it.
 
 The Mac job only reads the repository (no token left in its checkout); a GitHub-hosted job pushes
 `review/<id>-mac`. Raise `SAFE_FLOOR` whenever new test-safety work lands in Kite.
