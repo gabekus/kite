@@ -5,7 +5,8 @@
 //                            Chromium: until the selected tab's page has loaded, at most
 //                            30 s, then one WM_CLOSE must close every browser in time),
 //                            saves the session and exits 0 (CI). Errors go to the exit
-//                            code, never a dialog.
+//                            code, never a dialog. Fails if any window of Kite's (Chromium's
+//                            too) became the foreground window: a quiet run stays behind.
 //   Kite.exe --capture FILE.png [--window-size W,H] [--capture-scale N]
 //                            opens the window at W×H points (client area), saves the frame
 //                            it presents as a PNG and exits: the Helix UI gate
@@ -213,7 +214,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const OptionValue sizeOption = Option(args, L"--window-size");
     const std::optional<std::wstring>& capture = captureOption.value;
     const OptionValue saveLogOption = Option(args, L"--save-log");
+    // A quiet run: the one place that decides it (everything else reads Options::quiet). It
+    // never comes to the front, takes the focus or shows a dialog (shell/QuietRun.h, the Mac's
+    // KITE_DIAGNOSTICS test-safe mode): watched from here on, and --smoke-test fails if it did.
+    // A capture and a --save-log run are watched too, and say so on stderr.
     const bool quiet = smokeTest || captureOption.present || saveLogOption.present;
+    std::optional<kite::ForegroundWatch> foreground;
+    if (quiet) foreground.emplace();
     if (saveLogOption.present && !saveLogOption.value) return Fail(quiet, L"--save-log takes a file", kUsage);
     if (captureOption.present && !capture) return Fail(quiet, L"--capture takes a PNG path", kUsage);
     const OptionValue scaleOption = Option(args, L"--capture-scale");
@@ -421,7 +428,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 #endif
     if (found) writer.BackUpLaunch(std::move(*found));
 
-    controller->Show(showCommand, quiet);
+    controller->Show(showCommand);
     if (capture && !window.HasClientSize(size->first, size->second)) {
         // A capture is compared pixel for pixel with the Mac's, so a window Windows resized
         // (maximized by the launcher, clamped to 32767 px) would compare the wrong thing.
@@ -473,6 +480,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (saveLogOption.value) {
         if (problem = controller->SaveSaveLog(*saveLogOption.value); !problem.empty()) {
             return Fail(quiet, L"Couldn't write the save log: " + problem, kSaveFailed);
+        }
+    }
+    if (foreground) {
+        if (problem = foreground->Problem(); !problem.empty()) {
+            if (smokeTest) return Fail(quiet, problem, kWindowFailed);
+            WriteUtf8(STD_ERROR_HANDLE, L"Kite: " + problem + L"\n");
         }
     }
     if (!maySave) {

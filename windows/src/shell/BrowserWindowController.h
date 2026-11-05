@@ -115,7 +115,7 @@ public:
     // Shows the window (behind other windows for a quiet run) and, with Chromium, the first page,
     // and starts the auto-archive's timer and the read of downloads.json (only once this launch
     // is Kite's: a second one that hands over touches no file).
-    void Show(int showCommand, bool behindOtherWindows);
+    void Show(int showCommand);
 
     // Draws the backdrop, the sidebar and the caption buttons and commits them; with
     // `readBack`, the backdrop's frame as presented. Rebuilds a lost GPU first.

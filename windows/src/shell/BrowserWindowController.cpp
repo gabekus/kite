@@ -226,7 +226,7 @@ std::wstring BrowserWindowController::Init() {
 
     MakeCommands();
     // Every command the table can name does something: a test run fails on one that doesn't.
-    if (options_.smokeTest || options_.capture) {
+    if (options_.quiet) {
         for (const ShortcutCommand& command : ShortcutCommands()) {
             if (!commands_.contains(command.id)) return L"the shortcut command " + Widen(command.id) + L" does nothing";
         }
@@ -997,10 +997,15 @@ void BrowserWindowController::RunPending() {
 #endif
 }
 
-void BrowserWindowController::Show(int showCommand, bool behindOtherWindows) {
-    // Quiet runs open behind other windows without focus, and ignore a launcher's "start maximized".
-    if (behindOtherWindows) window_.ShowBehindOtherWindows();
-    else window_.Show(showCommand);
+void BrowserWindowController::Show(int showCommand) {
+    // Quiet runs open behind other windows and never activate, and ignore a launcher's "start
+    // maximized".
+    if (options_.quiet) {
+        window_.NeverActivate();
+        window_.ShowBehindOtherWindows();
+    } else {
+        window_.Show(showCommand);
+    }
     // Before the first page, whose first download then usually finds the history already in.
     ReadDownloads();
 #ifdef KITE_HAS_CEF
@@ -1296,7 +1301,9 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         else commandBar_->ForwardKey(code, ctrl, shift);
     };
     events.relaunched = [this] {
-        // Kite was launched again: this one comes forward instead.
+        // Kite was launched again: this one comes forward instead (a quiet run stays behind;
+        // the other launch, a test on the same profile, fails).
+        if (options_.quiet) return;
         if (IsIconic(window_.Handle())) ShowWindow(window_.Handle(), SW_RESTORE);
         SetForegroundWindow(window_.Handle());
     };
