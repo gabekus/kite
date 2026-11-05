@@ -5,7 +5,7 @@
 //
 //   {"type":"header","version":1,"qpcFrequency":F,"pid":P,"chromiumSwitches":[..]}
 //   {"type":"mark","name":N,"detail":D,"qpc":Q,"presents":..,"commits":..,"pointerMoves":..,
-//    "surfaceDraws":{"sidebar":..,"spaceBar":..,"spaceTip":..,"captionButtons":..,"commandBar":..,"iconPicker":..}}
+//    "surfaceDraws":{"sidebar":..,"spaceBar":..,"spaceTip":..,"captionButtons":..,"commandBar":..,"findBar":..,"iconPicker":..}}
 //   {"type":"dispatch","msg":M,"qpc":Q,"ms":X}       a dispatched message that took over 8 ms
 //   {"type":"input","kind":K,"inputQpc":..,"commitQpc":..,"frameId":..,"targetQpc":..,"presentQpc":..}
 //   {"type":"frame","qpc":..,"target":..,"offset":..,"theme":..,"rate":Hz,"commitQpc":..,"frameId":..,
@@ -38,7 +38,7 @@
 namespace kite::perf {
 
 // Whose surface drew (Compositor::DrawSurface's callers, and the command bar's swap chain).
-enum class View { Sidebar, SpaceBar, SpaceTip, CaptionButtons, CommandBar, IconPicker, Count };
+enum class View { Sidebar, SpaceBar, SpaceTip, CaptionButtons, CommandBar, FindBar, IconPicker, Count };
 
 // Opens FILE (replacing it), writes the header and turns the log on. Call once, before Kite
 // starts any thread that marks. Empty on success.

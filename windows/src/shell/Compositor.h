@@ -2,7 +2,7 @@
 // The window's DirectComposition tree, on one device: behind the page's child window, the
 // theme backdrop (a premultiplied-alpha swap chain) with the chrome over it (the sidebar and
 // the caption buttons);
-// over the page, the overlay (the command bar), in a second target with topmost TRUE
+// over the page, the overlay (the command bar, over the find bar), in a second target with topmost TRUE
 // (docs/windows.md, Rendering). The backdrop draws only when something changed (the theme,
 // the base colour or the size), so an idle window costs nothing, like the Mac's on-demand
 // ThemeView. Whoever changes the tree commits it (Commit), once a pass. The chrome's views
@@ -45,6 +45,8 @@ public:
     IDCompositionVisual* Chrome() const { return chrome_.Get(); }
     // Where the overlay's visuals go: over everything in the window, the page included.
     IDCompositionVisual* Overlay() const { return overlay_.Get(); }
+    // Over the page too, but under the overlay's: what belongs to the page (the find bar).
+    IDCompositionVisual* PageOverlay() const { return pageOverlay_.Get(); }
     IDCompositionDevice* Device() const { return device_.Get(); }
     Renderer& GetRenderer() const { return renderer_; }
     // The Direct2D context the chrome's views draw with, on the renderer's device. Its
@@ -84,7 +86,7 @@ private:
     Microsoft::WRL::ComPtr<IDXGISwapChain2> swapChain_;
     Microsoft::WRL::ComPtr<IDCompositionDevice> device_;
     Microsoft::WRL::ComPtr<IDCompositionTarget> target_, overlayTarget_;
-    Microsoft::WRL::ComPtr<IDCompositionVisual> root_, backdrop_, chrome_, overlay_;
+    Microsoft::WRL::ComPtr<IDCompositionVisual> root_, backdrop_, chrome_, overlay_, overlayRoot_, pageOverlay_;
     Microsoft::WRL::ComPtr<ID2D1Factory1> d2dFactory_;
     Microsoft::WRL::ComPtr<ID2D1Device> d2dDevice_;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> d2dContext_;

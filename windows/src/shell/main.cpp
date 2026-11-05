@@ -20,6 +20,12 @@
 //   Kite.exe --capture FILE.png --command-bar TEXT
 //                            the same with the command bar open (Ctrl+T) and TEXT typed in
 //                            it, composed over the window's frame as DirectComposition shows it.
+//   Kite.exe --capture FILE.png --find TEXT [--find-result ACTIVE/TOTAL]
+//                            the same with the find bar open (Ctrl+F) over the selected tab and
+//                            TEXT typed in it. A capture runs without Chromium, so
+//                            --find-result stands in for the page's report: 3/12 shows "3/12",
+//                            0/0 "Not Found"; without it the counter is empty, as before the
+//                            page answers.
 //   Kite.exe --capture FILE.png --space-tip N
 //                            the same with space N's tip (1-based) over its cell, at rest (the
 //                            cell's hover backing isn't drawn: no pointer is on it).
@@ -300,7 +306,7 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // value (core/CommandLine.h).
     kite::command_line::Spec spec;
     spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control", "--favicons", "--empty-favorites-hover"};
-    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log", "--rename-row", "--hover-row", "--run-command", "--icon-picker", "--pick-icon"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log", "--rename-row", "--hover-row", "--run-command", "--find", "--find-result", "--icon-picker", "--pick-icon"};
     // Its value is switches ("--a --b"), each checked against the allow-list below; Chromium's
     // raw read sees them too, so only allowed ones get this far.
     spec.switchValueOptions = {"--chromium-switches"};
@@ -365,6 +371,23 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         tipIndex = static_cast<size_t>(std::stoi(*tipOption.value) - 1);
     }
     if (tipOption.present && !captureOption.present) return Fail(quiet, L"--space-tip only goes with --capture", kUsage);
+    const OptionValue findOption = Option(args, L"--find");
+    if (findOption.present && !findOption.value) return Fail(quiet, L"--find takes the text typed in the find bar (\"\" for none)", kUsage);
+    if (findOption.present && !captureOption.present) return Fail(quiet, L"--find only goes with --capture", kUsage);
+    const OptionValue findResultOption = Option(args, L"--find-result");
+    std::optional<kite::FindResult> findResult;
+    if (findResultOption.present) {
+        // ACTIVE/TOTAL, as the counter reads: the page's report a capture can't ask for.
+        const std::wstring& text = findResultOption.value.value_or(L"");
+        const size_t slash = text.find(L'/');
+        const auto active = slash == std::wstring::npos ? std::nullopt : ParseInt(std::wstring_view(text).substr(0, slash));
+        const auto total = slash == std::wstring::npos ? std::nullopt : ParseInt(std::wstring_view(text).substr(slash + 1));
+        if (!active || !total || *active > *total || (*total > 0 && *active < 1)) {
+            return Fail(quiet, L"--find-result takes ACTIVE/TOTAL (3/12, or 0/0 for none)", kUsage);
+        }
+        findResult = kite::FindResult{*total > 0, *total, *active};
+    }
+    if (findResultOption.present && !findOption.present) return Fail(quiet, L"--find-result only goes with --find", kUsage);
     const OptionValue swipeOption = Option(args, L"--swipe");
     std::optional<double> swipe;
     if (swipeOption.present) {
@@ -773,6 +796,7 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     kite::perf::Mark("window-created");
     if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar: " + controller->CommandBarError(), kWindowFailed);
     if (archivedAtLaunch) controller->SessionChanged();
+    if (findOption.present && !controller->FindBar()) return Fail(quiet, L"Kite couldn't make the find bar", kWindowFailed);
     kite::MainWindow& window = controller->Window();
 
     // Sized after the swap chain exists, so a capture also goes through a resize, as a real
@@ -874,7 +898,9 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
             captureError = controller->WaitForFavicons(20, failed);
             for (const std::string& url : failed) WriteUtf8(STD_ERROR_HANDLE, L"Kite: no favicon from " + Widen(url) + L" (the globe shows)\n");
         }
-        if (captureError.empty()) captureError = controller->Capture(pixels, barText, tipIndex);
+        std::optional<kite::BrowserWindowController::CaptureFind> find;
+        if (findOption.present) find = kite::BrowserWindowController::CaptureFind{Narrow(*findOption.value), findResult};
+        if (captureError.empty()) captureError = controller->Capture(pixels, barText, tipIndex, find);
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);
         PostMessageW(window.Handle(), WM_CLOSE, 0, 0);
     }

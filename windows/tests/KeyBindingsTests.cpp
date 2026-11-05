@@ -329,3 +329,24 @@ TEST(tabNumbersCountASplitOnce) {
     state.SelectAdjacentTab(1, 900);
     CHECK(state.SelectedTab()->id == ids[2]);
 }
+
+// W21: Edit › Find's items, the Mac's ⌘F, ⌘G and ⇧⌘G with Ctrl, plus Windows' F3 and Shift+F3;
+// all Prefer Websites, so a page that uses the keys keeps them (KeyShortcutPriority.defaults).
+TEST(findCommandsTakeTheMacsKeysAndWindowsF3) {
+    const auto table = ShortcutTable(KeyBindings{});
+    CHECK(CommandAt(table, KeyShortcut("f", {M::Control})) == "find");
+    CHECK(CommandAt(table, KeyShortcut("g", {M::Control})) == "findNext");
+    CHECK(CommandAt(table, KeyShortcut("g", {M::Control, M::Shift})) == "findPrevious");
+    CHECK(CommandAt(table, KeyShortcut("f3", {})) == "findNext");
+    CHECK(CommandAt(table, KeyShortcut("f3", {M::Shift})) == "findPrevious");
+    CHECK(FindShortcut(table, KeyShortcut("f", {M::Control}))->priority == KeyShortcutPriority::Low);
+    CHECK(FindShortcut(table, KeyShortcut("g", {M::Control}))->priority == KeyShortcutPriority::Low);
+    CHECK(FindShortcut(table, KeyShortcut("g", {M::Control, M::Shift}))->priority == KeyShortcutPriority::Low);
+    // A Mac file's ⌘F rebinding reaches Windows as Ctrl+F's, and F3 stays Find Next.
+    KeyBindings bindings;
+    bindings.SetShortcut(KeyShortcut("e", {M::Command}), "find");
+    const auto rebound = ShortcutTable(bindings);
+    CHECK(CommandAt(rebound, KeyShortcut("e", {M::Control})) == "find");
+    CHECK(CommandAt(rebound, KeyShortcut("f", {M::Control})) == "");
+    CHECK(CommandAt(rebound, KeyShortcut("f3", {})) == "findNext");
+}

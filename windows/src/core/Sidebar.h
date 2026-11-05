@@ -184,6 +184,18 @@ SidebarTap SidebarRelease(const SidebarPress& press, const std::vector<SidebarRo
 // (SidebarRowCell.mouseDown's clickCount == 2, TabRowCell.doubleTapped). Folders don't.
 std::optional<std::string> SidebarRenameOnPress(const SidebarPress& press);
 
+// A middle click on a tab's row closes it, as the tab's close button does (Windows' convention,
+// Chrome's and Edge's; a Windows addition: the Mac has none). The press: on a tab's pill, its
+// buttons included, when the row has a close button (BrowserState::ShowsCloseButton; a tab in
+// one of Claude's folders has none, so it takes no middle press); nothing on a folder, the header,
+// New Tab or the divider. Held by the tab, as a left press is.
+std::optional<SidebarPress> SidebarMiddlePressAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x,
+                                                 float y, float listTop = sidebar_metrics::kHeaderAreaHeight);
+// Letting go of it: CloseTab when the release is inside the pressed tab's row (its bounds, as a
+// left tap's), wherever that row is now; nothing once it's moved off the row, or the row went.
+SidebarTap SidebarMiddleRelease(const SidebarPress& press, const std::vector<SidebarRow>& rows, float width, float height, float scroll,
+                                float x, float y, float listTop = sidebar_metrics::kHeaderAreaHeight);
+
 // Where a tab's trailing buttons sit in its row, as TabRowCell.layout places them right to left
 // (close, then Back to Pinned URL), for a sidebar `width` wide: each one's left and right in
 // sidebar points (none for one that doesn't show: only while `hovered`), and where its title ends.

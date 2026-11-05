@@ -16,6 +16,7 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "include/cef_find_handler.h"
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_dialog_handler.h"
 #include "include/cef_download_handler.h"
@@ -101,7 +102,7 @@ HWND FindPageWidget(HWND host) {
 
 }  // namespace
 
-struct Chromium::Shared {
+struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
     HWND window = nullptr;
     // A quiet run (Start's `quiet`): no page takes the focus or shows a dialog, and the
     // pages' windows never activate. Set before CEF starts, then only read (any thread).
@@ -116,6 +117,10 @@ struct Chromium::Shared {
     std::atomic<bool> inputBlocked{false};
     // Keys that reach a page go to Kite: from Ctrl+T in a page until Kite unblocks input.
     std::atomic<bool> keysToKite{false};
+    // KeepKeyboard: a navigation doesn't move the keyboard to the page.
+    std::atomic<bool> kiteKeepsKeyboard{false};
+    // BlockInput(false) is enabling the page windows again (CEF's thread only).
+    bool reenabling = false;
     // Use Both's "second press" bookkeeping, on CEF's UI thread only (OnPreKeyEvent, OnKeyEvent).
     ShortcutPriorityGate gate;
     // The Mac's gEnergySaverEnabled: on unless the user turns it off, as in Chrome
@@ -135,6 +140,14 @@ struct Chromium::Shared {
     HANDLE allClosed = nullptr;
     std::map<std::pair<int, int>, std::string> popupTabs;  // (opener browser id, popup_id) → tab id
 
+    // The overlay's hole as each page's window has it: the find bar's rounded rectangle, in the
+    // window's own px (its region's), or none.
+    struct Hole {
+        RECT rect{};
+        int radius = 0;
+        bool operator==(const Hole& o) const { return EqualRect(&rect, &o.rect) && radius == o.radius; }
+    };
+
     // Kite's UI thread only.
     struct Placement {
         bool visible = true;  // shown on the card, rather than hidden; SetAsChild windows start shown
@@ -151,6 +164,14 @@ struct Chromium::Shared {
         Timestamp lastShown = Now();  // made, or last on the card (the Mac's lastShown)
         bool mediaInUse = false;      // camera, microphone or screen capture (OnMediaAccessChange)
         std::string profile;          // the profile directory it was made in (a popup: its opener's)
+        Hole hole;                    // the overlay's hole as last sent, in its window's px
+        // Find asked for before the browser existed (Ctrl+F straight after a new tab): run once
+        // it's made, the last one asked for.
+        struct PendingFind {
+            std::string text;
+            bool forward = true, findNext = false;
+        };
+        std::optional<PendingFind> pendingFind;
     };
     // Kite's UI thread only. Browsers Kite closed (Close) whose DoClose hasn't come back yet:
     // out of `pages`, so their tab can have a new page, but the window waits for them.
@@ -162,6 +183,7 @@ struct Chromium::Shared {
     std::map<std::string, CefRefPtr<CefRequestContext>> contexts;  // by profile directory
     std::string shown;
     bool minimized = false;
+    Hole overlayHole;  // SetOverlayHole's, in client px
     LiveTabPolicy policy;  // at most six live pages, as the Mac's PagePool
     ULONGLONG closingSince = 0;  // when MayCloseWindow started closing
     bool closeForced = false;    // the deadline closed the window before every browser was ready
@@ -428,26 +450,68 @@ struct Chromium::Shared {
     // reflow, on every tab switch. It leans on Chromium's window layout, so a missing widget
     // is reported (widgetMissing, which fails --smoke-test); W10's off-screen pages replace it
     // with WasHidden.
+    // Also the overlay's hole: in the shown page's window, in none of the others. A window's
+    // region clips its hit-testing (and its drawing, where the bar covers it anyway), so a click
+    // there falls through to Kite's window behind it. One task on CEF's thread places and cuts
+    // each window that changed; a region set just before the window moves is set without its own
+    // repaint (bRedraw FALSE), so a resize step repaints once.
     void Layout() {
         const RECT card = Bounds();
-        std::vector<std::pair<HWND, Placement>> changes;
+        struct Change {
+            HWND host;
+            std::optional<Placement> placement;  // when it moved, showed or hid
+            std::optional<Hole> hole;            // when its hole changed
+        };
+        std::vector<Change> changes;
         for (auto& [id, page] : pages) {
             if (!page.hwnd) continue;
+            Change change{page.hwnd, std::nullopt, std::nullopt};
             Placement wanted;
             wanted.visible = id == shown && !minimized;
             wanted.rect = wanted.visible ? card : page.placed.rect;
-            if (wanted == page.placed) continue;
-            page.placed = wanted;
-            changes.emplace_back(page.hwnd, wanted);
+            if (!(wanted == page.placed)) {
+                page.placed = wanted;
+                change.placement = wanted;
+            }
+            Hole hole;
+            if (wanted.visible && !IsRectEmpty(&overlayHole.rect)) {
+                hole = overlayHole;
+                OffsetRect(&hole.rect, -card.left, -card.top);
+            }
+            if (!(hole == page.hole)) {
+                page.hole = hole;
+                change.hole = hole;
+            }
+            if (change.placement || change.hole) changes.push_back(change);
         }
         if (changes.empty()) return;
         // Shown first, then hidden, so the card is never empty in between.
-        std::stable_partition(changes.begin(), changes.end(), [](const auto& c) { return c.second.visible; });
+        std::stable_partition(changes.begin(), changes.end(), [](const Change& c) { return !c.placement || c.placement->visible; });
         RunOnCefUIThread([changes = std::move(changes)] {
-            for (const auto& [host, placement] : changes) {
+            for (const Change& change : changes) {
+                const HWND host = change.host;
+                if (change.hole) {
+                    // Repainted by the move that follows, when one does.
+                    const BOOL redraw = change.placement && change.placement->visible ? FALSE : TRUE;
+                    const Hole& hole = *change.hole;
+                    if (IsRectEmpty(&hole.rect)) {
+                        SetWindowRgn(host, nullptr, redraw);
+                    } else {
+                        // As big as a window can be, less the hole, so it holds through any resize.
+                        // CreateRoundRectRgn leaves out its right and bottom edges, as RECTs do.
+                        HRGN region = CreateRectRgn(0, 0, 32767, 32767);
+                        HRGN cut = CreateRoundRectRgn(hole.rect.left, hole.rect.top, hole.rect.right + 1, hole.rect.bottom + 1,
+                                                      2 * hole.radius, 2 * hole.radius);
+                        if (region && cut) CombineRgn(region, region, cut, RGN_DIFF);
+                        if (cut) DeleteObject(cut);
+                        // The window owns the region once it's set.
+                        if (region && !SetWindowRgn(host, region, redraw)) DeleteObject(region);
+                    }
+                }
+                if (!change.placement) continue;
                 const HWND widget = FindPageWidget(host);
-                if (placement.visible) {
-                    const RECT& r = placement.rect;
+                if (change.placement->visible) {
+                    const RECT& r = change.placement->rect;
                     SetWindowPos(host, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top,
                                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
                     if (widget) ShowWindow(widget, SW_SHOWNA);
@@ -459,10 +523,26 @@ struct Chromium::Shared {
         });
     }
 
+    // As the Mac's ChromiumEngine.find: a new search only highlights, so it steps once more to
+    // make the first match active (1/N), as Chrome does.
+    static void RunFind(CefRefPtr<CefBrowser> browser, std::string text, bool forward, bool findNext) {
+        RunOnCefUIThread([browser, text = std::move(text), forward, findNext] {
+            CefRefPtr<CefBrowserHost> host = browser->GetHost();
+            host->Find(text, forward, false, findNext);
+            if (!findNext) host->Find(text, forward, false, true);
+        });
+    }
+
     void FocusShown() {
-        if (inputBlocked) return;
+        // Nor while Kite's find field has it: a page made after Ctrl+F (its Attach) leaves it there.
+        if (inputBlocked || kiteKeepsKeyboard) return;
         auto it = pages.find(shown);
-        if (it != pages.end() && it->second.browser) it->second.browser->GetHost()->SetFocus(true);
+        if (it == pages.end() || !it->second.browser) return;
+        // Asked again on CEF's thread, as it runs: a field of Kite's may have taken the keyboard
+        // since (Ctrl+F as the command bar closed), and the page doesn't take it back then.
+        RunOnCefUIThread([shared = shared_from_this(), browser = it->second.browser] {
+            if (!shared->inputBlocked && !shared->kiteKeepsKeyboard) browser->GetHost()->SetFocus(true);
+        });
     }
 
     Page* PageFor(const std::string& tabID, const CefRefPtr<CefBrowser>& browser) {
@@ -561,6 +641,10 @@ struct Chromium::Shared {
         if (!page.pendingURL.empty()) {
             browser->GetMainFrame()->LoadURL(page.pendingURL);
             page.pendingURL.clear();
+        }
+        if (page.pendingFind) {
+            RunFind(browser, page.pendingFind->text, page.pendingFind->forward, page.pendingFind->findNext);
+            page.pendingFind.reset();
         }
         // The window got focus before this page existed (at launch, or when a popup tab
         // replaced its opener): hand it over now.
@@ -702,6 +786,7 @@ class PageClient : public CefClient,
                    public CefDialogHandler,
                    public CefDownloadHandler,
                    public CefFocusHandler,
+                   public CefFindHandler,
                    public CefJSDialogHandler,
                    public CefKeyboardHandler,
                    public CefLoadHandler,
@@ -718,6 +803,7 @@ public:
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
     CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
     CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
+    CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
     // Only in a quiet run, which shows no dialog: otherwise Chromium's own.
     CefRefPtr<CefDialogHandler> GetDialogHandler() override { return shared_->quiet ? this : nullptr; }
     // Always: a parked page's dialogs are answered here too (its tab has closed); others go on to
@@ -1168,8 +1254,27 @@ public:
 
     // While Kite's command bar is open, a page never takes the keyboard back (Chromium
     // focuses a page as it navigates), as the Mac blurs its pages while the bar is open. A
-    // quiet run's pages never take it: focusing a page's window activates Kite's.
-    bool OnSetFocus(CefRefPtr<CefBrowser>, FocusSource) override { return shared_->inputBlocked || shared_->quiet; }
+    // quiet run's pages never take it: focusing a page's window activates Kite's. Nor, while Kite's find field has the keyboard, on a navigation (a click is the system's).
+    // Nor as its window is enabled again (the command bar closing, which Chromium answers with a
+    // focus of its own, inside EnableWindow) while Kite keeps the keyboard: Ctrl+F over the bar.
+    bool OnSetFocus(CefRefPtr<CefBrowser>, FocusSource source) override {
+        if (shared_->kiteKeepsKeyboard && (source == FOCUS_SOURCE_NAVIGATION || shared_->reenabling)) return true;
+        return shared_->inputBlocked || shared_->quiet;
+    }
+
+    // CefFindHandler
+
+    // Every report, the interim ones too, as the Mac's KCBrowser passes them on: the count grows
+    // as Chromium scans the page.
+    void OnFindResult(CefRefPtr<CefBrowser> browser, int identifier, int count, const CefRect&, int activeMatchOrdinal,
+                      bool finalUpdate) override {
+        // A search replaced since (each Find has a higher identifier) reports nothing more.
+        if (identifier < lastFindIdentifier_) return;
+        lastFindIdentifier_ = identifier;
+        shared_->Post([shared = shared_, id = tabID_, browser, count, activeMatchOrdinal, finalUpdate] {
+            if (shared->PageFor(id, browser) && shared->events.findResult) shared->events.findResult(id, count, activeMatchOrdinal, finalUpdate);
+        });
+    }
 
     // CefKeyboardHandler
 
@@ -1308,6 +1413,7 @@ private:
     // CEF's UI thread only.
     CefRefPtr<CefRegistration> devTools_;
     std::vector<int> busyChecks_;  // Runtime.evaluate message ids awaiting an answer
+    int lastFindIdentifier_ = 0;   // OnFindResult's highest
     IMPLEMENT_REFCOUNTING(PageClient);
 };
 
@@ -1542,6 +1648,11 @@ void Chromium::Close(const std::string& tabID) {
     shared_->Layout();
 }
 
+bool Chromium::HasPage(const std::string& tabID) const {
+    const auto it = shared_->pages.find(tabID);
+    return it != shared_->pages.end() && !it->second.closeWhenMade;
+}
+
 void Chromium::SetBounds(const RECT& bounds) {
     {
         std::lock_guard lock(shared_->mutex);
@@ -1574,8 +1685,10 @@ void Chromium::BlockInput(bool blocked) {
     // Disabled, the page windows are skipped when Windows looks for the window under the
     // pointer, so clicks reach Kite's window. On CEF's thread, which owns them.
     if (!hosts.empty()) {
-        RunOnCefUIThread([hosts = std::move(hosts), blocked] {
+        RunOnCefUIThread([shared = shared_, hosts = std::move(hosts), blocked] {
+            shared->reenabling = !blocked;
             for (HWND host : hosts) EnableWindow(host, blocked ? FALSE : TRUE);
+            shared->reenabling = false;
         });
     }
 }
@@ -1630,6 +1743,44 @@ bool Chromium::Act(PageAction action) {
         }
     });
     return true;
+}
+
+bool Chromium::CanFind() const {
+    auto it = shared_->pages.find(shared_->shown);
+    return it != shared_->pages.end() && !it->second.closeWhenMade && !shared_->closing;
+}
+
+bool Chromium::Find(const std::string& text, bool forward, bool findNext) {
+    if (!CanFind()) return false;
+    Shared::Page& page = shared_->pages.at(shared_->shown);
+    if (!page.browser) {
+        page.pendingFind = Shared::Page::PendingFind{text, forward, findNext};
+        return true;
+    }
+    Shared::RunFind(page.browser, text, forward, findNext);
+    return true;
+}
+
+void Chromium::StopFinding() {
+    if (!CanFind()) return;
+    Shared::Page& page = shared_->pages.at(shared_->shown);
+    page.pendingFind.reset();
+    // Keep the active match selected, like Chrome and Arc.
+    if (page.browser) RunOnCefUIThread([browser = page.browser] { browser->GetHost()->StopFinding(false); });
+}
+
+void Chromium::SetOverlayHole(const RECT& hole, int cornerRadius) {
+    shared_->overlayHole = Shared::Hole{hole, IsRectEmpty(&hole) ? 0 : cornerRadius};
+    shared_->Layout();
+}
+
+void Chromium::KeepKeyboard(bool keep) { shared_->kiteKeepsKeyboard = keep; }
+
+bool Chromium::PageTakesClickAt(POINT client) const {
+    auto it = shared_->pages.find(shared_->shown);
+    if (it == shared_->pages.end() || !it->second.hwnd) return false;
+    // Windows' own search for the child window under a point, which honours window regions.
+    return ChildWindowFromPointEx(shared_->window, client, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED) == it->second.hwnd;
 }
 
 bool Chromium::MayCloseWindow() {

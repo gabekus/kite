@@ -1,7 +1,7 @@
 #pragma once
 // The browser window and what's in it, as the Mac's BrowserWindowController: the backdrop,
-// the sidebar, the caption buttons, the command bar, the pages (Chromium) and Kite's
-// shortcuts, wired to the session (core/Models.h). main.cpp parses the command line, loads the
+// the sidebar, the caption buttons, the command bar, the find bar, the pages (Chromium)
+// and Kite's shortcuts, wired to the session (core/Models.h). main.cpp parses the command line, loads the
 // session, and runs one of these. Like the Mac's BrowserWindowController+*.swift, its parts have
 // files of their own: +Spaces.cpp (editing spaces: the space menu, renaming, deleting,
 // reordering), +Tabs.cpp (pinning, renaming tabs and folders, New Folder, Duplicate, Back to Pinned
@@ -60,6 +60,7 @@
 #include "core/SpaceSwipe.h"
 #include "core/SpaceSwipeGesture.h"
 #include "core/ThemeBackdrop.h"
+#include "core/TitleBar.h"
 #include "shell/CaptionButtonsView.h"
 #ifdef KITE_HAS_CEF
 #include "shell/Chromium.h"
@@ -67,6 +68,7 @@
 #include "shell/CommandBarView.h"
 #include "shell/Compositor.h"
 #include "shell/Favicons.h"
+#include "shell/FindBarView.h"
 #include "shell/FrameClock.h"
 #include "shell/MainWindow.h"
 #include "shell/MemoryPressure.h"
@@ -140,6 +142,7 @@ public:
 
     MainWindow& Window() { return window_; }
     CommandBarView* CommandBar() { return commandBar_.get(); }
+    FindBarView* FindBar() { return findBar_.get(); }
     // Why there's no command bar, when there isn't one.
     const std::wstring& CommandBarError() const { return barError_; }
     UINT MaxTextureSize() const { return renderer_ ? renderer_->MaxTextureSize() : 0; }
@@ -184,7 +187,14 @@ public:
     std::wstring SmokeTest();
     // The window's frame as the screen shows it: the backdrop with the sidebar, the caption
     // buttons and (with `barText`) the command bar opened with that text, composed over it.
-    std::wstring Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip = std::nullopt);
+    // With `find`, the find bar open over the card with that query typed, and `findResult` as the
+    // page's report on it (a capture runs without Chromium; none leaves the counter empty).
+    struct CaptureFind {
+        std::string query;
+        std::optional<FindResult> result;
+    };
+    std::wstring Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip = std::nullopt,
+                         const std::optional<CaptureFind>& find = std::nullopt);
     // For a capture: two fingers over the sidebar have dragged its content `dx` points sideways
     // and are held there (the pages, the bar's light and the theme as they follow).
     std::wstring HoldSwipe(double dx);
@@ -254,14 +264,14 @@ private:
     // The content card, in points: right of the sidebar, inset on the other three sides
     // (BrowserWindowController's Layout.defaultSidebarWidth, and ArcMetrics.Content.inset in core's
     // sidebar_toggle::kContentInset).
-    static constexpr int kSidebarWidth = 240;
+    static constexpr int kSidebarWidth = title_bar::kSidebarWidth;
     // The window's timers and posted messages. The timers' ids on this window, shared out across
     // the checkpoints so two never collide (the ones not in this branch yet are reserved):
     //   1 smoke, 2 archive, 3 settle, 4 session save (W11), 5 history (W25a), 6 Arc merge (W33a),
     //   7 sidebar toggle (W12), 8 downloads save (W20a), 9 test tab close, 10 find (W21),
     //   11 Chromium::kStallTimer (the parked pages' stall check), 12 Change Space Icon…'s 0.15 s (W9e).
     // 0x4B42 and up are the views' (the command bar's caret, Chromium's close deadline, the
-    // sidebar's tip and drop, the rename field's caret; 0x4B49 the icon picker's caret, W9e). The WM_APP messages, each its own: +1
+    // sidebar's tip and drop, the rename field's caret, the find field's caret at 0x4B47, the icon picker's at 0x4B49, W9e). The WM_APP messages, each its own: +1
     // MainWindow::kWakeMessage, +2 the command bar's redraw, +3 the sidebar's redraw, +4 favicons,
     // +5 the frame clock, +6 space icons, +7 memory pressure (W11), +8 history, +9 Import from
     // Arc's read (kArcReadMessage), +10 arcSaved, +11 downloads, +20 perf. Filter checks that
@@ -424,6 +434,36 @@ private:
     void BlockPages(bool blocked);
     // The Mac's newTab and openLocation.
     void OpenCommandBar(CommandBarMode mode);
+    // Find in page (BrowserWindowController+PageCommands.swift): Ctrl+F opens the bar over the
+    // shown page and focuses its field, or beeps with no page; Ctrl+G and Ctrl+Shift+G step through
+    // the matches, or open the bar when it's closed or empty.
+    void ShowFind();
+    void StepFind(bool forward);
+    // The page's search (an empty text: stop).
+    void FindInPage(const FindQuery::Search& search);
+    // Closes the bar and ends the search; with `focusPage` (Esc, close) the page takes the keyboard.
+    void HideFindBar(bool focusPage);
+    // The shown tab changed (another tab, or none): the bar closes with it, as the Mac's
+    // findBarLeavesTab does without a conversation.
+    void FindBarFollowsSelection();
+    // The page's hole under the bar, and whether the page may take the keyboard on a navigation.
+    // Whatever moves the content card calls findBar_->SetCard and then this: OnSize and the
+    // sidebar's toggle (MovePage) do, and split view must too.
+    void UpdateFindHole();
+    // The app's appearance (the session's pageAppearance, else the system's apps' mode).
+    bool FindBarDark() const;
+    // Which of Kite's fields has the keyboard (Windows has one system caret a thread, and the
+    // Mac one first responder a window): the command bar's while it's open, else a rename's, else
+    // the find bar's, else none (the page's). GiveKeyboard takes it from the others before `to`
+    // takes it, so their carets go first: opening the command bar takes it from both, a rename
+    // from the find field, and Ctrl+F or a press in the find field ends a rename.
+    enum class KeyboardField { None, CommandBar, Rename, Find };
+    KeyboardField KeyboardOwner() const;
+    // With `focusFindField` false (a press in it), the find field takes it itself, the caret
+    // where the press is rather than its text all selected.
+    void GiveKeyboard(KeyboardField to, bool focusFindField = true);
+    // The content card in client px (the page's bounds).
+    RECT ContentBounds() const;
     CommandBarView::Look BarLook() const;
     void Commit(const CommandSuggestion& row, CommandBarMode mode);
     // A tab's close button and Ctrl+W (the Mac's close(tab:)). The id by value: Ctrl+W's is the
@@ -481,6 +521,10 @@ private:
     // keystroke drawing only the field) and from Rename Current Tab…, a folder renamed, New Folder,
     // Duplicate, Back to Pinned URL from its button and Reset all tabs, all undone after.
     std::wstring SmokeTestTabEditing();
+    // The smoke test's middle clicks: one on a Today tab's row closes it and its page, one moved off
+    // the row closes nothing, a pinned tab's unloads (its row stays, its page goes), and one on a
+    // favorite does nothing.
+    std::wstring SmokeTestMiddleClick();
     // Back to Pinned URL on the shown (live) page: the selected tab pinned, its page sent elsewhere,
     // then reset, waiting for the page to report it's home; unpinned again after.
     std::wstring SmokeTestLiveReset();
@@ -563,7 +607,6 @@ private:
     bool QueuePerfRequest(const COPYDATASTRUCT* data);
     void RunPerfRequests();
 #ifdef KITE_HAS_CEF
-    RECT ContentBounds() const;
     void ShowSelectedTab();
     void ShowFirstPage();
     Tab* TabNamed(const std::string& id);
@@ -687,6 +730,8 @@ private:
     std::unique_ptr<SpaceIconPickerView> iconPicker_;
     std::optional<std::string> pendingIconPicker_;
     std::wstring barError_;
+    std::unique_ptr<FindBarView> findBar_;
+    std::string findTabID_;  // the tab the find bar is open on
     // Frames while something animates (before the window in destruction: it posts to it).
     std::unique_ptr<FrameClock> clock_;
     // A precision touchpad's gestures over the sidebar (null where there's no DirectManipulation,
@@ -750,6 +795,16 @@ private:
     // The smoke test's read of Chromium's Energy Saver preference (Chromium::ReadEnergySaver).
     bool energySaverRead_ = false;
     std::optional<int> energySaverState_;
+    // The smoke test's find, once the first page loaded: who has the keyboard, then its query,
+    // then one with no match (BrowserWindowController+Tests.cpp).
+    enum class SmokeFind { Idle, Matching, Missing, Done };
+    SmokeFind smokeFind_ = SmokeFind::Idle;
+    std::wstring smokeFindProblem_;
+    RECT smokeFindFrame_{};  // the bar's, for the hole's checks
+    void StartSmokeFind();
+    std::wstring SmokeTestKeyboard();
+    void SmokeTestFind(int count, int activeMatch, bool final);
+    void FailSmokeFind(std::wstring problem);
 #endif
 };
 

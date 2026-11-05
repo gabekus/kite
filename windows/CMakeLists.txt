@@ -48,6 +48,7 @@ add_library(KiteCoreWin STATIC
   src/core/DownloadsWriter.cpp
   src/core/Favorites.cpp
   src/core/Files.cpp
+  src/core/FindBar.cpp
   src/core/History.cpp
   src/core/HistoryStore.cpp
   src/core/Json.cpp
@@ -157,6 +158,7 @@ if(WIN32)
     src/shell/FadedLayer.cpp
     src/shell/Favicons.cpp
     src/shell/FavoritesView.cpp
+    src/shell/FindBarView.cpp
     src/shell/FrameClock.cpp
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
@@ -175,12 +177,13 @@ if(WIN32)
     src/shell/SpaceMenu.cpp
     src/shell/SpaceTipView.cpp
     src/shell/TextEditing.cpp
+    src/shell/TextField.cpp
     src/shell/TextLine.cpp
     src/shell/TouchpadInput.cpp
     resources/Version.rc
     ${KITE_SHADER_HEADERS}
   )
-  set(KITE_SHELL_LIBRARIES KiteCoreWin user32 dwmapi shell32 ole32 uuid windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp comctl32)
+  set(KITE_SHELL_LIBRARIES KiteCoreWin user32 dwmapi shell32 ole32 uuid windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp comctl32 advapi32)
 
   # Chromium (CEF), from windows/scripts/fetch-cef.ps1. Without it (no download yet, or the
   # MinGW check, which can't link CEF's MSVC wrapper) Kite.exe builds without pages.
@@ -342,6 +345,7 @@ add_executable(KiteCoreTests
   tests/CommandLineTests.cpp
   tests/DownloadsTests.cpp
   tests/FavoritesTests.cpp
+  tests/FindBarTests.cpp
   tests/HistoryTests.cpp
   tests/JsonTests.cpp
   tests/KeyBindingsTests.cpp
