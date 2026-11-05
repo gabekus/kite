@@ -40,6 +40,8 @@ public:
     const Pixels* Get(const std::string& url, UINT side);
     // On `message`: moves the finished icons in. True when one arrived that Get now returns.
     bool TakeResults();
+    // Nothing queued or being fetched or decoded (a capture waits for this, never the window).
+    bool Idle() const;
 
     struct Shared;  // the queue the workers share (Favicons.cpp)
 

@@ -97,8 +97,8 @@ std::wstring BrowserWindowController::Init() {
     if (!compositor_) return L"Kite couldn't start DirectComposition: " + error;
 
     // The sidebar, over the backdrop: what the session lists, with favicons fetched off the UI
-    // thread (none in a capture, which mustn't depend on the network).
-    if (!options_.capture) favicons_ = Favicons::Create(window_.Handle(), kFaviconsMessage);
+    // thread (none in a capture, which mustn't depend on the network, unless it's asked for them).
+    if (!options_.capture || options_.captureFavicons) favicons_ = Favicons::Create(window_.Handle(), kFaviconsMessage);
     sidebar_ = SidebarView::Create(window_.Handle(), favicons_.get(),
                                    SpaceIconPainter::Pictures{options_.spaceIcons, kSpaceIconsMessage, options_.capture}, error);
     if (!sidebar_) return L"Kite couldn't make the sidebar: " + error;

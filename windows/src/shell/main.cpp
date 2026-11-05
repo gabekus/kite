@@ -41,6 +41,12 @@
 //   Kite.exe --capture FILE.png --toggle-sidebar N
 //                            the same after Toggle Sidebar (Ctrl+S) ran N times, each slide run to
 //                            its end (1: hidden, 2: shown again).
+//   Kite.exe --capture FILE.png --favicons
+//                            the same with the favicons fetched as the window fetches them (the
+//                            network, as the Mac's capture does), waiting for them (20 s at most).
+//   Kite.exe --capture FILE.png --favorite-hover N | --favorite-click N
+//                            the same with the pointer resting on the Nth favorite's pane (from 1, in
+//                            the grid's order), or after a click on it (pressed and let go there).
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
@@ -185,10 +191,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // normal launch on the real profile.
     for (size_t i = 0; i < args.size(); ++i) {
         const std::wstring& a = args[i];
-        if (a == L"--smoke-test" || a == L"--backdrop-test") continue;
+        if (a == L"--smoke-test" || a == L"--backdrop-test" || a == L"--favicons") continue;
         if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar" || a == L"--frame-log" ||
             a == L"--space-tip" || a == L"--swipe" || a == L"--space-drag" || a == L"--space-drop" || a == L"--space-menu" ||
-            a == L"--rename-space" || a == L"--page-status" || a == L"--toggle-sidebar") {
+            a == L"--rename-space" || a == L"--page-status" || a == L"--toggle-sidebar" || a == L"--favorite-hover" ||
+            a == L"--favorite-click") {
             ++i;
             continue;
         }
@@ -316,6 +323,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (!heldToggles || *heldToggles < 1 || *heldToggles > 9) return Fail(quiet, L"--toggle-sidebar takes how many times, 1 to 9", kUsage);
         if (!captureOption.present) return Fail(quiet, L"--toggle-sidebar only goes with --capture", kUsage);
     }
+    // The favorites' states, for a capture: their favicons, and a pane hovered or clicked.
+    const bool captureFavicons = HasFlag(args, L"--favicons");
+    if (captureFavicons && !captureOption.present) return Fail(quiet, L"--favicons only goes with --capture", kUsage);
+    std::optional<size_t> heldFavoriteHover, heldFavoriteClick;
+    for (const auto& [flag, out] :
+         {std::pair<const wchar_t*, std::optional<size_t>*>{L"--favorite-hover", &heldFavoriteHover}, {L"--favorite-click", &heldFavoriteClick}}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        *out = option.value ? place(*option.value) : std::nullopt;
+        if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a favorite's place, from 1", kUsage);
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+    }
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
 
@@ -375,6 +394,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     std::wstring problem;
     kite::BrowserWindowController::Options options;
     options.capture = capture.has_value();
+    options.captureFavicons = captureFavicons;
     options.smokeTest = smokeTest;
     options.frameLog = frameLogOption.present;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
@@ -456,6 +476,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
         if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
         if (heldMenu) controller->HoldSpaceMenu(*heldMenu);
+        if (captureError.empty() && heldFavoriteClick) captureError = controller->ClickFavorite(*heldFavoriteClick);
+        if (captureError.empty() && heldFavoriteHover) captureError = controller->HoldFavoriteHover(*heldFavoriteHover);
+        // Last, so the favicons of whatever the states above show have come.
+        if (captureError.empty() && captureFavicons) captureError = controller->WaitForFavicons(20);
         if (captureError.empty()) captureError = controller->Capture(pixels, barText, tipIndex);
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);
         PostMessageW(window.Handle(), WM_CLOSE, 0, 0);

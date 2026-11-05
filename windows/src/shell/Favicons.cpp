@@ -233,6 +233,7 @@ struct Favicons::Shared {
     std::condition_variable wake;
     std::deque<Job> queue;
     std::deque<Result> done;
+    int busy = 0;  // jobs a worker has taken and not yet finished
     bool stopping = false;
     bool posted = false;
 };
@@ -268,6 +269,7 @@ void Work(const std::shared_ptr<Favicons::Shared>& shared) {
             if (shared->stopping) break;
             job = std::move(shared->queue.front());
             shared->queue.pop_front();
+            ++shared->busy;
         }
         Result result{job.url, job.side, !job.bytes, job.bytes, std::nullopt};
         if (!result.bytes) {
@@ -277,6 +279,7 @@ void Work(const std::shared_ptr<Favicons::Shared>& shared) {
         }
         if (result.bytes && wic) result.pixels = Decode(wic.Get(), d2d.Get(), *result.bytes, job.side);
         std::lock_guard lock(shared->mutex);
+        --shared->busy;
         if (shared->stopping) break;
         shared->done.push_back(std::move(result));
         // One wake for however many arrive before the window takes them.
@@ -337,6 +340,11 @@ const Pixels* Favicons::Get(const std::string& url, UINT side) {
     shared_->wake.notify_one();
     if (added) Evict(url);
     return nullptr;
+}
+
+bool Favicons::Idle() const {
+    std::lock_guard lock(shared_->mutex);
+    return shared_->queue.empty() && shared_->busy == 0;
 }
 
 bool Favicons::TakeResults() {

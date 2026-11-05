@@ -24,8 +24,11 @@
 // `sidebar` prints what the sidebar shows for a space (default the selected one): the address
 // field's text and the space page's rows, top to bottom, with their place in points, then the
 // space bar's cells (in the bar's points, for a 240pt sidebar, exact: the window snaps them to
-// its pixels, under 1px from these at a fractional scale). `click` in the bar's 50pt along the
-// bottom selects the space whose cell it hits.
+// its pixels, under 1px from these at a fractional scale). Its `favorites` are the grid over the
+// page: its columns, its height with its gaps, where the page's rows start (`listTop`: their `top`s
+// are from there), and each tile with its panes and their frames, in sidebar points.
+// `click` in the bar's 50pt along the bottom selects the space whose cell it hits; on a favorite's
+// pane, it selects that favorite (in the space you're in).
 // `collapse` is View → Collapse / Expand Pinned Tabs for a space.
 // `space swipe` is two fingers sideways over the sidebar: the content dragged DX points (positive
 // towards the previous space) at a steady pace over SECONDS (default 0.25), an event every
@@ -55,6 +58,7 @@
 #include <vector>
 
 #include "core/CommandBar.h"
+#include "core/Favorites.h"
 #include "core/KeyBindings.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
@@ -445,8 +449,38 @@ int main(int argc, char** argv) {
             button.emplace("command", TopRowCommand(item.button));
             topRow.emplace_back(std::move(button));
         }
+        // The favorites over the page (FavoritesTrayView), for a 240pt sidebar.
+        const FavoritesTray tray = LayOutFavorites(state, *space, 240);
+        const auto frameOf = [](json::Object& o, const BarRect& r) {
+            o.emplace("left", static_cast<double>(r.left));
+            o.emplace("top", static_cast<double>(r.top));
+            o.emplace("width", static_cast<double>(r.Width()));
+            o.emplace("height", static_cast<double>(r.Height()));
+        };
+        json::Array tiles;
+        for (const FavoriteTile& tile : tray.tiles) {
+            json::Array panes;
+            for (const FavoritePane& pane : tile.panes) {
+                json::Object p{{"id", pane.tabID}, {"title", pane.title}, {"selected", pane.selected}};
+                if (pane.favicon.url) p.emplace("favicon", *pane.favicon.url);
+                // Its fill at rest, with no favicon colour known (kitecore decodes no icons).
+                const FavoriteLook look = FavoriteLookOf(pane.selected, false, !PrefersDarkForeground(state.spaces[*space].theme), false);
+                p.emplace("fill", static_cast<double>(look.fill));
+                frameOf(p, pane.frame);
+                panes.emplace_back(std::move(p));
+            }
+            json::Object t{{"id", tile.id}, {"split", tile.split}, {"panes", json::Value(std::move(panes))}};
+            if (tile.split) t.emplace("vertical", tile.vertical);
+            frameOf(t, tile.frame);
+            tiles.emplace_back(std::move(t));
+        }
+        json::Object favorites{{"columns", tray.columns},
+                               {"height", static_cast<double>(tray.height)},
+                               {"listTop", static_cast<double>(SidebarListTop(tray))},
+                               {"tiles", json::Value(std::move(tiles))}};
         json::Object out{{"address", AddressFieldText(state)},
                          {"topRow", json::Value(std::move(topRow))},
+                         {"favorites", json::Value(std::move(favorites))},
                          {"shown", !hidden},
                          {"sidebarLeft", static_cast<double>(SidebarLeft(!hidden, 240))},
                          {"cardLeft", static_cast<double>(CardLeft(!hidden, 240))},
@@ -464,6 +498,8 @@ int main(int argc, char** argv) {
         }
         const auto rows = SidebarRows(state, state.SelectedSpaceIndex());
         const std::vector<TopRowItem> topRow = LayOutTopRow(240, TopRowModelOf(state, page));
+        const FavoritesTray tray = LayOutFavorites(state, state.SelectedSpaceIndex(), 240);
+        const float listTop = SidebarListTop(tray);
         // The space bar along the bottom: a click on a space's cell selects it (pressed and let
         // go at the point, as the window's).
         if (const auto button = values[0] >= 0 && values[0] < 240 ? TopRowItemAt(topRow, values[0], values[1]) : std::nullopt) {
@@ -472,6 +508,21 @@ int main(int argc, char** argv) {
             const TopRowItem& item = topRow[*button];
             json::Object out{{"target", std::string("topRow")}, {"button", std::string(TopRowButtonName(item.button))}, {"enabled", item.enabled}};
             out.emplace("action", item.enabled ? TopRowCommand(item.button) : std::string("none"));
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (InFavorites(tray, 240, values[0], values[1])) {
+            // The grid's band: a pane's press selects its favorite on release (FavoritePaneView's
+            // mouseUp); the gaps and insets take the press and do nothing.
+            const auto press = FavoritePressAt(tray, values[0], values[1]);
+            json::Object out{{"target", std::string(press ? "favorite" : "favorites")}};
+            if (press) {
+                out.emplace("id", press->tabID);
+                const auto selected = FavoriteRelease(*press, tray, values[0], values[1]);
+                out.emplace("action", std::string(selected ? "selectTab" : "none"));
+                if (selected) {
+                    state.Select(*selected);
+                    changed = true;
+                }
+            }
             std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else if (values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) {
             const std::vector<SpaceCell> cells = SpaceCells(state);
@@ -489,14 +540,14 @@ int main(int argc, char** argv) {
             }
             std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else {
-            const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], 1);
+            const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], 1, false, listTop);
             static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron", "closeButton"};
             static constexpr const char* kActions[] = {"none",      "editAddress", "togglePinnedSection", "selectTab", "setFolderExpanded",
                                                        "newTab",    "closeTab"};
             json::Object out{{"target", std::string(kTargets[static_cast<int>(press ? press->target : SidebarHit::Target::None)])}};
             if (press) {
                 if (!press->id.empty()) out.emplace("id", press->id);
-                const SidebarTap tap = SidebarRelease(*press, rows, 240, values[2], values[3], values[0], values[1]);
+                const SidebarTap tap = SidebarRelease(*press, rows, 240, values[2], values[3], values[0], values[1], listTop);
                 out.emplace("action", std::string(kActions[static_cast<int>(tap.action)]));
                 switch (tap.action) {
                 case SidebarTap::Action::SelectTab: state.Select(tap.id); changed = true; break;

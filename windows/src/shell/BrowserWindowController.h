@@ -49,6 +49,8 @@ public:
         // window), no favicons (no network) and no auto-archive. The caller doesn't start
         // Chromium for one.
         bool capture = false;
+        // --capture --favicons: the favicons fetched as the window fetches them (WaitForFavicons).
+        bool captureFavicons = false;
         // --smoke-test: every shortcut command must do something, and the first page's load
         // closes the window.
         bool smokeTest = false;
@@ -126,6 +128,13 @@ public:
     // For the smoke test: the pointer resting on a top-row button (a mouse move there, as the
     // pointer sends it).
     std::wstring HoldTopRowHover(TopRowButton button);
+    // For a capture: the pointer resting on favorite pane `index` (from 0, in the grid's order),
+    // or a click on it (pressed and let go there, as the pointer sends them).
+    std::wstring HoldFavoriteHover(size_t index);
+    std::wstring ClickFavorite(size_t index);
+    // For a --favicons capture: the sidebar's favicons (and the 16px icons the favorites' colours
+    // come from) fetched and decoded, drawing as they come, for at most `seconds`.
+    std::wstring WaitForFavicons(double seconds);
 
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
@@ -273,6 +282,7 @@ private:
     // The smoke test's top row: its buttons, the page's states, a hover that draws nothing, a press
     // on a disabled button, and hiding and showing the sidebar from the toggle and Ctrl+S's command.
     std::wstring SmokeTestTopRow();
+    std::wstring SmokeTestFavorites();
     void MakeCommands();
     void RunCommand(const std::string& command);
     bool PageCommand(const std::string& command);

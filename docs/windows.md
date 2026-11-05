@@ -249,6 +249,44 @@ card's edge; `kitecore click X Y --page …` says what a click on a button runs.
 Captures: `--page-status` and `--toggle-sidebar N` (main.cpp); a hover draws
 nothing, which the smoke test checks.
 
+## The favorites grid
+
+W13 ports the Mac's favorites tray (`FavoritesTrayView`, `FavoriteTileView` and
+`FavoritePaneView` in SidebarFavorites.swift, `FavoritesTrayLayout`; core's
+`core/Favorites.h`, `shell/FavoritesView`): the current space's profile's
+favorites (`favoritesByProfile`), between the address field and the space's page,
+which starts under them. Tiles are 47pt high and 8pt apart, at most four a row,
+as many as square tiles fit and then the rows balanced (5 are 3 + 2, 9 are 3 × 3),
+with 8pt above and below; a favorite split is one tile, its panes 2pt apart. The
+grid stays put while the pages slide. An unselected pane is the address field's
+white wash (0.10, 0.20 hovered; 3.5 times on a light theme); the selected one is
+white at 0.45 (0.8 light) with its favicon's colour over it at 0.2 (0.3 hovered;
+none, 0.1 hovered on a light theme) and a 2pt ring of that colour, the colour
+being NSImage.dominantColor's (the fullest of twelve hue bins in the icon drawn
+16px a side) half way to white. A grey or missing favicon has no colour: the pane
+is just white, the globe in its middle. A click selects the favorite (released
+inside the pane, not after a 4pt drag, not the click that brings the window
+forward), the window's whole band is the grid's (no window drag, no row), and a
+pane's tooltip is the tab's title (comctl32's, as the top row's). Ctrl+1–9 count
+the favorites first, a split once (`SidebarStops`, unchanged from W8).
+
+- **Each pane is four `FadedLayer`s** (the wash, the tint, the ring and the
+  favicon) in a visual of its own, each drawn once at full strength and faded by
+  its effect group, so a hover or a selection is opacities the sidebar's next pass
+  commits, with nothing drawn (the smoke test counts the layers drawn and the
+  commit). A favicon arriving draws only its pane's icon layer, and, once its
+  16px icon gives the colour, its tint and ring.
+- **Captures.** `--favicons` fetches the favicons as the window does (a capture
+  otherwise has none, so no network) and waits for them, as the Mac's capture
+  loads them from the sites; `--favorite-hover N` and `--favorite-click N` hold a
+  pane hovered or clicked. `kitecore sidebar` gives `favorites` (columns, height,
+  `listTop`, each tile and pane with its frame), and `kitecore click` on a pane
+  selects it.
+- **Not yet:** the empty state ("Drag to add Favorites", until it's dismissed,
+  which needs the Mac's one-shot flags file), dragging tiles and the drop gap
+  (W18b), the tile's menu (W17), Add to / Remove from Favorites (W14, W17), and
+  the preview cards over a hovered favorite (FavoritePreviewCard, W38).
+
 ## Shortcuts
 
 Kite's shortcuts (W8) are the Mac's menu commands, by the same ids, with Ctrl in
