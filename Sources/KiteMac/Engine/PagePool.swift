@@ -180,8 +180,15 @@ final class PagePool {
         // A tab on one of Kite's own pages gets a blank page; the window draws the page over it.
         let url = InternalPage(tab.url) == nil ? tab.url : nil
         // History saved when the page hibernated, here or in a linked window, or before Kite last quit.
-        let restoring = savedState.removeValue(forKey: tab.id) ?? shared?.takeSavedState(tab.id, excluding: self)
-            ?? url.flatMap { historyFiles?.load(tab: tab.id, url: $0, profile: engine.profileDirectory) }
+        var source = PageRestore.Source.none
+        var restoring = savedState.removeValue(forKey: tab.id)
+        if restoring != nil { source = .thisWindow }
+        if restoring == nil, let state = shared?.takeSavedState(tab.id, excluding: self) { restoring = state; source = .anotherWindow }
+        if restoring == nil, let state = url.flatMap({ historyFiles?.load(tab: tab.id, url: $0, profile: engine.profileDirectory) }) {
+            restoring = state
+            source = .file
+        }
+        FindTestHookRunner.logPageMade(hasURL: url != nil, restoredFrom: source)   // a run with a find hook only
         let page = engine.makePage(url: url, restoring: restoring)
         register(page, id: tab.id)
         pageProfiles[tab.id] = engine.profileDirectory
