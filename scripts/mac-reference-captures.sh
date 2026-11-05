@@ -87,10 +87,14 @@ TEXT_FLOOR=92611226a9834ac52b95a77268bf1f5647f08490
 # don't depend on the runner's saved askOnPageEnabled and the Ask button (which runs Claude) never shows, and turns
 # Writing Tools off. 0586646 keeps a covered page answering. 8b84c62 (fix/test-find-hook-fallback) is the first where
 # the hooks give a ready line headless: no page loads on the runner (W21 timed out on 46ed602 and d8e9ec7), so after
-# 20 s Kite opens the bar anyway and writes "KITE_TEST_FIND: ready (fallback, the page never loaded): …" (a query then
-# shows no result). If that branch lands by squash or rebase, set this to the commit it landed as on main.
-FIND_FLOOR=8b84c620eb22a067a8a14b3337c2ae4139652769
-# How long a state waits, after Kite's socket answers, for that ready line (Kite itself gives up 30 s after launch).
+# 20 s Kite opens the bar anyway and writes "KITE_TEST_FIND: ready (fallback, the page never loaded): …". 9b086b8 makes
+# a fallback query only set the field's text, with no search, so that line is its only ready line (no result line
+# after it; the capture shows the query and no counter). If that branch lands by squash or rebase, set this to the
+# commit it landed as on main.
+FIND_FLOOR=9b086b836c07ad064b047523fe04fbd38207fefb
+# How long a state waits, after Kite's socket answers, for that ready line. Kite writes it by 20 s after launch at the
+# latest (FindTestHook.pageLoadTimeout: a find result, or the fallback when the page never loads), and
+# FindTestHookTests checks that this stays at least 5 s above that.
 FIND_READY_SECONDS=30
 
 # Views a click, right-click (through showSidebarMenu's KITE_TEST_CONTEXT_MENU hook) or drag may start on. Each was
