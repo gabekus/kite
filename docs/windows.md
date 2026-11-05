@@ -428,8 +428,9 @@ each event asks where the pointer is then, as the Mac's `isOverSidebar`; a verti
 gesture decided over the list scrolls it to its end, momentum included, wherever the
 pointer goes after: the gesture stays with the list it was decided under. One decided
 vertical elsewhere on the sidebar (the top row, the header, the space bar) has nothing
-of Kite's to scroll, so its contact is released at once. A swipe can catch the pages mid-settle and carries on from where they are. Windows'
-wheel messages carry no gesture phases, so the touchpad's contact is taken on
+of Kite's to scroll, so its contact is released at once. A swipe can catch the pages
+mid-settle and carries on from where they are. Windows' wheel messages carry no
+gesture phases, so the touchpad's contact is taken on
 `DM_POINTERHITTEST` by a DirectManipulation viewport on manual updates
 (`shell/TouchpadInput.h`, Chromium's way). The frame clock steps it once a frame
 while the gesture or its momentum runs, at the display's highest rate, and while the
