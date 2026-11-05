@@ -844,13 +844,20 @@ redraws' failures report a lost GPU, which rebuilds everything as the caption bu
 lays out at its own monitor's scale (WM_DPICHANGED, and its window's DPI checked as it opens) and stays on the anchor's monitor.
 A capture draws it at the window's scale, whatever its monitor's. Like Choose a Theme's, it's in Kite's appearance (the
 Appearance setting, else Windows' apps' mode), as NSPopover takes NSApp's, not the space's theme's: the UI gate's Mac
-picker is dark over a light theme on a dark Mac. Its emoji ink 21pt in their 33.5pt cells, as Apple Color Emoji's 22pt
-do, the category bar's and the bin's symbols 0.78 of the bar's factor, and NSPopover's arrow is 13pt deep (all three
-measured in the UI gate, review/w9e-mac).
+picker is dark over a light theme on a dark Mac; it follows Windows' mode changing while it's open. Its emoji ink 21pt
+in their 33.5pt cells, as Apple Color Emoji's 22pt do, and NSPopover's arrow is 13pt deep. The Icon tab's Segoe
+stand-ins are each fitted to the Mac's ink (core's IconTabInkFor: the box, the middle, and a stroke for weight where
+Segoe's stand-in is an outline and SF's is filled), from the 28 the gate's reference shows; the other 28 take their
+medians. Against the reference all 28 match the box within 8% and 27 the area within 15% (square.on.square.fill's
+outline reaches 0.78 of SF's filled one at the 2pt stroke the table allows; moon.fill's box sits 8% small to keep its
+heavier crescent's area to 1.07). The category bar's and the bin's symbols take 0.78 of the bar's factor, the car and
+the bin stroked for SF's heavier ink (core's BarGlyphFitFor). In the dark, the segmented control and the search field
+are one bezel and the knob, the divider and the popover's fill and edge are the gate's (as white over the fill, the Mac's
+alphas: its in-process capture draws the material unblurred, 75, where Windows' fill is 44) (all measured in the UI
+gate, review/w9e-mac).
 Replacing a picture deletes its file on the UI thread, as the Mac does: one DeleteFile of a name
 core checked, an exception to the no-file-I/O rule (docs/windows-architecture.md) that only a
-Mac profile's picture icon can reach. Emoji are Segoe UI Emoji's colour glyphs at 22pt scaled as the bar's (Apple's
-14.5pt ink at 12.5) and centred on their ink. `kitecore space icon-picker ID [--tab] [--category
+Mac profile's picture icon can reach. Emoji are Segoe UI Emoji's colour glyphs, centred on their ink. `kitecore space icon-picker ID [--tab] [--category
 N] [--query TEXT] [--scroll PT] [--pick N]` prints the grid model and picks a cell headless;
 `--hit X,Y` and `--place` print what a point hits (the later of two overlapping cells) and where
 the popover goes. `--capture FILE --icon-picker N,emoji|icon[,CATEGORY]` holds space N's picker
@@ -861,11 +868,10 @@ it with Escape.
 Known differences: the Image tab (a picture of your own: choose a file, drop one, paste) is
 there, disabled, and a picture icon opens on Emoji: Windows has the pieces (the file dialog,
 WIC, the clipboard, OLE drops) but writing the picture belongs on a worker and a drop target on
-the window meets Chromium's, which want their own checkpoint. AppKit's segmented control, the
-rounded-border field (its bezel 1pt in from its frame, as the gate measured), the popover's fill, edge, corners and
-the arrow's width are drawn to estimates (no shadow, a straight-sided arrow; the Mac's in-process capture draws its
-popover's material as a plain rectangle, so the gate couldn't measure them); the Icon tab's Segoe stand-ins ink
-within about 15% of SF's, glyph by glyph (no single factor fits); a held button dims to
+the window meets Chromium's, which want their own checkpoint. In the light the segmented control, the field and the
+knob are estimates (no light reference yet), and in either the popover's corners and the arrow's width (no shadow, a
+straight-sided arrow; the Mac's in-process capture draws its popover's material as a plain rectangle, so the gate
+couldn't measure them); a held button dims to
 50% (SwiftUI's plain style dims; not measured); the categories' and the bin's tooltips aren't
 shown; there's no scroller (macOS shows an overlay one while scrolling); a press outside goes
 on to what it's over; the popover closes when the window moves, where NSPopover moves with it;
@@ -925,10 +931,12 @@ swatches, and what a press lands on. `--capture FILE --new-item-menu` reads back
 N]` holds the page with its fields typed in and, with N, the swatches open and preset N clicked.
 
 Known differences for W9f:
-- The + menu is a Win32 menu without the popover's icons.
+- The + menu is a Win32 menu without the popover's icons, in Kite's appearance as the Mac's
+  NSPopover is (not the space's).
 - Choose a Theme's popover holds only the theme editor's presets (its colour grid, intensity and
-  grain come with the theme editor), in Arc's PopoverBackground colours with a thin edge and no
-  shadow, kept inside the monitor's work area, in Kite's appearance (not the space's, as NSPopover),
+  grain come with the theme editor), in the picker's popover fill and edge (NSPopover's material,
+  the same grey as the Mac's picker), no shadow, kept inside the monitor's work area, in Kite's
+  appearance (not the space's, as NSPopover; it follows Windows' mode changing while it's open),
   with NSPopover's 13pt arrow. Its swatches match the Mac's theme editor's row (the UI gate). As it opens Kite's window takes the keyboard, so a
   press in the page (its own window) closes it.
 - The profile pill changes the draft's profile only while the draft has no tabs (a tab opened in it
@@ -942,12 +950,18 @@ Known differences for W9f:
 - The help tags (the about field's and the profile's info button) and the + button's tooltip
   aren't shown yet, and Undo New Space waits for undo (W16).
 - The UI gate (review/w9f-mac) set what the page measured: a disabled Create Space at half again
-  (SwiftUI's disabled plain button), a field without the keyboard showing its placeholder at half
-  the label's (the focused one's stays placeholderTextColor's), and Choose a Theme's brush bold for
-  the weight of SF's filled one. Still different: in a dark space the Mac's capture inks Profile's
-  face.smiling filled (its code asks for the outline, which it inks in a light space), and Windows'
-  stays the outline; Segoe UI's text runs about 5% narrower than SF Pro's at the same size (the
-  profile pill 6pt narrower with it), baselines where SF's are.
+  (SwiftUI's disabled plain button); the field that has the page's keyboard (in an inactive window
+  too) keeps placeholderTextColor's placeholder and the other shows it at half the label's; typed
+  text in textColor (black in the light); Choose a Theme's brush bold for the weight of SF's filled
+  one; and Segoe UI Variable's weight axis set heavier than SF's weight names (Regular at 550,
+  Medium at 650, Semibold at 700), since at the same weight its ink is 15-30% lighter in a dark
+  space and up to 43% in a light one. That brings the labels to 0.90-1.02 of the Mac's weight and
+  their widths to within 1-7%; the title's Bold is the axis's heaviest and stays at 0.84. DirectWrite's
+  grayscale enhanced contrast was tried too: it only darkens dark-on-light text and gained under 5%,
+  so it isn't used. Segoe UI (Windows 10) has no weight axis and keeps its weights. Still different:
+  in a dark space the Mac's capture inks Profile's face.smiling filled (its code asks for the
+  outline, which it inks in a light space), and Windows' stays the outline; baselines are where
+  SF's are.
 
 ## Saving the session
 

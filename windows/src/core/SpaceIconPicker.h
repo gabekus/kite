@@ -189,4 +189,27 @@ struct IconPickerPlacement {
 };
 IconPickerPlacement PlaceIconPicker(const PickerRect& anchor, float contentWidth, float contentHeight, const PickerRect& screen);
 
+// An Icon tab symbol's ink as the Mac draws it (16pt semibold), which its Segoe stand-in is fitted
+// to: the ink's box (Segoe's is scaled so its sides' geometric mean is this box's), the ink's
+// middle from the cell's, and how much heavier it's drawn (its outline stroked this wide, in
+// points) where Segoe's stand-in is lighter than SF's at the same box. Measured in the UI gate
+// (review/w9e-mac picker-icon, the 28 symbols its capture shows: columns 5-8); the other 28 take
+// those's medians (`measured` false). Matched by box, area, weight and centre; no SF Symbol traced.
+struct IconTabInk {
+    float width = 0, height = 0;  // the ink's box, points
+    float dx = 0, dy = 0;         // its middle from the cell's
+    float stroke = 0;             // extra weight: the outline stroked this wide too
+    bool measured = false;
+};
+IconTabInk IconTabInkFor(std::string_view symbol);
+
+// The category bar's and the bin's symbols (regular 14pt on the Mac): their size as a fraction of
+// the bar's (briefcase) factor at 14pt, and an outline stroke for weight, per symbol. The UI gate
+// measured the lightbulb, heart, flag, car and trash; the rest take 0.78 and no stroke.
+struct BarGlyphFit {
+    float scale = 0.78f;
+    float stroke = 0;
+};
+BarGlyphFit BarGlyphFitFor(std::string_view symbol);
+
 }  // namespace kite

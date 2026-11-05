@@ -72,6 +72,8 @@ public:
     void SpaceChanged(const std::string& icon);
     void Close();
     bool IsOpen() const { return state_.has_value(); }
+    // Kite's appearance changed while it's open (Windows' light or dark mode): drawn again in it.
+    void SetDark(bool dark);
     std::optional<std::string> SpaceID() const { return state_ ? std::optional(state_->spaceID) : std::nullopt; }
     const std::optional<IconPickerState>& State() const { return state_; }
 
@@ -132,6 +134,8 @@ private:
     std::wstring Fail(const wchar_t* what, HRESULT hr);
     // Redraws, and reports a failure: logged, and a lost GPU to onDeviceLost.
     void RedrawOrReport();
+    // The dark segmented control's and field's bezel (the Mac's, measured in the UI gate).
+    void PaintBezel(ID2D1DeviceContext* context, const D2D1_RECT_F& box, float radius);
 
     // The drawing, in the window's points (the frame's top-left at the origin).
     void PaintFrame(ID2D1DeviceContext* context);
@@ -141,7 +145,7 @@ private:
     void PaintSymbols(ID2D1DeviceContext* context);
     // The emoji grid's rows [first, end), in the grid's own points (its top at 0).
     void PaintEmoji(ID2D1DeviceContext* context, size_t first, size_t end);
-    void PaintGlyph(ID2D1DeviceContext* context, const SymbolGlyph& glyph, D2D1_POINT_2F centre, float size, float alpha);
+    void PaintGlyph(ID2D1DeviceContext* context, const SymbolGlyph& glyph, D2D1_POINT_2F centre, float size, float alpha, float stroke = 0);
     void PaintAll(ID2D1DeviceContext* context);  // a capture's: everything, the grid clipped and scrolled
     D2D1_COLOR_F Label(float alpha) const;
 

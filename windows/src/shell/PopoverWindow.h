@@ -11,6 +11,7 @@
 
 #include <windows.h>  // first: the DirectX headers need its types
 
+#include <d2d1.h>
 #include <dcomp.h>
 #include <wrl/client.h>
 
@@ -19,6 +20,11 @@
 #include <string>
 
 namespace kite {
+
+// The popover's own fill and edge, the picker's and the swatches' alike (NSPopover's material, one
+// for both: the UI gate's Mac theme editor is the same grey as its picker), in each appearance.
+inline D2D1_COLOR_F PopoverFill(bool dark) { return dark ? D2D1_COLOR_F{0.172f, 0.172f, 0.18f, 1} : D2D1_COLOR_F{0.965f, 0.965f, 0.965f, 1}; }
+inline D2D1_COLOR_F PopoverEdge(bool dark) { return dark ? D2D1_COLOR_F{1, 1, 1, 0.15f} : D2D1_COLOR_F{0, 0, 0, 0.12f}; }
 
 class PopoverWindow {
 public:

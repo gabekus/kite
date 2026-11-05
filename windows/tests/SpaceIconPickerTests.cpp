@@ -11,6 +11,7 @@
 // file with Python's unicodedata (Unicode 14.0) and a split of the catalog's strings by hand.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -346,6 +347,27 @@ TEST(aPickSetsTheIconAndLetsTheOldPictureGo) {
     CHECK(PictureToDiscard("image:gone.png", state.spaces) == std::optional<std::string>("gone.png"));
     CHECK(!PictureToDiscard("image:../x.png", state.spaces));
     CHECK(!PictureToDiscard("\xF0\x9F\x8C\x99", state.spaces));
+}
+
+// The Icon tab's stand-ins are fitted to the Mac's ink: the 28 the UI gate's reference shows
+// (its columns 5-8) are measured, the rest take their medians; the bar's symbols have their fits.
+TEST(theIconTabsSymbolsAreFittedToTheMacsInk) {
+    const auto& symbols = IconTabSymbols();
+    size_t measured = 0;
+    for (size_t i = 0; i < symbols.size(); ++i) {
+        const IconTabInk ink = IconTabInkFor(symbols[i]);
+        const bool shown = i % 8 >= 4;  // columns 5-8, where the Mac's capture shows the grid
+        CHECK(ink.measured == shown);
+        CHECK(ink.width > 10 && ink.width < 30 && ink.height > 10 && ink.height < 22);
+        CHECK(std::abs(ink.dx) < 3 && std::abs(ink.dy) < 2.5f);  // moon.fill's crescent: -2.7
+        if (ink.measured) ++measured;
+    }
+    CHECK(measured == 28);
+    const IconTabInk circle = IconTabInkFor("circle.fill");
+    CHECK(circle.width == 16.5f && circle.height == 16.5f);
+    const IconTabInk median = IconTabInkFor("star.fill");
+    CHECK(!median.measured && median.width == 16.5f && median.height == 16.5f);
+    CHECK(BarGlyphFitFor("face.smiling").scale == 0.78f && BarGlyphFitFor("face.smiling").stroke == 0);
 }
 
 // NSPopover under the header's icon: centred on it, kept 4pt inside the screen, its arrow on the

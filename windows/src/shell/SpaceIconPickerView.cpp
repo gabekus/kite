@@ -30,26 +30,37 @@ constexpr float kTextSize = 13;
 // against Segoe UI Emoji's 25x25 at the bar's factor), and Segoe UI Emoji inks its size, so it's
 // set at 21, centred on its ink.
 constexpr float kEmojiSize = P::kEmojiFontSize * 21.0f / 22.0f;
-// The category bar's and the bin's regular 14pt SF symbols ink 0.78 of what the painter's
-// briefcase factor (semibold) gives Segoe's (the UI gate: the lightbulb, heart, flag and trash).
-constexpr float kBarGlyphScale = 0.78f;
-// AppKit's controls as drawn here, until the UI gate measures the Mac's: the segmented control's
-// track and its selected segment's knob, the rounded-border field (its text 5pt in), and the
-// popover's own fill and edge, in each appearance.
+// AppKit's controls as drawn here. In the dark, as the UI gate measured the Mac's (review/w9e-mac,
+// as white over the popover's fill): the segmented control's track and the rounded-border field
+// are one bezel, its fill at 0.072, a 1px line at 0.18 along its top and two along its bottom at
+// 0.18 and 0.34; the selected segment's knob is 1pt in from the track (20pt tall), at 0.41 with a
+// 1px highlight at 0.36 over it along its top; the divider over the category bar is at 0.19. In
+// the light (no reference yet): a black-tinted track, a white field and knob. The field's text is
+// 5pt in; the popover's fill and edge are PopoverWindow's.
 constexpr float kTabsRadius = 6, kKnobInset = 2, kKnobRadius = 4.5f;
+constexpr float kDarkKnobInset = 1, kDarkKnobRadius = 5;
+constexpr float kBezelFill = 0.072f, kBezelLine = 0.18f, kBezelBottom = 0.34f;
+constexpr float kKnobFill = 0.41f, kKnobHighlight = 0.36f;
+constexpr float kDarkDivider = 0.19f;
+// The gate's ink box counts antialiased edge pixels: an outline's box is this much smaller.
+constexpr float kInkHalo = 0.5f;
 constexpr float kFieldRadius = 5, kFieldTextInset = 5;
 constexpr float kPlaceholderOpacity = 0.25f;  // placeholderTextColor
 constexpr float kDisabledOpacity = 0.25f;     // disabledControlTextColor
-constexpr D2D1_COLOR_F kDarkFill{0.172f, 0.172f, 0.18f, 1}, kLightFill{0.965f, 0.965f, 0.965f, 1};
 constexpr D2D1_COLOR_F kDarkSelection{63 / 255.0f, 99 / 255.0f, 139 / 255.0f, 1};  // selectedTextBackgroundColor
 constexpr D2D1_COLOR_F kLightSelection{179 / 255.0f, 215 / 255.0f, 1, 1};
-constexpr float kDarkTextBackground = 30 / 255.0f;  // textBackgroundColor (#1E1E1E; white when light)
 // The emoji grid's rows kept drawn around those in view, above and below (the rest are let go).
 constexpr size_t kKeptRows = 10;
 // A wheel notch scrolls 100pt for Windows' default 3 lines, as the sidebar's list does.
 constexpr float kWheelLine = 100.0f / 3;
 
 D2D1_RECT_F ToD2D(const PickerRect& r) { return D2D1_RECT_F{r.left, r.top, r.right, r.bottom}; }
+
+// `alpha` of white over the dark popover's fill, as one opaque colour (so bezel layers don't add up).
+D2D1_COLOR_F OverDarkFill(float alpha) {
+    const D2D1_COLOR_F fill = PopoverFill(true);
+    return D2D1_COLOR_F{fill.r + (1 - fill.r) * alpha, fill.g + (1 - fill.g) * alpha, fill.b + (1 - fill.b) * alpha, 1};
+}
 
 }  // namespace
 
@@ -187,6 +198,15 @@ void SpaceIconPickerView::UseCompositor(Compositor* compositor) {
 std::wstring SpaceIconPickerView::Fail(const wchar_t* what, HRESULT hr) {
     deviceLost_ = IsDeviceLost(hr);
     return HResultMessage(what, hr);
+}
+
+void SpaceIconPickerView::SetDark(bool dark) {
+    if (dark == dark_) return;
+    dark_ = dark;
+    if (!state_) return;
+    frameDirty_ = true;
+    rowsDrawn_.clear();
+    RedrawOrReport();
 }
 
 void SpaceIconPickerView::RedrawOrReport() {
@@ -363,11 +383,25 @@ D2D1_COLOR_F SpaceIconPickerView::Label(float alpha) const {
     return D2D1_COLOR_F{c, c, c, kLabelAlpha * alpha};
 }
 
-void SpaceIconPickerView::PaintGlyph(ID2D1DeviceContext* context, const SymbolGlyph& glyph, D2D1_POINT_2F centre, float size, float alpha) {
+void SpaceIconPickerView::PaintGlyph(ID2D1DeviceContext* context, const SymbolGlyph& glyph, D2D1_POINT_2F centre, float size, float alpha,
+                                     float stroke) {
     SpaceIconLook look;
     look.kind = SpaceIconLook::Kind::Symbol;
     look.glyph = glyph;
-    painter_->Draw(context, brush_.Get(), look, centre, size, Scale(), Label(alpha), dark_);
+    painter_->Draw(context, brush_.Get(), look, centre, size, Scale(), Label(alpha), dark_, stroke);
+}
+
+void SpaceIconPickerView::PaintBezel(ID2D1DeviceContext* context, const D2D1_RECT_F& box, float radius) {
+    // The Mac's dark bezel (see kBezelFill): a pixel of line at the top, two at the bottom, the fill
+    // between, each an opaque colour over the popover's fill.
+    const float px = 1 / Scale();
+    const auto fill = [&](float top, float bottom, D2D1_COLOR_F color) {
+        brush_->SetColor(color);
+        context->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(box.left, top, box.right, bottom), radius, radius), brush_.Get());
+    };
+    fill(box.top, box.bottom, OverDarkFill(kBezelBottom));
+    fill(box.top, box.bottom - px, OverDarkFill(kBezelLine));
+    fill(box.top + px, box.bottom - 2 * px, OverDarkFill(kBezelFill));
 }
 
 void SpaceIconPickerView::PaintFrame(ID2D1DeviceContext* context) {
@@ -396,10 +430,10 @@ void SpaceIconPickerView::PaintFrame(ID2D1DeviceContext* context) {
         arc(r, arrow);
         sink->EndFigure(D2D1_FIGURE_END_CLOSED);
         if (SUCCEEDED(sink->Close())) {
-            brush_->SetColor(dark_ ? kDarkFill : kLightFill);
+            brush_->SetColor(PopoverFill(dark_));
             context->FillGeometry(body.Get(), brush_.Get());
-            // Its edge: a pixel, light in the dark and dark in the light.
-            brush_->SetColor(dark_ ? D2D1_COLOR_F{1, 1, 1, 0.15f} : D2D1_COLOR_F{0, 0, 0, 0.12f});
+            // Its edge: a pixel inside it (the stroke's outer half is off the surface).
+            brush_->SetColor(PopoverEdge(dark_));
             context->DrawGeometry(body.Get(), brush_.Get(), 2 / Scale());
         }
     }
@@ -410,8 +444,9 @@ void SpaceIconPickerView::PaintFrame(ID2D1DeviceContext* context) {
     if (layout_.remove) {
         const bool held = pressed_ && pressedInside_ && pressed_->target == IconPickerHit::Target::Remove;
         const PickerRect& bin = *layout_.remove;
-        PaintGlyph(context, RemoveIconGlyph(), D2D1::Point2F((bin.left + bin.right) / 2, (bin.top + bin.bottom) / 2),
-                   P::kBarSymbolSize * kBarGlyphScale, held ? kPressedOpacity : 1);
+        const BarGlyphFit fit = BarGlyphFitFor("trash");
+        PaintGlyph(context, RemoveIconGlyph(), D2D1::Point2F((bin.left + bin.right) / 2, (bin.top + bin.bottom) / 2), P::kBarSymbolSize * fit.scale,
+                   held ? kPressedOpacity : 1, fit.stroke);
     }
     if (state_->tab == IconPickerTab::Emoji) {
         PaintSearch(context);
@@ -424,17 +459,29 @@ void SpaceIconPickerView::PaintFrame(ID2D1DeviceContext* context) {
 
 void SpaceIconPickerView::PaintTabs(ID2D1DeviceContext* context) {
     const PickerRect& tabs = layout_.tabs;
-    brush_->SetColor(dark_ ? D2D1_COLOR_F{1, 1, 1, 0.1f} : D2D1_COLOR_F{0, 0, 0, 0.06f});
-    context->FillRoundedRectangle(D2D1::RoundedRect(ToD2D(tabs), kTabsRadius, kTabsRadius), brush_.Get());
+    if (dark_) {
+        PaintBezel(context, ToD2D(tabs), kTabsRadius);
+    } else {
+        brush_->SetColor(D2D1_COLOR_F{0, 0, 0, 0.06f});
+        context->FillRoundedRectangle(D2D1::RoundedRect(ToD2D(tabs), kTabsRadius, kTabsRadius), brush_.Get());
+    }
     for (size_t i = 0; i < layout_.segments.size() && i < tabTitles_.size(); ++i) {
         const PickerRect& segment = layout_.segments[i];
         const IconPickerTab tab = kIconPickerTabs[i];
         if (tab == state_->tab) {
             // The selected segment's knob.
-            const D2D1_RECT_F knob{segment.left + kKnobInset, segment.top + kKnobInset, segment.right - kKnobInset, segment.bottom - kKnobInset};
-            brush_->SetColor(dark_ ? D2D1_COLOR_F{1, 1, 1, 0.22f} : D2D1_COLOR_F{1, 1, 1, 1});
-            context->FillRoundedRectangle(D2D1::RoundedRect(knob, kKnobRadius, kKnobRadius), brush_.Get());
-            if (!dark_) {
+            const float inset = dark_ ? kDarkKnobInset : kKnobInset, radius = dark_ ? kDarkKnobRadius : kKnobRadius;
+            const D2D1_RECT_F knob{segment.left + inset, segment.top + inset, segment.right - inset, segment.bottom - inset};
+            brush_->SetColor(dark_ ? OverDarkFill(kKnobFill) : D2D1_COLOR_F{1, 1, 1, 1});
+            context->FillRoundedRectangle(D2D1::RoundedRect(knob, radius, radius), brush_.Get());
+            if (dark_) {
+                // Its highlight: a pixel along its top, inside its corners.
+                const float px = 1 / Scale();
+                context->PushAxisAlignedClip(D2D1::RectF(knob.left, knob.top, knob.right, knob.top + px), D2D1_ANTIALIAS_MODE_ALIASED);
+                brush_->SetColor(D2D1_COLOR_F{1, 1, 1, kKnobHighlight});
+                context->FillRoundedRectangle(D2D1::RoundedRect(knob, radius, radius), brush_.Get());
+                context->PopAxisAlignedClip();
+            } else {
                 brush_->SetColor(D2D1_COLOR_F{0, 0, 0, 0.08f});
                 context->DrawRoundedRectangle(D2D1::RoundedRect(knob, kKnobRadius, kKnobRadius), brush_.Get(), 1 / Scale());
             }
@@ -458,14 +505,18 @@ void SpaceIconPickerView::PaintSearch(ID2D1DeviceContext* context) {
     const D2D1_RECT_F frame = ToD2D(field);
     const D2D1_RECT_F box{frame.left + P::kSearchBezelInset, frame.top + P::kSearchBezelInset, frame.right - P::kSearchBezelInset,
                           frame.bottom - P::kSearchBezelInset};
-    const float shade = dark_ ? kDarkTextBackground : 1.0f;
-    brush_->SetColor(D2D1_COLOR_F{shade, shade, shade, 1});
-    context->FillRoundedRectangle(D2D1::RoundedRect(box, kFieldRadius, kFieldRadius), brush_.Get());
-    brush_->SetColor(dark_ ? D2D1_COLOR_F{1, 1, 1, 0.15f} : D2D1_COLOR_F{0, 0, 0, 0.15f});
-    const float hair = 0.5f / Scale();
-    context->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(box.left + hair, box.top + hair, box.right - hair, box.bottom - hair), kFieldRadius,
-                                                    kFieldRadius),
-                                  brush_.Get(), 1 / Scale());
+    if (dark_) {
+        // Lighter than the popover, as the tabs' track (the Mac's field is its bezel, not a well).
+        PaintBezel(context, box, kFieldRadius);
+    } else {
+        brush_->SetColor(D2D1_COLOR_F{1, 1, 1, 1});
+        context->FillRoundedRectangle(D2D1::RoundedRect(box, kFieldRadius, kFieldRadius), brush_.Get());
+        brush_->SetColor(D2D1_COLOR_F{0, 0, 0, 0.15f});
+        const float hair = 0.5f / Scale();
+        context->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(box.left + hair, box.top + hair, box.right - hair, box.bottom - hair),
+                                                        kFieldRadius, kFieldRadius),
+                                      brush_.Get(), 1 / Scale());
+    }
     const D2D1_POINT_2F text{field.left + kFieldTextInset - search_.ScrollX(), field.top + (field.Height() - search_.LineHeight()) / 2};
     context->PushAxisAlignedClip(D2D1::RectF(field.left + 1, field.top + 1, field.right - 1, field.bottom - 1), D2D1_ANTIALIAS_MODE_ALIASED);
     if (search_.Edit().Text().empty()) {
@@ -482,7 +533,7 @@ void SpaceIconPickerView::PaintSearch(ID2D1DeviceContext* context) {
 
 void SpaceIconPickerView::PaintCategories(ID2D1DeviceContext* context) {
     if (layout_.divider) {
-        brush_->SetColor(dark_ ? D2D1_COLOR_F{1, 1, 1, 0.1f} : D2D1_COLOR_F{0, 0, 0, 0.1f});
+        brush_->SetColor(dark_ ? OverDarkFill(kDarkDivider) : D2D1_COLOR_F{0, 0, 0, 0.1f});
         context->FillRectangle(ToD2D(*layout_.divider), brush_.Get());
     }
     const auto& categories = EmojiCategories();
@@ -490,8 +541,9 @@ void SpaceIconPickerView::PaintCategories(ID2D1DeviceContext* context) {
         const PickerRect& button = layout_.categories[i];
         const bool held = pressed_ && pressedInside_ && pressed_->target == IconPickerHit::Target::Category && pressed_->index == i;
         const float alpha = (state_->category == i ? 1 : P::kCategoryDimmed) * (held ? kPressedOpacity : 1);
+        const BarGlyphFit fit = BarGlyphFitFor(categories[i].symbol);
         PaintGlyph(context, categories[i].glyph, D2D1::Point2F((button.left + button.right) / 2, (button.top + button.bottom) / 2),
-                   P::kBarSymbolSize * kBarGlyphScale, alpha);
+                   P::kBarSymbolSize * fit.scale, alpha, fit.stroke);
     }
 }
 
@@ -502,9 +554,12 @@ void SpaceIconPickerView::PaintSymbols(ID2D1DeviceContext* context) {
         if (look.kind != SpaceIconLook::Kind::Symbol) continue;
         const PickerRect frame = IconPickerCellFrame(layout_, i, 0);
         const bool held = pressed_ && pressedInside_ && pressed_->target == IconPickerHit::Target::Cell && pressed_->index == i;
-        // Image(systemName:).font(.system(size: 16, weight: .semibold)) in labelColor.
-        painter_->Draw(context, brush_.Get(), look, D2D1::Point2F((frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2), P::kSymbolSize,
-                       Scale(), Label(held ? kPressedOpacity : 1), dark_);
+        // Image(systemName:).font(.system(size: 16, weight: .semibold)) in labelColor: each stand-in
+        // fitted to the Mac's ink (core's IconTabInkFor), its middle where the Mac's is in the cell.
+        const IconTabInk ink = IconTabInkFor(look.text);
+        painter_->DrawFitted(context, brush_.Get(), look,
+                             D2D1::Point2F((frame.left + frame.right) / 2 + ink.dx, (frame.top + frame.bottom) / 2 + ink.dy),
+                             ink.width - kInkHalo - ink.stroke, ink.height - kInkHalo - ink.stroke, ink.stroke, Label(held ? kPressedOpacity : 1));
     }
 }
 

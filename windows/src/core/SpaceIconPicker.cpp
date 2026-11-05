@@ -318,6 +318,81 @@ std::optional<IconPick> PickSpaceIcon(BrowserState& state, const std::string& sp
     return IconPick{state.spaces[*index].icon, PictureToDiscard(old, state.spaces)};
 }
 
+namespace {
+
+struct InkEntry {
+    std::string_view symbol;
+    IconTabInk ink;
+};
+// The Mac's ink (review/w9e-mac picker-icon, measured at 2x with the gate's ink threshold): width,
+// height, dx and dy (set so the fitted stand-in's weighted middle lands on the Mac's), and the
+// stroke that brings an outline stand-in's area to the Mac's filled one (at most 2pt; the box
+// it's fitted to is that much smaller, so the stroke keeps it).
+constexpr InkEntry kIconTabInk[] = {
+    {"bolt.fill", {11.5f, 18.0f, -0.17f, 0.87f, 0.55f}},
+    {"triangle.fill", {16.5f, 15.0f, -0.2f, 0.27f, 0.0f}},
+    {"asterisk", {14.5f, 16.5f, 0.15f, 0.33f, 0.6f}},
+    {"bell.fill", {15.5f, 17.0f, 0.14f, 0.21f, 0.0f}},
+    {"square.3.layers.3d", {16.5f, 18.0f, 0.16f, 0.39f, 0.61f}},
+    {"cylinder.split.1x2.fill", {14.0f, 17.0f, -0.07f, 0.8f, 1.37f}},
+    {"tray.fill", {19.0f, 14.0f, -0.16f, 1.74f, 0.41f}},
+    {"square.on.square.fill", {17.5f, 17.5f, 0.33f, 0.02f, 2.0f}},
+    {"checkmark.square.fill", {15.0f, 15.0f, -0.15f, 0.08f, 0.0f}},
+    {"doc.fill", {13.5f, 17.0f, -0.78f, 0.55f, 0.0f}},
+    {"book.fill", {19.0f, 15.0f, -0.17f, 0.08f, 1.5f}},
+    {"ellipsis.bubble.fill", {18.0f, 17.0f, -0.27f, 0.17f, 0.0f}},
+    {"drop.fill", {11.5f, 16.5f, 0.15f, 0.52f, 0.0f}},
+    {"circle.fill", {16.5f, 16.5f, 0.14f, 0.36f, 0.0f}},
+    {"moon.fill", {14.75f, 14.75f, -2.71f, 0.94f, 0.0f}},
+    {"sun.max.fill", {18.0f, 18.0f, -0.14f, 0.13f, 1.05f}},
+    {"basket.fill", {19.0f, 17.5f, -1.32f, 1.55f, 1.5f}},
+    {"gift.fill", {15.5f, 17.0f, 0.22f, 0.8f, 1.36f}},
+    {"bed.double.fill", {20.5f, 14.0f, 0.17f, 0.35f, 0.0f}},
+    {"fork.knife", {11.5f, 19.0f, 0.79f, 0.37f, 0.0f}},
+    {"video.fill", {19.5f, 13.0f, -0.69f, 0.01f, 0.0f}},
+    {"bandage.fill", {16.5f, 16.5f, 0.15f, 0.32f, 0.0f}},
+    {"chevron.left.forwardslash.chevron.right", {23.0f, 15.5f, 0.05f, 0.26f, 0.0f}},
+    {"baseball.fill", {16.5f, 16.5f, 0.14f, 0.36f, 0.0f}},
+    {"theatermasks.fill", {27.5f, 18.5f, -0.54f, 1.22f, 0.54f}},
+    {"scroll.fill", {17.5f, 17.0f, 0.75f, -0.13f, 1.17f}},
+    {"hand.thumbsup.fill", {16.5f, 17.0f, 0.92f, 0.33f, 0.0f}},
+    {"tram.fill", {14.5f, 20.5f, 0.13f, -0.62f, 0.34f}},
+};
+// The 28 measured's medians: a 16.5pt box, its middle 0.13pt right of the cell's and 0.36pt below.
+constexpr IconTabInk kIconTabInkMedian{16.5f, 16.5f, 0.13f, 0.36f, 0, false};
+
+}  // namespace
+
+IconTabInk IconTabInkFor(std::string_view symbol) {
+    for (const InkEntry& entry : kIconTabInk) {
+        if (entry.symbol != symbol) continue;
+        IconTabInk ink = entry.ink;
+        ink.measured = true;
+        return ink;
+    }
+    return kIconTabInkMedian;
+}
+
+BarGlyphFit BarGlyphFitFor(std::string_view symbol) {
+    // The UI gate's (review/w9e-mac picker-emoji): each symbol's ink against Segoe's at the bar's
+    // factor. Mac: lightbulb 9x16, heart 12x12.5, flag 11x13.5, car 16.5x13 (area 103, weight 33),
+    // trash 13.5x15.5 (weight 45.9).
+    struct Entry {
+        std::string_view symbol;
+        BarGlyphFit fit;
+    };
+    static constexpr Entry kFits[] = {
+        // At 0.78 Segoe's lightbulb, heart and flag ink within 8% of the Mac's box and area; its car
+        // and trash are outlines where SF's are heavier (area 72 against 103, 76.5 against 92), so
+        // they're stroked for the difference.
+        {"lightbulb", {0.78f, 0}}, {"heart", {0.78f, 0}}, {"flag", {0.78f, 0}}, {"car", {0.78f, 0.5f}}, {"trash", {0.78f, 0.3f}},
+    };
+    for (const Entry& entry : kFits) {
+        if (entry.symbol == symbol) return entry.fit;
+    }
+    return BarGlyphFit{};
+}
+
 IconPickerPlacement PlaceIconPicker(const PickerRect& anchor, float contentWidth, float contentHeight, const PickerRect& screen) {
     IconPickerPlacement placement;
     placement.width = contentWidth;

@@ -101,11 +101,21 @@ std::unique_ptr<SpaceCreationView> SpaceCreationView::Create(HWND window, IDWrit
         error = HResultMessage(L"CreateTextFormat", hr);
         return nullptr;
     }
-    // Segoe UI Variable has no Medium instance: its weight axis gives Cancel's 500.
+    // Segoe UI Variable inks lighter than SF Pro at the same weight (the UI gate, review/w9f-mac: the
+    // labels' ink 15-30% lighter in a dark space, up to 43% in a light one), so its weight axis sets
+    // each of the page's weights heavier: Regular 400 at 550, Medium 500 (Cancel's; it has no
+    // Medium instance) at 650, Semibold 600 at 700, as the space bar's semibold is Segoe's bold.
+    // That also brings its narrower text to within 1-3% of SF's widths. The title's Bold is the
+    // axis's heaviest. Segoe UI (Windows 10) has no axis and keeps its own weights.
     if (view->textFamily_ == L"Segoe UI Variable Text") {
-        const DWRITE_FONT_AXIS_VALUE medium{DWRITE_FONT_AXIS_TAG_WEIGHT, 500};
-        ComPtr<IDWriteTextFormat3> variable;
-        if (SUCCEEDED(view->cancelFormat_->QueryInterface(IID_PPV_ARGS(variable.GetAddressOf())))) variable->SetFontAxisValues(&medium, 1);
+        const std::pair<IDWriteTextFormat*, float> weights[] = {{view->subtitleFormat_.Get(), 550.0f}, {view->rowFormat_.Get(), 550.0f},
+                                                                {view->rowBoldFormat_.Get(), 700.0f}, {view->pillFormat_.Get(), 700.0f},
+                                                                {view->cancelFormat_.Get(), 650.0f}};
+        for (auto [textFormat, weight] : weights) {
+            const DWRITE_FONT_AXIS_VALUE axis{DWRITE_FONT_AXIS_TAG_WEIGHT, weight};
+            ComPtr<IDWriteTextFormat3> variable;
+            if (SUCCEEDED(textFormat->QueryInterface(IID_PPV_ARGS(variable.GetAddressOf())))) variable->SetFontAxisValues(&axis, 1);
+        }
     }
     for (IDWriteTextFormat* icon : {view->iconFormat_.Get(), view->iconBoldFormat_.Get()}) {
         icon->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -243,7 +253,11 @@ void SpaceCreationView::Hide() {
 void SpaceCreationView::Focus(Field field, bool selectAll) {
     if (!shown_) return;
     if (keyboard_ && *keyboard_ != field) FieldOf(*keyboard_).EndEditing();
-    if (keyboard_ != field) GpuOf(field == Field::Name ? Field::About : Field::Name).dirty = true;
+    if (keyboard_ != field) {
+        // Both draw again: the selection and the placeholder follow the keyboard.
+        GpuOf(field == Field::Name ? Field::About : Field::Name).dirty = true;
+        GpuOf(field).dirty = true;
+    }
     keyboard_ = field;
     if (selectAll) FieldOf(field).SelectAll();
     FocusChanged();
@@ -659,12 +673,12 @@ void SpaceCreationView::DrawCreate(ID2D1DeviceContext* context) {
     // #2C4AFC, at half strength until there's a name; "Create Space" white, at 45% then.
     const float w = layout_.create.Width(), h = layout_.create.Height();
     const bool on = CanCreate();
-    // Disabled, the whole button at half again (SwiftUI's disabled plain button), as one layer.
-    ComPtr<ID2D1Layer> dimmed;
-    if (!on && SUCCEEDED(context->CreateLayer(nullptr, dimmed.GetAddressOf()))) {
-        context->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(),
-                                                 kDisabledButtonOpacity),
-                           dimmed.Get());
+    // Disabled, the whole button at half again (SwiftUI's disabled plain button), as one layer
+    // (Direct2D 1.1 makes it: no layer object).
+    if (!on) {
+        context->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(),
+                                                  kDisabledButtonOpacity),
+                           nullptr);
     }
     brush_->SetColor(Srgb(M::kCreateColor, on ? 1 : M::kCreateDisabledOpacity));
     context->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(0, 0, w, h), M::kCornerRadius, M::kCornerRadius), brush_.Get());
@@ -672,7 +686,7 @@ void SpaceCreationView::DrawCreate(ID2D1DeviceContext* context) {
     context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
     DrawLabel(context, M::kCreateTitle, rowBoldFormat_.Get(), kLine, BarRect{0, (h - kLine) / 2, w, (h + kLine) / 2}, true,
               D2D1_COLOR_F{1, 1, 1, on ? 1 : M::kCreateDisabledTextOpacity});
-    if (dimmed) context->PopLayer();
+    if (!on) context->PopLayer();
 }
 
 std::wstring SpaceCreationView::DrawField(Field field, Pixels* readBack) {
@@ -706,8 +720,12 @@ std::wstring SpaceCreationView::DrawField(Field field, Pixels* readBack) {
         std::wstring error = compositor_->DrawSurface(
             perf::View::Sidebar, gpu.surface.Get(), width, height, dpi_,
             [&](ID2D1DeviceContext* context) {
-                text.Draw(context, brush_.Get(), Primary(kLabelAlpha), Primary(text.Focused() ? kPlaceholderOpacity : kUnfocusedPlaceholderOpacity),
-                          selection);
+                // The field that has the page's keyboard keeps placeholderTextColor's, in an inactive
+                // window too (the Mac's first responder does).
+                // The typed text in textColor: black in the light (the gate: the Mac's name inks (5,6,5) over
+                // the mint, not labelColor's 85%), labelColor's white in the dark.
+                text.Draw(context, brush_.Get(), Primary(model_.dark ? kLabelAlpha : 1.0f),
+                          Primary(keyboard_ == field ? kPlaceholderOpacity : kUnfocusedPlaceholderOpacity), selection);
             },
             readBack, hr);
         if (!error.empty()) {
