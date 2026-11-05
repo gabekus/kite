@@ -621,6 +621,7 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     options.saveLog = saveLogOption.present;
     options.quiet = quiet;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
+    options.supportDirectory = supportDirectory;
     auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, &history, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
     kite::perf::Mark("window-created");

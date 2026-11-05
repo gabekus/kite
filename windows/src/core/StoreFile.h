@@ -22,6 +22,8 @@
 #include <string>
 #include <string_view>
 
+#include "core/Files.h"
+
 namespace kite::store_file {
 
 // Empty on success, otherwise what went wrong (the target is then untouched).
@@ -47,7 +49,7 @@ std::optional<std::string> Read(const std::filesystem::path& file, size_t maxByt
 // 64 MB: fifteen times the biggest history.json the Mac's 20,000-page cap makes.
 inline constexpr size_t kMaxHistoryReadBytes = size_t{64} << 20;
 
-// UTF-8 for messages; path::string() throws on Windows for names outside the ANSI code page.
-std::string PathText(const std::filesystem::path& path);
+// UTF-8 for messages (core/Files.h's).
+using kite::PathText;
 
 }  // namespace kite::store_file

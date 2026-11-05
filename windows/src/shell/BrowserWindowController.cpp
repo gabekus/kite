@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <utility>
 
 #include "core/CommandBar.h"
@@ -77,6 +78,7 @@ BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserStat
 }
 
 BrowserWindowController::~BrowserWindowController() {
+    StopArcRead();
     // History's worker outlives the window: it stops posting to it.
     if (history_) history_->SetWake(nullptr);
     // The views and the compositor go before the window: it stops calling into them first.
@@ -259,6 +261,12 @@ std::wstring BrowserWindowController::Init() {
     else askToDelete_ = [this](const SpaceDeletion& deletion) { return AskToDeleteSpace(window_.Handle(), deletion); };
 
     MakeCommands();
+    // The Mac's File › Import from Arc…: in the window's system menu (Alt+Space) until Windows
+    // has a menu of Kite's own.
+    if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kImportFromArcMenuID, L"Import from Arc…");
+    }
     // Every command the table can name does something: a test run fails on one that doesn't.
     if (options_.quiet) {
         for (const ShortcutCommand& command : ShortcutCommands()) {
@@ -274,12 +282,13 @@ std::wstring BrowserWindowController::Init() {
     // shutdown can end the process as soon as WM_ENDSESSION returns, so that waits for both,
     // kEndSessionFlush at most between them.
     window_.onClose = [this](bool endingSession) {
+        // First, so an Import from Arc whose dialog is still up does nothing more.
+        closing_ = true;
         clock_->Stop();
         // DirectManipulation lets the window go while it's still a window.
         touchpad_.reset();
         memoryWatch_.reset();
         RunPending();
-        closing_ = true;
         SaveNow();
         // History too, as the Mac's flush at quit; main.cpp waits for its writes.
         if (history_) {
@@ -841,6 +850,7 @@ void BrowserWindowController::MakeCommands() {
         {"openLocation", [this] { OpenCommandBar(CommandBarMode::EditCurrent); }},
         {"archiveTab", [this] { ArchiveTab(); }},
         {"reopenClosedTab", [this] { ReopenClosedTab(); }},
+        {"importFromArc", [this] { ImportFromArc(); }},
         // One window, so closing it quits, as the Mac's last window does with Kite set so.
         {"closeWindow", [this] { PostMessageW(window_.Handle(), WM_CLOSE, 0, 0); }},
         {"quitKite", [this] { PostMessageW(window_.Handle(), WM_CLOSE, 0, 0); }},
@@ -1098,6 +1108,17 @@ void BrowserWindowController::OnSize() {
 // MARK: The window's messages
 
 bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
+    static_assert([] {
+        constexpr UINT ids[] = {MainWindow::kWakeMessage, CommandBarView::kRedrawMessage, SidebarView::kRedrawMessage, kFaviconsMessage,
+                                kFrameMessage, kSpaceIconsMessage, kMemoryPressureMessage, kHistoryMessage, kArcReadMessage,
+                                kPerfRequestMessage};
+        for (size_t i = 0; i < std::size(ids); ++i) {
+            for (size_t j = i + 1; j < std::size(ids); ++j) {
+                if (ids[i] == ids[j]) return false;
+            }
+        }
+        return true;
+    }(), "two of the window's WM_APP messages share an id");
     if (options_.perfControl) {
         if (message == WM_COPYDATA) {
             result = QueuePerfRequest(reinterpret_cast<const COPYDATASTRUCT*>(lParam)) ? 1 : 0;
@@ -1303,6 +1324,15 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     }
     if (message == kSpaceIconsMessage) {
         sidebar_->PicturesArrived();
+        return true;
+    }
+    if (message == kArcReadMessage) {
+        ArcRead();
+        return true;
+    }
+    if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == kImportFromArcMenuID) {
+        RunCommand("importFromArc");
+        result = 0;
         return true;
     }
     if (message == kFaviconsMessage) {
