@@ -98,6 +98,16 @@ import Testing
         #expect(steps.count == 2)
         #expect(!AutomationCommand.Tool.ui.takesTab)
     }
+
+    @Test func hitTakesOnePointAndIsReadOnly() throws {
+        let hit = try ui(["action": "hit", "point": [120, 364.5], "window": 7])
+        #expect(hit == .hit(window: 7, point: UIPoint(x: 120, y: 364.5)))
+        #expect(hit.isReadOnly)
+        #expect(UIInspection.actions.contains("hit"))
+        #expect(throws: (any Error).self) { try ui(["action": "hit"]) }
+        #expect(throws: (any Error).self) { try ui(["action": "hit", "point": [1]]) }
+        #expect(throws: (any Error).self) { try ui(["action": "hit", "point": "120,364"]) }
+    }
 }
 
 @Suite struct UIReportTests {
@@ -193,16 +203,6 @@ import Testing
             (233, 50) → (234, 50), 2 points: cursor resizeLeftRight | hit 0.5 SidebarResizeHandle
             (235, 50): cursor arrow | hit 0.1 NSHostingView
             """)
-    }
-
-    @Test func hitTakesOnePointAndIsReadOnly() throws {
-        let hit = try ui(["action": "hit", "point": [120, 364.5], "window": 7])
-        #expect(hit == .hit(window: 7, point: UIPoint(x: 120, y: 364.5)))
-        #expect(hit.isReadOnly)
-        #expect(UIInspection.actions.contains("hit"))
-        #expect(throws: (any Error).self) { try ui(["action": "hit"]) }
-        #expect(throws: (any Error).self) { try ui(["action": "hit", "point": [1]]) }
-        #expect(throws: (any Error).self) { try ui(["action": "hit", "point": "120,364"]) }
     }
 
     @Test func hitListsTheViewHitThenItsSuperviews() {
