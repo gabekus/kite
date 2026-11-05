@@ -87,7 +87,6 @@ extension BrowserWindowController: AutomationHost {
         pool.onTabOpened = { [weak automation] child, opener in automation?.tabOpened(child, by: opener) }
         claudeButton.automation = automation
         installClaudeControlBorder(automation)
-        installClaudeHandoffCard(automation)
         guard let root = window?.contentView else { return }
         // A strip across the window, rather than a view sized to the banner: the banner's size changes
         // with Claude's state, and an intrinsically sized host stayed 0×0, so its buttons never got clicks.

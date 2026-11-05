@@ -57,7 +57,7 @@ import Testing
         let withoutTab = TicketTest.prompt(TicketTest.Request(ticket: LinearTicket(key: "PRO-5"), target: url("https://pr-5.preview.app")),
                                            ticketTab: nil, issueURL: url("https://linear.app/a/issue/PRO-5"))
         #expect(withoutTab.contains("session \"PRO-5\"") && withoutTab.contains("https://pr-5.preview.app"))
-        #expect(TicketTest.prompt(TicketTest.Request(ticket: LinearTicket(key: "PRO-5")), ticketTab: nil, issueURL: nil).contains("handoff"))
+        #expect(TicketTest.prompt(TicketTest.Request(ticket: LinearTicket(key: "PRO-5")), ticketTab: nil, issueURL: nil).contains("Ask the user in your reply to open PRO-5"))
 
         #expect(ClaudeInvocation.systemPrompt(ticket: nil) == ClaudeInvocation.systemPrompt)
         let system = ClaudeInvocation.systemPrompt(ticket: "PRO-5")
