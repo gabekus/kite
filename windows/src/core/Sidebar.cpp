@@ -267,6 +267,11 @@ SidebarHit SidebarHitTest(const std::vector<SidebarRow>& rows, float width, floa
             inRow < M::kHeaderIconTop + M::kHeaderIconSize) {
             return {Target::PinnedChevron, *index};
         }
+        // The icon's 26pt button (SidebarPassthroughButton), there while the space has an icon.
+        if (!row.icon.empty() && x >= M::kHeaderIconX && x < M::kHeaderIconX + M::kHeaderIconSize && inRow >= M::kHeaderIconTop &&
+            inRow < M::kHeaderIconTop + M::kHeaderIconSize) {
+            return {Target::HeaderIcon, *index};
+        }
         return {Target::Row, *index};
     }
     case SidebarRow::Kind::Divider: return {};
@@ -319,11 +324,16 @@ SidebarTap SidebarRelease(const SidebarPress& press, const std::vector<SidebarRo
         if (SidebarHitTest(rows, width, height, scroll, x, y).target == Target::AddressField) return {Action::EditAddress, {}, false};
         return {};
     case Target::PinnedChevron:
-    case Target::CloseButton: {
-        // A button acts when let go over itself (SymbolButton's mouseUp), whatever the clicks.
+    case Target::CloseButton:
+    case Target::HeaderIcon: {
+        // A button acts when let go over itself (SymbolButton's and SidebarPassthroughButton's
+        // mouseUp), whatever the clicks.
         const auto row = pressedRow();
         if (!row || SidebarHitTest(rows, width, height, scroll, x, y) != SidebarHit{press.target, *row}) return {};
-        return {press.target == Target::CloseButton ? Action::CloseTab : Action::TogglePinnedSection, press.id, false};
+        const Action action = press.target == Target::CloseButton    ? Action::CloseTab
+                              : press.target == Target::HeaderIcon ? Action::ChangeIcon
+                                                                   : Action::TogglePinnedSection;
+        return {action, press.id, false};
     }
     case Target::Row: {
         const auto row = pressedRow();

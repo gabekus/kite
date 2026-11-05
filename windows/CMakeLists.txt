@@ -41,6 +41,7 @@ add_library(KiteCoreWin STATIC
   src/core/SpaceBar.cpp
   src/core/SpaceEditing.cpp
   src/core/SpaceIcon.cpp
+  src/core/SpaceIconPicker.cpp
   src/core/SymbolShape.cpp
   src/core/PictureLoads.cpp
   src/core/SpaceSwipe.cpp
@@ -193,6 +194,7 @@ add_executable(KiteCoreTests
   tests/SpaceBarTests.cpp
   tests/SpaceEditingTests.cpp
   tests/SpaceIconTests.cpp
+  tests/SpaceIconPickerTests.cpp
   tests/PictureLoadsTests.cpp
   tests/SpaceSwipeTests.cpp
   tests/SpaceSwipeGestureTests.cpp

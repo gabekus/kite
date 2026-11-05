@@ -13,6 +13,7 @@
 //   kitecore [--profile DIR] space swipe DX [SECONDS]
 //   kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...
 //   kitecore [--profile DIR] space move ID PLACE|drag ID X [Y]
+//   kitecore [--profile DIR] space icon-picker ID [--tab emoji|icon] [--category N] [--query TEXT] [--scroll PT] [--pick N]
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
@@ -41,6 +42,12 @@
 // presses its cell in the 240pt bar, drags to X (and Y, default the bar's middle) in bar points
 // and prints the strip there (the open slot, each cell's left, the ghost's), then lets go,
 // prints the slot it lands in and moves it there.
+// `space icon-picker` is Change Space Icon…'s popover for space ID as it opens (on its icon's
+// tab), then with a tab chosen, a category's button pressed (N from 0), TEXT searched and the
+// emoji grid scrolled PT points, in that order: it prints the tabs, the categories, the grid
+// (columns, rows, the rows the scroll view shows, every cell's icon) and the popover's height.
+// --pick N clicks cell N (from 0): the space gets that icon (saved), and the picture its old
+// icon showed, if nothing shows it now, is named as the file the window deletes.
 
 #include <algorithm>
 #include <charconv>
@@ -50,6 +57,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -62,6 +70,7 @@
 #include "core/Sidebar.h"
 #include "core/SpaceBar.h"
 #include "core/SpaceEditing.h"
+#include "core/SpaceIconPicker.h"
 #include "core/SpaceSwipeGesture.h"
 #include "core/SupportDirectory.h"
 #include "core/ThemeBackdrop.h"
@@ -100,6 +109,7 @@ int Usage() {
         "       kitecore [--profile DIR] space swipe DX [SECONDS]\n"
         "       kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...\n"
         "       kitecore [--profile DIR] space move ID PLACE|drag ID X [Y]\n"
+        "       kitecore [--profile DIR] space icon-picker ID [--tab emoji|icon] [--category N] [--query TEXT] [--scroll PT] [--pick N]\n"
         "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n",
         stderr);
     return kUsage;
@@ -605,6 +615,89 @@ int main(int argc, char** argv) {
             if (!state.SpaceIndex(id)) return kNotFound;
             state.RenameSpace(id, Join(args, 3));
             std::puts(state.spaces[*state.SpaceIndex(id)].name.c_str());
+        } else if (action == "icon-picker" && args.size() >= 3) {
+            auto picker = OpenIconPicker(state, Id(args[2]));
+            if (!picker) return kNotFound;
+            std::optional<size_t> pickIndex;
+            auto number = [](const std::string& text, auto& out) {
+                auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), out);
+                return error == std::errc() && end == text.data() + text.size();
+            };
+            std::optional<IconPickerTab> tab;
+            std::optional<size_t> category;
+            std::optional<std::string> query;
+            std::optional<float> scroll;
+            for (size_t i = 3; i < args.size(); ++i) {
+                if (i + 1 >= args.size()) return Usage();
+                const std::string& flag = args[i];
+                const std::string& value = args[++i];
+                if (flag == "--tab" && (value == "emoji" || value == "icon")) {
+                    tab = value == "emoji" ? IconPickerTab::Emoji : IconPickerTab::Icon;
+                } else if (flag == "--category") {
+                    size_t n = 0;
+                    if (!number(value, n) || n >= EmojiCategories().size()) return Usage();
+                    category = n;
+                } else if (flag == "--query") {
+                    query = value;
+                } else if (flag == "--scroll") {
+                    float pt = 0;
+                    if (!number(value, pt) || !std::isfinite(pt)) return Usage();
+                    scroll = pt;
+                } else if (flag == "--pick") {
+                    size_t n = 0;
+                    if (!number(value, n)) return Usage();
+                    pickIndex = n;
+                } else {
+                    return Usage();
+                }
+            }
+            if (tab) SelectIconPickerTab(*picker, *tab);
+            if (category) SelectIconPickerCategory(*picker, *category);
+            if (query) SetIconPickerQuery(*picker, *query);
+            if (scroll) ScrollIconPicker(*picker, *scroll - picker->scroll);
+            const Space& space = state.spaces[*state.SpaceIndex(picker->spaceID)];
+            const IconPickerLayout layout = LayOutIconPicker(picker->tab, !space.icon.empty());
+            const std::vector<std::string> cells = IconPickerCells(*picker);
+            json::Array tabs, categories, icons;
+            for (const IconPickerTab t : kIconPickerTabs) {
+                tabs.emplace_back(json::Object{{"title", std::string(IconPickerTabTitle(t))},
+                                               {"enabled", IconPickerTabAvailable(t)},
+                                               {"selected", t == picker->tab}});
+            }
+            if (picker->tab == IconPickerTab::Emoji) {
+                for (size_t i = 0; i < EmojiCategories().size(); ++i) {
+                    const EmojiCategory& c = EmojiCategories()[i];
+                    char glyph[8];
+                    std::snprintf(glyph, sizeof glyph, "%04X", static_cast<unsigned>(c.glyph.fluent));
+                    categories.emplace_back(json::Object{{"name", c.name}, {"symbol", c.symbol}, {"glyph", std::string(glyph)},
+                                                         {"selected", i == picker->category}});
+                }
+            }
+            for (const std::string& icon : cells) icons.emplace_back(icon);
+            const auto [first, end] = IconPickerVisibleRows(layout, cells.size(), picker->scroll);
+            json::Object out{{"space", picker->spaceID},
+                             {"tab", std::string(IconPickerTabTitle(picker->tab))},
+                             {"tabs", json::Value(std::move(tabs))},
+                             {"remove", layout.remove.has_value()},
+                             {"height", static_cast<double>(layout.height)},
+                             {"columns", static_cast<double>(layout.columns)},
+                             {"rows", static_cast<double>(IconPickerRows(cells.size(), layout.columns))},
+                             {"cells", json::Value(std::move(icons))}};
+            if (picker->tab == IconPickerTab::Emoji) {
+                out.emplace("query", picker->query);
+                out.emplace("category", static_cast<double>(picker->category));
+                out.emplace("categories", json::Value(std::move(categories)));
+                out.emplace("scroll", static_cast<double>(picker->scroll));
+                out.emplace("visibleRows", json::Array{json::Value(static_cast<double>(first)), json::Value(static_cast<double>(end))});
+            }
+            if (!pickIndex) {
+                std::puts(json::Write(json::Value(std::move(out))).c_str());
+                return kOk;
+            }
+            if (*pickIndex >= cells.size()) return kNotFound;
+            const std::optional<IconPick> pick = PickSpaceIcon(state, picker->spaceID, cells[*pickIndex]);
+            out.emplace("picked", json::Object{{"icon", pick->icon}, {"discard", pick->discard ? json::Value(*pick->discard) : json::Value()}});
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else if (action == "icon" && args.size() == 4) {
             const std::string id = Id(args[2]);
             if (!state.SpaceIndex(id)) return kNotFound;

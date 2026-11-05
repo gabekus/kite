@@ -28,7 +28,6 @@ constexpr float kUrlFieldFontSize = 13;
 constexpr float kUrlFieldTextOpacity = 0.6f;
 constexpr float kCornerRadius = 11;  // the address field and the pills
 constexpr float kFieldFill = 0.10f;  // white over the theme, for the address field
-constexpr float kHeaderIconX = 13;   // in the window
 constexpr float kHeaderTextX = 41;   // in the window
 constexpr float kHeaderFontSize = 13;
 constexpr float kHeaderTextOpacity = 0.45f;
