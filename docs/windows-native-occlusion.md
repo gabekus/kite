@@ -101,19 +101,29 @@ Reading them:
   - Any hidden verdict hides the page the same way, through `SetOccluded`. That's the path
     the covered phase measured.
   - P12a measured what's at stake: 5 ms/s with the tracker on, 431 with it off, before P2.
-- **The gap: a page made while Kite can't be seen.** In a Kite that opened covered, with P2
-  on from its start, the page isn't hidden (docs/windows.md, P2's Known gaps). Measured with
-  this tool before it turned P2 on after idle, one run per arm:
-  - P2's verdict was covered from 0.15 s, then locked through lockNotice.
-  - The page stayed `visible` at about 350 fps in every phase, at 441–494 ms/s.
-  - Kite hides the page's windows as the browser attaches, but the page turns `visible`
-    about 0.15 s later, and with the verdict unchanged nothing hides it again.
-  - Chromium's tracker did hide such a page on lock and display off: P12a's display-off runs
-    were such runs, and their "on" arm stayed `hidden`. With the tracker off, a Kite that
-    opened covered and stayed covered keeps a page running through a lock or display off until
-    P2 handles this case.
-  - Showing and hiding the page's host and widget windows once it has loaded does hide it
-    (tried from outside the process: rAF stopped at once).
+- **The gap P12b found, closed by #410: a page made while Kite can't be seen.** A Kite that
+  opened covered, with P2 on from its start, didn't hide its page.
+  - Kite hid the page's windows as the browser attached, but Chromium showed the page about
+    0.4 s after its load, and with the verdict unchanged nothing hid it again.
+  - Chromium's tracker had hidden such a page on lock and display off (P12a's display-off
+    runs were such runs, and their "on" arm stayed `hidden`). With the tracker off, it would
+    have run through a lock or display off.
+  - #410 has the page report whether it reads as visible. Kite re-hides one it has hidden by
+    showing and hiding its windows (docs/windows.md, P2, "A page Kite hides stays hidden").
+  - Measured with `--p2-from-launch` (P2 on from Kite's start, Kite covered by the desktop
+    from about 0.16 s), 3 runs per arm, medians. CPU is Kite's total, "off" arm (Kite's
+    default), before #410 → with it:
+
+    | phase | Kite CPU ms/s | page hidden % | rAF fps |
+    |---|---:|---:|---:|
+    | idle | 488 → 10.1 | 0 → 100 | 351 → 0 |
+    | nearMover | 471 → 2.1 | 0 → 100 | 349 → 0 |
+    | covered | 484 → 3.1 | 0 → 100 | 350 → 0 |
+    | overMover | 474 → 3.1 | 0 → 100 | 350 → 0 |
+    | lockNotice | 482 → 2.3 | 0 → 100 | 351 → 0 |
+
+    The "on" arm (tracker back on) went the same way: covered 481 → 4.3, lockNotice 477 → 2.7.
+    Its movers stayed at 21.9 and 23.6 ms/s, the tracker's ~1,845 cs/s.
 
 ## Short answer (P12a)
 
@@ -288,8 +298,8 @@ tracker dormant, so the A/B is still a valid measure of its cost:
   is off. P2 (#379) covers both itself: it hides the shown page's widget on
   `WTS_SESSION_LOCK` and on `GUID_SESSION_DISPLAY_STATUS` off, as well as when Kite is cloaked
   or covered. Without P2, turning the tracker off is a regression for an animating page left
-  open overnight. (P12b found one case P2 misses: a page made while Kite can't be seen. See
-  "P12b: off, with P2".)
+  open overnight. (P12b found one case P2 missed, a page made while Kite can't be seen;
+  #410 closed it. See "P12b: off, with P2".)
 - **Nothing else in Kite reads it.** No Kite code reads page visibility, Chromium's occlusion
   state or `WasHidden`. Background tabs and a minimized Kite are hidden by hiding their widget
   windows (docs/windows.md, Rendering), which doesn't involve the tracker.

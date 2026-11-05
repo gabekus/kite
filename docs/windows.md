@@ -1400,15 +1400,6 @@ Windows that means:
     sharing it while covered) shows its card. While a recorder runs, a covered
     Kite draws (the verdict is visible, so there's no heartbeat); the watcher
     waits on the recorder's process, and its exit runs a pass.
-    A page made while Kite can't be seen isn't hidden. That happens when Kite opens behind
-    other windows, covered from its first pass, as a quiet `--perf-log` run does. Kite hides the
-    page's windows as the browser attaches, but the page turns `visible` about 0.15 s later
-    (measured: `hidden`, then `visible`, rAF at about 350 fps with the widget still hidden).
-    The verdict never changes, so nothing hides it again. It draws until the verdict goes to
-    visible and back; a lock or display off doesn't stop it, since the verdict was already
-    hidden. Chromium's tracker, on before P12b, did stop it on lock and display off. P12b
-    found this (docs/windows-native-occlusion.md); it's to fix. Showing and hiding the page's
-    host and widget windows once it's loaded does hide it.
 
 ## Measuring performance
 
