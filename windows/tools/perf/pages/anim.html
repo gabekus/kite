@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- kiteperf's animating page: a CSS animation and a requestAnimationFrame loop, so a shown page
+     draws every frame and a hidden (or covered) one shows whether it stops. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Animating page</title>
+<style>
+  body { font: 16px system-ui, sans-serif; margin: 40px; background: #fff; }
+  .spin { width: 120px; height: 120px; background: linear-gradient(45deg, #36c, #c36); border-radius: 16px;
+          animation: spin 2s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #bar { height: 12px; background: #3a3; margin-top: 40px; width: 0; }
+</style>
+</head>
+<body>
+<div class="spin"></div>
+<div id="bar"></div>
+<p id="count">0</p>
+<script>
+  let frames = 0;
+  const bar = document.getElementById('bar'), count = document.getElementById('count');
+  function tick(t) {
+    frames++;
+    bar.style.width = (50 + 50 * Math.sin(t / 300)) + '%';
+    count.textContent = frames;
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+</script>
+</body>
+</html>

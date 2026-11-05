@@ -42,7 +42,7 @@ bool BrowserWindowController::RunUntil(const std::function<bool()>& done, double
             DispatchMessageW(&message);
         } else if (clock_->Manual() && clock_->Running() && FrameClock::Now() >= nextFrame) {
             nextFrame = FrameClock::Now() + 1.0 / 60;
-            Frame(FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr));
+            Frame(FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr), 0);  // rate unknown (0), as Filter's without --perf-log
         } else {
             Sleep(1);
         }
@@ -472,7 +472,10 @@ std::wstring BrowserWindowController::SmokeTestWindow() {
     // Switching spaces: the pages slide on the compositor and the theme crossfades on the
     // clock's frames, and both come to rest on the next space, then back on this one.
     if (state_.spaces.size() > 1) {
+        const uint64_t armed = saveArms_;
         if (std::wstring problem = SmokeTestSpaces(); !problem.empty()) return problem;
+        // A change arms the session's save (it may have fired already: the settling ran timers).
+        if (writer_ && writer_->MaySave() && saveArms_ == armed) return L"switching spaces didn't schedule a save";
         // And swiping between them with two fingers on a touchpad.
         if (std::wstring problem = SmokeTestSwipe(); !problem.empty()) return problem;
         // And editing them: drags in the bar, the menu, renaming, New Folder, Delete Space.
@@ -530,6 +533,12 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
     if (problem.empty() && barText) {
         // The bar as Ctrl+T opens it, with the text typed in.
         if (!commandBar_) return L"Kite couldn't make the command bar";
+        // Its history rows are the profile's file's: read on history's worker, waited for here
+        // (a test run, before the first frame it saves).
+        if (history_) {
+            history_->ForProfile(state_.SelectedProfileDirectory());
+            if (!history_->WaitForLoads(std::chrono::seconds(10))) return L"history wasn't read within 10 s";
+        }
         commandBar_->Show(CommandBarMode::NewTab, "", BarLook());
         commandBar_->Type(*barText);
         Pixels bar;

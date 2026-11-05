@@ -1,27 +1,47 @@
 #pragma once
 // The browser window and what's in it, as the Mac's BrowserWindowController: the backdrop,
 // the sidebar, the caption buttons, the command bar, the pages (Chromium) and Kite's
-// shortcuts, wired to the session (core/Models.h). main.cpp parses the command line, loads and
-// saves the session, and runs one of these. Like the Mac's BrowserWindowController+*.swift, its
-// parts have files of their own: +Spaces.cpp (editing spaces: the space menu, renaming,
-// deleting, reordering), +Chromium.cpp (the pages) and +Tests.cpp (--smoke-test and --capture).
+// shortcuts, wired to the session (core/Models.h). main.cpp parses the command line, loads the
+// session, and runs one of these. Like the Mac's BrowserWindowController+*.swift, its parts have
+// files of their own: +Spaces.cpp (editing spaces: the space menu, renaming, deleting,
+// reordering), +Chromium.cpp (the pages) and +Tests.cpp (--smoke-test and --capture).
 //
 // Everything here is on Kite's UI thread. The session is the caller's, borrowed for the
-// window's life; the window changes it and the caller saves it as the window closes
-// (MainWindow::onClose).
+// window's life. The window changes it and saves it as it changes, as the Mac's BrowserStore
+// does: each change arms a one-shot timer (core/SessionSaveDelay.h's SaveSchedule: a second,
+// ten for a page's title or favicon), and when it fires a copy of the session goes to the
+// caller's SessionWriter, which writes it on its own thread. Closing the window saves at once
+// (main.cpp waits for that write once the window is gone); logoff and shutdown save at once and
+// wait here, for kEndSessionFlush at most.
+//
+// Browsing history goes to the caller's HistoryStores (core/HistoryStore.h) as the Mac's
+// BrowserStore records it: a visit when a page reports a main-frame address its tab hasn't
+// recorded yet (CEF's OnAddressChange, as the Mac's addressDidChange: the URL a navigation
+// commits, after its redirects, and a same-document change to a new URL, such as pushState or
+// a fragment, as a visit of its own; a reload records nothing), and the page's title for the
+// last address recorded. The stores' one save timer is armed after each change (3 s, at most
+// 30), and closing the window saves them too.
 
 #include <windows.h>
 
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
+#include "core/HistoryStore.h"
 #include "core/KeyBindings.h"
+#include "core/LiveTabPolicy.h"
 #include "core/Models.h"
+#include "core/SessionSaveDelay.h"
+#include "core/SessionWriter.h"
 #include "core/SidebarTopRow.h"
 #include "core/SpaceEditing.h"
 #include "core/SpaceSwipe.h"
@@ -36,6 +56,7 @@
 #include "shell/Favicons.h"
 #include "shell/FrameClock.h"
 #include "shell/MainWindow.h"
+#include "shell/MemoryPressure.h"
 #include "shell/Renderer.h"
 #include "shell/SidebarView.h"
 #include "shell/TouchpadInput.h"
@@ -55,17 +76,34 @@ public:
         // --frame-log: each frame the clock delivered (when it was handled, the time it was
         // drawn for, the pages' offset and the theme's crossfade) is kept for SaveFrameLog.
         bool frameLog = false;
+        // --save-log: each save handed to the writer (when, and what it cost the UI thread) is
+        // kept for SaveSaveLog.
+        bool saveLog = false;
+        // A quiet run (main.cpp's `quiet`, which alone decides it): the window opens behind
+        // the others and never activates, the pages never take the focus or show a dialog
+        // (Chromium::Start's `quiet`), and every shortcut command must do something.
+        bool quiet = false;
+        // --perf-control: WM_COPYDATA tagged perf::kControlTag runs a shortcut's command, logs a
+        // mark, opens a tab or posts a pointer move (QueuePerfRequest). Test profiles only.
+        bool perfControl = false;
+        // --chromium-switches: added to Chromium's command line (test profiles only).
+        std::vector<std::string> chromiumSwitches;
         // The profile's SpaceIcons folder: the pictures chosen as space icons (a capture
         // decodes them in place, the rest on a worker).
         std::filesystem::path spaceIcons;
+        // The profile's folder, where Import from Arc puts its shortcut changes and routes.
+        std::filesystem::path supportDirectory;
     };
 
     // The window and everything in it, laid out and wired, not yet shown or drawn. Null with
     // `error` when the GPU, the window or a view couldn't be made. No command bar isn't a
-    // failure (CommandBar() is null then). `save` runs as the window closes, and at logoff or
-    // shutdown, after the pages' last reports.
+    // failure (CommandBar() is null then). `writer` (the caller's, outliving the window) gets
+    // the session as it changes, and once more as the window closes, and at logoff or shutdown,
+    // after the pages' last reports; null saves nothing. `history` (the caller's too) gets the
+    // pages' visits and gives the command bar its history rows; null records nothing.
     static std::unique_ptr<BrowserWindowController> Create(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts,
-                                                           Options options, std::function<void()> save, std::wstring& error);
+                                                           Options options, SessionWriter* writer, HistoryStores* history,
+                                                           std::wstring& error);
     ~BrowserWindowController();
     BrowserWindowController(const BrowserWindowController&) = delete;
     BrowserWindowController& operator=(const BrowserWindowController&) = delete;
@@ -77,16 +115,20 @@ public:
     UINT MaxTextureSize() const { return renderer_ ? renderer_->MaxTextureSize() : 0; }
 
 #ifdef KITE_HAS_CEF
-    // Starts Chromium for the window's pages, its profiles under `root`. AlreadyRunning: another
-    // Kite has the profile and was told to come forward.
-    Chromium::StartResult StartChromium(const std::filesystem::path& root, std::wstring& error);
+    // Starts Chromium for the window's pages, its profiles under `root`, with the sandbox the
+    // bootstrap handed Kite.dll (RunWinMain). AlreadyRunning: another Kite has the profile and
+    // was told to come forward.
+    Chromium::StartResult StartChromium(const std::filesystem::path& root, void* sandboxInfo, std::wstring& error);
     // After the message loop: Chromium's shutdown, then what a smoke test checks of it. Empty
     // when it all went well (or there was no Chromium).
     std::wstring ShutDownChromium();
+    // What a smoke test read of the sandbox (shell/Sandbox.h): the first page's renderer and
+    // every helper, a line each; empty before the renderer reported.
+    const std::wstring& SandboxReport() const { return sandboxReport_; }
 #endif
     // Shows the window (behind other windows for a quiet run) and, with Chromium, the first page,
     // and starts the auto-archive's timer.
-    void Show(int showCommand, bool behindOtherWindows);
+    void Show(int showCommand);
 
     // Draws the backdrop, the sidebar and the caption buttons and commits them; with
     // `readBack`, the backdrop's frame as presented. Rebuilds a lost GPU first.
@@ -97,6 +139,11 @@ public:
     // DirectManipulation's reports (`dm`: status or content, `t` on the clock's seconds). Empty
     // on success.
     std::wstring SaveFrameLog(const std::filesystem::path& file) const;
+    // The run's saves (Options::saveLog) as one JSON object: `saves` (`t`, s from the window's
+    // creation; `uiMicros`, the copy handed to the writer; `closing`), `frames` (frames the
+    // clock delivered) and `writer` (the writer's statistics after its last write). Empty on
+    // success.
+    std::wstring SaveSaveLog(const std::filesystem::path& file) const;
     // The smoke test's checks of the window: the command bar opens and draws, the sidebar and
     // the caption buttons draw something, and the lost-GPU path rebuilds and draws. Empty on
     // success. Then the window closes once the first page has loaded (30 s at most), or after
@@ -131,6 +178,15 @@ public:
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
 
+    // The session changed outside the window's own handlers (main.cpp's auto-archive at
+    // launch): it's saved after `delay`, as the window's own changes are.
+    void SessionChanged(SessionSaveDelay delay = SessionSaveDelay::Soon);
+
+    // How long the window waits for the session's last write when Windows ends the session
+    // (WM_ENDSESSION: the process may end as soon as it returns). Giving up is safe: the
+    // atomic write leaves the old file or the new one.
+    static constexpr std::chrono::milliseconds kEndSessionFlush{3000};
+
 private:
     // The content card, in points: right of the sidebar, inset on the other three sides
     // (BrowserWindowController's Layout.defaultSidebarWidth, and ArcMetrics.Content.inset in core's
@@ -141,13 +197,22 @@ private:
     //   1 smoke, 2 archive, 3 settle, 4 session save (W11), 5 history (W25a), 6 Arc merge (W33a),
     //   7 sidebar toggle (W12), 8 downloads save (W20a).
     // 0x4B42 and up are the views' (the command bar's caret, Chromium's close deadline, the
-    // sidebar's tip and drop, the rename field's caret).
+    // sidebar's tip and drop, the rename field's caret). The WM_APP messages, each its own: +1
+    // MainWindow::kWakeMessage, +2 the command bar's redraw, +3 the sidebar's redraw, +4 favicons,
+    // +5 the frame clock, +6 space icons, +7 memory pressure (W11), +8 history, +9 Import from
+    // Arc's read (kArcReadMessage), +10 arcSaved, +11 downloads, +20 perf. Filter checks that
+    // neither the timers nor the messages it sees overlap.
     static constexpr UINT_PTR kSmokeTimer = 1;
     // The auto-archive's pass, every 15 minutes as on the Mac (AppDelegate's archiveTimer).
     static constexpr UINT_PTR kArchiveTimer = 2;
     static constexpr UINT kArchiveIntervalMs = 15 * 60 * 1000;
     // When the pages' slide on the compositor has ended (its duration and a frame, rounded up).
     static constexpr UINT_PTR kSettleTimer = 3;
+    // The session's save, armed by a change (SaveSchedule) and gone once it fires: never idle.
+    static constexpr UINT_PTR kSaveTimer = 4;
+    // History's save (HistoryStores::NextSaveIn), armed by a change and gone once it fires.
+    static constexpr UINT_PTR kHistoryTimer = 5;
+    // (6 is Import from Arc's merge, kArcMergeTimer; 8 the downloads' save.)
     // When the sidebar's hide or show has ended on the compositor (the same allowance).
     static constexpr UINT_PTR kToggleTimer = 7;
     // View › Hide Sidebar in the window's system menu (Alt+Space, a right-click on the band above the
@@ -158,9 +223,15 @@ private:
     // Posted by the frame clock once a composition frame while something animates.
     static constexpr UINT kFrameMessage = WM_APP + 5;
     static constexpr UINT kSpaceIconsMessage = WM_APP + 6;
+    // Posted by the memory watch (MemoryPressure.h), wParam the MemoryPressure level.
+    static constexpr UINT kMemoryPressureMessage = WM_APP + 7;
+    // Posted by history's worker when a profile's file has been read (HistoryStores::SetWake).
+    static constexpr UINT kHistoryMessage = WM_APP + 8;
+    // --perf-control's queued requests (QueuePerfRequest).
+    static constexpr UINT kPerfRequestMessage = WM_APP + 20;
 
     BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
-                            std::function<void()> save, std::unique_ptr<Renderer> renderer);
+                            SessionWriter* writer, HistoryStores* history, std::unique_ptr<Renderer> renderer);
     std::wstring Init();
     // What follows from the selected space's theme at once: the title bar's dark mode, the
     // material under the backdrop, the caption buttons' glyphs (the Mac's NSAppearance).
@@ -202,8 +273,8 @@ private:
     bool CommandEnabled(const std::string& command) const;
     // One frame of the clock's: the touchpad's movement, then the theme's crossfade or a
     // swipe's step drawn for the composition frame at `time` (the pages' slide runs on the
-    // compositor).
-    void Frame(double time);
+    // compositor). `rateHz` is the display's, for --perf-log (0 when it isn't on).
+    void Frame(double time, double rateHz);
     std::wstring DrawAt(double time, Pixels* readBack);
     // The smoke test's space switch, there and back, run to rest.
     std::wstring SmokeTestSpaces();
@@ -233,8 +304,21 @@ private:
     // with no WM_CLOSE first).
     void RunPending();
 
-    // The session changed under the window: the sidebar and an open bar show it.
-    void StateChanged();
+    // The session changed under the window: the sidebar and an open bar show it, and it's
+    // saved after `save` (none: nothing that's saved changed, a page repeating its title).
+    void StateChanged(std::optional<SessionSaveDelay> save = SessionSaveDelay::Soon);
+    // The save timer fired, or the window is closing: a copy of the session to the writer.
+    // `then` runs on the writer's thread after that write (SessionWriter::SaveThen).
+    void SaveNow(std::function<void(const std::string& error)> then = {});
+    // History changed (a visit, a title): its save timer, armed for the store due first.
+    void ArmHistorySave();
+    // The history a tab's visits go to: its own profile's (the Mac's history(forTab:)).
+    HistoryStore* HistoryForTab(const std::string& tabID);
+    // A page reported an address or a title: the Mac's pageURLChanged and pageTitleChanged.
+    void RecordAddress(const std::string& tabID, const std::string& url);
+    void RecordTitle(const std::string& tabID, const std::string& title);
+    // The tab's page is gone (closed, discarded): its next address is a visit again.
+    void ForgetRecorded(const std::string& tabID) { recordedURLs_.erase(tabID); }
     // The selected tab's page shows, and the sidebar with it, after the selection moved.
     void SelectionMoved();
     void ShowPage();
@@ -289,12 +373,49 @@ private:
     // The smoke test's checks, the clock's frames stepped by RunUntil.
     std::wstring SmokeTestWindow();
     void MakeCommands();
+    // Import from Arc (BrowserWindowControllerArcImport.cpp, the Mac's ArcImportController):
+    // Arc's files are read on a worker, which posts kArcReadMessage when they're in.
+    // The window's WM_APP ids are listed above, with kSmokeTimer.
+    static constexpr UINT kArcReadMessage = WM_APP + 9;
+    // The window's system menu item for it (Alt+Space): a WM_SYSCOMMAND id, under 0xF000.
+    static constexpr UINT kImportFromArcMenuID = 0x0A10;
+    // The writer's thread has written an import's session and its other files.
+    static constexpr UINT kArcSavedMessage = WM_APP + 10;
+    // The next profile's history merge: a one-shot timer, since WM_TIMER comes only once input,
+    // paint and posted messages are done, so the window answers between profiles.
+    static constexpr UINT_PTR kArcMergeTimer = 6;
+    struct ArcJob;
+    struct ArcSave;
+    void ImportFromArc();
+    void ReadArc(std::optional<std::filesystem::path> picked);
+    void ArcRead();
+    void ArcSaved();
+    // As the window closes: an import the writer has reported back on gets the rest of its
+    // history merged at once. One it hasn't reported on yet (its session still being written)
+    // keeps its spaces and side files, and its history isn't merged.
+    void FinishArcImport();
+    // As the window goes: asks a running read to stop and waits for it (a few seconds at most).
+    void StopArcRead();
     void RunCommand(const std::string& command);
     bool PageCommand(const std::string& command);
     void DropCompositor();
     std::wstring Rebuild();
     void OnSize();
     bool Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result);
+    // One --perf-control request, a UTF-8 JSON object: {"command":ID[,"qpc":Q]} runs a shortcut's
+    // command (the input→present clock starting at Q, the harness's send), {"mark":NAME} logs a
+    // mark, {"open":URL} opens an http or https URL in a tab and shows it (the command bar's
+    // Open), {"input":"move","x":X,"y":Y,"qpc":Q} posts a pointer move to the window at client
+    // px (X, Y), and {"input":"leave"} the pointer's leaving. Checked here and queued, then run
+    // from the message loop (RunPerfRequests), so the sender isn't held while it runs and its
+    // dispatch is timed like any other. False when it isn't one, or the command does nothing now.
+    struct PerfRequest {
+        enum class Kind { Command, Mark, Open, Move, Leave } kind;
+        std::string text;
+        int64_t x = 0, y = 0, qpc = 0;
+    };
+    bool QueuePerfRequest(const COPYDATASTRUCT* data);
+    void RunPerfRequests();
 #ifdef KITE_HAS_CEF
     RECT ContentBounds() const;
     void ShowSelectedTab();
@@ -306,7 +427,38 @@ private:
     BrowserState& state_;
     const ShortcutMap shortcuts_;
     const Options options_;
-    const std::function<void()> save_;
+    SessionWriter* const writer_;
+    HistoryStores* const history_;
+    // The address each tab's page last recorded in history (the Mac's recordedURLs).
+    std::map<std::string, std::string> recordedURLs_;
+    SaveSchedule saveSchedule_;
+    // What saving cost Kite's UI thread (the copy handed to the writer), for the save log.
+    struct SaveCost {
+        uint64_t saves = 0;
+        double maxMicros = 0;
+        double totalMicros = 0;
+    };
+    SaveCost saveCost_;
+    // What recording a visit cost the UI thread, for the save log.
+    struct HistoryCost {
+        uint64_t visits = 0;
+        double maxMicros = 0;
+        double totalMicros = 0;
+        void Add(double micros) {
+            ++visits;
+            maxMicros = std::max(maxMicros, micros);
+            totalMicros += micros;
+        }
+    };
+    HistoryCost historyCost_;
+    struct LoggedSave {
+        double at, micros;
+        bool closing;
+    };
+    std::vector<LoggedSave> saves_;
+    uint64_t saveArms_ = 0;  // times a change (re)armed the save timer (the smoke test checks it)
+    double createdAt_ = 0;  // FrameClock::Now() when the window was made, for the save log
+    bool closing_ = false;  // the window has begun to close (its session saved at once)
     // Destroyed in reverse: the views and the compositor before the window, the window before
     // Chromium (closing it destroys the browsers' windows, which Chromium's shutdown waits
     // for), and the GPU last.
@@ -366,6 +518,16 @@ private:
     // A precision touchpad's gestures over the sidebar (null where there's no DirectManipulation,
     // and once the window closes: it lets the window go while it's still a window).
     std::unique_ptr<TouchpadInput> touchpad_;
+    // Low memory closes the background pages (before the window in destruction: it posts to it).
+    std::unique_ptr<MemoryPressureWatch> memoryWatch_;
+    bool watchingMemory_ = false;
+    // The memory watch's reports, for the save log: when, and the level.
+    struct PressureReport {
+        double at;
+        MemoryPressure level;
+        bool discarded;  // the background pages were asked to close
+    };
+    std::vector<PressureReport> pressureReports_;
     struct LoggedFrame {
         double handled, target, offset, theme;
     };
@@ -373,6 +535,11 @@ private:
     std::vector<std::string> touchpadLog_;  // TouchpadInput::log's records, after the frames
     size_t touchpadLogDropped_ = 0;          // and how many didn't fit (kMaxTouchpadLog)
     std::wstring touchpadError_;            // why there's no touchpad_, when there isn't one
+    // --perf-control's pointer is over the window: the system's WM_MOUSELEAVE (the real pointer
+    // is elsewhere) doesn't take its hover away.
+    bool perfPointer_ = false;
+    size_t perfMovesPosted_ = 0, perfLeavesPosted_ = 0;  // posted and not yet received
+    std::vector<PerfRequest> perfRequests_;
     size_t frameCount_ = 0;  // frames delivered, logged or not (the smoke test checks them)
 
     // A capture's space menu, composed over the frame (HoldSpaceMenu).
@@ -385,12 +552,27 @@ private:
     std::map<std::string, std::function<void()>, std::less<>> commands_;
     // A shortcut ran from a key: the character Windows makes of that key isn't typed.
     bool dropCharacter_ = false;
+    // Import from Arc's read: the worker (joined before the window goes) and what it hands back.
+    std::thread arcThread_;
+    std::shared_ptr<ArcJob> arcJob_;
+    // An import whose session the writer hasn't written yet (kArcSavedMessage brings it back).
+    std::shared_ptr<ArcSave> arcSave_;
+    bool arcReading_ = false;  // from the command until the confirmation's answer
 #ifdef KITE_HAS_CEF
     // Each open popup's tab and the tab that opened it (the Mac's PagePool.popupOpeners).
     std::map<std::string, std::string> popupOpeners_;
     bool firstPageMade_ = false;
     bool pageLoading_ = false, pageLoaded_ = false;
+    // A smoke test's check of the first page's renderer (shell/Sandbox.h): whether one reported
+    // in, what was wrong with its sandbox and the helpers' (empty when nothing was), and what
+    // they were.
+    bool rendererChecked_ = false;
+    std::wstring rendererProblem_, helperProblem_, sandboxReport_;
+    void CloseWhenSmokeTestIsDone();
     ULONGLONG closeAskedAt_ = 0;  // when the smoke test asked the window to close
+    // The smoke test's read of Chromium's Energy Saver preference (Chromium::ReadEnergySaver).
+    bool energySaverRead_ = false;
+    std::optional<int> energySaverState_;
 #endif
 };
 

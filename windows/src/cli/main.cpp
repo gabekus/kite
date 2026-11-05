@@ -14,10 +14,18 @@
 //   kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...
 //   kitecore [--profile DIR] space move ID PLACE|drag ID X [Y]
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
+//   kitecore [--profile DIR] backups
+//   kitecore save-schedule KIND@SECONDS... [--at SECONDS]
+//   kitecore save-bench [TABS]
+//   kitecore [--profile DIR] history list|search TEXT... [--limit N]|add URL [TITLE...] [--at SECONDS]
+//            |merge FILE|remove URL...|remove-since SECONDS|all|clear [--chromium PROFILE]
+//   kitecore history chromium-date MICROSECONDS
+//   kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]
+//   kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
 // an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
-// isn't running on: both write session.json. `theme` prints the space's theme maths
+// isn't running on: both write session.json and history.json. `theme` prints the space's theme maths
 // (lightness, foreground, glow, accent) and its window backdrop (material, and the corner and
 // centre pixels at WIDTH×HEIGHT px, default 1280×820) as sRGB hex. `suggest` prints the command
 // bar's rows for TEXT, top first (--current: editing the current tab's address, Ctrl+L).
@@ -41,9 +49,40 @@
 // presses its cell in the 240pt bar, drags to X (and Y, default the bar's middle) in bar points
 // and prints the strip there (the open slot, each cell's left, the ghost's), then lets go,
 // prints the slot it lands in and moves it there.
+// `backups` lists the profile's session backups (Backups/session.<stamp>[.kind].json), newest
+// first as Restore Data orders them, with what each holds; it works when session.json doesn't
+// read. `save-schedule` replays changes (soon@0 pageEvent@0.5 ...: a sidebar change or a page's
+// title or favicon, at a time in seconds) through Kite's save timer and prints the saves it
+// makes, and with --at what's still waiting then (the pending save's kind and when it's due).
+// `save-bench` writes a session of TABS tabs (default 200) the way the app does, in a temp
+// folder of its own (never a profile), and prints what it cost: the copy on the UI thread (μs),
+// the encoding and the atomic write on the writer's thread, medians of 25 runs.
+// `history` reads and changes a profile's browsing history (history.json, or with --chromium a
+// Chromium profile folder's Kite History.json, as the Mac's HistoryStore keeps them): `list` is
+// every page, last visited first; `search` the command bar's ranking (--limit, default 4); `add`
+// records a visit (now, or --at Foundation seconds since 2001); `merge` adds a history.json's
+// pages as Import from Arc does (a later visit and the higher count win); `remove` is Remove from
+// History, `remove-since` Delete browsing data's (pages last visited at or after SECONDS, or all);
+// `clear` forgets every page. Each prints JSON. `history chromium-date` turns Chromium's
+// microseconds since 1601 into Foundation seconds, as the Arc import reads them. `suggest`
+// includes history's rows, from the selected space's profile, as the bar. The history-bench
+// executable (windows/tests/HistoryBench.cpp) measures history on the app's own path.
+// `import-arc` is Import from Arc (core/ArcImportController.h): from Arc for Windows' folder
+// (--auto, the default), or PATH (Arc's folder, the folder holding it, or a sidebar file). It
+// prints what came over, per kind, and what was skipped and why: counts only, never Arc's
+// titles or addresses. Arc's unnamed spaces stay out, as the Mac's dialog starts, unless Arc
+// has no named space (then they're all there is) or --include-unnamed; --leave-out-unnamed
+// leaves them out either way. The session is saved first, then keybindings.json and
+// LinkRouting.json, then each Arc profile's history into its Kite profile's history (found:
+// historyRows, historyPages; imported: historyPages, historyPagesNew; skipped: history* by
+// reason); the summary prints once all of it is written. With --profile or
+// KITE_SUPPORT_PATH, KITE_ARC_DATA_PATH stands in for Arc's folder, as in the Mac's test runs.
+// `profile` lists, makes, renames and deletes Kite profiles (core/Profiles.h). A deleted one's
+// folder name is free again once its Chromium folder is gone, which kitecore never deletes.
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -54,16 +93,23 @@
 #include <string>
 #include <vector>
 
+#include "core/ArcImportController.h"
 #include "core/CommandBar.h"
+#include "core/History.h"
+#include "core/HistoryStore.h"
 #include "core/KeyBindings.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
+#include "core/Profiles.h"
+#include "core/SessionSaveDelay.h"
 #include "core/SessionStore.h"
+#include "core/SessionWriter.h"
 #include "core/Sidebar.h"
 #include "core/SidebarTopRow.h"
 #include "core/SpaceBar.h"
 #include "core/SpaceEditing.h"
 #include "core/SpaceSwipeGesture.h"
+#include "core/StoreFile.h"
 #include "core/SupportDirectory.h"
 #include "core/ThemeBackdrop.h"
 #include "core/URLInput.h"
@@ -101,7 +147,15 @@ int Usage() {
         "       kitecore [--profile DIR] space swipe DX [SECONDS]\n"
         "       kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...\n"
         "       kitecore [--profile DIR] space move ID PLACE|drag ID X [Y]\n"
-        "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n",
+        "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n"
+        "       kitecore [--profile DIR] backups\n"
+        "       kitecore save-schedule KIND@SECONDS... [--at SECONDS]\n"
+        "       kitecore save-bench [TABS]\n"
+        "       kitecore [--profile DIR] history list|search TEXT... [--limit N]|add URL [TITLE...] [--at SECONDS]\n"
+        "                |merge FILE|remove URL...|remove-since SECONDS|all|clear [--chromium PROFILE]\n"
+        "       kitecore history chromium-date MICROSECONDS\n"
+        "       kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]\n"
+        "       kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY\n",
         stderr);
     return kUsage;
 }
@@ -228,6 +282,254 @@ void AddLook(json::Object& o, const SpaceIconLook& look, LookIn in = LookIn::Bar
 // Ids typed in either case, like UUID(uuidString:).
 std::string Id(const std::string& text) { return NormalizeUuid(text).value_or(text); }
 
+std::optional<double> ParseSeconds(const std::string& text) {
+    double value = 0;
+    auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (error != std::errc() || end != text.data() + text.size() || !std::isfinite(value)) return std::nullopt;
+    return value;
+}
+
+std::string PathUtf8(const std::filesystem::path& path) {
+    auto u8 = path.u8string();
+    return std::string(u8.begin(), u8.end());
+}
+
+json::Value BackupsSummary(const SessionBackups& backups) {
+    json::Array rows;
+    for (const auto& backup : backups.Ordered(SessionBackups::Now())) {
+        const auto summary = SessionBackups::SummaryOf(backup);
+        json::Object o{{"file", PathUtf8(backup.file.filename())},
+                       {"kind", std::string(SessionBackups::RawValue(backup.kind))},
+                       {"stamp", SessionBackups::Stamp(backup.date)},
+                       {"date", backup.date},
+                       {"restorable", summary.IsRestorable()}};
+        if (summary.spaceCount) o.emplace("spaces", static_cast<double>(*summary.spaceCount));
+        if (summary.tabCount) o.emplace("tabs", static_cast<double>(*summary.tabCount));
+        rows.push_back(json::Value(std::move(o)));
+    }
+    return json::Value(json::Object{{"directory", PathUtf8(backups.Directory())}, {"backups", json::Value(std::move(rows))}});
+}
+
+// The changes `save-schedule` replays: KIND@SECONDS, in time order.
+int SaveScheduleCommand(const std::vector<std::string>& args) {
+    std::vector<SaveChange> changes;
+    std::optional<double> until;
+    for (size_t i = 1; i < args.size(); ++i) {
+        if (args[i] == "--at" && i + 1 < args.size()) {
+            if (!(until = ParseSeconds(args[++i]))) return Usage();
+            continue;
+        }
+        const size_t at = args[i].find('@');
+        if (at == std::string::npos) return Usage();
+        auto delay = SessionSaveDelayFromRaw(args[i].substr(0, at));
+        auto seconds = ParseSeconds(args[i].substr(at + 1));
+        if (!delay || !seconds || (!changes.empty() && *seconds < changes.back().at)) return Usage();
+        changes.push_back({*seconds, *delay});
+    }
+    const SaveReplay replay = ReplaySaves(changes, until);
+    json::Array saves;
+    for (const ReplayedSave& save : replay.saves) {
+        saves.push_back(json::Object{{"at", save.at}, {"kind", std::string(RawValue(save.kind))}});
+    }
+    json::Object out{{"saves", json::Value(std::move(saves))}};
+    if (until) {
+        out.emplace("pending", replay.pending ? json::Value(std::string(RawValue(*replay.pending))) : json::Value(nullptr));
+        out.emplace("dueAt", replay.dueAt ? json::Value(*replay.dueAt) : json::Value(nullptr));
+    }
+    std::puts(json::Write(json::Value(std::move(out))).c_str());
+    return kOk;
+}
+
+// What saving a session of `tabs` tabs costs, measured on the app's own path, in a temp folder.
+int SaveBenchCommand(int tabs) {
+    std::error_code ignored;
+    const std::filesystem::path folder = std::filesystem::temp_directory_path(ignored) / ("kite-save-bench-" + NewUuid());
+    struct Cleanup {
+        std::filesystem::path folder;
+        ~Cleanup() {
+            std::error_code ignored;
+            std::filesystem::remove_all(folder, ignored);
+        }
+    } cleanup{folder};
+    const SessionStore store(folder / "session.json");
+    BrowserState state = BrowserState::MakeDefault(std::nullopt);
+    for (int i = 0; i < tabs; ++i) {
+        const std::string n = std::to_string(i);
+        const std::string id = state.OpenTab("https://example.com/articles/" + n + "?ref=kite-bench", std::nullopt, true, Now());
+        if (auto at = state.Location(id)) {
+            Tab* tab = state.TabAt(*at);
+            tab->title = "A page with a usual title, number " + n + " — Example";
+            tab->faviconURL = "https://example.com/favicon.ico";
+        }
+    }
+    constexpr int kRuns = 25;
+    auto median = [](std::vector<double> values) {
+        std::sort(values.begin(), values.end());
+        return values[values.size() / 2];
+    };
+    std::vector<double> copies, encodes, writes;
+    size_t bytes = 0;
+    // Backups dated in 1970, so each run's hourly check is one in-memory comparison, as in the app.
+    SessionWriter writer(store, true, [] { return 0.0; });
+    for (int run = 0; run < kRuns; ++run) {
+        // A change between runs, so each one is written (an unchanged one is skipped).
+        state.spaces[0].tabs[0].title = "run " + std::to_string(run);
+        const auto start = std::chrono::steady_clock::now();
+        writer.Save(state);  // the UI thread's whole part: the copy handed over
+        copies.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count());
+        if (std::string error = writer.Flush(); !error.empty()) {
+            std::fprintf(stderr, "kitecore: %s\n", error.c_str());
+            return kSaveFailed;
+        }
+        const auto stats = writer.Stats();
+        encodes.push_back(stats.lastEncodeMicros);
+        writes.push_back(stats.lastWriteMicros);
+        bytes = stats.lastBytes;
+    }
+    std::puts(json::Write(json::Value(json::Object{{"tabs", static_cast<double>(tabs)},
+                                                   {"bytes", static_cast<double>(bytes)},
+                                                   {"runs", static_cast<double>(kRuns)},
+                                                   {"uiThreadCopyMicros", median(copies)},
+                                                   {"uiThreadCopyMaxMicros", *std::max_element(copies.begin(), copies.end())},
+                                                   {"encodeMicros", median(encodes)},
+                                                   {"writeMicros", median(writes)}}))
+                  .c_str());
+    return kOk;
+}
+
+// MARK: History
+
+json::Value EntrySummary(const HistoryEntry& entry) {
+    return json::Value(json::Object{{"url", entry.url},
+                                    {"title", entry.title},
+                                    {"displayTitle", entry.DisplayTitle()},
+                                    {"lastVisit", entry.lastVisit},
+                                    {"visitCount", entry.visitCount}});
+}
+
+json::Value EntriesSummary(const std::vector<HistoryEntry>& entries) {
+    json::Array rows;
+    for (const HistoryEntry& entry : entries) rows.push_back(EntrySummary(entry));
+    return json::Value(std::move(rows));
+}
+
+std::optional<size_t> ParseCount(const std::string& text) {
+    size_t value = 0;
+    auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (error != std::errc() || end != text.data() + text.size()) return std::nullopt;
+    return value;
+}
+
+// kitecore history ...: on the file itself, read and written at once (the app's are on its
+// writer thread). An unreadable file is reported and left as it is, never written over.
+int HistoryCommand(std::vector<std::string> args, const std::filesystem::path& support) {
+    std::string chromium = BrowserState::kDefaultProfile;
+    std::optional<size_t> limit;
+    std::optional<double> at;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const bool hasValue = i + 1 < args.size();
+        if (args[i] == "--chromium" && hasValue) {
+            chromium = args[i + 1];
+        } else if (args[i] == "--limit" && hasValue) {
+            if (!(limit = ParseCount(args[i + 1]))) return Usage();
+        } else if (args[i] == "--at" && hasValue) {
+            if (!(at = ParseSeconds(args[i + 1]))) return Usage();
+        } else {
+            continue;
+        }
+        args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+        --i;
+    }
+    // A profile folder's name, never a path out of the support folder.
+    if (args.size() < 2 || chromium.empty() || chromium.find_first_of("/\\:") != std::string::npos || chromium == "." || chromium == "..") {
+        return Usage();
+    }
+    const std::string& action = args[1];
+    if (action == "chromium-date") {
+        if (args.size() != 3) return Usage();
+        int64_t micros = 0;
+        auto [end, error] = std::from_chars(args[2].data(), args[2].data() + args[2].size(), micros);
+        if (error != std::errc() || end != args[2].data() + args[2].size()) return Usage();
+        std::puts(json::Write(json::Value(History::ChromiumDate(micros))).c_str());
+        return kOk;
+    }
+    const HistoryFile file(HistoryStores::FileFor(support, chromium));
+    auto loaded = file.Load(HistoryFile::Unreadable::Leave);
+    if (auto* error = std::get_if<HistoryFile::Error>(&loaded)) {
+        std::fprintf(stderr, "kitecore: unreadable history: %s\n", error->message.c_str());
+        return kLoadFailed;
+    }
+    History history;
+    if (auto* found = std::get_if<History>(&loaded)) history = std::move(*found);
+    const auto save = [&] {
+        if (std::string error = file.Save(history); !error.empty()) {
+            std::fprintf(stderr, "kitecore: %s\n", error.c_str());
+            return static_cast<int>(kSaveFailed);
+        }
+        return static_cast<int>(kOk);
+    };
+    if (action == "list" && args.size() == 2) {
+        std::vector<HistoryEntry> entries = history.Entries();
+        std::stable_sort(entries.begin(), entries.end(), [](const HistoryEntry& a, const HistoryEntry& b) { return a.lastVisit > b.lastVisit; });
+        if (limit && entries.size() > *limit) entries.resize(*limit);
+        std::puts(json::Write(EntriesSummary(entries)).c_str());
+        return kOk;
+    }
+    if (action == "search" && args.size() >= 3) {
+        std::puts(json::Write(EntriesSummary(history.Search(Join(args, 2), limit.value_or(4)))).c_str());
+        return kOk;
+    }
+    if (action == "add" && args.size() >= 3) {
+        const std::string& url = args[2];
+        if (!History::Records(url)) {
+            std::fprintf(stderr, "kitecore: history keeps web pages only (http and https): %s\n", url.c_str());
+            return kNotFound;
+        }
+        history.RecordVisit(url, Join(args, 3), at.value_or(Now()));
+        if (int code = save(); code != kOk) return code;
+        std::puts(json::Write(EntrySummary(*history.Find(url))).c_str());
+        return kOk;
+    }
+    if (action == "merge" && args.size() == 3) {
+        const auto text = store_file::Read(std::filesystem::path(std::u8string(args[2].begin(), args[2].end())),
+                                           store_file::kMaxHistoryReadBytes);
+        if (!text) {
+            std::fprintf(stderr, "kitecore: couldn't read %s\n", args[2].c_str());
+            return kLoadFailed;
+        }
+        auto imported = History::DecodeFile(*text);
+        if (auto* error = std::get_if<std::string>(&imported)) {
+            std::fprintf(stderr, "kitecore: not a history file: %s\n", error->c_str());
+            return kLoadFailed;
+        }
+        const size_t added = history.Merge(std::get<History>(imported).Entries());
+        if (int code = save(); code != kOk) return code;
+        std::puts(json::Write(json::Value(json::Object{{"added", added}, {"entries", history.Count()}})).c_str());
+        return kOk;
+    }
+    if (action == "remove" && args.size() >= 3) {
+        const size_t before = history.Count();
+        history.Remove(std::vector<std::string>(args.begin() + 2, args.end()));
+        if (int code = save(); code != kOk) return code;
+        std::puts(json::Write(json::Value(json::Object{{"removed", before - history.Count()}})).c_str());
+        return kOk;
+    }
+    if (action == "remove-since" && args.size() == 3) {
+        std::optional<Timestamp> since;
+        if (args[2] != "all" && !(since = ParseSeconds(args[2]))) return Usage();
+        const size_t before = history.Count();
+        history.RemoveVisits(since);
+        if (int code = save(); code != kOk) return code;
+        std::puts(json::Write(json::Value(json::Object{{"removed", before - history.Count()}})).c_str());
+        return kOk;
+    }
+    if (action == "clear" && args.size() == 2) {
+        history.RemoveAll();
+        return save();
+    }
+    return Usage();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -253,6 +555,17 @@ int main(int argc, char** argv) {
         --i;
     }
     if (args.empty()) return Usage();
+    // The save timer's rules alone: no profile involved.
+    if (args[0] == "save-schedule") return SaveScheduleCommand(args);
+    if (args[0] == "save-bench" && args.size() <= 2) {
+        if (profile) return Usage();  // it never touches a profile
+        int tabs = 200;
+        if (args.size() == 2) {
+            auto [end, error] = std::from_chars(args[1].data(), args[1].data() + args[1].size(), tabs);
+            if (error != std::errc() || end != args[1].data() + args[1].size() || tabs < 0 || tabs > 100000) return Usage();
+        }
+        return SaveBenchCommand(tabs);
+    }
 
     auto resolved = ResolveSupportDirectory(profile ? profile : EnvironmentPath("KITE_SUPPORT_PATH"), EnvironmentPath("LOCALAPPDATA"));
     if (auto* error = std::get_if<SupportDirectoryError>(&resolved)) {
@@ -260,6 +573,15 @@ int main(int argc, char** argv) {
         return kBadProfile;
     }
     SessionStore store(std::get<std::filesystem::path>(resolved) / "session.json");
+
+    // History is its own file: the session isn't read.
+    if (args[0] == "history") return HistoryCommand(args, std::get<std::filesystem::path>(resolved));
+
+    // These don't read the session: backups are there for when it can't be read.
+    if (args[0] == "backups" && args.size() == 1) {
+        std::puts(json::Write(BackupsSummary(store.Backups())).c_str());
+        return kOk;
+    }
 
     BrowserState state;
     // kitecore never moves the user's session aside: an unreadable one is reported and left.
@@ -353,13 +675,24 @@ int main(int argc, char** argv) {
             if (args[i] == "--current") mode = CommandBarMode::EditCurrent;
             else words.push_back(args[i]);
         }
+        // The current space's profile's history, as the bar searches it. One that doesn't read
+        // shows no rows, as in the app.
+        const HistoryFile historyFile(HistoryStores::FileFor(std::get<std::filesystem::path>(resolved), state.SelectedProfileDirectory()));
+        auto history = historyFile.Load(HistoryFile::Unreadable::Leave);
+        if (auto* error = std::get_if<HistoryFile::Error>(&history)) {
+            std::fprintf(stderr, "kitecore: unreadable history, left out: %s\n", error->message.c_str());
+        }
+        const History* visited = std::get_if<History>(&history);
         json::Array rows;
-        for (const CommandSuggestion& row : CommandBarSuggestions(Join(words, 0), state, mode)) {
-            const char* kind = row.kind == CommandSuggestion::Kind::Open ? "open"
-                               : row.kind == CommandSuggestion::Kind::Search ? "search" : "switchTab";
+        for (const CommandSuggestion& row : CommandBarSuggestions(Join(words, 0), state, mode, visited)) {
+            const char* kind = row.kind == CommandSuggestion::Kind::Open        ? "open"
+                               : row.kind == CommandSuggestion::Kind::Search    ? "search"
+                               : row.kind == CommandSuggestion::Kind::SwitchTab ? "switchTab"
+                                                                                : "history";
             json::Object o{{"kind", std::string(kind)}, {"url", row.url}, {"title", row.title}, {"detail", row.detail}};
             if (!row.tabID.empty()) o.emplace("tabID", row.tabID);
             if (row.faviconURL) o.emplace("faviconURL", *row.faviconURL);
+            if (!row.subtitle.empty()) o.emplace("subtitle", row.subtitle);
             rows.emplace_back(std::move(o));
         }
         std::puts(json::Write(json::Value(std::move(rows))).c_str());
@@ -736,6 +1069,91 @@ int main(int argc, char** argv) {
             const auto& presets = Theme::Presets();
             std::puts(state.AddSpace(std::string(unicode::Trim(args[2])), args.size() == 4 ? args[3] : "",
                                      presets[state.spaces.size() % presets.size()]).c_str());
+        } else {
+            return Usage();
+        }
+        changed = true;
+    } else if (command == "import-arc") {
+        arc_import::ImportOptions options;
+        std::optional<std::filesystem::path> picked;
+        bool automatic = false;
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--include-unnamed" && !options.includeUntitled) options.includeUntitled = true;
+            else if (args[i] == "--leave-out-unnamed" && !options.includeUntitled) options.includeUntitled = false;
+            else if (args[i] == "--auto" && !picked) automatic = true;
+            else if (!automatic && !picked && !args[i].starts_with("--")) picked = std::filesystem::path(std::u8string(args[i].begin(), args[i].end()));
+            else return Usage();
+        }
+        const auto arcDirectory = arc_import::ArcDirectory(profile ? profile : EnvironmentPath("KITE_SUPPORT_PATH"),
+                                                           EnvironmentPath("KITE_ARC_DATA_PATH"), EnvironmentPath("LOCALAPPDATA"));
+        std::variant<arc_import::Plan, arc_import::LoadError> plan = arc_import::LoadError{};
+        try {
+            plan = picked ? arc_import::ReadPicked(*picked, arcDirectory) : arc_import::ReadAuto(arcDirectory);
+        } catch (const std::exception& e) {
+            plan = arc_import::ReadFailed(e.what());
+        } catch (...) {
+            plan = arc_import::ReadFailed(nullptr);
+        }
+        if (auto* error = std::get_if<arc_import::LoadError>(&plan)) {
+            std::fprintf(stderr, "kitecore: %s %s\n", error->message.c_str(), error->detail.c_str());
+            return kNotFound;
+        }
+        arc_import::Imported imported = arc_import::Import(state, std::get<arc_import::Plan>(plan), options);
+        // The session first: shortcut changes and routes to spaces it doesn't have would be no use.
+        if (std::string error = store.Save(state); !error.empty()) {
+            std::fprintf(stderr, "kitecore: %s\n", error.c_str());
+            return kSaveFailed;
+        }
+        arc_import::WriteProfileFiles(imported, std::get<std::filesystem::path>(resolved));
+        // Then each Arc profile's history, into the stores the app keeps (history.json, and
+        // Chromium/<dir>/Kite History.json for another profile), written before the summary.
+        HistoryStores stores(std::get<std::filesystem::path>(resolved));
+        stores.Start();
+        if (!arc_import::MergeHistories(imported, stores, std::chrono::seconds(60))) {
+            std::fputs("kitecore: history: the profiles' history files weren't read within 60 s, so Arc's history wasn't merged\n", stderr);
+            return kSaveFailed;
+        }
+        stores.SaveNow();
+        if (std::string error = stores.Flush(DeadlineAfter(std::chrono::seconds(60))); !error.empty()) {
+            std::fprintf(stderr, "kitecore: history: %s\n", error.c_str());
+            return kSaveFailed;
+        }
+        std::puts(json::Write(arc_import::Summary(imported)).c_str());
+        return kOk;
+    } else if (command == "profile" && args.size() >= 2) {
+        const std::string& action = args[1];
+        if (action == "list" && args.size() == 2) {
+            json::Array rows;
+            for (const Profile& p : AllProfiles(state)) {
+                json::Object o{{"directory", p.directory}, {"name", p.name}, {"dataStoreID", p.dataStoreID}};
+                o.emplace("deletable", CanDeleteProfile(state, p.directory));
+                rows.push_back(json::Value(std::move(o)));
+            }
+            std::puts(json::Write(json::Value(std::move(rows))).c_str());
+            return kOk;
+        } else if (action == "add" && args.size() == 3) {
+            auto made = CreateProfile(state, args[2]);
+            if (auto* error = std::get_if<ProfileNameError>(&made)) {
+                std::fprintf(stderr, "kitecore: %s\n", Message(*error));
+                return kUsage;
+            }
+            std::puts(std::get<Profile>(made).directory.c_str());
+        } else if (action == "rename" && args.size() == 4) {
+            if (ProfileFor(state, args[2]).directory != args[2] || args[2] == Profile::kDefaultDirectory) return kNotFound;
+            if (auto error = RenameProfile(state, args[2], args[3])) {
+                std::fprintf(stderr, "kitecore: %s\n", Message(*error));
+                return kUsage;
+            }
+        } else if (action == "delete" && args.size() == 3) {
+            // Arc's rule: only a profile no space uses, never the default one.
+            if (!DeleteProfile(state, args[2])) return kNotFound;
+            // The shell deletes a profile's Chromium folder; with none, its name is free at once.
+            std::error_code error;
+            if (!std::filesystem::exists(std::get<std::filesystem::path>(resolved) / "Chromium" /
+                                             std::filesystem::path(std::u8string(args[2].begin(), args[2].end())),
+                                         error)) {
+                ForgetRetiredProfiles(state, {args[2]});
+            }
         } else {
             return Usage();
         }

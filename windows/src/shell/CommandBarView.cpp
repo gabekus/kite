@@ -73,8 +73,8 @@ constexpr float kShadowBlur = 30;
 constexpr float kShadowOpacity = 0.5f;
 constexpr float kShadowY = 16;
 constexpr float kShadowMargin = 112;  // room for it around the panel: 3σ and the offset
-// Open, five tabs, search: the most rows CommandBarSuggestions makes.
-constexpr size_t kMaxRows = 7;
+// Open, five tabs, three pages from history, search: the most rows CommandBarSuggestions makes.
+constexpr size_t kMaxRows = 10;
 // The Mac's default text selection colours (NSColor.selectedTextBackgroundColor), not
 // checked against Arc's bar.
 constexpr D2D1_COLOR_F kDarkSelection{63 / 255.0f, 99 / 255.0f, 139 / 255.0f, 1};
@@ -87,8 +87,10 @@ constexpr UINT kSwapChainFlags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJ
 constexpr wchar_t kGlobeGlyph = 0xE774;
 constexpr wchar_t kSearchGlyph = 0xE721;
 constexpr wchar_t kArrowGlyph = 0xE72A;
-// The Mac's FaviconView with no favicon yet: the globe at 60%.
+// The Mac's FaviconView with no favicon yet: the globe at 60% (of labelColor, SidebarKit.swift:269, 313).
 constexpr float kNoFaviconOpacity = 0.6f;
+// NSColor.labelColor's alpha, in both appearances.
+constexpr float kLabelAlpha = 0.85f;
 
 // How much of a Gaussian of standard deviation `sigma` falls between `from` and `to`: the
 // shadow's falloff along one axis at `x`.
@@ -226,7 +228,7 @@ bool CommandBarView::CreateGpu(std::wstring& error) {
     // In the overlay: over the page's child window (the backdrop is behind it).
     composition_ = compositor_->Device();
     if (FAILED(hr = composition_->CreateVisual(visual_.ReleaseAndGetAddressOf())) ||
-        FAILED(hr = compositor_->Overlay()->AddVisual(visual_.Get(), FALSE, nullptr)) || FAILED(hr = composition_->Commit())) {
+        FAILED(hr = compositor_->Overlay()->AddVisual(visual_.Get(), FALSE, nullptr)) || FAILED(hr = compositor_->Commit())) {
         error = HResultMessage(L"building the command bar's composition tree", hr);
         ReleaseGpu();
         return false;
@@ -245,7 +247,7 @@ void CommandBarView::ReleaseGpu() {
     caret_.Release();
     if (visual_ && compositor_) {
         compositor_->Overlay()->RemoveVisual(visual_.Get());
-        composition_->Commit();
+        compositor_->Commit();
     }
     visual_.Reset();
     composition_.Reset();
@@ -463,7 +465,7 @@ void CommandBarView::Hide() {
     // Its buffers go until it opens again; the device, target and shadow strips stay.
     ReleaseBuffers();
     caret_.Update(composition_.Get(), context_.Get(), visual_.Get(), false, {}, 0, 0, {});
-    if (composition_) composition_->Commit();
+    if (composition_ && compositor_) compositor_->Commit();
     line_.Edit().SetText(std::wstring(), 0, 0);
     line_.Relayout();
     rows_.clear();
@@ -540,8 +542,19 @@ void CommandBarView::BuildRowText() {
             titleRight = boxLeft - C::kActionGap - text.detailWidth - C::kActionGap;
         }
         const std::wstring title = Widen(row.title);
-        dwrite_->CreateTextLayout(title.c_str(), static_cast<UINT32>(title.size()), rowEllipsisFormat_.Get(),
-                                  std::max(titleRight - C::kRowTitleX, 1.0f), C::kRowFillHeight, text.title.GetAddressOf());
+        const float room = std::max(titleRight - C::kRowTitleX, 1.0f);
+        dwrite_->CreateTextLayout(title.c_str(), static_cast<UINT32>(title.size()), rowEllipsisFormat_.Get(), room, C::kRowFillHeight,
+                                  text.title.GetAddressOf());
+        if (text.title && !row.subtitle.empty()) {
+            DWRITE_TEXT_METRICS metrics{};
+            if (SUCCEEDED(text.title->GetMetrics(&metrics))) text.titleWidth = metrics.widthIncludingTrailingWhitespace;
+            // The subtitle only where the whole title fits; the rest of the line, cut at its end.
+            if (text.titleWidth < room - 1) {
+                const std::wstring subtitle = L" \u2014 " + Widen(row.subtitle);
+                dwrite_->CreateTextLayout(subtitle.c_str(), static_cast<UINT32>(subtitle.size()), rowEllipsisFormat_.Get(),
+                                          room - text.titleWidth, C::kRowFillHeight, text.subtitle.GetAddressOf());
+            }
+        }
         rowText_.push_back(std::move(text));
     }
 }
@@ -707,7 +720,7 @@ void CommandBarView::UpdateCaret() {
     }
     // The hidden system caret follows, in client pixels.
     if (wanted && focused_) SetCaretPos(g.leftPx + std::lround(x * g.scale), g.topPx + std::lround(TextTop() * g.scale));
-    composition_->Commit();
+    compositor_->Commit();
 }
 
 // Messages -------------------------------------------------------------------------------
@@ -905,6 +918,8 @@ std::wstring CommandBarView::Draw(Pixels* readBack, POINT* origin) {
         *readBack = std::move(*pixels);
         if (origin) *origin = {g.leftPx - g.marginPx, g.topPx - g.marginPx};
     }
+    perf::CountSurfaceDraw(perf::View::CommandBar);
+    perf::CountPresent();
     if (FAILED(hr = swapChain_->Present(1, 0))) {
         deviceLost_ = IsDeviceLost(hr);
         return HResultMessage(L"presenting the command bar", hr);
@@ -914,6 +929,11 @@ std::wstring CommandBarView::Draw(Pixels* readBack, POINT* origin) {
 }
 
 D2D1_COLOR_F CommandBarView::Primary() const { return look_.dark ? Color(1, 1, 1, 1) : Color(0, 0, 0, 1); }
+
+// labelColor is white (dark) or black (light) at 0.85 alpha. Where the Mac takes it with
+// withAlphaComponent (the subtitle, the placeholder, the arrow box) that alpha is replaced, not
+// multiplied, so those use Primary with their own.
+D2D1_COLOR_F CommandBarView::Label(float opacity) const { return WithAlpha(Primary(), kLabelAlpha * opacity); }
 
 D2D1_COLOR_F CommandBarView::Accent() const { return Color(look_.accent.r, look_.accent.g, look_.accent.b, 1); }
 
@@ -960,7 +980,7 @@ void CommandBarView::DrawField(ID2D1DeviceContext* context) {
         const D2D1_COLOR_F selection = look_.dark ? kDarkSelection : kLightSelection;
         line_.DrawSelection(context, brush_.Get(), origin, origin.y, origin.y + line_.LineHeight(),
                             focused_ ? selection : WithAlpha(Primary(), 0.15f));
-        brush_->SetColor(Primary());
+        brush_->SetColor(Label());  // CommandBar.swift:533, textColor = .labelColor
         context->DrawTextLayout(origin, layout, brush_.Get());
     }
     // The caret is its own visual (UpdateCaret).
@@ -1000,12 +1020,16 @@ void CommandBarView::DrawRow(ID2D1DeviceContext* context, size_t index, float to
     case CommandSuggestion::Kind::Open: icon = kGlobeGlyph; break;
     case CommandSuggestion::Kind::Search: icon = kSearchGlyph; break;
     case CommandSuggestion::Kind::SwitchTab:
-        // Favicons come with the sidebar (W4); until then the Mac's no-favicon globe.
+    case CommandSuggestion::Kind::History:
+        // The bar's favicons come later (the sidebar's are W4's); until then the Mac's
+        // no-favicon globe, for a tab and for a page from history (FaviconView.show(page:)).
         icon = kGlobeGlyph;
         iconOpacity = kNoFaviconOpacity;
         break;
     }
-    Glyph(context, icon, C::kRowIconSize, tile, WithAlpha(highlighted ? accent : Primary(), iconOpacity));
+    // CommandBar.swift:820 (the symbol's tint) and SidebarKit.swift:269 (the favicon's globe):
+    // labelColor, at the globe's 60%.
+    Glyph(context, icon, C::kRowIconSize, tile, highlighted ? WithAlpha(accent, iconOpacity) : Label(iconOpacity));
 
     // The arrow in its 24pt box, 13pt from the fill's right.
     const float boxRight = fill.right - C::kActionBoxTrailing;
@@ -1014,18 +1038,27 @@ void CommandBarView::DrawRow(ID2D1DeviceContext* context, size_t index, float to
     const float boxOpacity = highlighted ? 1 : 0.7f;
     brush_->SetColor(highlighted ? white : WithAlpha(Primary(), 0.06f * boxOpacity));
     context->FillRoundedRectangle(D2D1::RoundedRect(box, 6, 6), brush_.Get());
-    Glyph(context, kArrowGlyph, 13, box, highlighted ? accent : WithAlpha(Primary(), boxOpacity));
+    Glyph(context, kArrowGlyph, 13, box, highlighted ? accent : Label(boxOpacity));  // CommandBar.swift:821, 823
 
     if (index >= rowText_.size()) return;
     const RowText& text = rowText_[index];
     if (text.detail) {
         const float right = box.left - C::kActionGap;
-        brush_->SetColor(highlighted ? WithAlpha(white, 0.8f) : WithAlpha(Primary(), C::kRowDetailOpacity));
+        brush_->SetColor(highlighted ? WithAlpha(white, 0.8f) : Label(C::kRowDetailOpacity));  // CommandBar.swift:836-837
         context->DrawTextLayout(D2D1::Point2F(right - text.detailWidth, fill.top), text.detail.Get(), brush_.Get());
     }
     if (text.title) {
-        brush_->SetColor(highlighted ? white : WithAlpha(Primary(), C::kRowTextOpacity));
+        brush_->SetColor(highlighted ? white : Label(C::kRowTextOpacity));  // CommandBar.swift:826, 833
         context->DrawTextLayout(D2D1::Point2F(fill.left + C::kRowTitleX, fill.top), text.title.Get(), brush_.Get(),
+                                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+    if (text.subtitle) {
+        // The Mac's dim part: white at 0.7 on the accent, else the label colour at 0.5, both
+        // under the title's own 0.8 when not highlighted.
+        // CommandBar.swift:829, 833: labelColor.withAlphaComponent(0.5) (replacing its 0.85), under
+        // the title's 0.8.
+        brush_->SetColor(highlighted ? WithAlpha(white, 0.7f) : WithAlpha(Primary(), 0.5f * C::kRowTextOpacity));
+        context->DrawTextLayout(D2D1::Point2F(fill.left + C::kRowTitleX + text.titleWidth, fill.top), text.subtitle.Get(), brush_.Get(),
                                 D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
 }

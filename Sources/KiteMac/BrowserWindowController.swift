@@ -150,6 +150,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         self.isIncognito = incognito
         self.pool = PagePool(engine: engine, store: store)
         if let sharedPages { pool.join(sharedPages) }
+        // Incognito tabs leave no history on disk.
+        if !incognito { pool.historyFiles = AppDelegate.tabHistory }
         let savedWidth = UserDefaults.standard.double(forKey: Self.sidebarWidthKey)
         self.sidebarWidth = savedWidth > 0 ? Self.clampedSidebarWidth(savedWidth) : Layout.defaultSidebarWidth
         let window = BrowserWindow(
@@ -634,7 +636,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             materialView.appearance = appearance
             peekCard.material.appearance = appearance
         }
-        peekCard.theme.setTheme(space.theme, animated: shownSpaceID != nil)
+        // Hidden, it would run its own crossfade frames for nobody; it just takes the new theme.
+        peekCard.theme.setTheme(space.theme, animated: shownSpaceID != nil && !peekCard.isHiddenOrHasHiddenAncestor)
         if let shownSpaceID, shownSpaceID != space.id, let old = state.spaceIndex(shownSpaceID) {
             spaceSwipe.spaceChanged(from: old, to: state.selectedSpaceIndex)
         }
@@ -1503,6 +1506,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             // An incognito window keeps nothing, so there's nowhere to put the import.
             return !isIncognito
         case #selector(setAsDefaultBrowser(_:)):
+            item.isHidden = !Self.canBeDefaultBrowser
             item.state = Self.isDefaultBrowser ? .on : .off
         case #selector(capturePage(_:)), #selector(captureFullPage(_:)), #selector(capturePortraitMode(_:)):
             return shownPage != nil && store.state.selectedTab?.url != nil

@@ -1,0 +1,15 @@
+{
+  "items": [
+    "00000000-0000-4000-8000-000000000501",
+    {"archivedAt": 800001000, "reason": "auto",
+     "source": {"space": {"_0": "00000000-0000-4000-8000-000000000001"}},
+     "sidebarItem": {"id": "00000000-0000-4000-8000-000000000501", "parentID": null, "title": null, "childrenIds": [], "createdAt": 800000100, "isUnread": false, "originatingDevice": "TESTDEVICE",
+       "data": {"tab": {"savedURL": "https://old.example.test/page", "savedTitle": "Old Page", "savedMuteStatus": "allowAudio", "timeLastActiveAt": 800000900, "activeTabBeforeCreationID": "00000000-0000-4000-8000-000000000110"}}}},
+    "00000000-0000-4000-8000-000000000502",
+    {"archivedAt": 800000500, "reason": "manual",
+     "source": {"space": {"_0": "00000000-0000-4000-8000-000000000999"}},
+     "sidebarItem": {"id": "00000000-0000-4000-8000-000000000502", "parentID": null, "title": "Renamed Old", "childrenIds": [], "createdAt": 800000050, "isUnread": false, "originatingDevice": "TESTDEVICE",
+       "data": {"tab": {"savedURL": "https://older.example.test/", "savedTitle": "Older", "savedMuteStatus": "allowAudio", "timeLastActiveAt": 800000400, "referrerID": "00000000-0000-4000-8000-000000000501"}}}}
+  ],
+  "version": 1
+}
