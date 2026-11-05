@@ -794,6 +794,9 @@ std::optional<BrowserState> DecodeBrowserState(const Value& v) {
     if (auto engine = OptionalString(v, "searchEngine")) state.searchEngine = *engine;
     state.extra = Extra(v, {"spaces", "selectedSpaceID", "favorites", "profileFavorites", "favoriteSplits", "recentlyClosed",
                             "archived", "archiveAfter", "searchEngine"});
+    // Pinned tabs saved before Kite kept a pinned URL take the page they're on, as the Mac's
+    // decoder does.
+    state.SyncPinnedURLs();
     return state;
 }
 

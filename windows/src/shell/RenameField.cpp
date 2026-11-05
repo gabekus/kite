@@ -1,6 +1,6 @@
-// See SpaceRenameField.h.
+// See RenameField.h.
 
-#include "shell/SpaceRenameField.h"
+#include "shell/RenameField.h"
 
 #include <algorithm>
 #include <cmath>
@@ -42,11 +42,11 @@ bool Inside(const D2D1_RECT_F& r, float x, float y) { return x >= r.left && x < 
 
 }  // namespace
 
-std::unique_ptr<SpaceRenameField> SpaceRenameField::Create(HWND window, IDWriteFactory* dwrite, IDWriteTextFormat* format,
-                                                           IDWriteTextFormat* done, std::string spaceID, const std::string& name,
-                                                           std::wstring& error) {
-    std::unique_ptr<SpaceRenameField> field(new SpaceRenameField(window, std::move(spaceID)));
-    // The field's own format: the header's without its "…" (a field scrolls instead).
+std::unique_ptr<RenameField> RenameField::Create(HWND window, IDWriteFactory* dwrite, IDWriteTextFormat* format, IDWriteTextFormat* done,
+                                                 std::string id, const std::string& text, std::wstring_view placeholder,
+                                                 std::wstring& error) {
+    std::unique_ptr<RenameField> field(new RenameField(window, std::move(id)));
+    // The field's own format: its row's without the "…" (a field scrolls instead).
     wchar_t family[64]{};
     ComPtr<IDWriteTextFormat> own;
     HRESULT hr = format->GetFontFamilyName(family, 64);
@@ -55,32 +55,33 @@ std::unique_ptr<SpaceRenameField> SpaceRenameField::Create(HWND window, IDWriteF
                                       format->GetFontSize(), L"", own.GetAddressOf());
     }
     if (SUCCEEDED(hr)) hr = own->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-    static constexpr wchar_t kPlaceholder[] = L"Space Name";
     static constexpr wchar_t kDone[] = L"Done";
-    if (SUCCEEDED(hr)) {
-        hr = dwrite->CreateTextLayout(kPlaceholder, static_cast<UINT32>(std::size(kPlaceholder) - 1), own.Get(), 100000,
+    if (SUCCEEDED(hr) && !placeholder.empty()) {
+        hr = dwrite->CreateTextLayout(placeholder.data(), static_cast<UINT32>(placeholder.size()), own.Get(), 100000,
                                       format->GetFontSize() * 2, field->placeholder_.GetAddressOf());
     }
-    if (SUCCEEDED(hr)) {
+    if (SUCCEEDED(hr) && done) {
         hr = dwrite->CreateTextLayout(kDone, static_cast<UINT32>(std::size(kDone) - 1), done, 100000, done->GetFontSize() * 2,
                                       field->done_.GetAddressOf());
     }
     DWRITE_TEXT_METRICS metrics{};
-    if (SUCCEEDED(hr)) hr = field->done_->GetMetrics(&metrics);
+    if (SUCCEEDED(hr) && done) hr = field->done_->GetMetrics(&metrics);
     if (FAILED(hr)) {
         error = HResultMessage(L"the rename field's text", hr);
         return nullptr;
     }
-    // SidebarLabel.naturalWidth: the text's width rounded up to a whole point, so Done's label sits
-    // up to a point short of the cell's end, as the Mac's does.
-    field->doneWidth_ = std::ceil(metrics.widthIncludingTrailingWhitespace);
-    DWRITE_LINE_METRICS line{};
-    UINT32 count = 0;
-    if (SUCCEEDED(field->done_->GetLineMetrics(&line, 1, &count)) && count == 1) field->doneLayoutBaseline_ = line.baseline;
-    // The name, all selected, as SpaceRenameField.begin's selectAll.
-    std::wstring text = Widen(name);
-    const size_t end = text.size();
-    field->line_.Edit().SetText(std::move(text), end, 0);
+    if (done) {
+        // SidebarLabel.naturalWidth: the text's width rounded up to a whole point, so Done's label sits
+        // up to a point short of the cell's end, as the Mac's does.
+        field->doneWidth_ = std::ceil(metrics.widthIncludingTrailingWhitespace);
+        DWRITE_LINE_METRICS line{};
+        UINT32 count = 0;
+        if (SUCCEEDED(field->done_->GetLineMetrics(&line, 1, &count)) && count == 1) field->doneLayoutBaseline_ = line.baseline;
+    }
+    // The text, all selected, as begin(with:)'s selectAll.
+    std::wstring wide = Widen(text);
+    const size_t end = wide.size();
+    field->line_.Edit().SetText(std::move(wide), end, 0);
     field->line_.SetFormat(dwrite, own.Get(), format->GetFontSize() * 2);
     field->focused_ = GetFocus() == window;
     if (field->focused_) CreateCaret(window, nullptr, 1, 1);  // hidden: where magnifiers and IMEs look
@@ -88,21 +89,23 @@ std::unique_ptr<SpaceRenameField> SpaceRenameField::Create(HWND window, IDWriteF
     return field;
 }
 
-SpaceRenameField::~SpaceRenameField() {
+RenameField::~RenameField() {
     line_.StopBlink();
     if (focused_) DestroyCaret();
     UseCompositor(nullptr, nullptr);
 }
 
-std::string SpaceRenameField::Text() const { return Narrow(line_.Edit().Text()); }
+std::string RenameField::Text() const { return Narrow(line_.Edit().Text()); }
 
-void SpaceRenameField::Place(float left, float right, float lineTop, float lineHeight, float baseline, D2D1_RECT_F done, float doneBaseline,
-                             UINT dpi, bool dark) {
+void RenameField::Place(float left, float right, float lineTop, float lineHeight, float baseline, D2D1_RECT_F done, float doneBaseline,
+                        float clipTop, float clipBottom, UINT dpi, bool dark) {
     if (left == left_ && right == right_ && lineTop == lineTop_ && lineHeight == lineHeight_ && baseline == baseline_ &&
-        doneBaseline == doneBaseline_ && dpi == dpi_ && dark == dark_ && done.left == doneBox_.left && done.top == doneBox_.top &&
-        done.right == doneBox_.right && done.bottom == doneBox_.bottom) {
+        doneBaseline == doneBaseline_ && clipTop == clipTop_ && clipBottom == clipBottom_ && dpi == dpi_ && dark == dark_ &&
+        done.left == doneBox_.left && done.top == doneBox_.top && done.right == doneBox_.right && done.bottom == doneBox_.bottom) {
         return;
     }
+    clipTop_ = clipTop;
+    clipBottom_ = clipBottom;
     left_ = left;
     right_ = right;
     lineTop_ = lineTop;
@@ -117,9 +120,9 @@ void SpaceRenameField::Place(float left, float right, float lineTop, float lineH
     dirty_ = true;
 }
 
-bool SpaceRenameField::InField(float x, float y) const { return x >= left_ && x < right_ && y >= lineTop_ - 4 && y < lineTop_ + lineHeight_ + 4; }
+bool RenameField::InField(float x, float y) const { return x >= left_ && x < right_ && y >= lineTop_ - 4 && y < lineTop_ + lineHeight_ + 4; }
 
-void SpaceRenameField::UseCompositor(Compositor* compositor, IDCompositionVisual* parent) {
+void RenameField::UseCompositor(Compositor* compositor, IDCompositionVisual* parent) {
     caret_.Release();
     if (visual_ && parent_) parent_->RemoveVisual(visual_.Get());
     visual_.Reset();
@@ -133,7 +136,7 @@ void SpaceRenameField::UseCompositor(Compositor* compositor, IDCompositionVisual
     caretPlaced_ = false;
 }
 
-std::wstring SpaceRenameField::Draw(Pixels* readBack, POINT* origin) {
+std::wstring RenameField::Draw(Pixels* readBack, POINT* origin) {
     if (!compositor_ || !parent_) return {};
     if (deviceLost_) return L"the GPU device was lost";
     const float scale = Scale();
@@ -172,6 +175,10 @@ std::wstring SpaceRenameField::Draw(Pixels* readBack, POINT* origin) {
         surfaceAt_ = at;
         visual_->SetOffsetX(static_cast<float>(at.x));
         visual_->SetOffsetY(static_cast<float>(at.y));
+        // Only over the list: a row scrolled under the favorites or the space bar hides its field
+        // with it (the caret too, a visual in this one).
+        visual_->SetClip(D2D_RECT_F{-static_cast<float>(at.x), std::floor(clipTop_ * scale) - static_cast<float>(at.y),
+                                    static_cast<float>(width), std::ceil(clipBottom_ * scale) - static_cast<float>(at.y)});
         const D2D1_POINT_2F shift{-static_cast<float>(at.x) / scale, -static_cast<float>(at.y) / scale};
         const std::wstring error = compositor_->DrawSurface(
             surface_.Get(), width, height, dpi_,
@@ -189,8 +196,10 @@ std::wstring SpaceRenameField::Draw(Pixels* readBack, POINT* origin) {
                 const D2D1_POINT_2F text{left_ + kTextInset - line_.ScrollX(), baseline_ - line_.Baseline()};
                 context->PushAxisAlignedClip(D2D1::RectF(left_, doneBox_.top, right_, doneBox_.bottom), D2D1_ANTIALIAS_MODE_ALIASED);
                 if (line_.Edit().Text().empty()) {
-                    brush_->SetColor(Primary(dark_, kLabelAlpha * kPlaceholderOpacity));
-                    context->DrawTextLayout(text, placeholder_.Get(), brush_.Get());
+                    if (placeholder_) {
+                        brush_->SetColor(Primary(dark_, kLabelAlpha * kPlaceholderOpacity));
+                        context->DrawTextLayout(text, placeholder_.Get(), brush_.Get());
+                    }
                 } else if (IDWriteTextLayout* layout = line_.Layout()) {
                     // The line's height, as NSTextView fills a selection.
                     line_.DrawSelection(context, brush_.Get(), text, lineTop_, lineTop_ + lineHeight_,
@@ -199,8 +208,10 @@ std::wstring SpaceRenameField::Draw(Pixels* readBack, POINT* origin) {
                     context->DrawTextLayout(text, layout, brush_.Get(), D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
                 }
                 context->PopAxisAlignedClip();
-                brush_->SetColor(Primary(dark_, kLabelAlpha * kDoneOpacity));
-                context->DrawTextLayout(D2D1::Point2F(doneBox_.left, doneBaseline_ - doneLayoutBaseline_), done_.Get(), brush_.Get());
+                if (done_) {
+                    brush_->SetColor(Primary(dark_, kLabelAlpha * kDoneOpacity));
+                    context->DrawTextLayout(D2D1::Point2F(doneBox_.left, doneBaseline_ - doneLayoutBaseline_), done_.Get(), brush_.Get());
+                }
                 context->SetTransform(base);
             },
             readBack, hr);
@@ -216,7 +227,7 @@ std::wstring SpaceRenameField::Draw(Pixels* readBack, POINT* origin) {
     return {};
 }
 
-SpaceRenameField::Outcome SpaceRenameField::Apply(TextEditing::Change change) {
+RenameField::Outcome RenameField::Apply(TextEditing::Change change) {
     if (change == TextEditing::Change::None) return Outcome::None;
     if (change == TextEditing::Change::Text) line_.Relayout();
     else line_.KeepCaretVisible();
@@ -225,7 +236,7 @@ SpaceRenameField::Outcome SpaceRenameField::Apply(TextEditing::Change change) {
     return Outcome::Changed;
 }
 
-std::optional<SpaceRenameField::Outcome> SpaceRenameField::KeyDown(UINT key, bool ctrl, bool shift) {
+std::optional<RenameField::Outcome> RenameField::KeyDown(UINT key, bool ctrl, bool shift) {
     if (key == VK_RETURN) return Outcome::Commit;
     if (key == VK_ESCAPE) return Outcome::Cancel;
     const std::optional<TextEditing::Change> change = line_.Edit().KeyDown(key, ctrl, shift);
@@ -233,10 +244,10 @@ std::optional<SpaceRenameField::Outcome> SpaceRenameField::KeyDown(UINT key, boo
     return Apply(*change);
 }
 
-SpaceRenameField::Outcome SpaceRenameField::Character(wchar_t character) { return Apply(line_.Edit().Character(character)); }
+RenameField::Outcome RenameField::Character(wchar_t character) { return Apply(line_.Edit().Character(character)); }
 
-bool SpaceRenameField::Press(float x, float y, bool shift) {
-    pressedDone_ = Inside(doneBox_, x, y);
+bool RenameField::Press(float x, float y, bool shift) {
+    pressedDone_ = done_ && Inside(doneBox_, x, y);
     if (pressedDone_) return true;
     if (!InField(x, y)) return false;
     selecting_ = true;
@@ -244,14 +255,14 @@ bool SpaceRenameField::Press(float x, float y, bool shift) {
     return true;
 }
 
-SpaceRenameField::Outcome SpaceRenameField::Move(float x, float) {
+RenameField::Outcome RenameField::Move(float x, float) {
     if (!selecting_) return Outcome::None;
     const size_t at = line_.IndexAt(x - left_ - kTextInset);
     if (at == line_.Edit().Caret()) return Outcome::None;
     return Apply(line_.Edit().Select(at, true));
 }
 
-SpaceRenameField::Outcome SpaceRenameField::Release(float x, float y) {
+RenameField::Outcome RenameField::Release(float x, float y) {
     selecting_ = false;
     // Done's mouseUp: let go over it.
     const bool done = pressedDone_ && Inside(doneBox_, x, y);
@@ -259,7 +270,7 @@ SpaceRenameField::Outcome SpaceRenameField::Release(float x, float y) {
     return done ? Outcome::Commit : Outcome::None;
 }
 
-void SpaceRenameField::SetFocused(bool focused) {
+void RenameField::SetFocused(bool focused) {
     if (focused == focused_) return;
     focused_ = focused;
     if (focused) CreateCaret(window_, nullptr, 1, 1);
@@ -269,14 +280,14 @@ void SpaceRenameField::SetFocused(bool focused) {
     dirty_ = true;  // the selection's colour
 }
 
-bool SpaceRenameField::HandleTimer(WPARAM timer) {
+bool RenameField::HandleTimer(WPARAM timer) {
     if (!line_.HandleTimer(timer)) return false;
     UpdateCaret();
     if (compositor_) compositor_->Commit();
     return true;
 }
 
-void SpaceRenameField::UpdateCaret() {
+void RenameField::UpdateCaret() {
     if (!compositor_ || !visual_) return;
     const float scale = Scale();
     const float x = left_ + kTextInset - line_.ScrollX() + line_.CaretX();
@@ -295,7 +306,7 @@ void SpaceRenameField::UpdateCaret() {
     caretPlaced_ = true;
 }
 
-void SpaceRenameField::PlaceImeWindow() {
+void RenameField::PlaceImeWindow() {
     const float scale = Scale();
     const POINT caret{pageOrigin_.x + std::lround((left_ + kTextInset - line_.ScrollX() + line_.CaretX()) * scale),
                       pageOrigin_.y + std::lround(lineTop_ * scale)};

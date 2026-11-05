@@ -562,7 +562,7 @@ A right-click on a cell or the space's header opens the space's menu with the Ma
 order and words (`SpaceMenu`): Change Space Icon…, Rename Space…, What's This Space For?…,
 Edit Theme Color…, Set Profile ▸, then New Folder and Live Folders ▸, then Delete Space
 (disabled for the last space). Rename Space…, or a click on the current space's name, opens
-the header's name field (`shell/SpaceRenameField`, the Mac's SpaceRenameField and Done): the
+the header's name field (`shell/RenameField`, the Mac's SpaceRenameField and Done): the
 name all selected in the header's 13pt semibold, 2pt into the field as in AppKit's field
 editor, over the editor's textBackgroundColor (#1E1E1E dark, white light, square, from 3pt
 before the field to 1pt past its end and 22pt tall, as the Mac's capture draws it), "Space Name" when
@@ -601,6 +601,48 @@ to the capture's) and puts its bottom-left on the cell's centre, and `--rename-s
 space N's name field drawn as with the keyboard (a quiet capture's window never has it).
 
 
+
+## Pinning, renaming and folders
+
+Pin Tab (Ctrl+D, the Mac's ⌘D, Arc's Use Both priority) moves the selected tab to the end of its
+space's pinned items, or a pinned tab (from any folder) to the top of its space's Today; a split
+moves as one, its panes in order. A pinned tab or favorite remembers the page it was pinned at
+(`pinnedURL`, `BrowserState::SyncPinnedURLs`, run after every change and as a session loads, as
+the Mac's store and decoder do: never Kite's own pages or about:blank, and unpinned tabs lose
+theirs). One that has left that page (`Tab::HasLeftPinnedURL`: a fragment, a trailing slash,
+"www." and http/https don't count) shows Back to Pinned URL (arrow.uturn.backward, Segoe's Undo
+glyph) on hover, left of the close button, which sends it home and loads its page if it has
+one. These commands have the Mac's ids and no default shortcut, so keybindings.json can bind
+them: New Folder… (`newFolder`, "New Folder" at the end of the selected space's pinned items;
+as on the Mac it doesn't open the folder's rename), Duplicate Tab (`duplicate`, a copy below
+the tab in Today, or at Today's top for a pinned tab or favorite, selected), Rename Current
+Tab… (`renameCurrentTab`), Reset all tabs in this Space (`resetSpace`), Reset Tab to Original
+URL (`resetTab`), Replace Pin with Current Page (`replacePinnedTab`) and Add to Favorites
+(`toggleFavorite`). Each is enabled as the Mac's validateMenuItem has it (a tab selected, or
+one off its pinned page), and a disabled one's key passes on.
+
+A double-click on a tab's row (on the second press, as the Mac's mouseDown) or Rename Current
+Tab… opens the row's name field (`shell/RenameField`, W9d's header field generalized): the
+title all selected in the row's 14pt, "Keep it short and sweet!" when empty, over the field
+editor's background, with no Done; Return renames (a blank name goes back to the page's title),
+Escape doesn't, and leaving it keeps what was typed, as does its row going (another space shown,
+the tab moved into a closed folder). A folder's field is the same in its 14pt semibold with no
+placeholder, and a blank name keeps the old one. The fields are visuals in their page, clipped to
+the list, so a keystroke draws only the field (the smoke test checks the page doesn't draw). A
+favorite or a split's pane has no row to rename in: the Mac's Rename Tab… dialog for those, and
+for a hidden sidebar, comes with ArcDialog (W19), a beep until then. A folder's rename has no
+way in yet but `--rename-row`: the Mac's is its menu's Rename… (W17).
+
+`kitecore tab pin|favorite|rename|duplicate|reset|reset-all|separate|reveal|pinned-url|replace-pin`
+and `kitecore folder new|rename|delete|move` do the same headless; `kitecore sidebar` gives each
+tab row's `canReset` and `renamed`, and `click … --double` is a double-click's second press.
+`--capture FILE --rename-row N` opens row N's field (from 1, as `sidebar` lists the selected
+space's rows), `--hover-row N` rests the pointer on row N, and `--run-command ID` runs a command
+first (`pinTab` on a pinned tab is the "after unpin" state). Not yet: the rows' context menus
+(Pin/Unpin, Rename…, Back to Pinned URL, Separate From Pinned Tab, Edit Pinned Page, a folder's
+Rename… and Delete: W17, whose model is here and in kitecore), Undo (W16: `EditState` is where
+it records), the command bar's command rows (the commands are there to bind, not to search),
+Back to Pinned URL's tooltip, and the "Pin Tab"/"Unpin Tab" retitling (no menu shows it).
 
 ## Refresh rate
 

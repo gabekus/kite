@@ -1,10 +1,12 @@
 #pragma once
-// The space header's name field while the space is renamed (the Mac's SpaceRenameField and the
-// header's Done, SidebarListRows.swift): the name in the header's 13pt semibold, all selected
-// as it opens, in labelColor, 2pt into AppKit's field editor over its textBackgroundColor;
-// "Space Name" when it's empty; Return or Done commits, Escape cancels, and leaving it (a press
-// elsewhere in the window, the page or the command bar taking the keyboard, another space
-// shown) commits. SidebarView places it over the header's name.
+// The sidebar's rename fields: a space's name in its header (the Mac's SpaceRenameField and the
+// header's Done, SidebarListRows.swift), and a tab's title or a folder's name in its row (the Mac's
+// RenameField, SidebarListCells.swift). The text in its row's font, all selected as it opens, in
+// labelColor, 2pt into AppKit's field editor over its textBackgroundColor; a placeholder when
+// it's empty ("Space Name", a tab's "Keep it short and sweet!", none for a folder); Return (or the
+// header's Done) commits, Escape cancels, and leaving it (a press elsewhere in the window, the page
+// or the command bar taking the keyboard, its row no longer shown) commits. SidebarView places it
+// over the name it edits.
 //
 // It's a visual of its own in the space's page (so it slides and swipes with the page, as the
 // Mac's field is a subview of its row), with its own small surface, so a keystroke draws only
@@ -20,6 +22,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
@@ -27,28 +30,33 @@
 
 namespace kite {
 
-class SpaceRenameField {
+class RenameField {
 public:
-    // `format` is the header's (13pt semibold); `done` Done's (12pt semibold). Null with
+    // `format` is its row's (the header's 13pt semibold, a tab's 14pt regular, a folder's 14pt
+    // semibold); `done` Done's (12pt semibold), null for a field with no Done (a row's);
+    // `placeholder` what an empty one shows. `id` is the space's, tab's or folder's. Null with
     // `error` when its layouts can't be made.
-    static std::unique_ptr<SpaceRenameField> Create(HWND window, IDWriteFactory* dwrite, IDWriteTextFormat* format,
-                                                    IDWriteTextFormat* done, std::string spaceID, const std::string& name,
-                                                    std::wstring& error);
-    ~SpaceRenameField();
-    SpaceRenameField(const SpaceRenameField&) = delete;
-    SpaceRenameField& operator=(const SpaceRenameField&) = delete;
+    static std::unique_ptr<RenameField> Create(HWND window, IDWriteFactory* dwrite, IDWriteTextFormat* format, IDWriteTextFormat* done,
+                                               std::string id, const std::string& text, std::wstring_view placeholder,
+                                               std::wstring& error);
+    ~RenameField();
+    RenameField(const RenameField&) = delete;
+    RenameField& operator=(const RenameField&) = delete;
 
-    const std::string& SpaceID() const { return spaceID_; }
+    const std::string& Id() const { return id_; }
     std::string Text() const;
 
-    // Done's width (its label's), for the header's layout.
+    // Done's width (its label's), for the header's layout; 0 with no Done.
     float DoneWidth() const { return doneWidth_; }
     // Where it sits, in its page's points (the sidebar's, the list scrolled): the field's box
     // from `left` to `right`, its line from `lineTop`, `lineHeight` tall, with the text's
-    // baseline at `baseline`, and Done's box with its label's baseline; in the space's
-    // appearance. Draw puts it there.
-    void Place(float left, float right, float lineTop, float lineHeight, float baseline, D2D1_RECT_F done, float doneBaseline, UINT dpi,
-               bool dark);
+    // baseline at `baseline`, and Done's box with its label's baseline (with no Done, a box of no
+    // width at the editor's end, as tall as the row: what the field's surface spans); shown only
+    // between `clipTop` and `clipBottom` (the list's); in the space's appearance. Draw puts it there.
+    void Place(float left, float right, float lineTop, float lineHeight, float baseline, D2D1_RECT_F done, float doneBaseline,
+               float clipTop, float clipBottom, UINT dpi, bool dark);
+    // The editor's background past the field's end (kBackgroundAfter), for a row's Done box.
+    static constexpr float kEditorAfter = 1;
     // Where its page's top-left is in the window, client px (for the IME and the system caret).
     void SetPageOrigin(POINT origin) { pageOrigin_ = origin; }
 
@@ -74,8 +82,8 @@ public:
     Outcome Move(float x, float y);
     Outcome Release(float x, float y);
     bool InField(float x, float y) const;
-    // Done's box, in page points (for a test's press).
-    const D2D1_RECT_F& DoneBox() const { return doneBox_; }
+    // Done's box, in page points (for a test's press); none with no Done.
+    std::optional<D2D1_RECT_F> DoneBox() const { return done_ ? std::optional<D2D1_RECT_F>(doneBox_) : std::nullopt; }
 
     // The keyboard came or went (the window's WM_SETFOCUS and WM_KILLFOCUS): the caret shows
     // only while the window has it, and the selection greys without it.
@@ -87,7 +95,7 @@ public:
     static constexpr UINT_PTR kCaretTimer = 0x4B45;  // the command bar's is 0x4B42, the tip's 0x4B44
 
 private:
-    SpaceRenameField(HWND window, std::string spaceID) : window_(window), spaceID_(std::move(spaceID)), line_(window, kCaretTimer) {}
+    RenameField(HWND window, std::string id) : window_(window), id_(std::move(id)), line_(window, kCaretTimer) {}
     Outcome Apply(TextEditing::Change change);
     // The caret where the field drew, shown while the window has the keyboard, it blinks on and
     // nothing is selected. Commits nothing.
@@ -95,13 +103,14 @@ private:
     float Scale() const { return static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI; }
 
     HWND window_;
-    std::string spaceID_;
+    std::string id_;
     TextLine line_;
     Microsoft::WRL::ComPtr<IDWriteTextLayout> placeholder_, done_;
     float doneWidth_ = 0;
     float doneLayoutBaseline_ = 0;  // Done's first baseline from its layout's top
 
     float left_ = 0, right_ = 0, lineTop_ = 0, lineHeight_ = 16, baseline_ = 0, doneBaseline_ = 0;
+    float clipTop_ = 0, clipBottom_ = 0;
     D2D1_RECT_F doneBox_{};
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
     bool dark_ = true;

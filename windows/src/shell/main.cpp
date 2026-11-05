@@ -198,6 +198,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar" || a == L"--frame-log" ||
             a == L"--space-tip" || a == L"--swipe" || a == L"--space-drag" || a == L"--space-drop" || a == L"--space-menu" ||
             a == L"--rename-space" || a == L"--page-status" || a == L"--toggle-sidebar" || a == L"--favorite-hover" ||
+            a == L"--rename-row" || a == L"--hover-row" || a == L"--run-command" ||
             a == L"--favorite-click") {
             ++i;
             continue;
@@ -340,6 +341,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a favorite's place, from 1", kUsage);
         if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
     }
+    // The sidebar's rows, for a capture: one renamed in place (a tab's or folder's, its place from
+    // 1 as kitecore's `sidebar` lists the selected space's rows), one with the pointer resting on it,
+    // and a command run by its id first (pinTab, say), as its shortcut would.
+    std::optional<size_t> heldRowRename, heldRowHover;
+    for (const auto& [flag, out] :
+         {std::pair<const wchar_t*, std::optional<size_t>*>{L"--rename-row", &heldRowRename}, {L"--hover-row", &heldRowHover}}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        *out = option.value ? place(*option.value) : std::nullopt;
+        if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a row's place, from 1", kUsage);
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+    }
+    const OptionValue runCommandOption = Option(args, L"--run-command");
+    if (runCommandOption.present && !runCommandOption.value) return Fail(quiet, L"--run-command takes a command's id", kUsage);
+    if (runCommandOption.present && !captureOption.present) return Fail(quiet, L"--run-command only goes with --capture", kUsage);
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
 
@@ -481,6 +497,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (captureError.empty() && swipe) captureError = controller->HoldSwipe(*swipe);
         if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
         if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
+        if (captureError.empty() && runCommandOption.value) captureError = controller->RunCommandForCapture(Narrow(*runCommandOption.value));
+        if (captureError.empty() && heldRowRename) captureError = controller->HoldRowRename(*heldRowRename, std::nullopt, true);
+        if (captureError.empty() && heldRowHover) captureError = controller->HoldRowHover(*heldRowHover);
         if (heldMenu) controller->HoldSpaceMenu(*heldMenu);
         if (captureError.empty() && heldFavoriteClick) captureError = controller->ClickFavorite(*heldFavoriteClick);
         if (captureError.empty() && heldFavoriteHover) captureError = controller->HoldFavoriteHover(*heldFavoriteHover);

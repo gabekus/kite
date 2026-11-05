@@ -302,12 +302,17 @@ TEST(fixtureRoundTripsAtTheJsonLevel) {
     auto parsed = json::Parse(ReadFile(fs::path(KITE_FIXTURES_DIR) / "session-v1.json"));
     json::Value original = *std::get<json::Value>(parsed).Find("state");
     json::Value encoded = Encode(*DecodeBrowserState(original));
-    // The only expected differences: legacy `pinned` → `pinnedItems`, and the default `tint`.
+    // The only expected differences: legacy `pinned` → `pinnedItems`, whose tab takes its page as
+    // its pinned URL (the Mac decoder's syncPinnedURLs), and the default `tint`.
     json::Object expected = *original.AsObject();
     json::Array spaces = *expected["spaces"].AsArray();
     json::Object work = *spaces[1].AsObject();
     json::Array items;
-    for (const auto& tab : *work["pinned"].AsArray()) items.push_back(json::Value(json::Object{{"tab", json::Value(json::Object{{"_0", tab}})}}));
+    for (const auto& legacy : *work["pinned"].AsArray()) {
+        json::Object tab = *legacy.AsObject();
+        tab["pinnedURL"] = tab["url"];
+        items.push_back(json::Value(json::Object{{"tab", json::Value(json::Object{{"_0", json::Value(std::move(tab))}})}}));
+    }
     work.erase("pinned");
     work["pinnedItems"] = json::Value(std::move(items));
     json::Object theme = *work["theme"].AsObject();

@@ -209,6 +209,11 @@ std::wstring BrowserWindowController::Init() {
     actions.spaceMenu = [this](const std::string& spaceID, POINT screen) { ShowSpaceMenu(spaceID, screen); };
     actions.renameSpace = [this](const std::string& spaceID, const std::string& name) { RenameSpace(spaceID, name); };
     actions.beginRenaming = [this](const std::string& spaceID) { BeginRenaming(spaceID); };
+    // Tabs and folders (+Tabs.cpp): their row's rename, a double-click on a tab, Back to Pinned URL.
+    actions.renameTab = [this](const std::string& tabID, const std::string& name) { RenameTab(tabID, name); };
+    actions.renameFolder = [this](const std::string& folderID, const std::string& name) { RenameFolder(folderID, name); };
+    actions.beginRenamingTab = [this](const std::string& tabID) { BeginRenamingTab(tabID); };
+    actions.resetTab = [this](const std::string& tabID) { BackToPinnedURL(tabID); };
     // The top row's buttons run the commands of the same names (the Mac's SidebarActions).
     actions.topRow = [this](TopRowButton button) { RunCommand(TopRowCommand(button)); };
     // The empty favorites tray's Dismiss (the Mac's OneShotFlags.set): a write of a few bytes.
@@ -460,6 +465,8 @@ bool BrowserWindowController::CommandEnabled(const std::string& command) const {
     if (command.size() == 6 && command.starts_with("space") && command[5] >= '1' && command[5] <= '9') {
         return static_cast<size_t>(command[5] - '0') <= state_.spaces.size();
     }
+    // Pin Tab and the other tab commands need a tab, or one off its pinned page.
+    if (bool enabled = true; TabCommandEnabled(command, enabled)) return enabled;
     return true;
 }
 
@@ -509,11 +516,14 @@ std::wstring BrowserWindowController::SaveFrameLog(const std::filesystem::path& 
 // MARK: The session and the pages
 
 void BrowserWindowController::StateChanged() {
-    // A rename ends once its space isn't the one shown (another selected, or it was deleted),
-    // keeping what was typed, as leaving the field does: renamed here, in this update, so the
-    // sidebar's Update stays a picture of the session.
-    if (const std::optional<std::string> renaming = sidebar_->Renaming(); renaming && *renaming != state_.selectedSpaceID) {
-        if (const auto taken = sidebar_->TakeRename()) state_.RenameSpace(taken->first, taken->second);
+    // A tab pinned by any path remembers its page, and a page reported by a pinned tab with none yet
+    // becomes its pinned URL (the Mac's BrowserStore.mutate and mutatePage sync after every change).
+    state_.SyncPinnedURLs();
+    // A rename ends once its header or row isn't shown (another space selected, the space, tab or
+    // folder gone or hidden in a closed folder), keeping what was typed, as leaving the field does:
+    // renamed here, in this update, so the sidebar's Update stays a picture of the session.
+    if (const auto renaming = sidebar_->Renaming(); renaming && !RenameStillShown(*renaming)) {
+        if (const auto taken = sidebar_->TakeRename()) ApplyRename(taken->first, taken->second);
     }
     SyncSpace();
     // The selected tab's page's status first, so the top row's update shows both together.
@@ -543,7 +553,7 @@ void BrowserWindowController::SelectionMoved() {
 
 void BrowserWindowController::ShowPage() {
 #ifdef KITE_HAS_CEF
-    if (chromium_) ShowSelectedTab();
+    if (chromium_ && !holdPages_) ShowSelectedTab();
 #endif
 }
 
@@ -774,6 +784,7 @@ void BrowserWindowController::MakeCommands() {
              if (!PageCommand("developerTools")) MessageBeep(MB_OK);
          }},
     };
+    MakeTabCommands();
     for (int n = 1; n <= 9; ++n) {
         commands_[n == 9 ? "lastTab" : "tab" + std::to_string(n)] = [this, n] {
             state_.SelectTabNumber(n);
