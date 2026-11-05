@@ -80,8 +80,47 @@ struct FindTestHookTests {
             == "KITE_TEST_FIND: ready: \"domain\", found, 2 matches, active 1, counter \"1/2\"")
         #expect(FindTestHook.resultLine(query: "zqxj", found: false, matches: nil, activeMatch: nil, counter: "Not Found")
             == "KITE_TEST_FIND: ready: \"zqxj\", not found, counter \"Not Found\"")
-        #expect(!FindTestHook.timeoutLine.contains("ready"))
+        #expect(!FindTestHook.timeoutLine(FindTestHook.Wait()).contains("ready"))
         #expect(!FindTestHook.refusedLine("x").contains("ready"))
+        #expect(!FindTestHook.armedLine(.open, coveredPagesAnswer: true, windowVisible: false).contains("ready"))
+    }
+
+    @Test func aLookAtTheSelectedTabRunsOnlyOnceItsPageHasLoaded() {
+        // For a load that finished before the hook was armed (or a notification that didn't match).
+        let tab = UUID()
+        #expect(FindTestHook.runs(selectedTab: tab, pageShown: true, pageLoading: false, progress: 1))
+        #expect(!FindTestHook.runs(selectedTab: tab, pageShown: true, pageLoading: false, progress: 0))   // not started
+        #expect(!FindTestHook.runs(selectedTab: tab, pageShown: true, pageLoading: true, progress: 1))
+        #expect(!FindTestHook.runs(selectedTab: tab, pageShown: true, pageLoading: nil, progress: nil))
+        #expect(!FindTestHook.runs(selectedTab: tab, pageShown: false, pageLoading: false, progress: 1))
+        #expect(!FindTestHook.runs(selectedTab: nil, pageShown: true, pageLoading: false, progress: 1))
+    }
+
+    @Test func aFindHookKeepsCoveredPagesAnswering() {
+        // A test-safe window is behind the user's windows, where WebKit stops an occluded window's page.
+        #expect(FindTestHook.keepsCoveredPagesAnswering(environment: ["KITE_TEST_FIND": "domain"], testSafe: true))
+        #expect(FindTestHook.keepsCoveredPagesAnswering(environment: ["KITE_TEST_FIND_OPEN": "1"], testSafe: true))
+        #expect(!FindTestHook.keepsCoveredPagesAnswering(environment: [:], testSafe: true))
+        #expect(!FindTestHook.keepsCoveredPagesAnswering(environment: ["KITE_TEST_FIND": "domain"], testSafe: false))
+        #expect(!FindTestHook.keepsCoveredPagesAnswering(environment: ["KITE_TEST_FIND": "a\nb"], testSafe: true))
+    }
+
+    @Test func theDiagnosticLinesSayWhatTheHookSaw() {
+        #expect(FindTestHook.armedLine(.query("domain"), coveredPagesAnswer: true, windowVisible: false)
+            == "KITE_TEST_FIND: armed: query \"domain\"; waiting up to 30 s for the selected tab's page to load "
+            + "(covered pages answer: yes, window visible: no)")
+        #expect(FindTestHook.armedLine(.open, coveredPagesAnswer: false, windowVisible: true).hasPrefix("KITE_TEST_FIND: armed: open, empty;"))
+        var wait = FindTestHook.Wait()
+        wait.loads = 3
+        wait.selectedLoads = 1
+        wait.selectedTab = true
+        wait.pageShown = true
+        wait.pageLoading = true
+        wait.progress = 0.1
+        #expect(FindTestHook.timeoutLine(wait)
+            == "KITE_TEST_FIND: no page finished loading in 30 s, so the find bar wasn't opened (finished loads seen: 3, "
+            + "of the selected tab: 1; selected tab: yes, page shown: yes, loading: yes, progress: 0.10, window visible: no)")
+        #expect(FindTestHook.timeoutLine(FindTestHook.Wait()).contains("loading: unknown, progress: unknown"))
     }
 }
 
@@ -185,5 +224,19 @@ struct FindTestHookSourceTests {
             }
         }
         #expect(try source("AppDelegate.swift").contains("FindTestHookRunner.start(in: windowController)"))
+    }
+
+    @Test func aFindHooksPageAnswersBehindOtherWindowsOnTestSafeRunsOnly() throws {
+        // The cause of W21's first headless run: the covered test window's page never finished loading.
+        let webKit = try source("Engine/WebKitEngine.swift")
+        #expect(webKit.contains("if PageContextMenuItems.testMode != nil || FindTestHookRunner.configured != nil, webView.responds(to: setOcclusion) {"))
+        let runner = try source("Diagnostics/FindTestHookRunner.swift")
+        let declaration = try #require(runner.range(of: "nonisolated static let configured = "))
+        let configured = runner[declaration.upperBound...].prefix { $0 != ")" }
+        #expect(configured.hasPrefix("FindTestHook.from(environment: ProcessInfo.processInfo.environment,"))
+        #expect(configured.hasSuffix("testSafe: WindowPresenter.testSafe"))
+        // Armed and timed-out lines, so a run that doesn't open the bar says why.
+        #expect(try body(of: "static func start(", in: runner).contains("log(FindTestHook.armedLine("))
+        #expect(try body(of: "private func poll(until deadline: Date) {", in: runner).contains("Self.log(FindTestHook.timeoutLine(wait))"))
     }
 }

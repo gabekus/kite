@@ -174,10 +174,11 @@ final class WebKitPage: NSObject, WebPage {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         observe()
-        // The right-click test hook needs the page to answer while the test window is covered;
-        // WebKit stops serving an occluded window's page (private WKWebView setting).
+        // The right-click and find-bar test hooks need the page to answer while the test window is covered;
+        // WebKit stops serving an occluded window's page (private WKWebView setting). Without this a find hook's
+        // page never finishes loading behind the other windows (FindTestHook.keepsCoveredPagesAnswering).
         let setOcclusion = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
-        if PageContextMenuItems.testMode != nil, webView.responds(to: setOcclusion) {
+        if PageContextMenuItems.testMode != nil || FindTestHookRunner.configured != nil, webView.responds(to: setOcclusion) {
             typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
             unsafeBitCast(webView.method(for: setOcclusion), to: Setter.self)(webView, setOcclusion, false)
         }
