@@ -8,8 +8,8 @@
 # and windows/cmake/mingw-w64.cmake cross-compiles the whole app.
 cmake_minimum_required(VERSION 3.24)
 project(Kite LANGUAGES CXX)
-if(MINGW)
-  enable_language(RC)
+if(WIN32)
+  enable_language(RC)  # resources/Kite.rc: the app icon (and MinGW's manifest)
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -202,14 +202,18 @@ if(WIN32)
     target_link_libraries(Kite PRIVATE d3dcompiler)
   endif()
   target_link_libraries(kitecore PRIVATE shell32)
-  # Both get Kite.manifest: per-monitor DPI v2, the UTF-8 code page, long paths, Common Controls 6
-  # (the task dialog).
+  # Both get Kite.rc, with the app icon (Explorer shows it for either exe), and Kite.manifest:
+  # per-monitor DPI v2, the UTF-8 code page, long paths, Common Controls 6 (the task dialog).
+  # MSVC's linker embeds the manifest; MinGW's has no manifest tool, so Kite.rc carries it there.
+  target_sources(Kite PRIVATE resources/Kite.rc)
+  target_sources(kitecore PRIVATE resources/Kite.rc)
+  set_property(SOURCE resources/Kite.rc APPEND PROPERTY OBJECT_DEPENDS
+               "${CMAKE_CURRENT_SOURCE_DIR}/resources/Kite.ico" "${CMAKE_CURRENT_SOURCE_DIR}/resources/Kite.manifest")
   if(MSVC)
     target_sources(Kite PRIVATE resources/Kite.manifest)
     target_sources(kitecore PRIVATE resources/Kite.manifest)
   else()
-    target_sources(Kite PRIVATE resources/Kite.rc)
-    target_sources(kitecore PRIVATE resources/Kite.rc)
+    set_property(SOURCE resources/Kite.rc APPEND PROPERTY COMPILE_DEFINITIONS KITE_RC_MANIFEST)
     target_link_options(Kite PRIVATE -municode)
   endif()
 endif()

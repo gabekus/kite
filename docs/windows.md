@@ -55,8 +55,10 @@ windows/
                 (an Arc for Windows folder, Chromium Web Data databases)
   tools/perf/   kiteperf: the measurement harness, its session fixture and pages (never shipped)
   helix/        checkpoints.md and states/ (sessions for the UI gate)
-  resources/    Kite.manifest (DPI, UTF-8 code page, long paths, Common Controls 6) and its MinGW .rc
-  scripts/      fetch-cef.ps1, gen-unicode-tables.py, make-web-data.py (the Web Data fixtures)
+  resources/    Kite.manifest (DPI, UTF-8 code page, long paths, Common Controls 6), Kite.ico (the
+                Mac's AppIcon.icns, from make-icon.py) and Kite.rc, which embeds them
+  scripts/      fetch-cef.ps1, gen-unicode-tables.py, make-icon.py, make-web-data.py (the Web Data
+                fixtures)
   cmake/        mingw-w64.cmake (cross-compile check off Windows)
 ```
 
