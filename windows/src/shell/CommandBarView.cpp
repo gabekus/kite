@@ -79,8 +79,6 @@ constexpr size_t kMaxRows = 10;
 // checked against Arc's bar.
 constexpr D2D1_COLOR_F kDarkSelection{63 / 255.0f, 99 / 255.0f, 139 / 255.0f, 1};
 constexpr D2D1_COLOR_F kLightSelection{179 / 255.0f, 215 / 255.0f, 1, 1};
-constexpr UINT_PTR kCaretTimer = 0x4B42;  // 'KB'; Chromium's close deadline is 0x4B43
-constexpr UINT kCaretTimeoutQuery = 0x2022;  // SPI_GETCARETTIMEOUT (winuser.h, Windows 10 1709+)
 // docs/windows.md, Refresh rate: flip-discard with a frame-latency waitable object, latency 1.
 constexpr UINT kSwapChainFlags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
 
@@ -115,49 +113,6 @@ HRESULT MakeAlphaStrip(ID2D1DeviceContext* context, const std::vector<float>& al
     props.dpiX = props.dpiY = dpi;
     props.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
     return context->CreateBitmap(size, pixels.data(), row ? count * 4 : 4, &props, out.ReleaseAndGetAddressOf());
-}
-
-
-bool IsHighSurrogate(wchar_t c) { return c >= 0xD800 && c < 0xDC00; }
-// What would start a second line in the field (DirectWrite breaks at these even without
-// wrapping): control characters, NEL, and the line and paragraph separators.
-bool BreaksLine(wchar_t c) { return c < 0x20 || c == 0x7F || c == 0x85 || c == 0x2028 || c == 0x2029; }
-bool IsLowSurrogate(wchar_t c) { return c >= 0xDC00 && c < 0xE000; }
-
-char32_t CodePointAt(const std::wstring& text, size_t at) {
-    const wchar_t c = text[at];
-    if (IsHighSurrogate(c) && at + 1 < text.size() && IsLowSurrogate(text[at + 1])) {
-        return 0x10000 + ((static_cast<char32_t>(c) - 0xD800) << 10) + (static_cast<char32_t>(text[at + 1]) - 0xDC00);
-    }
-    return c;
-}
-
-// Where characters (grapheme clusters, as the core's matching and Swift count them) start,
-// per UTF-16 unit, plus one past the end: the caret only ever sits between characters.
-std::vector<bool> Utf16CharacterStarts(const std::wstring& text) {
-    std::u32string codePoints;
-    std::vector<size_t> offsets;
-    for (size_t i = 0; i < text.size();) {
-        const char32_t c = CodePointAt(text, i);
-        codePoints.push_back(c);
-        offsets.push_back(i);
-        i += c > 0xFFFF ? 2 : 1;
-    }
-    const std::vector<bool> starts = unicode::CharacterStarts(codePoints);
-    std::vector<bool> out(text.size() + 1, false);
-    for (size_t k = 0; k < codePoints.size(); ++k) {
-        if (starts[k]) out[offsets[k]] = true;
-    }
-    out[text.size()] = true;
-    return out;
-}
-
-// Ctrl+Left and Ctrl+Right stop between runs of these, as in Windows' own text boxes.
-enum class WordClass { Space, Word, Other };
-WordClass Classify(char32_t c) {
-    if (c == ' ' || c == '\t' || c == 0xA0 || c == 0x3000 || (c >= 0x2000 && c <= 0x200A)) return WordClass::Space;
-    if (unicode::IsLetter(c) || unicode::IsNumber(c) || c == '_') return WordClass::Word;
-    return WordClass::Other;
 }
 
 D2D1_COLOR_F Color(float r, float g, float b, float a) { return D2D1_COLOR_F{r, g, b, a}; }
@@ -240,11 +195,12 @@ std::unique_ptr<CommandBarView> CommandBarView::Create(HWND window, Callbacks ca
     static constexpr wchar_t kPlaceholder[] = L"Search or Enter URL...";
     view->dwrite_->CreateTextLayout(kPlaceholder, static_cast<UINT32>(std::size(kPlaceholder) - 1), view->fieldFormat_.Get(), 100000,
                                     C::kFieldHeight, view->placeholderLayout_.GetAddressOf());
+    view->line_.SetFormat(view->dwrite_.Get(), view->fieldFormat_.Get(), C::kFieldHeight);
     return view;
 }
 
 CommandBarView::~CommandBarView() {
-    if (open_) KillTimer(window_, kCaretTimer);
+    if (open_) line_.StopBlink();
     ReleaseGpu();
 }
 
@@ -272,8 +228,7 @@ bool CommandBarView::CreateGpu(std::wstring& error) {
     // In the overlay: over the page's child window (the backdrop is behind it).
     composition_ = compositor_->Device();
     if (FAILED(hr = composition_->CreateVisual(visual_.ReleaseAndGetAddressOf())) ||
-        FAILED(hr = composition_->CreateVisual(caretVisual_.ReleaseAndGetAddressOf())) ||
-        FAILED(hr = compositor_->Overlay()->AddVisual(visual_.Get(), FALSE, nullptr)) || FAILED(hr = composition_->Commit())) {
+        FAILED(hr = compositor_->Overlay()->AddVisual(visual_.Get(), FALSE, nullptr)) || FAILED(hr = compositor_->Commit())) {
         error = HResultMessage(L"building the command bar's composition tree", hr);
         ReleaseGpu();
         return false;
@@ -289,13 +244,10 @@ void CommandBarView::ReleaseGpu() {
     outsidePanel_.Reset();
     shadowWidth_ = shadowHeight_ = -1;
     shadowDpi_ = 0;
-    caretVisual_.Reset();
-    caretSurface_.Reset();
-    caretWidth_ = caretHeight_ = 0;
-    caretAdded_ = false;
+    caret_.Release();
     if (visual_ && compositor_) {
         compositor_->Overlay()->RemoveVisual(visual_.Get());
-        composition_->Commit();
+        compositor_->Commit();
     }
     visual_.Reset();
     composition_.Reset();
@@ -334,6 +286,8 @@ void CommandBarView::ComputeGeometry() {
     g.bufferHeight = static_cast<UINT>(std::ceil(tallest * g.scale)) + 2 * static_cast<UINT>(g.marginPx);
     const bool widthChanged = g.width != geometry_.width;
     geometry_ = g;
+    // The field's visible width before any text is laid out in it (Show sets the text next).
+    line_.SetVisibleWidth(g.width - C::kIconX - C::kTextX);
     if (widthChanged) BuildRowText();
 }
 
@@ -475,11 +429,9 @@ void CommandBarView::Show(CommandBarMode mode, const std::string& text, const Lo
     }
     open_ = true;
     highlighted_ = 0;
-    scrollX_ = 0;
     selecting_ = false;
     composing_ = false;
     pressed_ = kPressedNothing;
-    highSurrogate_ = 0;
     hoveredRow_ = -1;
     // Laid out and filled before anything can draw (taking the focus below draws).
     ComputeGeometry();
@@ -496,13 +448,13 @@ void CommandBarView::Show(CommandBarMode mode, const std::string& text, const Lo
 }
 
 void CommandBarView::Type(std::string_view text) {
-    if (open_) Insert(Widen(text));
+    if (open_) Apply(line_.Edit().Insert(Widen(text)));
 }
 
 void CommandBarView::Hide() {
     if (!open_) return;
     open_ = false;
-    KillTimer(window_, kCaretTimer);
+    line_.StopBlink();
     if (GetCapture() == window_) ReleaseCapture();
     if (focused_) DestroyCaret();
     selecting_ = false;
@@ -512,13 +464,10 @@ void CommandBarView::Hide() {
     drawOnRestore_ = false;
     // Its buffers go until it opens again; the device, target and shadow strips stay.
     ReleaseBuffers();
-    if (caretAdded_ && visual_) visual_->RemoveVisual(caretVisual_.Get());
-    caretAdded_ = false;
-    if (composition_) composition_->Commit();
-    text_.clear();
-    characterStarts_.assign(1, true);
-    caret_ = anchor_ = 0;
-    textLayout_.Reset();
+    caret_.Update(composition_.Get(), context_.Get(), visual_.Get(), false, {}, 0, 0, {});
+    if (composition_ && compositor_) compositor_->Commit();
+    line_.Edit().SetText(std::wstring(), 0, 0);
+    line_.Relayout();
     rows_.clear();
     rowText_.clear();
     if (callbacks_.closed) callbacks_.closed();
@@ -548,7 +497,7 @@ void CommandBarView::Layout() {
 
 void CommandBarView::Refresh() {
     if (!open_) return;
-    std::vector<CommandSuggestion> rows = callbacks_.suggestions ? callbacks_.suggestions(Narrow(text_), mode_) : std::vector<CommandSuggestion>{};
+    std::vector<CommandSuggestion> rows = callbacks_.suggestions ? callbacks_.suggestions(Narrow(line_.Edit().Text()), mode_) : std::vector<CommandSuggestion>{};
     if (rows.size() > kMaxRows) rows.resize(kMaxRows);
     if (rows == rows_) return;
     const bool hadHighlight = highlighted_ >= 0 && static_cast<size_t>(highlighted_) < rows_.size();
@@ -613,20 +562,16 @@ void CommandBarView::BuildRowText() {
 // Text editing ---------------------------------------------------------------------------
 
 void CommandBarView::SetText(std::wstring text, size_t caret, size_t anchor) {
-    text_ = std::move(text);
-    caret_ = std::min(caret, text_.size());
-    anchor_ = std::min(anchor, text_.size());
+    line_.Edit().SetText(std::move(text), caret, anchor);
     TextChanged();
 }
 
 void CommandBarView::TextChanged() {
-    characterStarts_ = Utf16CharacterStarts(text_);
-    textLayout_.Reset();
-    dwrite_->CreateTextLayout(text_.c_str(), static_cast<UINT32>(text_.size()), fieldFormat_.Get(), 100000, C::kFieldHeight,
-                              textLayout_.GetAddressOf());
+    const std::wstring& text = line_.Edit().Text();
+    line_.Relayout();
     // As the Mac's onChange(of: query): the rows again, the first highlighted.
     highlighted_ = 0;
-    SetRows(callbacks_.suggestions ? callbacks_.suggestions(Narrow(text_), mode_) : std::vector<CommandSuggestion>{});
+    SetRows(callbacks_.suggestions ? callbacks_.suggestions(Narrow(text), mode_) : std::vector<CommandSuggestion>{});
     KeepCaretVisible();
     Invalidate();  // first, so the caret waits for the text's draw
     RestartCaretBlink();
@@ -638,102 +583,12 @@ void CommandBarView::SelectionChanged() {
     RestartCaretBlink();
 }
 
-void CommandBarView::Insert(std::wstring_view text) {
-    const size_t start = SelectionStart();
-    text_.replace(start, SelectionEnd() - start, text);
-    caret_ = anchor_ = start + text.size();
-    // What's inserted can join the character after it (a combining mark, a ZWJ, a second
-    // flag letter): the caret goes to the end of that character, never inside it.
-    characterStarts_ = Utf16CharacterStarts(text_);
-    while (caret_ < text_.size() && !characterStarts_[caret_]) ++caret_;
-    anchor_ = caret_;
-    TextChanged();
-}
-
-void CommandBarView::DeleteRange(size_t from, size_t to) {
-    if (from >= to) return;
-    text_.erase(from, to - from);
-    caret_ = anchor_ = from;
-    TextChanged();
-}
-
-size_t CommandBarView::PreviousCharacter(size_t at) const {
-    while (at > 0) {
-        if (characterStarts_[--at]) return at;
-    }
-    return 0;
-}
-
-size_t CommandBarView::NextCharacter(size_t at) const {
-    while (at < text_.size()) {
-        if (characterStarts_[++at]) return at;
-    }
-    return text_.size();
-}
-
-size_t CommandBarView::PreviousWord(size_t at) const {
-    while (at > 0 && Classify(CodePointAt(text_, PreviousCharacter(at))) == WordClass::Space) at = PreviousCharacter(at);
-    if (at == 0) return 0;
-    const WordClass run = Classify(CodePointAt(text_, PreviousCharacter(at)));
-    while (at > 0 && Classify(CodePointAt(text_, PreviousCharacter(at))) == run) at = PreviousCharacter(at);
-    return at;
-}
-
-size_t CommandBarView::NextWord(size_t at) const {
-    if (at < text_.size()) {
-        const WordClass run = Classify(CodePointAt(text_, at));
-        if (run != WordClass::Space) {
-            while (at < text_.size() && Classify(CodePointAt(text_, at)) == run) at = NextCharacter(at);
-        }
-    }
-    while (at < text_.size() && Classify(CodePointAt(text_, at)) == WordClass::Space) at = NextCharacter(at);
-    return at;
-}
-
-void CommandBarView::Copy() const {
-    if (!HasSelection() || !OpenClipboard(window_)) return;
-    const std::wstring selected = text_.substr(SelectionStart(), SelectionEnd() - SelectionStart());
-    EmptyClipboard();
-    if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, (selected.size() + 1) * sizeof(wchar_t))) {
-        if (auto* out = static_cast<wchar_t*>(GlobalLock(memory))) {
-            std::copy(selected.begin(), selected.end(), out);
-            out[selected.size()] = L'\0';
-            GlobalUnlock(memory);
-            if (!SetClipboardData(CF_UNICODETEXT, memory)) GlobalFree(memory);
-        } else {
-            GlobalFree(memory);
-        }
-    }
-    CloseClipboard();
-}
-
-void CommandBarView::Paste() {
-    if (!OpenClipboard(window_)) return;
-    std::wstring pasted;
-    if (HANDLE data = GetClipboardData(CF_UNICODETEXT)) {
-        if (const auto* text = static_cast<const wchar_t*>(GlobalLock(data))) {
-            // Up to the terminating NUL, but never past the clipboard's own memory.
-            const size_t most = GlobalSize(data) / sizeof(wchar_t);
-            size_t length = 0;
-            while (length < most && text[length]) ++length;
-            pasted.assign(text, length);
-            GlobalUnlock(data);
-        }
-    }
-    CloseClipboard();
-    // One line: each line break (CR LF, CR or LF) and other control character becomes a space.
-    std::wstring line;
-    line.reserve(pasted.size());
-    for (size_t i = 0; i < pasted.size(); ++i) {
-        const wchar_t c = pasted[i];
-        if (c == L'\r' && i + 1 < pasted.size() && pasted[i + 1] == L'\n') continue;
-        line.push_back(BreaksLine(c) ? L' ' : c);
-    }
-    if (!line.empty()) Insert(line);
+void CommandBarView::Apply(TextEditing::Change change) {
+    if (change == TextEditing::Change::Text) TextChanged();
+    else if (change == TextEditing::Change::Selection) SelectionChanged();
 }
 
 bool CommandBarView::KeyDown(UINT key, bool ctrl, bool shift) {
-    const size_t end = text_.size();
     switch (key) {
     case VK_ESCAPE:
         Hide();
@@ -747,86 +602,24 @@ bool CommandBarView::KeyDown(UINT key, bool ctrl, bool shift) {
     case VK_DOWN:
         SetHighlighted(std::min(highlighted_ + 1, std::max(static_cast<int>(rows_.size()) - 1, 0)));
         return true;
-    case VK_LEFT:
-    case VK_RIGHT:
-    case VK_HOME:
-    case VK_END: {
-        size_t to = caret_;
-        if (key == VK_HOME) to = 0;
-        else if (key == VK_END) to = end;
-        else if (HasSelection() && !shift && !ctrl) to = key == VK_LEFT ? SelectionStart() : SelectionEnd();
-        else if (key == VK_LEFT) to = ctrl ? PreviousWord(caret_) : PreviousCharacter(caret_);
-        else to = ctrl ? NextWord(caret_) : NextCharacter(caret_);
-        caret_ = to;
-        if (!shift) anchor_ = to;
-        SelectionChanged();
-        return true;
-    }
-    case VK_BACK:
-        if (HasSelection()) DeleteRange(SelectionStart(), SelectionEnd());
-        else if (caret_ > 0) DeleteRange(ctrl ? PreviousWord(caret_) : PreviousCharacter(caret_), caret_);
-        return true;
-    case VK_DELETE:
-        if (shift && !ctrl) {  // Shift+Delete: cut
-            Copy();
-            DeleteRange(SelectionStart(), SelectionEnd());
-        } else if (HasSelection()) {
-            DeleteRange(SelectionStart(), SelectionEnd());
-        } else if (caret_ < end) {
-            DeleteRange(caret_, ctrl ? NextWord(caret_) : NextCharacter(caret_));
+    case 'W':
+        // The Mac's closeTab closes an open bar rather than the tab.
+        if (ctrl && !shift) {
+            Hide();
+            return true;
         }
-        return true;
-    case VK_INSERT:
-        if (ctrl && !shift) Copy();
-        else if (shift && !ctrl) Paste();
-        return true;
+        break;
     default:
         break;
     }
-    if (!ctrl || shift) return false;
-    switch (key) {
-    case 'A':
-        anchor_ = 0;
-        caret_ = end;
-        SelectionChanged();
-        return true;
-    case 'C':
-        Copy();
-        return true;
-    case 'X':
-        Copy();
-        DeleteRange(SelectionStart(), SelectionEnd());
-        return true;
-    case 'V':
-        Paste();
-        return true;
-    case 'W':  // the Mac's closeTab closes an open bar rather than the tab
-        Hide();
-        return true;
-    default:
-        return false;  // Ctrl+T and the rest go on to the window's shortcuts
-    }
+    // Ctrl+T and the rest go on to the window's shortcuts.
+    const std::optional<TextEditing::Change> change = line_.Edit().KeyDown(key, ctrl, shift);
+    if (!change) return false;
+    Apply(*change);
+    return true;
 }
 
-void CommandBarView::Character(wchar_t c) {
-    if (IsHighSurrogate(c)) {
-        highSurrogate_ = c;
-        return;
-    }
-    if (IsLowSurrogate(c)) {
-        if (!highSurrogate_) return;
-        const wchar_t pair[2] = {highSurrogate_, c};
-        highSurrogate_ = 0;
-        Insert(std::wstring_view(pair, 2));
-        return;
-    }
-    highSurrogate_ = 0;
-    // Control characters (Ctrl+A's 0x01, Backspace's 0x08, Enter's 0x0D, Ctrl+Backspace's
-    // 0x7F) are the keys KeyDown already handled; a line separator would start a second line.
-    if (c < 0x20 || c == 0x7F) return;
-    if (BreaksLine(c)) c = L' ';
-    Insert(std::wstring_view(&c, 1));
-}
+void CommandBarView::Character(wchar_t c) { Apply(line_.Edit().Character(c)); }
 
 void CommandBarView::ForwardKey(UINT key, bool ctrl, bool shift) {
     // Ctrl+T among them finds the bar open already, so it's dropped.
@@ -877,83 +670,29 @@ int CommandBarView::RowAt(D2D1_POINT_2F p) const {
 
 float CommandBarView::TextTop() const {
     // Placed so the first line's baseline sits at 38.5.
-    DWRITE_LINE_METRICS line{};
-    UINT32 count = 0;
-    IDWriteTextLayout* layout = textLayout_ ? textLayout_.Get() : placeholderLayout_.Get();
-    if (layout) layout->GetLineMetrics(&line, 1, &count);
-    return C::kFieldBaseline - line.baseline;
+    return C::kFieldBaseline - line_.Baseline();
 }
 
-float CommandBarView::LineHeight() const {
-    DWRITE_LINE_METRICS line{};
-    UINT32 count = 0;
-    IDWriteTextLayout* layout = textLayout_ ? textLayout_.Get() : placeholderLayout_.Get();
-    if (layout) layout->GetLineMetrics(&line, 1, &count);
-    return line.height;
-}
+size_t CommandBarView::TextIndexAt(float x) const { return line_.IndexAt(x - C::kTextX); }
 
-size_t CommandBarView::TextIndexAt(float x) const {
-    if (!textLayout_ || text_.empty()) return 0;
-    BOOL trailing = FALSE, inside = FALSE;
-    DWRITE_HIT_TEST_METRICS hit{};
-    textLayout_->HitTestPoint(x - C::kTextX + scrollX_, 0, &trailing, &inside, &hit);
-    size_t index = std::min<size_t>(hit.textPosition + (trailing ? hit.length : 0), text_.size());
-    while (index > 0 && !characterStarts_[index]) --index;
-    return index;
-}
-
-float CommandBarView::CaretX() const {
-    if (!textLayout_) return 0;
-    FLOAT x = 0, y = 0;
-    DWRITE_HIT_TEST_METRICS hit{};
-    textLayout_->HitTestTextPosition(static_cast<UINT32>(caret_), FALSE, &x, &y, &hit);
-    return x;
-}
-
-void CommandBarView::KeepCaretVisible() {
-    const float visible = std::max(geometry_.width - C::kIconX - C::kTextX, 1.0f);
-    DWRITE_TEXT_METRICS metrics{};
-    if (textLayout_) textLayout_->GetMetrics(&metrics);
-    const float x = CaretX();
-    if (x - scrollX_ > visible) scrollX_ = x - visible;
-    if (x - scrollX_ < 0) scrollX_ = x;
-    // Never scrolled past the text's end, once it's shorter again.
-    scrollX_ = std::clamp(scrollX_, 0.0f, std::max(metrics.widthIncludingTrailingWhitespace + 1 - visible, 0.0f));
-}
+void CommandBarView::KeepCaretVisible() { line_.KeepCaretVisible(); }
 
 void CommandBarView::PlaceImeWindow() {
     if (!open_) return;
-    HIMC context = ImmGetContext(window_);
-    if (!context) return;
     const float scale = geometry_.scale;
-    const POINT caret{geometry_.leftPx + std::lround((C::kTextX + CaretX() - scrollX_) * scale),
+    const POINT caret{geometry_.leftPx + std::lround((C::kTextX + line_.CaretX() - line_.ScrollX()) * scale),
                       geometry_.topPx + std::lround(TextTop() * scale)};
-    COMPOSITIONFORM composition{};
-    composition.dwStyle = CFS_POINT;
-    composition.ptCurrentPos = caret;
-    ImmSetCompositionWindow(context, &composition);
-    CANDIDATEFORM candidates{};
-    candidates.dwIndex = 0;
-    candidates.dwStyle = CFS_CANDIDATEPOS;
-    candidates.ptCurrentPos = {caret.x, caret.y + std::lround(LineHeight() * scale)};
-    ImmSetCandidateWindow(context, &candidates);
     // The composition in the field's own size.
     LOGFONTW font{};
     font.lfHeight = -std::lround(C::kFieldFontSize * scale);
     font.lfWeight = FW_MEDIUM;
     font.lfCharSet = DEFAULT_CHARSET;
     lstrcpynW(font.lfFaceName, textFamily_.c_str(), LF_FACESIZE);
-    ImmSetCompositionFontW(context, &font);
-    ImmReleaseContext(window_, context);
+    line_.PlaceIme(caret, std::lround(line_.LineHeight() * scale), &font);
 }
 
 void CommandBarView::RestartCaretBlink() {
-    caretOn_ = true;
-    blinkSince_ = GetTickCount64();
-    const UINT blink = GetCaretBlinkTime();
-    // INFINITE: the user turned blinking off.
-    if (open_ && focused_ && blink && blink != INFINITE) SetTimer(window_, kCaretTimer, blink, nullptr);
-    else KillTimer(window_, kCaretTimer);
+    line_.RestartBlink(open_ && focused_);
     // With a draw on its way, the caret moves with the text it belongs to (Draw places it).
     if (!redrawPosted_) UpdateCaret();
 }
@@ -965,68 +704,23 @@ void CommandBarView::Invalidate() {
 }
 
 void CommandBarView::UpdateCaret() {
-    if (!caretVisual_ || !visual_ || !composition_) return;
+    if (!visual_ || !composition_ || !context_) return;
     const Geometry& g = geometry_;
-    const float x = C::kTextX - scrollX_ + CaretX();
+    const float x = C::kTextX - line_.ScrollX() + line_.CaretX();
     // Only in the window with the keyboard, not over a selection, and inside the field.
-    const bool wanted = open_ && swapChain_ && focused_ && caretOn_ && !HasSelection() && x >= C::kTextX - 1 &&
+    const bool wanted = open_ && swapChain_ && focused_ && line_.CaretOn() && !line_.Edit().HasSelection() && x >= C::kTextX - 1 &&
                         x <= g.width - C::kIconX;
-    if (wanted) {
-        const UINT width = static_cast<UINT>(std::max(1L, std::lround(g.scale)));  // 1pt
-        const UINT height = static_cast<UINT>(std::max(1L, std::lround(LineHeight() * g.scale)));
-        const D2D1_COLOR_F color = Primary();
-        if (!caretSurface_ || width != caretWidth_ || height != caretHeight_ || color.r != caretColor_.r) {
-            // A surface of the caret's colour, filled once.
-            caretSurface_.Reset();
-            ComPtr<IDXGISurface> surface;
-            POINT offset{};
-            HRESULT hr = composition_->CreateSurface(width, height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED,
-                                                     caretSurface_.GetAddressOf());
-            if (SUCCEEDED(hr)) hr = caretSurface_->BeginDraw(nullptr, IID_PPV_ARGS(surface.GetAddressOf()), &offset);
-            if (SUCCEEDED(hr)) {
-                ComPtr<ID2D1Bitmap1> target;
-                const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
-                    D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-                    D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96);
-                hr = context_->CreateBitmapFromDxgiSurface(surface.Get(), &props, target.GetAddressOf());
-                if (SUCCEEDED(hr)) {
-                    context_->SetTarget(target.Get());
-                    context_->SetDpi(96, 96);
-                    context_->BeginDraw();
-                    context_->SetTransform(D2D1::Matrix3x2F::Identity());
-                    // The surface may be part of a larger atlas: only its own rectangle.
-                    const auto left = static_cast<float>(offset.x), top = static_cast<float>(offset.y);
-                    context_->PushAxisAlignedClip(D2D1::RectF(left, top, left + static_cast<float>(width), top + static_cast<float>(height)),
-                                                  D2D1_ANTIALIAS_MODE_ALIASED);
-                    context_->Clear(color);
-                    context_->PopAxisAlignedClip();
-                    hr = context_->EndDraw();
-                    context_->SetTarget(nullptr);
-                }
-                caretSurface_->EndDraw();
-            }
-            if (FAILED(hr) || FAILED(caretVisual_->SetContent(caretSurface_.Get()))) {
-                deviceLost_ = deviceLost_ || IsDeviceLost(hr);
-                caretSurface_.Reset();
-                return;
-            }
-            caretWidth_ = width;
-            caretHeight_ = height;
-            caretColor_ = color;
-        }
-        // In the panel's buffer: centred on the caret's position, snapped to a pixel.
-        const LONG center = g.marginPx + std::lround(x * g.scale);
-        caretVisual_->SetOffsetX(static_cast<float>(center - static_cast<LONG>(width) / 2));
-        caretVisual_->SetOffsetY(static_cast<float>(g.marginPx + std::lround(TextTop() * g.scale)));
-        // The hidden system caret follows, in client pixels.
-        if (focused_) SetCaretPos(g.leftPx + std::lround(x * g.scale), g.topPx + std::lround(TextTop() * g.scale));
+    const UINT width = static_cast<UINT>(std::max(1L, std::lround(g.scale)));  // 1pt
+    const UINT height = static_cast<UINT>(std::max(1L, std::lround(line_.LineHeight() * g.scale)));
+    // In the panel's buffer: centred on the caret's position, snapped to a pixel.
+    const POINT at{g.marginPx + std::lround(x * g.scale) - static_cast<LONG>(width) / 2, g.marginPx + std::lround(TextTop() * g.scale)};
+    if (const HRESULT hr = caret_.Update(composition_.Get(), context_.Get(), visual_.Get(), wanted, at, width, height, Primary()); FAILED(hr)) {
+        deviceLost_ = deviceLost_ || IsDeviceLost(hr);
+        return;
     }
-    if (wanted != caretAdded_) {
-        if (wanted) visual_->AddVisual(caretVisual_.Get(), TRUE, nullptr);
-        else visual_->RemoveVisual(caretVisual_.Get());
-        caretAdded_ = wanted;
-    }
-    composition_->Commit();
+    // The hidden system caret follows, in client pixels.
+    if (wanted && focused_) SetCaretPos(g.leftPx + std::lround(x * g.scale), g.topPx + std::lround(TextTop() * g.scale));
+    compositor_->Commit();
 }
 
 // Messages -------------------------------------------------------------------------------
@@ -1084,20 +778,10 @@ bool CommandBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, L
         RestartCaretBlink();
         Invalidate();
         return false;
-    case WM_TIMER: {
-        if (wParam != kCaretTimer) return false;
-        // Windows' own text boxes stop blinking after a while, the caret left showing.
-        DWORD timeout = 5000;
-        if (!SystemParametersInfoW(kCaretTimeoutQuery, 0, &timeout, 0)) timeout = 5000;
-        if (timeout != INFINITE && GetTickCount64() - blinkSince_ >= timeout) {
-            KillTimer(window_, kCaretTimer);
-            caretOn_ = true;
-        } else {
-            caretOn_ = !caretOn_;
-        }
+    case WM_TIMER:
+        if (!line_.HandleTimer(wParam)) return false;
         UpdateCaret();
         return true;
-    }
     case WM_SETCURSOR: {
         if (LOWORD(lParam) != HTCLIENT) return false;
         POINT cursor{};
@@ -1116,9 +800,7 @@ bool CommandBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, L
         } else if (InField(p)) {
             SetCapture(window_);
             selecting_ = true;
-            caret_ = TextIndexAt(p.x);
-            if (!(wParam & MK_SHIFT)) anchor_ = caret_;
-            SelectionChanged();
+            Apply(line_.Edit().Select(TextIndexAt(p.x), (wParam & MK_SHIFT) != 0));
         } else if (const int row = RowAt(p); row >= 0) {
             pressed_ = row;
         }
@@ -1127,9 +809,8 @@ bool CommandBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, L
     case WM_MOUSEMOVE: {
         const D2D1_POINT_2F p = PanelPoint(lParam);
         if (selecting_) {
-            if (const size_t at = TextIndexAt(p.x); at != caret_) {
-                caret_ = at;
-                SelectionChanged();
+            if (const size_t at = TextIndexAt(p.x); at != line_.Edit().Caret()) {
+                Apply(line_.Edit().Select(at, true));
             }
             return true;
         }
@@ -1237,6 +918,8 @@ std::wstring CommandBarView::Draw(Pixels* readBack, POINT* origin) {
         *readBack = std::move(*pixels);
         if (origin) *origin = {g.leftPx - g.marginPx, g.topPx - g.marginPx};
     }
+    perf::CountSurfaceDraw(perf::View::CommandBar);
+    perf::CountPresent();
     if (FAILED(hr = swapChain_->Present(1, 0))) {
         deviceLost_ = IsDeviceLost(hr);
         return HResultMessage(L"presenting the command bar", hr);
@@ -1286,32 +969,19 @@ void CommandBarView::DrawField(ID2D1DeviceContext* context) {
                       brush_.Get(), C::kMagnifierStroke, roundStroke_.Get());
 
     const float top = TextTop();
-    const D2D1_POINT_2F origin{C::kTextX - scrollX_, top};
+    const D2D1_POINT_2F origin{C::kTextX - line_.ScrollX(), top};
     context->PushAxisAlignedClip(D2D1::RectF(C::kTextX - 1, 0, width - C::kIconX, C::kFieldHeight), D2D1_ANTIALIAS_MODE_ALIASED);
-    if (text_.empty()) {
+    if (line_.Edit().Text().empty()) {
         // Not under an IME's composition, which Windows draws over the field at the caret.
         brush_->SetColor(WithAlpha(Primary(), C::kPlaceholderOpacity));
         if (placeholderLayout_ && !composing_) context->DrawTextLayout(origin, placeholderLayout_.Get(), brush_.Get());
-    } else if (textLayout_) {
-        if (HasSelection()) {
-            UINT32 count = 0;
-            const auto start = static_cast<UINT32>(SelectionStart());
-            const auto length = static_cast<UINT32>(SelectionEnd() - SelectionStart());
-            textLayout_->HitTestTextRange(start, length, 0, 0, nullptr, 0, &count);
-            std::vector<DWRITE_HIT_TEST_METRICS> ranges(count);
-            if (count && SUCCEEDED(textLayout_->HitTestTextRange(start, length, 0, 0, ranges.data(), count, &count))) {
-                const D2D1_COLOR_F selection = look_.dark ? kDarkSelection : kLightSelection;
-                // Grey when the window isn't the one in front, as on the Mac.
-                brush_->SetColor(focused_ ? selection : WithAlpha(Primary(), 0.15f));
-                for (const auto& r : ranges) {
-                    context->FillRectangle(D2D1::RectF(origin.x + r.left, origin.y + r.top, origin.x + r.left + r.width,
-                                                       origin.y + r.top + r.height),
-                                           brush_.Get());
-                }
-            }
-        }
+    } else if (IDWriteTextLayout* layout = line_.Layout()) {
+        // Grey when the window isn't the one in front, as on the Mac.
+        const D2D1_COLOR_F selection = look_.dark ? kDarkSelection : kLightSelection;
+        line_.DrawSelection(context, brush_.Get(), origin, origin.y, origin.y + line_.LineHeight(),
+                            focused_ ? selection : WithAlpha(Primary(), 0.15f));
         brush_->SetColor(Label());  // CommandBar.swift:533, textColor = .labelColor
-        context->DrawTextLayout(origin, textLayout_.Get(), brush_.Get());
+        context->DrawTextLayout(origin, layout, brush_.Get());
     }
     // The caret is its own visual (UpdateCaret).
     context->PopAxisAlignedClip();

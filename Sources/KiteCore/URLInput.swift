@@ -34,6 +34,10 @@ public enum SearchEngine: String, Hashable, Codable, CaseIterable, Sendable {
 public enum URLInput {
     static let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
     private static let knownSchemes: Set<String> = ["http", "https", "file", "about", "data", "blob", "view-source", "mailto"]
+    /// Whether an app on this computer opens `url` (claude:, zoommtg:). Typed with "://", such a link is a
+    /// URL, as in Arc, and the page hands it to that app ("todo:milk" stays a search). KiteCore can't ask
+    /// the system, so the app sets this.
+    nonisolated(unsafe) public static var appOpens: (URL) -> Bool = { _ in false }
 
     public static func resolve(_ input: String, engine: SearchEngine) -> URL? {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -55,7 +59,8 @@ public enum URLInput {
     }
 
     private static func explicitURL(_ text: String) -> URL? {
-        guard let url = URL(string: text), let scheme = url.scheme?.lowercased(), knownSchemes.contains(scheme) else {
+        guard let url = URL(string: text), let scheme = url.scheme?.lowercased(),
+              knownSchemes.contains(scheme) || (text.contains("://") && appOpens(url)) else {
             return nil
         }
         if scheme == "http" || scheme == "https" {
