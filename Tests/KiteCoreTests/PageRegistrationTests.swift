@@ -29,7 +29,10 @@ struct PageRegistrationTests {
         let check = try #require(body.range(of: "if PageRegistration.loadingToRecord(pageIsLoading: page.isLoading, recorded: store.pages[tab.id]?.isLoading) == true {"))
         // Straight after register (comments between), before anything else touches the page.
         let between = body[made.upperBound..<check.lowerBound]
-        #expect(between.split(separator: "\n").allSatisfy { $0.trimmingCharacters(in: .whitespaces).hasPrefix("//") })
+        #expect(between.split(separator: "\n").allSatisfy {
+            let line = $0.trimmingCharacters(in: .whitespaces)
+            return line.isEmpty || line.hasPrefix("//")
+        })
         let recorded = body[check.upperBound...]
         #expect(recorded.hasPrefix("\n            store.updatePage(tab.id) { $0.isLoading = true }\n            onLoadingChanged?(tab.id, page, true)\n        }"))
         // The engine API is unchanged: makePage still takes the URL and starts the load itself.
