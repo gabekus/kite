@@ -47,3 +47,59 @@ TEST(aPopupAndItsOpenerAreLinkedWhileBothTabsExist) {
     state.Close(popup);
     CHECK(!IsLinkedToPopup(openers, state, opener));
 }
+
+// LiveTabPolicyTests.hibernationIsDroppedWhenTheTabChangedDuringItsBusyCheck
+TEST(hibernationIsDroppedWhenTheTabChangedDuringItsBusyCheck) {
+    const Timestamp picked = 10;
+    CHECK(LiveTabPolicy::StillHibernates(picked, picked, true, false));
+    // Shown again (and maybe hidden again) while the check ran.
+    CHECK(!LiveTabPolicy::StillHibernates(picked, Timestamp{11}, true, false));
+    CHECK(!LiveTabPolicy::StillHibernates(picked, picked, true, true));
+    // Another page under the tab id (made again).
+    CHECK(!LiveTabPolicy::StillHibernates(picked, picked, false, false));
+    // Already gone.
+    CHECK(!LiveTabPolicy::StillHibernates(picked, std::nullopt, true, false));
+    CHECK(!LiveTabPolicy::StillHibernates(std::nullopt, std::nullopt, true, false));
+}
+
+// PagePool.watchMemoryPressure: warning and critical both hibernate every page not on screen.
+TEST(memoryPressureDiscardsEveryPageNotOnScreen) {
+    CHECK(!DiscardsPages(MemoryPressure::Normal));
+    CHECK(DiscardsPages(MemoryPressure::Warning));
+    CHECK(DiscardsPages(MemoryPressure::Critical));
+    std::map<std::string, Timestamp> live{{"c", 3}, {"a", 1}, {"b", 2}, {"shown", 0}};
+    // Under the live-tab limit, still all but the shown one, oldest first.
+    CHECK(TabsToDiscardUnderPressure(live, {"shown"}) == (std::vector<std::string>{"a", "b", "c"}));
+    CHECK(LiveTabPolicy{6}.TabsToEvict(live, {"shown"}).empty());
+    // Ties by id, so the order doesn't depend on the map's.
+    CHECK(TabsToDiscardUnderPressure({{"y", 1}, {"x", 1}}, {}) == (std::vector<std::string>{"x", "y"}));
+    CHECK(TabsToDiscardUnderPressure({{"only", 1}}, {"only"}).empty());
+    CHECK(TabsToDiscardUnderPressure({}, {}).empty());
+}
+
+// The low-memory watch (shell/MemoryPressure): one report a spell, and no spell missed.
+TEST(theMemoryWatchReportsEachSpellOnce) {
+    MemoryPressureLatch latch;
+    CHECK(latch.WaitingForLow());
+    // Low: reported, then the watch waits for high (recovered).
+    auto step = latch.Signalled(true);
+    CHECK(step.report == MemoryPressure::Critical && !step.waitForLow);
+    // High: back to normal, and to waiting for low.
+    step = latch.Signalled(true);
+    CHECK(step.report == MemoryPressure::Normal && step.waitForLow);
+    // A low signal that's over by the time it's looked at is no spell.
+    step = latch.Signalled(false);
+    CHECK(!step.report && step.waitForLow && latch.WaitingForLow());
+    CHECK(!latch.Recovered());
+}
+
+TEST(aDipOverBeforeItsHandledDoesntHideTheNextSpell) {
+    MemoryPressureLatch latch;
+    CHECK(latch.Signalled(true).report == MemoryPressure::Critical);
+    // The window finds memory no longer low as it handles the report: memory may now hover
+    // between the two levels, so the watch waits for low again, not for high.
+    CHECK(latch.Recovered() && latch.WaitingForLow());
+    // ...and memory running low again is a new report.
+    auto step = latch.Signalled(true);
+    CHECK(step.report == MemoryPressure::Critical && !step.waitForLow);
+}

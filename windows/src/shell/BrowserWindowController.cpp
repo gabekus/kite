@@ -3,13 +3,16 @@
 #include "shell/BrowserWindowController.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <utility>
 
 #include "core/CommandBar.h"
+#include "core/Json.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
 #include "core/Sidebar.h"
@@ -18,9 +21,11 @@
 #include "shell/Capture.h"
 #ifdef KITE_HAS_CEF
 #include "shell/Chromium.h"
+#include "shell/Sandbox.h"
 #endif
 #include "shell/Errors.h"
 #include "shell/Keys.h"
+#include "shell/PerfLog.h"
 #include "shell/SpaceMenu.h"
 #include "shell/Text.h"
 
@@ -28,14 +33,16 @@ namespace kite {
 
 namespace {
 
-// A frame log's touchpad records at most (a few MB; a resting finger polls once a frame).
+// A frame log's touchpad records at most: about 20 MB held (a record's string is 40 to 90
+// characters, some 100 bytes with its allocation) and 8 to 18 MB written. A resting finger
+// polls once a frame, so a 500 Hz display fills it in under 7 minutes of resting.
 constexpr size_t kMaxTouchpadLog = 200000;
 
 }  // namespace
 
 std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts,
-                                                                          Options options, std::function<void()> save,
-                                                                          std::wstring& error) {
+                                                                          Options options, SessionWriter* writer,
+                                                                          HistoryStores* history, std::wstring& error) {
     // The GPU first: everything is set up before the window shows, so it never appears empty
     // or with the wrong title bar.
     std::unique_ptr<Renderer> renderer = Renderer::Create(error);
@@ -48,7 +55,7 @@ std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTAN
         return nullptr;
     }
     std::unique_ptr<BrowserWindowController> controller(
-        new BrowserWindowController(instance, state, std::move(shortcuts), options, std::move(save), std::move(renderer)));
+        new BrowserWindowController(instance, state, std::move(shortcuts), options, writer, history, std::move(renderer)));
     if (!controller->window_.IsValid()) {
         error = L"CreateWindowExW failed";
         return nullptr;
@@ -58,20 +65,24 @@ std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTAN
 }
 
 BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
-                                                 std::function<void()> save, std::unique_ptr<Renderer> renderer)
+                                                 SessionWriter* writer, HistoryStores* history, std::unique_ptr<Renderer> renderer)
     : instance_(instance),
       state_(state),
       shortcuts_(std::move(shortcuts)),
       options_(options),
-      save_(std::move(save)),
+      writer_(writer),
+      history_(history),
       renderer_(std::move(renderer)),
       window_(instance),
       theme_(state.SelectedSpace().theme),
-      shownSpaceID_(state.SelectedSpace().id) {}
+      shownSpaceID_(state.SelectedSpace().id) {
+    createdAt_ = FrameClock::Now();
+}
 
 BrowserWindowController::~BrowserWindowController() {
-    // A slide still running lets go of the compositor clock's boost.
-    if (toggling_) FrameClock::BoostWithoutFrames(false);
+    StopArcRead();
+    // History's worker outlives the window: it stops posting to it.
+    if (history_) history_->SetWake(nullptr);
     // The views and the compositor go before the window: it stops calling into them first.
     window_.onClose = nullptr;
     window_.onSize = nullptr;
@@ -93,8 +104,21 @@ std::wstring BrowserWindowController::Init() {
     systemBackdrop_ = !options_.capture && window_.UseSystemBackdrop();
     ApplyAppearance(theme_.to);
     clock_ = std::make_unique<FrameClock>(window_.Handle(), kFrameMessage);
+    // Not in a capture, whose pages Chromium doesn't make.
+    if (!options_.capture) {
+        memoryWatch_ = std::make_unique<MemoryPressureWatch>(window_.Handle(), kMemoryPressureMessage);
+        watchingMemory_ = memoryWatch_->IsWatching();
+    }
+    if (history_) {
+        // Each profile's file is read on history's worker; its wake comes here. One read before
+        // the window existed is taken in now.
+        HWND hwnd = window_.Handle();
+        history_->SetWake([hwnd] { PostMessageW(hwnd, kHistoryMessage, 0, 0); });
+        history_->Adopt();
+    }
     compositor_ = Compositor::Create(window_.Handle(), *renderer_, error);
     if (!compositor_) return L"Kite couldn't start DirectComposition: " + error;
+    if (perf::On()) perf::SetWindow(window_.Handle());
 
     // The sidebar, over the backdrop: what the session lists, with favicons fetched off the UI
     // thread (none in a capture, which mustn't depend on the network, unless it's asked for them).
@@ -155,7 +179,11 @@ std::wstring BrowserWindowController::Init() {
 
     // The command bar (Ctrl+T), over everything in the window.
     CommandBarView::Callbacks bar;
-    bar.suggestions = [this](std::string_view text, CommandBarMode mode) { return CommandBarSuggestions(text, state_, mode); };
+    bar.suggestions = [this](std::string_view text, CommandBarMode mode) {
+        // The current space's profile's history (the Mac's store.history).
+        const History* history = history_ ? &history_->ForProfile(state_.SelectedProfileDirectory()).Get() : nullptr;
+        return CommandBarSuggestions(text, state_, mode, history, Now());
+    };
     bar.commit = [this](const CommandSuggestion& row, CommandBarMode mode) { Commit(row, mode); };
     bar.opened = [this] {
         BlockPages(true);
@@ -219,19 +247,20 @@ std::wstring BrowserWindowController::Init() {
         sidebar_->SetFavoritesEmptyStateDismissed(true);
     };
     sidebar_->SetActions(std::move(actions));
-    if (options_.smokeTest || options_.capture) askToDelete_ = [](const SpaceDeletion&) { return false; };
+    if (options_.quiet) askToDelete_ = [](const SpaceDeletion&) { return false; };
     else askToDelete_ = [this](const SpaceDeletion& deletion) { return AskToDeleteSpace(window_.Handle(), deletion); };
 
     MakeCommands();
-    // View › Hide Sidebar: in the window's system menu until Windows has a menu of Kite's own, so a
-    // pointer can bring a hidden sidebar back (its toggle leaves with it, and there's no hover reveal
-    // yet).
+    // View › Hide Sidebar and the Mac's File › Import from Arc…: in the window's system menu
+    // (Alt+Space) until Windows has a menu of Kite's own, so a pointer can bring a hidden sidebar
+    // back (its toggle leaves with it, and there's no hover reveal yet).
     if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kToggleSidebarMenuID, ToggleSidebarMenuText().c_str());
+        AppendMenuW(menu, MF_STRING, kImportFromArcMenuID, L"Import from Arc…");
     }
     // Every command the table can name does something: a test run fails on one that doesn't.
-    if (options_.smokeTest || options_.capture) {
+    if (options_.quiet) {
         for (const ShortcutCommand& command : ShortcutCommands()) {
             if (!commands_.contains(command.id)) return L"the shortcut command " + Widen(command.id) + L" does nothing";
         }
@@ -240,13 +269,40 @@ std::wstring BrowserWindowController::Init() {
         return Filter(message, wParam, lParam, result);
     };
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE): what the pages
-    // reported runs first (titles, addresses), then the caller saves.
-    window_.onClose = [this] {
+    // reported runs first (titles, addresses), then the session and history are saved at once.
+    // Closing doesn't wait for the writes (main.cpp does, once the window is gone); logoff and
+    // shutdown can end the process as soon as WM_ENDSESSION returns, so that waits for both,
+    // kEndSessionFlush at most between them.
+    window_.onClose = [this](bool endingSession) {
+        // First, so an Import from Arc whose dialog is still up does nothing more.
+        closing_ = true;
         clock_->Stop();
+        // A slide still running lets the display's rate go now, not when the controller goes.
+        slideBoost_.Set(false);
+        toggleBoost_.Set(false);
         // DirectManipulation lets the window go while it's still a window.
         touchpad_.reset();
+        memoryWatch_.reset();
         RunPending();
-        if (save_) save_();
+        SaveNow();
+        // An Arc import whose session is written but whose history isn't merged yet: all of it
+        // now, before history's last save.
+        KillTimer(window_.Handle(), kArcMergeTimer);
+        FinishArcImport();
+        // History too, as the Mac's flush at quit; main.cpp waits for its writes.
+        if (history_) {
+            KillTimer(window_.Handle(), kHistoryTimer);
+            history_->SaveNow();
+        }
+        if (endingSession) {
+            const Deadline deadline = DeadlineAfter(kEndSessionFlush);
+            std::string problems[2];
+            if (writer_) problems[0] = writer_->Flush(deadline);
+            if (history_) problems[1] = history_->Flush(deadline);
+            for (const std::string& problem : problems) {
+                if (!problem.empty()) OutputDebugStringW((L"Kite: " + Widen(problem) + L"\n").c_str());
+            }
+        }
     };
     return {};
 }
@@ -294,11 +350,11 @@ void BrowserWindowController::SpaceChanged(size_t old, size_t now) {
     const double duration =
         IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle()) && sidebarShown_ ? sidebar_->SlidePages(from, 0) : 0;
     if (duration <= 0) {
-        sidebarSliding_ = false;
+        SetSliding(false);
         return FinishSettling();
     }
     // The compositor runs it; Kite only hears when it has ended.
-    sidebarSliding_ = true;
+    SetSliding(true);
     slideStarted_ = true;
     // The compositor starts it at the commit's frame, up to a frame after now: the timer allows
     // for one at 60 Hz.
@@ -307,7 +363,7 @@ void BrowserWindowController::SpaceChanged(size_t old, size_t now) {
 
 void BrowserWindowController::FinishSettling() {
     KillTimer(window_.Handle(), kSettleTimer);
-    sidebarSliding_ = false;
+    SetSliding(false);
     slideStarted_ = false;
     // A swipe's landing: its space is selected now the pages are at rest, its page where the
     // neighbour's was.
@@ -319,6 +375,13 @@ void BrowserWindowController::FinishSettling() {
     sidebar_->Update(state_);
 }
 
+void BrowserWindowController::SetSliding(bool sliding) {
+    sidebarSliding_ = sliding;
+    // The display at its highest rate while the pages slide on the compositor, as the Mac's
+    // settle boosts on its clock: a switch with no crossfade (the same theme) too.
+    slideBoost_.Set(sliding);
+}
+
 bool BrowserWindowController::OverSidebar(POINT at) const {
     RECT client{};
     GetClientRect(window_.Handle(), &client);
@@ -328,23 +391,35 @@ bool BrowserWindowController::OverSidebar(POINT at) const {
 }
 
 SpaceSwipeGesture::Step BrowserWindowController::SwipeInputArrived(const SwipeInput& input, POINT at) {
-    // Asked of each event until a swipe begins, as the Mac's isOverSidebar: the pointer may have
-    // left the sidebar since the fingers came down, or the command bar opened over it.
+    // Asked of a gesture's began and its movement until it's decided, as the Mac's
+    // isOverSidebar: the pointer may have left the sidebar since the fingers came down, or the
+    // command bar opened over it.
     const bool overSidebar = OverSidebar(at);
     const SpaceSwipeGesture::Step step = swipe_.Handle(input, overSidebar, [this] { return BeginSwipe(); });
     switch (step) {
     case SpaceSwipeGesture::Step::Pass:
-        if (overSidebar) {
-            // A vertical gesture is the list's scroll (and its momentum) under the pointer:
-            // content dragged down goes back up the list.
-            if (input.dy != 0) sidebar_->ScrollList(at, static_cast<float>(-input.dy));
-        } else if (touchpad_) {
-            // Not the sidebar's: the rest of it is the system's wheel messages, for whatever is
-            // under the pointer (the Mac passes the event on to it).
-            touchpad_->ReleaseContact();
+        if (!swipe_.AskedWhere()) {
+            // Decided: the rest of a vertical gesture, momentum included, is the list's wherever
+            // the pointer goes, when it was decided over the list.
+            if (listScrolling_) sidebar_->ScrollListBy(static_cast<float>(-input.dy));
+        } else if (overSidebar) {
+            // A vertical gesture is the list's scroll under the pointer: content dragged down goes
+            // back up the list.
+            listScrolling_ = sidebar_->ScrollList(at, static_cast<float>(-input.dy));
+            // Decided vertical anywhere else on the sidebar (the header, the top row, the space
+            // bar): nothing of Kite's scrolls with it, so the contact goes back to the system and
+            // the clock stops polling for it.
+            if (swipe_.Vertical() && !listScrolling_ && touchpad_) touchpad_->ReleaseContact();
+        } else {
+            // Off the sidebar before it's decided: not the sidebar's. The rest of it is the
+            // system's wheel messages, for whatever is under the pointer (the Mac passes the
+            // event on to it).
+            listScrolling_ = false;
+            if (touchpad_) touchpad_->ReleaseContact();
         }
         break;
     case SpaceSwipeGesture::Step::Move:
+        listScrolling_ = false;
         ShowSwipe();
         break;
     case SpaceSwipeGesture::Step::Release:
@@ -361,7 +436,7 @@ SwipeStart BrowserWindowController::BeginSwipe() {
     // neighbours, a landing still to come selected first.
     float offset = sidebar_->PageOffset();
     KillTimer(window_.Handle(), kSettleTimer);
-    sidebarSliding_ = false;
+    SetSliding(false);
     slideStarted_ = false;
     offset += static_cast<float>(CommitLanding() * kSidebarWidth);
     if (pagesAnchor_) {
@@ -411,7 +486,7 @@ void BrowserWindowController::FinishSwipe(int landing) {
         sidebar_->SetPageOffset(to);
         return FinishSettling();
     }
-    sidebarSliding_ = true;
+    SetSliding(true);
     // The bar's light slides with them (SlidePages leaves that to the sidebar's next Update),
     // and the slide starts now, as a keyboard switch's: PageOffset reads it from now, so a swipe
     // catching it mid-way carries on from where the pages really are.
@@ -463,11 +538,13 @@ bool BrowserWindowController::CommandEnabled(const std::string& command) const {
     return true;
 }
 
-void BrowserWindowController::Frame(double time) {
+void BrowserWindowController::Frame(double time, double rateHz) {
     ++frameCount_;
     lastFrameTime_ = time;
     // The touchpad's movement this frame first, so the frame shows it.
     const bool touchpadFrames = touchpad_ && touchpad_->Step();
+    // Before the draw, so its commit is this frame's.
+    if (perf::On()) perf::Frame(time, sidebar_->PageOffset(), theme_.Progress(time), rateHz);
     // Only what moved draws: the crossfade, or a swipe's step. The touchpad's other frames (a
     // vertical scroll's, a swipe's swallowed momentum) leave the backdrop as it is.
     if (theme_.Fading() || swipeMoved_) {
@@ -506,15 +583,156 @@ std::wstring BrowserWindowController::SaveFrameLog(const std::filesystem::path& 
     return out ? std::wstring{} : L"couldn't write " + file.wstring();
 }
 
+std::wstring BrowserWindowController::SaveSaveLog(const std::filesystem::path& file) const {
+    json::Array saves;
+    for (const LoggedSave& save : saves_) {
+        saves.push_back(json::Object{{"t", std::round(save.at * 1000) / 1000}, {"uiMicros", std::round(save.micros * 10) / 10},
+                                     {"closing", save.closing}});
+    }
+    const double mean = saveCost_.saves ? saveCost_.totalMicros / static_cast<double>(saveCost_.saves) : 0.0;
+    json::Array reports;
+    for (const PressureReport& report : pressureReports_) {
+        const char* name = report.level == MemoryPressure::Critical ? "critical" : report.level == MemoryPressure::Warning ? "warning" : "normal";
+        reports.push_back(json::Object{{"t", std::round(report.at * 1000) / 1000}, {"level", name}, {"discarded", report.discarded}});
+    }
+    json::Object log{{"saves", json::Value(std::move(saves))},
+                     {"frames", frameCount_},
+                     {"uiMicros", json::Object{{"max", saveCost_.maxMicros}, {"mean", mean}}},
+                     {"memoryPressure", json::Object{{"watching", watchingMemory_}, {"reports", json::Value(std::move(reports))}}}};
+    if (writer_) {
+        const SessionWriter::Statistics stats = writer_->Stats();
+        log.emplace("writer", json::Object{{"handedOver", stats.handedOver},
+                                           {"written", stats.written},
+                                           {"unchanged", stats.unchanged},
+                                           {"superseded", stats.superseded},
+                                           {"backups", stats.backups},
+                                           {"lastBytes", stats.lastBytes},
+                                           {"lastEncodeMicros", stats.lastEncodeMicros},
+                                           {"lastWriteMicros", stats.lastWriteMicros},
+                                           {"lastError", stats.lastError},
+                                           {"lastBackupError", stats.lastBackupError}});
+    }
+    if (history_) {
+        const HistoryStores::Statistics stats = history_->Stats();
+        const double visitMean = historyCost_.visits ? historyCost_.totalMicros / static_cast<double>(historyCost_.visits) : 0.0;
+        const HistoryStore& store = history_->ForProfile(BrowserState::kDefaultProfile);
+        log.emplace("history", json::Object{{"visits", historyCost_.visits},
+                                            {"visitMicros", json::Object{{"max", historyCost_.maxMicros}, {"mean", visitMean}}},
+                                            {"entries", store.Get().Count()},
+                                            {"loaded", store.IsLoaded()},
+                                            {"loadError", store.LoadError()},
+                                            {"loads", stats.loads},
+                                            {"writes", stats.writes},
+                                            {"failedWrites", stats.failedWrites},
+                                            {"lastBytes", stats.lastBytes},
+                                            {"lastLoadMicros", stats.lastLoadMicros},
+                                            {"lastEncodeMicros", stats.lastEncodeMicros},
+                                            {"lastWriteMicros", stats.lastWriteMicros},
+                                            {"lastError", stats.lastError}});
+    }
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    if (!out) return L"couldn't open " + file.wstring();
+    out << json::Write(json::Value(std::move(log))) << '\n';
+    out.flush();
+    return out ? std::wstring{} : L"couldn't write " + file.wstring();
+}
+
 // MARK: The session and the pages
 
-void BrowserWindowController::StateChanged() {
+void BrowserWindowController::SessionChanged(SessionSaveDelay delay) {
+    // A second after the last sidebar change; a page's title or favicon never pushes a waiting
+    // save back (SaveSchedule). SetTimer with the same id replaces the waiting one. Nothing
+    // when the session mustn't be saved (MaySave).
+    if (!writer_ || !writer_->MaySave()) return;
+    if (auto seconds = saveSchedule_.Changed(delay, FrameClock::Now())) {
+        SetTimer(window_.Handle(), kSaveTimer, static_cast<UINT>(std::ceil(*seconds * 1000)), nullptr);
+        ++saveArms_;
+    }
+}
+
+void BrowserWindowController::SaveNow(std::function<void(const std::string& error)> then) {
+    KillTimer(window_.Handle(), kSaveTimer);
+    saveSchedule_.Saved();
+    if (!writer_ || !writer_->MaySave()) {
+        // Nothing is written, and whoever waits on this write hears so.
+        if (then) then("Kite doesn't save this session (it couldn't be read)");
+        return;
+    }
+    // A copy for the writer's thread (the session is the UI thread's to change): the only cost
+    // here. Encoding and the disk are the writer's.
+    const auto start = std::chrono::steady_clock::now();
+    if (then) writer_->SaveThen(state_, std::move(then));
+    else writer_->Save(state_);
+    const double micros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+    ++saveCost_.saves;
+    saveCost_.maxMicros = std::max(saveCost_.maxMicros, micros);
+    saveCost_.totalMicros += micros;
+    if (options_.saveLog) saves_.push_back(LoggedSave{FrameClock::Now() - createdAt_, micros, closing_});
+}
+
+void BrowserWindowController::ArmHistorySave() {
+    if (!history_) return;
+    // One timer for every profile's store: the soonest save; none when nothing waits.
+    if (auto seconds = history_->NextSaveIn()) {
+        SetTimer(window_.Handle(), kHistoryTimer, static_cast<UINT>(std::ceil(*seconds * 1000)), nullptr);
+    } else {
+        KillTimer(window_.Handle(), kHistoryTimer);
+    }
+}
+
+HistoryStore* BrowserWindowController::HistoryForTab(const std::string& tabID) {
+    if (!history_) return nullptr;
+    // Profiles.swift's profileDirectory(ofTab:): the tab's space's profile, a favorite's grid's,
+    // else the selected space's.
+    std::string directory = state_.SelectedProfileDirectory();
+    if (auto location = state_.Location(tabID)) {
+        if (location->space) {
+            directory = state_.ProfileDirectory(*location->space);
+        } else {
+            for (const auto& [profile, tabs] : state_.favoritesByProfile) {
+                if (std::any_of(tabs.begin(), tabs.end(), [&](const Tab& tab) { return tab.id == tabID; })) directory = profile;
+            }
+        }
+    }
+    return &history_->ForProfile(directory);
+}
+
+void BrowserWindowController::RecordAddress(const std::string& tabID, const std::string& url) {
+    // The Mac's pageURLChanged, before its tab check (a typed URL is already on the tab when the
+    // page reports it). A tab showing one of Kite's own pages keeps it out of history.
+    if (url.empty() || !history_) return;
+    if (const Tab* tab = state_.FindTabByID(tabID); tab && tab->url && tab->url->starts_with("kite:") && !History::Records(url)) return;
+    auto [it, inserted] = recordedURLs_.try_emplace(tabID, url);
+    if (!inserted && it->second == url) return;
+    it->second = url;
+    HistoryStore* store = HistoryForTab(tabID);
+    if (!store) return;
+    const auto start = std::chrono::steady_clock::now();
+    const bool changed = store->RecordVisit(url, "", Now());
+    historyCost_.Add(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count());
+    if (changed) ArmHistorySave();
+}
+
+void BrowserWindowController::RecordTitle(const std::string& tabID, const std::string& title) {
+    // The Mac's pageTitleChanged: for the address the tab last recorded; a repeat saves nothing.
+    if (title.empty() || !history_) return;
+    if (const Tab* tab = state_.FindTabByID(tabID); tab && tab->url && tab->url->starts_with("kite:")) return;
+    auto it = recordedURLs_.find(tabID);
+    if (it == recordedURLs_.end()) return;
+    if (HistoryStore* store = HistoryForTab(tabID); store && store->UpdateTitle(it->second, title)) ArmHistorySave();
+}
+
+void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save) {
     // A rename ends once its space isn't the one shown (another selected, or it was deleted),
     // keeping what was typed, as leaving the field does: renamed here, in this update, so the
     // sidebar's Update stays a picture of the session.
     if (const std::optional<std::string> renaming = sidebar_->Renaming(); renaming && *renaming != state_.selectedSpaceID) {
-        if (const auto taken = sidebar_->TakeRename()) state_.RenameSpace(taken->first, taken->second);
+        if (const auto taken = sidebar_->TakeRename()) {
+            state_.RenameSpace(taken->first, taken->second);
+            if (!save) save = SessionSaveDelay::Soon;
+        }
     }
+    if (save) SessionChanged(*save);
     SyncSpace();
     // The selected tab's page's status first, so the top row's update shows both together.
     ShowPageStatus();
@@ -565,6 +783,7 @@ void BrowserWindowController::PageGone(const std::string& tabID) {
 #ifdef KITE_HAS_CEF
     if (!chromium_) return;
     chromium_->Close(tabID);
+    ForgetRecorded(tabID);
     // A closed page can't be anyone's opener or popup again.
     std::erase_if(popupOpeners_, [&](const auto& entry) { return entry.first == tabID || entry.second == tabID; });
 #else
@@ -601,6 +820,7 @@ void BrowserWindowController::Commit(const CommandSuggestion& row, CommandBarMod
     switch (row.kind) {
     case CommandSuggestion::Kind::Open:
     case CommandSuggestion::Kind::Search:
+    case CommandSuggestion::Kind::History:
         if (mode == CommandBarMode::EditCurrent && state_.SelectedTab()) {
             const std::string id = state_.SelectedTab()->id;
             if (auto at = state_.Location(id)) {
@@ -661,11 +881,10 @@ void BrowserWindowController::SetSidebarShown(bool shown) {
     // Like Arc: the final frames set once, the compositor drawing the frames between (no slide
     // on a window that isn't on screen).
     const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
-    const bool wasToggling = toggling_;
     const double duration = sidebar_->SetShown(shown, visible);
     toggling_ = duration > 0;
     // The display at its highest rate while it slides (docs/windows.md, Refresh rate).
-    if (toggling_ != wasToggling) FrameClock::BoostWithoutFrames(toggling_);
+    toggleBoost_.Set(toggling_);
     // The system menu's item says what it will do next (validateMenuItem's retitling).
     if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
         ModifyMenuW(menu, kToggleSidebarMenuID, MF_BYCOMMAND | MF_STRING, kToggleSidebarMenuID, ToggleSidebarMenuText().c_str());
@@ -696,7 +915,7 @@ void BrowserWindowController::FinishToggle() {
     KillTimer(window_.Handle(), kToggleTimer);
     if (!toggling_) return;
     toggling_ = false;
-    FrameClock::BoostWithoutFrames(false);
+    toggleBoost_.Set(false);
     sidebar_->SettleToggle();
     if (!sidebarShown_) MovePage();
     if (compositor_) compositor_->Commit();
@@ -715,6 +934,7 @@ void BrowserWindowController::MakeCommands() {
         {"openLocation", [this] { OpenCommandBar(CommandBarMode::EditCurrent); }},
         {"archiveTab", [this] { ArchiveTab(); }},
         {"reopenClosedTab", [this] { ReopenClosedTab(); }},
+        {"importFromArc", [this] { ImportFromArc(); }},
         // One window, so closing it quits, as the Mac's last window does with Kite set so.
         {"closeWindow", [this] { PostMessageW(window_.Handle(), WM_CLOSE, 0, 0); }},
         {"quitKite", [this] { PostMessageW(window_.Handle(), WM_CLOSE, 0, 0); }},
@@ -787,7 +1007,87 @@ void BrowserWindowController::MakeCommands() {
 }
 
 void BrowserWindowController::RunCommand(const std::string& command) {
-    if (auto it = commands_.find(command); it != commands_.end()) it->second();
+    auto it = commands_.find(command);
+    if (it == commands_.end()) return;
+    if (!perf::On()) return it->second();
+    perf::Mark("command-begin", command);
+    it->second();
+    perf::Mark("command-end", command);
+}
+
+bool BrowserWindowController::QueuePerfRequest(const COPYDATASTRUCT* data) {
+    if (!data || data->dwData != perf::kControlTag || !data->lpData || !data->cbData) return false;
+    auto parsed = json::Parse(std::string_view(static_cast<const char*>(data->lpData), data->cbData));
+    const json::Value* request = std::get_if<json::Value>(&parsed);
+    if (!request || !request->AsObject()) return false;
+    const auto text = [&](std::string_view key) -> const std::string* {
+        const json::Value* value = request->Find(key);
+        return value ? value->AsString() : nullptr;
+    };
+    const auto number = [&](std::string_view key) -> std::optional<int64_t> {
+        const json::Value* value = request->Find(key);
+        return value ? value->AsInt() : std::nullopt;
+    };
+    PerfRequest queued{PerfRequest::Kind::Mark, {}, 0, 0, 0};
+    if (const std::string* command = text("command")) {
+        if (!commands_.contains(*command) || !CommandEnabled(*command)) return false;
+        queued = {PerfRequest::Kind::Command, *command, 0, 0, number("qpc").value_or(perf::Now())};
+    } else if (const std::string* mark = text("mark")) {
+        queued = {PerfRequest::Kind::Mark, *mark, 0, 0, 0};
+    } else if (const std::string* url = text("open")) {
+        // Web pages only: nothing of the machine's (file:, view-source:, kite: or a script).
+        if (!url->starts_with("http://") && !url->starts_with("https://")) return false;
+        queued = {PerfRequest::Kind::Open, *url, 0, 0, 0};
+    } else if (const std::string* input = text("input")) {
+        if (*input == "leave") {
+            queued = {PerfRequest::Kind::Leave, {}, 0, 0, 0};
+        } else {
+            const auto x = number("x"), y = number("y");
+            if (*input != "move" || !x || !y || *x < 0 || *y < 0 || *x > 0x7FFF || *y > 0x7FFF) return false;
+            queued = {PerfRequest::Kind::Move, {}, *x, *y, number("qpc").value_or(perf::Now())};
+        }
+    } else {
+        return false;
+    }
+    if (perfRequests_.size() >= 256) return false;  // a sender that never lets the loop run
+    perfRequests_.push_back(std::move(queued));
+    if (perfRequests_.size() == 1) PostMessageW(window_.Handle(), kPerfRequestMessage, 0, 0);
+    return true;
+}
+
+void BrowserWindowController::RunPerfRequests() {
+    std::vector<PerfRequest> requests;
+    requests.swap(perfRequests_);
+    for (PerfRequest& r : requests) {
+        switch (r.kind) {
+        case PerfRequest::Kind::Command:
+            // The state may have changed since it was queued.
+            if (!CommandEnabled(r.text)) {
+                perf::Mark("control-refused", r.text);
+                break;
+            }
+            if (perf::On()) perf::Input("command", r.qpc);
+            RunCommand(r.text);
+            break;
+        case PerfRequest::Kind::Mark: perf::Mark(r.text); break;
+        case PerfRequest::Kind::Open:
+            state_.OpenTab(r.text);
+            SelectionMoved();
+            break;
+        case PerfRequest::Kind::Move:
+            perfPointer_ = true;
+            if (PostMessageW(window_.Handle(), WM_MOUSEMOVE, 0, MAKELPARAM(r.x, r.y))) {
+                ++perfMovesPosted_;
+                if (perf::On()) perf::Input("move", r.qpc);
+            }
+            break;
+        case PerfRequest::Kind::Leave:
+            perfPointer_ = false;
+            perfMovesPosted_ = 0;
+            if (PostMessageW(window_.Handle(), WM_MOUSELEAVE, 0, 0)) ++perfLeavesPosted_;
+            break;
+        }
+    }
 }
 
 bool BrowserWindowController::PageCommand(const std::string& command) {
@@ -888,6 +1188,43 @@ void BrowserWindowController::OnSize() {
 // MARK: The window's messages
 
 bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
+    static_assert([] {
+        constexpr UINT ids[] = {MainWindow::kWakeMessage, CommandBarView::kRedrawMessage, SidebarView::kRedrawMessage, kFaviconsMessage,
+                                kFrameMessage, kSpaceIconsMessage, kMemoryPressureMessage, kHistoryMessage, kArcReadMessage, kArcSavedMessage,
+                                kPerfRequestMessage};
+        for (size_t i = 0; i < std::size(ids); ++i) {
+            for (size_t j = i + 1; j < std::size(ids); ++j) {
+                if (ids[i] == ids[j]) return false;
+            }
+        }
+        return true;
+    }(), "two of the window's WM_APP messages share an id");
+    if (options_.perfControl) {
+        if (message == WM_COPYDATA) {
+            result = QueuePerfRequest(reinterpret_cast<const COPYDATASTRUCT*>(lParam)) ? 1 : 0;
+            return true;
+        }
+        if (message == kPerfRequestMessage) {
+            RunPerfRequests();
+            return true;
+        }
+    }
+    // The real pointer's moves and leaves, not the ones --perf-control posted (they arrive in
+    // order), nor the leave TrackMouseEvent sends at once while a posted pointer is over the
+    // window (the real one is elsewhere).
+    if (message == WM_MOUSEMOVE && perfMovesPosted_) --perfMovesPosted_;
+    else if (message == WM_MOUSELEAVE && perfLeavesPosted_) --perfLeavesPosted_;
+    else if (message == WM_MOUSEMOVE || message == WM_NCMOUSEMOVE || message == WM_NCMOUSELEAVE ||
+             (message == WM_MOUSELEAVE && !perfPointer_)) {
+        perf::CountPointerMove();
+    }
+    if (message == WM_DISPLAYCHANGE && perf::On()) perf::DisplayChanged();
+    // The real pointer isn't over the window while --perf-control moves one: TrackMouseEvent's
+    // leave would take the hover straight off again.
+    if (message == WM_MOUSELEAVE && perfPointer_) {
+        result = 0;
+        return true;
+    }
     // The caption buttons' presses, whatever else is open.
     if (caption_->HandleMessage(message, wParam, lParam, result)) return true;
     // Two fingers coming down on a precision touchpad: over the sidebar (and nothing over it),
@@ -956,16 +1293,72 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     }
     if (message == WM_TIMER && wParam == kArchiveTimer) {
         if (auto interval = state_.ArchiveAfterSeconds()) {
-            for (const Tab& tab : state_.ArchiveStaleTabs(*interval)) PageGone(tab.id);
-            StateChanged();
+            const std::vector<Tab> archived = state_.ArchiveStaleTabs(*interval);
+            for (const Tab& tab : archived) PageGone(tab.id);
+            if (!archived.empty()) {
+                StateChanged();
+            } else if (writer_ && writer_->MaySave() && !writer_->OfferBackup()) {
+                // Nothing changed, so nothing to redraw or write; but the Mac's pass always
+                // mutates, so its session saves and its hourly backup comes with it. The writer
+                // offers that backup of what it last wrote, or, having written nothing yet this
+                // run, the session is saved as a change would be.
+                SessionChanged();
+            }
         }
         return true;
     }
     if (message == kFrameMessage) {
         // Delivered after the frame: a frame that takes longer than the next tick doesn't queue
         // another behind it.
-        if (clock_->Running()) Frame(FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr));
+        // A test run steps its own (RunUntil), and one posted before it began is dropped.
+        if (clock_->Running() && !clock_->Manual()) {
+            double rate = 0;
+            const double time = FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr, perf::On() ? &rate : nullptr);
+            Frame(time, rate);
+        }
         clock_->Delivered();
+        return true;
+    }
+    if (message == WM_TIMER && wParam == kSaveTimer) {
+        SaveNow();
+        return true;
+    }
+    if (message == WM_TIMER && wParam == kHistoryTimer) {
+        KillTimer(window_.Handle(), kHistoryTimer);
+        if (history_) history_->SaveDue();
+        ArmHistorySave();
+        return true;
+    }
+    if (message == kHistoryMessage) {
+        // A profile's history.json has been read: it takes the place of what this run had (its
+        // visits replayed over it), and an open bar shows its rows.
+        std::vector<std::string> problems;
+        if (history_ && history_->Adopt(&problems)) {
+            if (commandBar_ && commandBar_->IsOpen()) commandBar_->Refresh();
+            ArmHistorySave();
+        }
+        // A file that didn't read was moved aside (or, if it couldn't be, is left alone and not
+        // saved over); the Mac logs it too. The save log's history block has the default's.
+        for (const std::string& problem : problems) {
+            OutputDebugStringW((L"Kite: history couldn't be read, starting without it: " + Widen(problem) + L"\n").c_str());
+        }
+        return true;
+    }
+    if (message == kMemoryPressureMessage) {
+        // The Mac's watchMemoryPressure: the pages that aren't on screen close, if memory is
+        // still low as the report is handled (a dip already over, seen at launch on a busy PC,
+        // closes nothing). A test profile's --save-log run can post a report with lParam 1,
+        // which skips that check, to drive the path without running the machine out of memory.
+        const auto level = static_cast<MemoryPressure>(wParam);
+        const bool forced = options_.saveLog && lParam == 1;
+        const bool low = memoryWatch_ && memoryWatch_->IsLow();
+        const bool discards = DiscardsPages(level) && (forced || low);
+        // Over already: the watch waits for low again, so the next spell is reported.
+        if (DiscardsPages(level) && !low && memoryWatch_) memoryWatch_->Recovered();
+        if (options_.saveLog) pressureReports_.push_back({FrameClock::Now() - createdAt_, level, discards});
+#ifdef KITE_HAS_CEF
+        if (chromium_ && discards) chromium_->DiscardHiddenPages();
+#endif
         return true;
     }
     // The pages' slide has ended on the compositor.
@@ -986,6 +1379,26 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         sidebar_->PicturesArrived();
         return true;
     }
+    // Each of the window's own messages has its own id (W15 and W11 once took the same two).
+    static_assert(kArcReadMessage > kHistoryMessage && kArcSavedMessage > kArcReadMessage, "the window's message ids overlap");
+    if (message == kArcReadMessage) {
+        ArcRead();
+        return true;
+    }
+    if (message == kArcSavedMessage) {
+        ArcSaved();
+        return true;
+    }
+    if (message == WM_TIMER && wParam == kArcMergeTimer) {
+        KillTimer(window_.Handle(), kArcMergeTimer);
+        ArcSaved();
+        return true;
+    }
+    if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == kImportFromArcMenuID) {
+        RunCommand("importFromArc");
+        result = 0;
+        return true;
+    }
     if (message == kFaviconsMessage) {
         if (favicons_ && favicons_->TakeResults()) sidebar_->InvalidatePages();
         return true;
@@ -999,10 +1412,15 @@ void BrowserWindowController::RunPending() {
 #endif
 }
 
-void BrowserWindowController::Show(int showCommand, bool behindOtherWindows) {
-    // Quiet runs open behind other windows without focus, and ignore a launcher's "start maximized".
-    if (behindOtherWindows) window_.ShowBehindOtherWindows();
-    else window_.Show(showCommand);
+void BrowserWindowController::Show(int showCommand) {
+    // Quiet runs open behind other windows and never activate, and ignore a launcher's "start
+    // maximized".
+    if (options_.quiet) {
+        window_.NeverActivate();
+        window_.ShowBehindOtherWindows();
+    } else {
+        window_.Show(showCommand);
+    }
 #ifdef KITE_HAS_CEF
     ShowFirstPage();
 #endif
@@ -1028,9 +1446,13 @@ void BrowserWindowController::RunMessageLoop() {
         } else {
             retryUntil = 0;
         }
+        // --perf-log looks up when committed frames reached the screen, every 16 ms while any wait.
+        const bool polling = perf::On() && perf::Pending();
+        if (polling && timeout == INFINITE) timeout = 16;
         const DWORD woke =
             MsgWaitForMultipleObjectsEx(removed ? 1 : 0, removed ? &removed : nullptr, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-        if ((removed && woke == WAIT_OBJECT_0) || woke == WAIT_TIMEOUT) {
+        if (polling) perf::Poll();
+        if ((removed && woke == WAIT_OBJECT_0) || (woke == WAIT_TIMEOUT && !compositor_)) {
             if (renderer_ && compositor_) {
                 const HRESULT reason = renderer_->Device()->GetDeviceRemovedReason();
                 OutputDebugStringW(HResultMessage(L"Kite: the GPU device was removed", reason).append(L"\n").c_str());
@@ -1046,7 +1468,13 @@ void BrowserWindowController::RunMessageLoop() {
                 break;
             }
             TranslateMessage(&message);
-            DispatchMessageW(&message);
+            if (perf::On()) {
+                const int64_t began = perf::Now();
+                DispatchMessageW(&message);
+                perf::Dispatched(message.message, began);
+            } else {
+                DispatchMessageW(&message);
+            }
         }
     }
 }

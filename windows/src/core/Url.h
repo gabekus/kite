@@ -12,6 +12,9 @@ std::optional<std::string> Scheme(std::string_view url);
 // The host of a hierarchical URL ("scheme://[user@]host[:port]..."), without brackets for
 // IPv6; nullopt when there's no authority. May be empty ("file:///x").
 std::optional<std::string> Host(std::string_view url);
+// The path, as written (percent escapes kept), without the query or fragment: Foundation's
+// url.path(percentEncoded: true). After the authority when there is one; "" for "https://a.com".
+std::string_view Path(std::string_view url);
 // Whether the authority ("//[user@]host[:port]") parses the way RFC 3986, and so Foundation's
 // URL(string:), requires: a bracketed host is an IPv6 address, a port is ASCII digits up to
 // 65535. True when there's no authority. A URL failing this is nil on the Mac, so it must

@@ -43,20 +43,45 @@ public:
     void Stop();
     void SetBoost(bool boost);
     // The boost alone, with no frames (the window's thread): for an animation that runs on the
-    // compositor (the sidebar's hide and show), on as it starts and off as it ends. Counted with the
-    // clocks' boosts, so either ending leaves the other's on. Its own on-or-off is one flag for the
-    // process: with several windows (W29a) it becomes each window's, or one window's slide ending
-    // would end another's boost.
-    static void BoostWithoutFrames(bool boost);
+    // compositor (the sidebar's hide and show, the pages' slide), on as it starts and off as it
+    // ends, as the Mac's clock asks for the top rate while the pages' settle runs on it. Each
+    // animation holds its own, counted with the clocks' boosts and the others', so one ending
+    // leaves the rest on; it lets go when it goes.
+    class BoostWithoutFrames {
+    public:
+        BoostWithoutFrames() = default;
+        ~BoostWithoutFrames() { Set(false); }
+        BoostWithoutFrames(const BoostWithoutFrames&) = delete;
+        BoostWithoutFrames& operator=(const BoostWithoutFrames&) = delete;
+        void Set(bool boost);
+        bool On() const { return on_; }
+
+    private:
+        bool on_ = false;
+    };
+    // How many boosts Kite counts as held in the process (boosted clocks and BoostWithoutFrames
+    // that are on): Kite's own count, not what Windows did with them (the boost function may be
+    // missing, and its HRESULT isn't checked). For the smoke test, on the UI thread only: with
+    // several windows on their own threads (W29a) the count needs to be atomic.
+    static int ProcessBoosts();
     bool Running() const { return running_; }
     bool Boosted() const { return boosted_; }
     // The window took the message: the next frame may post another.
     void Delivered() { posted_ = false; }
+    // For a test run (the window's thread): the thread posts no frames, and the window steps
+    // them itself while Running, so what's checked is what the window does with its frames and
+    // when it starts, boosts and stops the clock, never whether the display is ticking (with it
+    // off the compositor clock's wait fails at once and DwmFlush can stall). Start, Stop and the
+    // boost are the same either way.
+    void SetManual(bool manual);
+    bool Manual() const { return manual_; }
 
     // Now, in seconds (QueryPerformanceCounter).
     static double Now();
     // When the next frame reaches the screen, in Now()'s seconds; Now() when `device` can't say.
-    static double NextFrameTime(IDCompositionDevice* device);
+    // With `rateHz`, also the compositor's current rate (0 when it can't say), from the same
+    // statistics.
+    static double NextFrameTime(IDCompositionDevice* device, double* rateHz = nullptr);
 
 private:
     void Run();
@@ -68,6 +93,7 @@ private:
     bool running_ = false;  // under mutex_ for the thread; read on the UI thread only
     bool boosted_ = false;  // the UI thread's
     bool quit_ = false;
+    bool manual_ = false;  // under mutex_ for the thread; read on the UI thread only
     std::atomic<bool> posted_{false};
     std::thread thread_;
 };

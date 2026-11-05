@@ -6,10 +6,10 @@
 //
 // A symbol is its glyph in Segoe Fluent Icons (Segoe MDL2 Assets where Fluent isn't installed),
 // filled from the glyph's outline in the colour it's given, centred on its ink, at a size made so
-// the briefcase inks as wide as the Mac's semibold one (15pt at 12.5, measured in its 2x
-// capture): the same factor for every symbol, so they keep their sizes relative to each other.
-// The nine neither font has are Kite's own shapes (core/SymbolShape.h), scaled from the bar's
-// 12.5 and centred as the Mac's ink sits in its cell, which need neither font.
+// Segoe's briefcase glyph inks as wide as the Mac's semibold briefcase (14.65pt at 12.5): the
+// same factor for every symbol, so they keep their sizes relative to each other. The nine neither
+// font has, and the briefcase, are Kite's own shapes (core/SymbolShape.h), placed by core's
+// PlaceDrawnSymbol, which need neither font.
 // A picture is core's PictureFrameAt (the Mac's rounded square), the stored PNG's centred square
 // scaled to its pixels; a picture whose file can't be read shows the "photo" symbol. Greying (the
 // bar's) is the caller's.

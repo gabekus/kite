@@ -27,7 +27,7 @@ struct FadedLayer {
 // visual, effect group and surface made the first time (`fresh` is set then: it needs a parent and
 // an opacity), the surface resized for a new size. With `readBack` it keeps the drawing in `pixels`.
 // Empty on success, else what failed (`hr`: whether the GPU went, IsDeviceLost).
-std::wstring DrawFadedLayer(Compositor& compositor, FadedLayer& layer, UINT width, UINT height, UINT dpi, const Compositor::Content& content,
+std::wstring DrawFadedLayer(Compositor& compositor, perf::View view, FadedLayer& layer, UINT width, UINT height, UINT dpi, const Compositor::Content& content,
                             bool readBack, HRESULT& hr, bool& fresh);
 // After DrawFadedLayer: a fresh layer's visual goes into `parent`, placed as AddVisual places it
 // (`insertAbove` the `reference`, or with none, on top for FALSE and at the bottom for TRUE). A
