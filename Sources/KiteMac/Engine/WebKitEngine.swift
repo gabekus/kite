@@ -195,7 +195,10 @@ final class WebKitPage: NSObject, WebPage {
         set { webView.pageZoom = newValue }
     }
 
-    func load(_ url: URL) { webView.load(URLRequest(url: url)) }
+    func load(_ url: URL) {
+        webView.load(URLRequest(url: url))
+        FindTestHookRunner.logLoadAsked(webView)   // a run with a find hook only
+    }
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
     func reload() { webView.reload() }

@@ -130,8 +130,24 @@ public enum FindTestHook: Equatable, Sendable {
         public var screens = 0
         /// Times the page's web content process ended (WebKit reloads it each time).
         public var contentProcessEnds = 0
+        /// The page's web content process id: 0 when WebKit has none running for it, nil when it can't be read.
+        public var contentProcess: Int?
 
         public init() {}
+    }
+
+    /// How a web content process id reads in the diagnostic lines.
+    public static func processText(_ pid: Int?) -> String {
+        guard let pid else { return "unknown" }
+        return pid > 0 ? "running" : "none"
+    }
+
+    /// A page's state when WebKit was asked to load it (`when`: "load asked" straight after, then a later look), on a
+    /// run with a find hook: whether the load took (WebKit sets the URL and loading at once) and whether the page
+    /// has a web content process. No URL is written.
+    public static func loadLine(_ when: String, urlSet: Bool, loading: Bool, progress: Double, contentProcess: Int?) -> String {
+        "\(logPrefix) page: \(when) (web view URL set: \(urlSet ? "yes" : "no"), loading: \(loading ? "yes" : "no"), "
+            + "progress: \(String(format: "%.2f", progress)), content process: \(processText(contentProcess)))"
     }
 
     /// The stderr line when no page finished loading in time. The bar opens anyway (`fallbackLine`).
@@ -143,7 +159,8 @@ public enum FindTestHook: Equatable, Sendable {
             + "\(flag(wait.selectedTab)), page shown: \(flag(wait.pageShown)), loading: \(flag(wait.pageLoading)), "
             + "progress: \(amount(wait.progress)); web view loading: \(flag(wait.webViewLoading)), web view progress: "
             + "\(amount(wait.webViewProgress)), web view URL set: \(flag(wait.webViewHasURL)), content process ended: "
-            + "\(wait.contentProcessEnds) times; window visible: \(flag(wait.windowVisible)), ordered in: "
+            + "\(wait.contentProcessEnds) times, content process: \(processText(wait.contentProcess)); window visible: "
+            + "\(flag(wait.windowVisible)), ordered in: "
             + "\(flag(wait.windowOrderedIn)), on a screen: \(flag(wait.windowOnScreen)), screens: \(wait.screens))"
     }
 
