@@ -22,6 +22,11 @@ final class PagePool {
     /// Hidden tabs whose last busy check found media or capture in use: the live-tab limit skips them.
     private var busyIDs: Set<UUID> = []
     private var savedState: [UUID: Any] = [:]
+    /// Where tabs' history is kept across relaunches (`savedState` and live pages); nil in incognito windows.
+    var historyFiles: TabHistoryStore?
+    /// Tabs that loaded since the last background save of their history.
+    private var historyToSave: Set<UUID> = []
+    private var historySaveTask: Task<Void, Never>?
     private var visibleIDs: Set<UUID> = []
     private var memoryPressure: DispatchSourceMemoryPressure?
     /// Each open popup's tab and the tab that opened it (window.open, or a link with
@@ -174,8 +179,9 @@ final class PagePool {
         let engine = engine(forTab: tab.id)
         // A tab on one of Kite's own pages gets a blank page; the window draws the page over it.
         let url = InternalPage(tab.url) == nil ? tab.url : nil
-        // History saved when the page hibernated, here or in a linked window.
+        // History saved when the page hibernated, here or in a linked window, or before Kite last quit.
         let restoring = savedState.removeValue(forKey: tab.id) ?? shared?.takeSavedState(tab.id, excluding: self)
+            ?? url.flatMap { historyFiles?.load(tab: tab.id, url: $0, profile: engine.profileDirectory) }
         let page = engine.makePage(url: url, restoring: restoring)
         register(page, id: tab.id)
         pageProfiles[tab.id] = engine.profileDirectory
@@ -288,7 +294,19 @@ final class PagePool {
         }
         for id in savedState.keys where !restorable.contains(id) {
             savedState[id] = nil
+            historyFiles?.remove(tab: id)
         }
+    }
+
+    /// Writes every live page's history, for quitting (`historyFiles.flush` waits for it).
+    func saveAllHistory() {
+        for id in pages.keys { saveHistory(of: id) }
+    }
+
+    /// Delete Browsing Data took history: tabs asleep here wake with none.
+    func forgetSavedHistory() {
+        savedState.removeAll()
+        historyToSave.removeAll()
     }
 
     /// A new selected tab showing `page`, which already exists (a popup, or a Peek's page expanded). `url` is
@@ -335,9 +353,12 @@ final class PagePool {
         guard let page = pages.removeValue(forKey: id) else { return }
         // A closed page can't be anyone's opener or popup again.
         Self.popupOpeners = Self.popupOpeners.filter { $0.key != id && $0.value != id }
+        let profile = pageProfiles[id]
         pageProfiles[id] = nil
         OAuthResumeTracker.forget(id)
-        savedState[id] = keepHistory ? page.hibernationState() : nil
+        let state = keepHistory ? page.hibernationState() : nil
+        savedState[id] = state
+        if let state = state as? Data { writeHistory(state, of: id, profile: profile) } else { historyFiles?.remove(tab: id) }
         lastShown[id] = nil
         busyIDs.remove(id)
         page.onEvent = nil
@@ -349,6 +370,36 @@ final class PagePool {
     }
 
     // MARK: Private
+
+    /// Writes tab `id`'s history a few seconds after it loads or moves, so a crash loses little of it.
+    /// Quitting and hibernating write it too, with the latest scroll and form contents.
+    private func scheduleHistorySave(_ id: UUID) {
+        guard historyFiles != nil else { return }
+        historyToSave.insert(id)
+        guard historySaveTask == nil else { return }
+        historySaveTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard let self else { return }
+            self.historySaveTask = nil
+            let ids = self.historyToSave
+            self.historyToSave = []
+            for id in ids { self.saveHistory(of: id) }
+        }
+    }
+
+    private func saveHistory(of id: UUID) {
+        guard historyFiles != nil, let page = pages[id], let state = page.hibernationState() as? Data else { return }
+        writeHistory(state, of: id, profile: pageProfiles[id])
+    }
+
+    /// Saved with the tab's URL as the sidebar has it, which is what it loads at launch.
+    private func writeHistory(_ navigation: Data, of id: UUID, profile: String?) {
+        let state = store.state
+        guard let historyFiles,
+              let url = state.tab(id)?.url ?? state.recentlyClosed.first(where: { $0.tab.id == id })?.tab.url
+        else { return }
+        historyFiles.save(navigation, tab: id, url: url, profile: profile)
+    }
 
     private func register(_ page: WebPage, id: UUID) {
         pages[id] = page
@@ -373,6 +424,7 @@ final class PagePool {
             store.pageTitleChanged(id, title)
         case .url(let url):
             store.pageURLChanged(id, url)
+            scheduleHistorySave(id)
             if let page = pages[id] { OAuthResumeTracker.page(page, movedTo: url, key: id) }
             // A prompt belongs to the site that asked; leaving it drops the prompt (as Chromium does).
             if let request = permissionRequests[id], let url,
@@ -392,6 +444,7 @@ final class PagePool {
             }
             if !isLoading {
                 markInstalledExtensions(in: id)
+                scheduleHistorySave(id)
                 onLoadFinished?(id)
                 // For whoever watches every window's pages (Claude's handoffs), not just this window's.
                 NotificationCenter.default.post(name: .kitePageFinishedLoading, object: self, userInfo: ["tab": id])

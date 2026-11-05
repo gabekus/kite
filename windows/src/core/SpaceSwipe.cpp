@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iterator>
 #include <numbers>
+#include <utility>
 
 namespace kite {
 
@@ -175,10 +176,11 @@ double ThemeCrossfadeProgress(double elapsed, double startProgress) {
 }
 
 bool ThemeCrossfade::Set(const Theme& theme, double now) {
-    if (theme == to) return false;
+    if (interactive || theme == to) return false;
     if (start && now - *start < space_motion::kThemeDuration / 2) to = from;
     from = to;
     to = theme;
+    startProgress = 0;
     if (from == to) {
         start.reset();
         return false;
@@ -190,17 +192,84 @@ bool ThemeCrossfade::Set(const Theme& theme, double now) {
 void ThemeCrossfade::Snap(const Theme& theme) {
     from = to = theme;
     start.reset();
+    interactive.reset();
+    startProgress = 0;
+}
+
+void ThemeCrossfade::SetInteractive(const Theme& fromTheme, const Theme& toTheme, float progress) {
+    from = fromTheme;
+    to = toTheme;
+    interactive = from == to ? 1.0f : std::clamp(progress, 0.0f, 1.0f);
+    start.reset();
+}
+
+void ThemeCrossfade::FinishInteractive(const Theme& theme, double now) {
+    const float progress = interactive.value_or(1.0f);
+    interactive.reset();
+    // Rubber-banded past the last space, or between two spaces with the same theme.
+    if (from == to && theme == to) return Snap(theme);
+    if (theme != to && theme != from) {
+        // Another space selected under the swipe: a switch to it, from whichever side was
+        // showing more.
+        if (progress >= 0.5f) from = to;
+        to = theme;
+        startProgress = 0;
+        start = now;
+        return;
+    }
+    if (theme == to) {
+        startProgress = progress;
+    } else {
+        // Back where it started: the same mix, read from the other end.
+        std::swap(from, to);
+        startProgress = 1 - progress;
+    }
+    // Already all the way there (a whole page's drag, or none back): nothing to fade.
+    if (startProgress >= 1) return Snap(theme);
+    start = now;
 }
 
 float ThemeCrossfade::Progress(double time) {
+    if (interactive) return *interactive;
     if (!start) return 1;
     const double elapsed = std::max(time - *start, 0.0);
     if (elapsed >= space_motion::kThemeDuration) {
         start.reset();
         from = to;
+        startProgress = 0;
         return 1;
     }
-    return static_cast<float>(ThemeCrossfadeProgress(elapsed));
+    return static_cast<float>(ThemeCrossfadeProgress(elapsed, startProgress));
+}
+
+}  // namespace kite
+
+namespace kite {
+
+std::optional<SpaceSwipe::Neighbours> SpaceSwipe::Neighbours::Make(const std::vector<std::string>& spaces, size_t selected) {
+    if (selected >= spaces.size()) return std::nullopt;
+    Neighbours n;
+    if (selected > 0) n.previous = spaces[selected - 1];
+    n.current = spaces[selected];
+    if (selected + 1 < spaces.size()) n.next = spaces[selected + 1];
+    return n;
+}
+
+std::optional<std::string> SpaceSwipe::Neighbours::Towards(int direction) const {
+    if (direction < 0) return previous;
+    if (direction > 0) return next;
+    return current;
+}
+
+std::optional<std::string> SpaceSwipe::Neighbours::Target(int direction, const std::vector<std::string>& spaces, const std::string& selected) const {
+    if (selected != current) return std::nullopt;
+    const auto here = std::find(spaces.begin(), spaces.end(), current);
+    const std::optional<std::string> id = Towards(direction);
+    if (here == spaces.end() || !id) return std::nullopt;
+    const auto at = std::find(spaces.begin(), spaces.end(), *id);
+    const std::ptrdiff_t step = direction < 0 ? -1 : direction > 0 ? 1 : 0;
+    if (at == spaces.end() || at - here != step) return std::nullopt;
+    return id;
 }
 
 }  // namespace kite

@@ -23,6 +23,18 @@ import Testing
         #expect(!URLInput.looksLikeURL(input))
     }
 
+    @Test func typedAppLinksAreURLs() {
+        let appOpens = URLInput.appOpens
+        URLInput.appOpens = { $0.scheme == "claude" || $0.scheme == "todo" }
+        defer { URLInput.appOpens = appOpens }
+        let link = "claude://claude.ai/magic-link?a=1#b"
+        #expect(URLInput.resolve(link, engine: .google)?.absoluteString == link)
+        #expect(URLInput.looksLikeURL(link))
+        // Without "://", or with no app for it, it's still a search.
+        #expect(URLInput.resolve("todo:milk", engine: .google)?.host() == "www.google.com")
+        #expect(URLInput.resolve("nobody://x", engine: .google)?.host() == "www.google.com")
+    }
+
     @Test func encodesQueryCharacters() {
         let url = SearchEngine.google.searchURL(for: "c++ & rust?")
         #expect(url.absoluteString == "https://www.google.com/search?q=c%2B%2B%20%26%20rust%3F")
