@@ -194,4 +194,31 @@ import Testing
             (235, 50): cursor arrow | hit 0.1 NSHostingView
             """)
     }
+
+    @Test func hitTakesOnePointAndIsReadOnly() throws {
+        let hit = try ui(["action": "hit", "point": [120, 364.5], "window": 7])
+        #expect(hit == .hit(window: 7, point: UIPoint(x: 120, y: 364.5)))
+        #expect(hit.isReadOnly)
+        #expect(UIInspection.actions.contains("hit"))
+        #expect(throws: (any Error).self) { try ui(["action": "hit"]) }
+        #expect(throws: (any Error).self) { try ui(["action": "hit", "point": [1]]) }
+        #expect(throws: (any Error).self) { try ui(["action": "hit", "point": "120,364"]) }
+    }
+
+    @Test func hitListsTheViewHitThenItsSuperviews() {
+        let chain = [
+            UIHitView(path: "0.3.3.0.5.1.1.6", className: "SymbolButton", frame: UIRect(x: 202, y: 352.5, width: 24, height: 24)),
+            UIHitView(path: "0.3.3.0.5.1.1", className: "SidebarPassthroughView", frame: UIRect(x: 8, y: 346.5, width: 224, height: 36)),
+            UIHitView(path: "0.3.3.0.5.1", className: "TabRowCell", frame: UIRect(x: 8, y: 344, width: 224, height: 41)),
+            UIHitView(path: nil, className: "NSThemeFrame", frame: UIRect(x: 0, y: 0, width: 1280, height: 820), isHidden: true),
+        ]
+        #expect(UIReport.hit(UIPoint(x: 210, y: 364.5), chain: chain) == """
+            Hit at (210, 364.5): the view a click there reaches, then its superviews.
+            0.3.3.0.5.1.1.6 SymbolButton [202,352.5 24×24]
+            0.3.3.0.5.1.1 SidebarPassthroughView [8,346.5 224×36]
+            0.3.3.0.5.1 TabRowCell [8,344 224×41]
+            - NSThemeFrame [0,0 1280×820] hidden=true
+            """)
+        #expect(UIReport.hit(UIPoint(x: -1, y: -1), chain: []) == "Hit at (-1, -1): nothing.")
+    }
 }
