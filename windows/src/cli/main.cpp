@@ -60,6 +60,7 @@
 #include "core/OKLab.h"
 #include "core/SessionStore.h"
 #include "core/Sidebar.h"
+#include "core/SidebarTopRow.h"
 #include "core/SpaceBar.h"
 #include "core/SpaceEditing.h"
 #include "core/SpaceSwipeGesture.h"
@@ -85,9 +86,9 @@ int Usage() {
         "usage: kitecore [--profile DIR] state\n"
         "       kitecore [--profile DIR] resolve TEXT...\n"
         "       kitecore [--profile DIR] suggest TEXT... [--current]\n"
-        "       kitecore [--profile DIR] sidebar [SPACE_ID]\n"
+        "       kitecore [--profile DIR] sidebar [SPACE_ID] [--page back,forward,loading] [--hidden]\n"
         "       kitecore [--profile DIR] collapse SPACE_ID\n"
-        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]]\n"
+        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]] [--page back,forward,loading]\n"
         "       kitecore [--profile DIR] open TEXT... [--space ID] [--background]\n"
         "       kitecore [--profile DIR] select TAB_ID\n"
         "       kitecore [--profile DIR] tab next|prev|NUMBER\n"
@@ -270,6 +271,34 @@ int main(int argc, char** argv) {
     const bool existed = std::holds_alternative<BrowserState>(loaded);
     state = existed ? std::move(std::get<BrowserState>(loaded)) : BrowserState::MakeDefault();
 
+    // The page the selected tab shows, as Chromium would report it (kitecore has no pages): what the
+    // top row shows (sidebar, click). And the sidebar hidden (View › Hide Sidebar, which the session
+    // doesn't keep): where the card's edge is.
+    PageStatus page;
+    bool hidden = false;
+    if (args[0] == "sidebar" || args[0] == "click") {
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--hidden" && args[0] == "sidebar") {
+                hidden = true;
+            } else if (args[i] == "--page" && i + 1 < args.size()) {
+                std::string_view rest = args[i + 1];
+                while (!rest.empty()) {
+                    const std::string_view word = rest.substr(0, rest.find(','));
+                    if (word == "back") page.canGoBack = true;
+                    else if (word == "forward") page.canGoForward = true;
+                    else if (word == "loading") page.isLoading = true;
+                    else if (word != "none") return Usage();
+                    rest = rest.size() > word.size() ? rest.substr(word.size() + 1) : std::string_view{};
+                }
+                args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
+            } else {
+                continue;
+            }
+            args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
+            --i;
+        }
+    }
+
     const std::string& command = args[0];
     const SearchEngine engine = SearchEngineFromRaw(state.searchEngine).value_or(SearchEngine::Google);
     bool changed = false;
@@ -400,7 +429,27 @@ int main(int argc, char** argv) {
             cell.emplace("tip", std::move(t));
             bar.emplace_back(std::move(cell));
         }
+        // The top row over the address field (sidebar points), for the page given with --page, and
+        // where the sidebar and the card's leading edge sit, shown or hidden (window points).
+        json::Array topRow;
+        for (const TopRowItem& item : LayOutTopRow(240, TopRowModelOf(state, page))) {
+            json::Object button{{"button", std::string(TopRowButtonName(item.button))},
+                                {"symbol", item.symbol},
+                                {"tooltip", item.tooltip},
+                                {"enabled", item.enabled},
+                                {"opacity", static_cast<double>(item.Opacity())},
+                                {"left", static_cast<double>(item.frame.left)},
+                                {"top", static_cast<double>(item.frame.top)},
+                                {"width", static_cast<double>(item.frame.Width())},
+                                {"height", static_cast<double>(item.frame.Height())}};
+            button.emplace("command", TopRowCommand(item.button));
+            topRow.emplace_back(std::move(button));
+        }
         json::Object out{{"address", AddressFieldText(state)},
+                         {"topRow", json::Value(std::move(topRow))},
+                         {"shown", !hidden},
+                         {"sidebarLeft", static_cast<double>(SidebarLeft(!hidden, 240))},
+                         {"cardLeft", static_cast<double>(CardLeft(!hidden, 240))},
                          {"rows", json::Value(std::move(rows))},
                          {"spaceBar", json::Object{{"fits", layout.fits}, {"cells", json::Value(std::move(bar))}}}};
         std::puts(json::Write(json::Value(std::move(out))).c_str());
@@ -414,9 +463,17 @@ int main(int argc, char** argv) {
             if (error != std::errc() || end != args[i].data() + args[i].size()) return Usage();
         }
         const auto rows = SidebarRows(state, state.SelectedSpaceIndex());
+        const std::vector<TopRowItem> topRow = LayOutTopRow(240, TopRowModelOf(state, page));
         // The space bar along the bottom: a click on a space's cell selects it (pressed and let
         // go at the point, as the window's).
-        if (values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) {
+        if (const auto button = values[0] >= 0 && values[0] < 240 ? TopRowItemAt(topRow, values[0], values[1]) : std::nullopt) {
+            // A top-row button: the command the window runs (nothing for a disabled one). Toggle
+            // Sidebar and the page's commands are the window's, so nothing here changes.
+            const TopRowItem& item = topRow[*button];
+            json::Object out{{"target", std::string("topRow")}, {"button", std::string(TopRowButtonName(item.button))}, {"enabled", item.enabled}};
+            out.emplace("action", item.enabled ? TopRowCommand(item.button) : std::string("none"));
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) {
             const std::vector<SpaceCell> cells = SpaceCells(state);
             const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
             const float x = values[0], y = values[1] - SpaceBarTop(values[2]);

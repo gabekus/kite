@@ -72,6 +72,53 @@ if(NOT collapsed)
   message(FATAL_ERROR "collapse didn't fold the pinned tabs: ${bar}")
 endif()
 expect_exit_early(5 sidebar 00000000-0000-0000-0000-000000000000)
+# The top row (SidebarHeaderView): the toggle 6pt in, then back, forward and reload ending 6pt
+# short of the edge. With no page yet back and forward are off and reload is on (there's a tab);
+# --page is what a page reports: back on, and reload the X while it loads. --hidden moves the
+# card's edge to the inset.
+kitecore(bar sidebar)
+string(JSON count LENGTH "${bar}" topRow)
+string(JSON button0 GET "${bar}" topRow 0 button)
+string(JSON left0 GET "${bar}" topRow 0 left)
+string(JSON top0 GET "${bar}" topRow 0 top)
+string(JSON button3 GET "${bar}" topRow 3 button)
+string(JSON left3 GET "${bar}" topRow 3 left)
+string(JSON back GET "${bar}" topRow 1 enabled)
+string(JSON reload GET "${bar}" topRow 3 enabled)
+string(JSON symbol3 GET "${bar}" topRow 3 symbol)
+string(JSON cardLeft GET "${bar}" cardLeft)
+if(NOT count EQUAL 4 OR NOT button0 STREQUAL "toggleSidebar" OR NOT left0 EQUAL 6 OR NOT top0 EQUAL 7.5 OR NOT button3 STREQUAL "reload"
+   OR NOT left3 EQUAL 202 OR back OR NOT reload OR NOT symbol3 STREQUAL "arrow.clockwise" OR NOT cardLeft EQUAL 240)
+  message(FATAL_ERROR "sidebar's top row gave ${bar}")
+endif()
+kitecore(bar sidebar --page back,loading --hidden)
+string(JSON back GET "${bar}" topRow 1 enabled)
+string(JSON forward GET "${bar}" topRow 2 enabled)
+string(JSON symbol3 GET "${bar}" topRow 3 symbol)
+string(JSON tooltip3 GET "${bar}" topRow 3 tooltip)
+string(JSON shown GET "${bar}" shown)
+string(JSON cardLeft GET "${bar}" cardLeft)
+string(JSON sidebarLeft GET "${bar}" sidebarLeft)
+if(NOT back OR forward OR NOT symbol3 STREQUAL "xmark" OR NOT tooltip3 STREQUAL "Reload" OR shown OR NOT cardLeft EQUAL 10
+   OR NOT sidebarLeft EQUAL -240)
+  message(FATAL_ERROR "sidebar --page back,loading --hidden gave ${bar}")
+endif()
+# A click on back with a page to go back to runs Go Back; on forward with none, nothing; between
+# the buttons the row is the window's drag, not a press.
+kitecore(hit click 150 23 --page back)
+string(JSON target GET "${hit}" target)
+string(JSON action GET "${hit}" action)
+kitecore(off click 184 23 --page back)
+string(JSON offAction GET "${off}" action)
+string(JSON offEnabled GET "${off}" enabled)
+kitecore(gap click 100 23)
+string(JSON gapTarget GET "${gap}" target)
+kitecore(toggle click 22 23)
+string(JSON toggleAction GET "${toggle}" action)
+if(NOT target STREQUAL "topRow" OR NOT action STREQUAL "goBack" OR NOT offAction STREQUAL "none" OR offEnabled OR NOT gapTarget STREQUAL "none"
+   OR NOT toggleAction STREQUAL "toggleSidebar")
+  message(FATAL_ERROR "top-row clicks gave ${hit}, ${off}, ${gap}, ${toggle}")
+endif()
 # A click on Wikipedia's row (top 146 under the 82pt header) selects it; one on the address
 # field opens the bar there; one on the header presses it and does nothing yet; one in the
 # divider's gap lands on nothing.

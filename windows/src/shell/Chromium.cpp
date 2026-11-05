@@ -629,9 +629,11 @@ public:
 
     // CefLoadHandler
 
-    void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading, bool, bool) override {
-        shared_->Post([shared = shared_, id = tabID_, browser, isLoading] {
-            if (shared->PageFor(id, browser) && shared->events.loadingChanged) shared->events.loadingChanged(id, isLoading);
+    void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading, bool canGoBack, bool canGoForward) override {
+        shared_->Post([shared = shared_, id = tabID_, browser, isLoading, canGoBack, canGoForward] {
+            if (shared->PageFor(id, browser) && shared->events.loadingChanged) {
+                shared->events.loadingChanged(id, isLoading, canGoBack, canGoForward);
+            }
         });
     }
 

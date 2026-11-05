@@ -45,6 +45,10 @@
 
 namespace kite {
 
+// A drawn symbol's geometry (core/SymbolShape.h: its layers joined and cut in order, in the shape's
+// points), on `d2d`; null when it can't be made.
+Microsoft::WRL::ComPtr<ID2D1Geometry> MakeShapeGeometry(ID2D1Factory* d2d, const SymbolShape& shape);
+
 class SpaceIconPainter {
 public:
     struct Pictures {

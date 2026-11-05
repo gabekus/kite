@@ -7,8 +7,10 @@
 #include <algorithm>
 #include <cmath>
 
+#include "core/SidebarTopRow.h"
 #include "core/SpaceBar.h"
 #include "core/SpaceEditing.h"
+#include "core/TitleBar.h"
 #include "shell/Capture.h"
 #include "shell/SpaceMenu.h"
 
@@ -357,6 +359,8 @@ std::wstring BrowserWindowController::SmokeTest() {
     if (barTop < 0 || barTop >= static_cast<long>(chrome.height) || !Inked(chrome, static_cast<UINT>(barTop))) {
         return L"the space bar drew nothing";
     }
+    // The top row: its buttons, the page's states, hiding and showing the sidebar.
+    if (std::wstring problem = SmokeTestTopRow(); !problem.empty()) return problem;
     // And the caption buttons their glyphs.
     Pixels buttons;
     if (std::wstring problem = caption_->Draw(&buttons); !problem.empty()) return L"the caption buttons couldn't draw: " + problem;
@@ -387,10 +391,11 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
     // The window's own frame, read back as it's presented: at the window's scale.
     std::wstring problem = Draw(&pixels);
     if (problem.empty()) {
-        // The sidebar's surface over the backdrop, at the window's top-left.
+        // The sidebar's surface over the backdrop, at the window's top-left (off the window while
+        // it's hidden).
         Pixels chrome;
         problem = sidebar_->Draw(&chrome);
-        if (problem.empty()) ComposeOver(pixels, chrome, POINT{0, 0});
+        if (problem.empty() && sidebarShown_) ComposeOver(pixels, chrome, POINT{0, 0});
     }
     if (problem.empty()) {
         Pixels buttons;
@@ -477,6 +482,148 @@ std::wstring BrowserWindowController::HoldRename(size_t index, const std::option
     if (text) sidebar_->TypeInRename(*text);
     if (focused) sidebar_->FocusRenameForCapture();
     return {};
+}
+
+void BrowserWindowController::HoldPageStatus(const PageStatus& page) {
+    if (const Tab* tab = state_.SelectedTab()) pageStatus_[tab->id] = page;
+    ShowPageStatus();
+}
+
+std::wstring BrowserWindowController::HoldSidebarToggles(int times) {
+    for (int i = 0; i < times; ++i) {
+        RunCommand("toggleSidebar");
+        if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
+    }
+    return {};
+}
+
+std::wstring BrowserWindowController::HoldTopRowHover(TopRowButton button) {
+    const std::optional<POINT> at = sidebar_->TopRowCentre(button);
+    if (!at) return L"the top row has no such button";
+    SendMouse(window_.Handle(), WM_MOUSEMOVE, *at, 0);
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestTopRow() {
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    // Drawn first, so what follows shows what each change draws.
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the sidebar couldn't draw: " + problem;
+    const std::vector<TopRowItem>& items = sidebar_->TopRowItems();
+    if (items.size() != 4 || items.front().button != TopRowButton::ToggleSidebar || items.back().button != TopRowButton::Reload) {
+        return L"the top row isn't the toggle, back, forward and reload";
+    }
+    const Tab* tab = state_.SelectedTab();
+    if (!tab) return {};  // the smoke page's session always has one
+    const std::string tabID = tab->id;
+    const std::optional<PageStatus> before =
+        pageStatus_.contains(tabID) ? std::optional<PageStatus>(pageStatus_.at(tabID)) : std::nullopt;
+    const auto restore = [&] {
+        if (before) pageStatus_[tabID] = *before;
+        else pageStatus_.erase(tabID);
+        ShowPageStatus();
+    };
+    const auto item = [&](TopRowButton button) {
+        for (const TopRowItem& i : sidebar_->TopRowItems()) {
+            if (i.button == button) return i;
+        }
+        return TopRowItem{};
+    };
+    const std::wstring failure = [&]() -> std::wstring {
+        // Back turning on is an opacity: the sidebar's next pass commits it, drawing nothing.
+        size_t draws = sidebar_->TopRowSurfaceDraws();
+        const size_t commits = sidebar_->Commits();
+        HoldPageStatus(PageStatus{false, true, false});
+        if (!item(TopRowButton::Back).enabled || item(TopRowButton::Forward).enabled) return L"the page's history didn't reach the top row";
+        if (!sidebar_->CommitPending()) return L"a button turning on wasn't to be committed";
+        sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0);
+        if (sidebar_->Commits() != commits + 1 || sidebar_->CommitPending()) return L"a button turning on wasn't committed";
+        if (sidebar_->TopRowSurfaceDraws() != draws) return L"a button turning on drew its surface";
+        // Loading: reload is the X, which draws that one button.
+        HoldPageStatus(PageStatus{true, true, false});
+        if (item(TopRowButton::Reload).symbol != "xmark") return L"a loading page didn't show the X";
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the top row couldn't draw: " + problem;
+        if (sidebar_->TopRowSurfaceDraws() != draws + 1) return L"the X drew more than its button";
+        // A hover over a button draws nothing (the Mac's SymbolButton shows none; Windows' tooltip comes).
+        draws = sidebar_->TopRowSurfaceDraws();
+        if (std::wstring problem = HoldTopRowHover(TopRowButton::Back); !problem.empty()) return problem;
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the sidebar couldn't draw: " + problem;
+        if (sidebar_->TopRowSurfaceDraws() != draws) return L"hovering a top-row button drew";
+        // The first hover over a button makes the tooltips (comctl32 loads then, not at launch).
+        if (!sidebar_->TopRowHasTooltips()) return L"hovering a top-row button made no tooltip";
+        // The buttons take their presses (not the window's drag); the row between them drags.
+        const auto areaAt = [&](POINT at) {
+            RECT client{};
+            GetClientRect(window_.Handle(), &client);
+            return TitleBarAreaAt(static_cast<float>(client.right) / scale, SidebarShownWidth(), static_cast<float>(at.x) / scale,
+                                  static_cast<float>(at.y) / scale, scale);
+        };
+        const POINT toggle = *sidebar_->TopRowCentre(TopRowButton::ToggleSidebar);
+        if (areaAt(toggle) != TitleBarArea::Client || areaAt(POINT{std::lround(100 * scale), toggle.y}) != TitleBarArea::Drag) {
+            return L"the top row's buttons aren't cut out of the window's drag";
+        }
+        // A press on a disabled button (forward) does nothing.
+        const POINT forward = *sidebar_->TopRowCentre(TopRowButton::Forward);
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, forward, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, forward, 0);
+        if (!sidebarShown_ || GetCapture() == window_.Handle()) return L"a press on a disabled button did something";
+        // The toggle hides the sidebar: it slides off, the card's edge moves to the inset, and the
+        // sidebar takes no pointer.
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, toggle, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, toggle, 0);
+        if (sidebarShown_ || !toggling_) return L"the toggle didn't hide the sidebar";
+        if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
+        if (sidebar_->Left() != -static_cast<float>(kSidebarWidth)) return L"the hidden sidebar isn't off the window";
+#ifdef KITE_HAS_CEF
+        if (chromium_ && ContentBounds().left != MulDiv(static_cast<int>(sidebar_toggle::kContentInset), static_cast<int>(window_.Dpi()),
+                                                        USER_DEFAULT_SCREEN_DPI)) {
+            return L"the card didn't grow to the window's inset";
+        }
+#endif
+        if (areaAt(toggle) != TitleBarArea::Drag || OverSidebar(POINT{std::lround(120 * scale), std::lround(200 * scale)})) {
+            return L"the hidden sidebar still takes the pointer";
+        }
+        if (sidebar_->HandleMouse(WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(toggle.x, toggle.y))) return L"the hidden sidebar took a press";
+        // The system menu's item says Show Sidebar now, and shows it.
+        const auto menuTitle = [&] {
+            wchar_t title[64] = {};
+            if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) GetMenuStringW(menu, kToggleSidebarMenuID, title, 64, MF_BYCOMMAND);
+            return std::wstring(title);
+        };
+        if (!menuTitle().starts_with(L"Show Sidebar\t") || menuTitle() != ToggleSidebarMenuText()) {
+            return L"the system menu doesn't offer Show Sidebar with its shortcut";
+        }
+        // Hidden at rest it draws and commits nothing: reload's arrow coming back (the page stopped
+        // loading) and back turning off wait for the show, which draws reload alone.
+        const size_t hiddenCommits = sidebar_->Commits(), hiddenDraws = sidebar_->TopRowSurfaceDraws();
+        HoldPageStatus(PageStatus{false, false, true});
+        sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0);
+        if (std::wstring problem = Draw(); !problem.empty()) return L"the window couldn't draw: " + problem;
+        if (sidebar_->Commits() != hiddenCommits || sidebar_->TopRowSurfaceDraws() != hiddenDraws) return L"the hidden sidebar drew";
+        SendMessageW(window_.Handle(), WM_SYSCOMMAND, kToggleSidebarMenuID, 0);
+        if (!sidebarShown_ || !toggling_) return L"the system menu's Show Sidebar didn't show the sidebar";
+        if (sidebar_->TopRowSurfaceDraws() != hiddenDraws + 1 || item(TopRowButton::Reload).symbol != "arrow.clockwise") {
+            return L"the sidebar didn't draw what changed while it was hidden as it showed";
+        }
+        if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
+        if (!menuTitle().starts_with(L"Hide Sidebar\t") || menuTitle() != ToggleSidebarMenuText()) {
+            return L"the system menu doesn't offer Hide Sidebar with its shortcut";
+        }
+        // Ctrl+S's command hides it, and one caught 30 ms into the slide turns back from where it is.
+        RunCommand("toggleSidebar");
+        if (sidebarShown_ || !toggling_) return L"Toggle Sidebar didn't hide the sidebar";
+        RunUntil([] { return false; }, 0.03);
+        const float turned = sidebar_->Left();
+        RunCommand("toggleSidebar");
+        if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
+        if (!sidebarShown_ || sidebar_->Left() != 0 || !(turned < 0 && turned > -static_cast<float>(kSidebarWidth))) {
+            return L"a toggle caught mid-slide didn't turn back";
+        }
+        if (areaAt(toggle) != TitleBarArea::Client) return L"the shown sidebar's toggle isn't a button";
+        return {};
+    }();
+    restore();
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the top row couldn't draw: " + problem;
+    return failure;
 }
 
 std::wstring BrowserWindowController::SmokeTestSpaceEditing() {

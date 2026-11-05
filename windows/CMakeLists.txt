@@ -49,6 +49,7 @@ add_library(KiteCoreWin STATIC
   src/core/TouchpadPhases.cpp
   src/core/LiveTabPolicy.cpp
   src/core/Sidebar.cpp
+  src/core/SidebarTopRow.cpp
   src/core/TabClosing.cpp
   src/core/SupportDirectory.cpp
   src/core/ThemeBackdrop.cpp
@@ -112,11 +113,13 @@ if(WIN32)
     src/shell/Capture.cpp
     src/shell/CommandBarView.cpp
     src/shell/Compositor.cpp
+    src/shell/FadedLayer.cpp
     src/shell/Favicons.cpp
     src/shell/FrameClock.cpp
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
     src/shell/Renderer.cpp
+    src/shell/SidebarTopRowView.cpp
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
     src/shell/SpaceIconPainter.cpp
@@ -150,7 +153,8 @@ if(WIN32)
     # need, and loads the window's graphics DLLs only in the process that draws the window.
     target_link_options(Kite PRIVATE /STACK:0x800000
       /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:dwmapi.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll
-      # comctl32 for Delete Space's task dialog and gdi32 for --space-menu's read-back: only the
+      # comctl32 for Delete Space's task dialog and the top row's tooltips (made on the first hover
+      # over a button), and gdi32 for --space-menu's read-back: only the
       # window's process calls them (user32 loads gdi32 for itself, so delaying Kite's import of it
       # is safe: no call of Kite's to it comes before the window, or from a loader callback).
       /DELAYLOAD:comctl32.dll /DELAYLOAD:gdi32.dll)
@@ -192,6 +196,7 @@ add_executable(KiteCoreTests
   tests/ModelTests.cpp
   tests/LiveTabPolicyTests.cpp
   tests/SidebarTests.cpp
+  tests/SidebarTopRowTests.cpp
   tests/SpaceBarTests.cpp
   tests/SpaceEditingTests.cpp
   tests/SpaceIconTests.cpp

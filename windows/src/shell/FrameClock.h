@@ -42,6 +42,12 @@ public:
     void Start(bool boost = true);
     void Stop();
     void SetBoost(bool boost);
+    // The boost alone, with no frames (the window's thread): for an animation that runs on the
+    // compositor (the sidebar's hide and show), on as it starts and off as it ends. Counted with the
+    // clocks' boosts, so either ending leaves the other's on. Its own on-or-off is one flag for the
+    // process: with several windows (W29a) it becomes each window's, or one window's slide ending
+    // would end another's boost.
+    static void BoostWithoutFrames(bool boost);
     bool Running() const { return running_; }
     bool Boosted() const { return boosted_; }
     // The window took the message: the next frame may post another.
