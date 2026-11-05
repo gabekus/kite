@@ -32,6 +32,7 @@ public static class KiteCheck {
   [DllImport("user32.dll")] static extern IntPtr DefWindowProcW(IntPtr h, uint m, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int cy, uint flags);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr context);
   [DllImport("user32.dll")] public static extern bool DestroyWindow(IntPtr h);
   [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
   [DllImport("user32.dll")] static extern bool PeekMessageW(out MSG m, IntPtr h, uint min, uint max, uint remove);
@@ -48,15 +49,22 @@ public static class KiteCheck {
   // Kite's occlusion counts as covering it (a tool window or an owned popup wouldn't). Topmost,
   // so it stays over Kite even if Kite came forward (CI's desktop has no one to keep it back).
   public static IntPtr MakeCover() {
+    // In physical pixels, as Kite (per-monitor aware) measures: a shell that isn't DPI aware
+    // gets the screen scaled down, and a cover that size left part of Kite showing on CI.
+    SetProcessDpiAwarenessContext((IntPtr)(-4));
     var c = new WNDCLASS { proc = proc, instance = GetModuleHandleW(IntPtr.Zero), background = GetStockObject(4), name = "KiteCoveredLaunchCheck" };
     RegisterClassW(ref c);
     IntPtr h = CreateWindowExW(0x08000008, "KiteCoveredLaunchCheck", "Kite covered-launch check", 0x80000000,
         GetSystemMetrics(76), GetSystemMetrics(77), GetSystemMetrics(78), GetSystemMetrics(79), IntPtr.Zero, IntPtr.Zero, c.instance, IntPtr.Zero);
     // Shown by SetWindowPos, not ShowWindow, whose first call takes the launcher's show state
     // instead (hidden, for a runner's shell). HWND_TOPMOST, SWP_NOACTIVATE | SWP_SHOWWINDOW.
-    SetWindowPos(h, (IntPtr)(-1), GetSystemMetrics(76), GetSystemMetrics(77), GetSystemMetrics(78), GetSystemMetrics(79), 0x0010 | 0x0040);
+    SetWindowPos(h, (IntPtr)(-1), GetSystemMetrics(76) - 64, GetSystemMetrics(77) - 64, GetSystemMetrics(78) + 128, GetSystemMetrics(79) + 128,
+                 0x0010 | 0x0040);
     return h;
   }
+  [StructLayout(LayoutKind.Sequential)] struct RECT { public int l, t, r, b; }
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+  public static string Describe(IntPtr h) { RECT r; GetWindowRect(h, out r); return r.l + "," + r.t + "," + r.r + "," + r.b; }
   public static void Pump() { MSG m; while (PeekMessageW(out m, IntPtr.Zero, 0, 0, 1)) DispatchMessageW(ref m); }
   public static IntPtr FindKite(int pid) {
     IntPtr found = IntPtr.Zero;
@@ -105,6 +113,7 @@ setInterval(() => { log += 'F' + Date.now() + ':' + frames + ' '; document.title
   if ($Cover) {
     $cover = [KiteCheck]::MakeCover()
     if ($cover -eq [IntPtr]::Zero -or -not [KiteCheck]::IsWindowVisible($cover)) { throw "couldn't show the cover window" }
+    Write-Host "cover: $([KiteCheck]::Describe($cover))"
     Pump 300
   }
   $env:KITE_SUPPORT_PATH = $profileDir
@@ -116,6 +125,7 @@ setInterval(() => { log += 'F' + Date.now() + ':' + frames + ' '; document.title
   $closedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
   $window = [KiteCheck]::FindKite($process.Id)
   if ($window -eq [IntPtr]::Zero) { throw 'Kite never showed its window' }
+  Write-Host "Kite's window: $([KiteCheck]::Describe($window))"
   [KiteCheck]::PostMessage($window, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null  # WM_CLOSE
   if (-not $process.WaitForExit(30000)) { throw "Kite didn't close within 30 s" }
 
