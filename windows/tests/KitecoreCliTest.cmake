@@ -1,10 +1,13 @@
 # Drives kitecore against a fresh profile: ctest runs it with -DKITECORE=<path> -DWORK=<dir>.
+# kitecore writes UTF-8 ("Rename Space…", emoji), so every execute_process that reads its output
+# decodes it as UTF-8: without a policy saying so, CMake decodes it with the console's code page
+# (437 on a default console), and the "…" checks miss.
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}")
 
 function(kitecore out)
   execute_process(COMMAND "${KITECORE}" --profile "${WORK}" ${ARGN}
-                  RESULT_VARIABLE code OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr OUTPUT_STRIP_TRAILING_WHITESPACE)
+                  RESULT_VARIABLE code OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr OUTPUT_STRIP_TRAILING_WHITESPACE ENCODING UTF8)
   if(NOT code EQUAL 0)
     message(FATAL_ERROR "kitecore ${ARGN} exited ${code}: ${stderr}")
   endif()
@@ -181,7 +184,7 @@ file(MAKE_DIRECTORY "${SIDEBAR}")
 file(COPY_FILE "${CMAKE_CURRENT_LIST_DIR}/../helix/states/sidebar.json" "${SIDEBAR}/session.json")
 function(sidebar_kitecore out)
   execute_process(COMMAND "${KITECORE}" --profile "${SIDEBAR}" ${ARGN}
-                  RESULT_VARIABLE code OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr OUTPUT_STRIP_TRAILING_WHITESPACE)
+                  RESULT_VARIABLE code OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr OUTPUT_STRIP_TRAILING_WHITESPACE ENCODING UTF8)
   if(NOT code EQUAL 0)
     message(FATAL_ERROR "kitecore ${ARGN} exited ${code}: ${stderr}")
   endif()
@@ -273,7 +276,7 @@ foreach(icon "image:x.png" "image:a/b.png" "symbol:not.a.symbol" "symbol:pawprin
   string(REPLACE "symbol:briefcase" "${icon}" changed "${sidebarState}")
   file(WRITE "${other}/session.json" "${changed}")
   execute_process(COMMAND "${KITECORE}" --profile "${other}" sidebar "${workID}" RESULT_VARIABLE code OUTPUT_VARIABLE out
-                  OUTPUT_STRIP_TRAILING_WHITESPACE)
+                  OUTPUT_STRIP_TRAILING_WHITESPACE ENCODING UTF8)
   string(JSON cellShows GET "${out}" spaceBar cells 1 shows)
   string(JSON headShows GET "${out}" rows 0 shows)
   # An invalid picture name is still a picture (its placeholder); no icon has no header slot.
@@ -418,13 +421,13 @@ expect_exit_early(5 space delete 00000000-0000-0000-0000-000000000000)
 # The last space stays: refused, with its own exit code.
 set(lone "${WORK}/lone")
 file(MAKE_DIRECTORY "${lone}")
-execute_process(COMMAND "${KITECORE}" --profile "${lone}" space add Only OUTPUT_VARIABLE onlyID OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE code)
-execute_process(COMMAND "${KITECORE}" --profile "${lone}" state OUTPUT_VARIABLE loneState)
+execute_process(COMMAND "${KITECORE}" --profile "${lone}" space add Only OUTPUT_VARIABLE onlyID OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE code ENCODING UTF8)
+execute_process(COMMAND "${KITECORE}" --profile "${lone}" state OUTPUT_VARIABLE loneState ENCODING UTF8)
 string(JSON loneCount LENGTH "${loneState}" spaces)
 foreach(i RANGE 1 ${loneCount})
   string(JSON first GET "${loneState}" spaces 0 id)
   execute_process(COMMAND "${KITECORE}" --profile "${lone}" space delete "${first}" RESULT_VARIABLE code OUTPUT_QUIET)
-  execute_process(COMMAND "${KITECORE}" --profile "${lone}" state OUTPUT_VARIABLE loneState)
+  execute_process(COMMAND "${KITECORE}" --profile "${lone}" state OUTPUT_VARIABLE loneState ENCODING UTF8)
 endforeach()
 string(JSON loneCount LENGTH "${loneState}" spaces)
 if(NOT code EQUAL 6 OR NOT loneCount EQUAL 1)
