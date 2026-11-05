@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Handoff: the tag's Skip and Done</title>
+<!-- The ring's tag is the only place a step shows: its words, Skip and Done. A press on it must end the step
+     without counting as a press on the page: the open menu here closes on any press outside it, as many do. -->
+<style>body{font:14px system-ui;margin:40px} .menu{display:inline-block;padding:8px;border:1px solid #ccc;width:200px}</style>
+<div class="menu" id="menu">Open menu
+  <p><button id="approve">Approve</button></p>
+  <p><button id="save">Save</button></p>
+</div>
+<script>
+window.menuOpen = true;
+window.presses = [];
+document.addEventListener('mousedown', (e) => { if (!document.getElementById('menu').contains(e.target)) window.menuOpen = false; });
+document.addEventListener('click', (e) => window.presses.push(e.target.id || e.target.tagName));
+// The tag's box, found from the page's side: its host is the only element there, so a scan along the control's
+// row finds where the tag starts and ends (the shadow root is closed, so its buttons can't be named).
+window.tagBox = (id) => {
+  const r = document.getElementById(id).getBoundingClientRect(), y = r.top + r.height / 2;
+  let left = null, right = null;
+  for (let x = Math.ceil(r.right); x < innerWidth; x++) {
+    const hit = document.elementFromPoint(x, y);
+    if (hit && hit.tagName === 'KITE-HANDOFF') { if (left === null) left = x; right = x; }
+  }
+  const scale = innerWidth > 1280 ? 1280 / innerWidth : 1;
+  return JSON.stringify({ left, right, y, scale });
+};
+</script>

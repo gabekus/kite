@@ -82,9 +82,9 @@ extension AutomationCommand.Tool {
         case .signIn:
             "When a page needs the user to sign in (a login form, a password or a one-time code), hands the tab to the user: Kite shows it, offers their password manager, and waits (up to 5 minutes) until they've signed in or cancelled. You never see or type the password. Returns where the tab ended up. Never ask the user for a password in chat."
         case .handoff:
-            "When you stop because the user must do something themselves (your safety check or the user's rules won't let you, it needs their judgment, a secret only they hold, or a command on their computer), hand it to them with this instead of listing steps in chat. Say why you stopped in reason, and give each step: instruction (a few words: \"Approve Apple\", \"Tick Super Administrator\"), the tab, and the control to click by ref, selector or its visible text, or a command for their terminal. Kite rings that control on the page with the step beside it, marks the tabs in the sidebar, and shows a card with your reason, the step, Back, Skip and Done, and the command to copy. A step is done when the user clicks the ringed control or presses Done; Back makes the step before wait again. Returns at once with a handoff id unless you pass wait. Pass wait 600 (or call handoff_status with wait 600 straight after) and don't end your turn while steps wait: once you stop, Kite can't tell you the user is done and they're left waiting on you. A wait ends early when every step has ended, a step is blocked, or a step's click opens a new tab (its id is in the result). Don't do a step yourself after handing it off."
+            "When you stop because the user must do something themselves on a page (your safety check or the user's rules won't let you, it needs their judgment, or a secret only they hold), hand it to them with this instead of listing steps in chat. Say why you stopped in reason, and give each step: instruction (a few words: \"Approve Apple\", \"Tick Super Administrator\"), the tab, and the control by ref (best: from find or read_page), selector or its visible text. Kite shows a step only there: it rings the control with a tag beside it (the step, Skip and Done; your reason when the pointer rests on it) and marks the tab in the sidebar. There's no card or list anywhere else, so every step needs a control on its page; anything else (a question, a command for their terminal) you ask in chat. A step is done when the user clicks the ringed control or presses Done, and skipped when they press Skip. If Kite can't find a step's control on its page (or the tab has left the page or closed), the user sees nothing for it: the result says NOT SHOWN, at once or as soon as it happens, so point it at a control that's there or withdraw it. Returns at once with a handoff id unless you pass wait. Pass wait 600 (or call handoff_status with wait 600 straight after) and don't end your turn while steps wait: once you stop, Kite can't tell you the user is done and they're left waiting on you. A wait ends early when every step has ended, a step is blocked, or a step's click opens a new tab (its id is in the result). Don't do a step yourself after handing it off."
         case .handoffStatus:
-            "Which steps of a handoff the user has done, skipped or not reached yet (a step they went back to with Back waits again), with each tab's URL now, and any tab a step's click opened. Pass wait (seconds, up to 600) to wait until they're all done or skipped, a step is blocked, or a click opens a new tab; call again to keep waiting, and don't end your turn while steps wait. cancel true takes the steps you no longer need off the user's screen."
+            "Which steps of a handoff the user has done, skipped or not reached yet, with each tab's URL now, what's in the way of a waiting step (a control that's turned off, or one Kite can't show: NOT SHOWN), and any tab a step's click opened. Pass wait (seconds, up to 600) to wait until they're all done or skipped, a step is blocked or can't be shown, or a click opens a new tab; call again to keep waiting, and don't end your turn while steps wait. cancel true takes the steps you no longer need off the user's pages."
         case .readConsole:
             "Console messages and uncaught errors logged since Claude started driving the tab. pattern filters by regex; clear empties the log after reading."
         case .readNetwork:
@@ -226,19 +226,19 @@ extension AutomationCommand.Tool {
                 "tab": ["type": "string", "description": "Tab id for steps that don't name one."],
                 "steps": [
                     "type": "array", "minItems": 1, "maxItems": .number(Double(UserHandoff.maxSteps)),
-                    "description": .string("In order. Steps on one tab are shown one after another. One control per step: something "
-                        + "that takes several clicks (Update Nameservers, then Continue, then Approve) is several steps, each with "
-                        + "its control, so Kite can ring each one. Check the control can be clicked now: a disabled one is "
-                        + "reported back to you as blocked, so hand over what turns it on first (a field to fill in, a box to tick)."),
+                    "description": .string("In order. Steps on one tab are shown one after another. One control per step, and every "
+                        + "step needs one (ref, selector or text): something that takes several clicks (Update Nameservers, then "
+                        + "Continue, then Approve) is several steps, each with its control, so Kite can ring each one. Check the "
+                        + "control is on the page and can be clicked now: a disabled one is reported back to you as blocked, so "
+                        + "hand over what turns it on first (a field to fill in, a box to tick)."),
                     "items": [
                         "type": "object",
                         "properties": [
                             "instruction": ["type": "string", "description": "What to do, in a few words: \"Approve Apple\", \"Click Save\"."],
-                            "tab": ["type": "string", "description": "Tab id the step happens in. Omit for the call's tab (or the front tab), or for a command."],
+                            "tab": ["type": "string", "description": "Tab id the step happens in. Omit for the call's tab (or the front tab)."],
                             "ref": Self.ref,
                             "selector": Self.selector,
                             "text": ["type": "string", "description": "Visible text of the control to click, when there's no ref: \"Save\"."],
-                            "command": ["type": "string", "description": "A command for the user to run in their terminal, shown with Copy. Takes no tab or target."],
                             "why": ["type": "string", "description": "Why this step is theirs, when it differs from reason."],
                         ],
                         "required": ["instruction"],
@@ -251,7 +251,7 @@ extension AutomationCommand.Tool {
             properties = [
                 "id": ["type": "string", "description": "The handoff id (h1, h2…). Omit for your latest."],
                 "wait": ["type": "number", "minimum": 0, "maximum": .number(UserHandoff.maxWait), "description": "Seconds to wait for the user to finish (default 0)."],
-                "cancel": ["type": "boolean", "description": "Take the remaining steps off the user's screen."],
+                "cancel": ["type": "boolean", "description": "Take the remaining steps off the user's pages."],
             ]
         case .readConsole:
             properties = ["tab": tab, "pattern": ["type": "string", "description": "Regular expression to match messages."],
