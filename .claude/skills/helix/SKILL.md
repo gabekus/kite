@@ -38,8 +38,8 @@ first. Kite for Mac is the only reference; never use Arc for Windows.
      (fresh `mktemp -d /tmp/k.XXXX` profile, per AGENTS.md), captured with
      `kite ui capture -o mac.png`.
    - Windows (any monitor; CI uploads one as the `kite-windows-capture` artifact):
-     `Kite.exe --capture win.png --window-size 1280,820 --capture-scale 2`
-     (lays the window out at 2× on any monitor and saves its presented frame)
+     `Kite.exe --capture C:\…\win.png --window-size 1280,820 --capture-scale 2`
+     (an absolute path; lays the window out at 2× on any monitor and saves its presented frame)
      with `KITE_SUPPORT_PATH` set to a fresh profile holding the same session.
    Then spawn ONE fresh subagent as the visual reviewer.
    Give it only the two image paths, the checkpoint line, and these

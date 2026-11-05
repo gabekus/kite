@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import KiteCore
 import SwiftUI
 
@@ -179,8 +180,8 @@ final class RecentTabSwitcherController {
               page.view.window != nil, page.view.bounds.width > 0 else { return }
         page.captureImage(area: page.view.bounds) { [weak self] data in
             DispatchQueue.main.async {
-                guard let self, let data, let image = NSImage(data: data) else { return }
-                self.snapshots[id] = Self.thumbnail(image)
+                guard let self, let data, let image = Self.thumbnail(data) else { return }
+                self.snapshots[id] = image
                 self.pruneSnapshots()
                 if self.switcher != nil { self.updateView() }
             }
@@ -192,17 +193,25 @@ final class RecentTabSwitcherController {
         snapshots = snapshots.filter { live.contains($0.key) }
     }
 
-    /// Kept small: two pixels per point of the card's width.
-    private static func thumbnail(_ image: NSImage) -> NSImage {
+    /// Kept small: two pixels per point of the card's width, decoded at that size. (Drawing into an
+    /// `NSImage` with lockFocus backs it at the screen's scale, which doubled that on Retina: 4× the memory.)
+    static func thumbnail(_ data: Data) -> NSImage? {
         let width = RecentTabSwitcherView.Metrics.cardWidth * 2
-        guard image.size.width > width else { return image }
-        let size = NSSize(width: width, height: (image.size.height * width / image.size.width).rounded())
-        let small = NSImage(size: size)
-        small.lockFocus()
-        NSGraphicsContext.current?.imageInterpolation = .high
-        image.draw(in: NSRect(origin: .zero, size: size))
-        small.unlockFocus()
-        return small
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let pixelWidth = properties[kCGImagePropertyPixelWidth] as? CGFloat,
+              let pixelHeight = properties[kCGImagePropertyPixelHeight] as? CGFloat,
+              pixelWidth > 0, pixelHeight > 0 else { return nil }
+        // The longer side's limit that makes the width `width` (pages narrower than it stay as they are).
+        let longest = width * max(pixelWidth, pixelHeight) / pixelWidth
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: min(longest, max(pixelWidth, pixelHeight)).rounded(),
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
     }
 
     private static func aspect(of size: CGSize) -> CGFloat {

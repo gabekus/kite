@@ -373,7 +373,17 @@ namespace {
 struct DrawnSymbol {
     std::string_view name;
     SymbolShape shape;
+    // The middle of the Mac's ink in the header's 26pt slot at 15pt, from the slot's centre
+    // (review/w9b4-mac's slot crops; the briefcase from review/w9b-mac two-spaces.png, its slot
+    // [13,150 26x26]): the ink more than half covered, so to a quarter point.
+    ShapePoint header;
+    ShapeBounds bounds;  // the shape's, once
 };
+
+DrawnSymbol Make(std::string_view name, SymbolShape shape, ShapePoint header) {
+    const ShapeBounds bounds = BoundsOf(shape);
+    return DrawnSymbol{name, std::move(shape), header, bounds};
+}
 
 // Each shape in the bar's points about the cell's centre, its ink box the Mac's (review/w9b4-mac:
 // the Mac's bar at 2x, ink more than half covered, to a quarter point).
@@ -515,18 +525,37 @@ SymbolShape TheaterMasks() {
     return ShapeBuilder().Append(back.Build()).Append(gap.Build()).Append(face).Build();
 }
 
+SymbolShape Briefcase() {
+    // The test sessions' Work icon: a case in outline with a handle, a straight band across its
+    // middle and a tab on the band, every part one 1.35 stroke (the Mac's weight): box
+    // -7.5..7.0 x -6.0..6.5 (the Mac's), so its middle is 0.25 left of the cell's centre and the
+    // handle and the tab are centred on that.
+    constexpr float kStroke = 1.35f, left = -7.5f, right = 7.0f, top = -3.5f, bottom = 6.5f;
+    constexpr float handleTop = -6.0f, mid = (left + right) / 2;
+    ShapeBuilder b;
+    b.RoundRect(mid - 3.0f, handleTop, mid + 3.0f, top + kStroke, 1.5f);
+    b.Cut().RoundRect(mid - 3.0f + kStroke, handleTop + kStroke, mid + 3.0f - kStroke, top + 2 * kStroke, 0.15f);
+    b.Add().RoundRect(left, top, right, bottom, 1.75f);
+    b.Cut().RoundRect(left + kStroke, top + kStroke, right - kStroke, bottom - kStroke, 1.75f - kStroke);
+    b.Add().RoundRect(left, 0, right, kStroke, 0);
+    b.RoundRect(mid - 1.5f, -0.75f, mid + 1.5f, 2.1f, 0.5f);
+    return b.Build();
+}
+
 const std::vector<DrawnSymbol>& Drawn() {
-    // In the Icon tab's order.
+    // In the Icon tab's order, then the briefcase (not in the tab).
     static const std::vector<DrawnSymbol> drawn = {
-        {"bookmark.fill", Bookmark()},
-        {"pawprint.fill", Pawprint()},
-        {"bed.double.fill", BedDouble()},
-        {"fork.knife", ForkKnife()},
-        {"dumbbell.fill", Dumbbell()},
-        {"bandage.fill", Bandage()},
-        {"baseball.fill", Baseball()},
-        {"takeoutbag.and.cup.and.straw.fill", TakeoutBagAndCup()},
-        {"theatermasks.fill", TheaterMasks()},
+        Make("bookmark.fill", Bookmark(), {0.25f, 0.25f}),
+        Make("pawprint.fill", Pawprint(), {0, 0.25f}),
+        Make("bed.double.fill", BedDouble(), {0, 0}),
+        Make("fork.knife", ForkKnife(), {-0.25f, -0.25f}),
+        Make("dumbbell.fill", Dumbbell(), {0, 0.25f}),
+        Make("bandage.fill", Bandage(), {0.25f, 0.25f}),
+        Make("baseball.fill", Baseball(), {0, 0.25f}),
+        Make("takeoutbag.and.cup.and.straw.fill", TakeoutBagAndCup(), {0, 0.25f}),
+        // The slot clips the masks' sides, so across is the bar's middle scaled (-0.2 x 1.2).
+        Make("theatermasks.fill", TheaterMasks(), {-0.25f, 0}),
+        Make("briefcase", Briefcase(), {-0.25f, 0}),
     };
     return drawn;
 }
@@ -538,6 +567,20 @@ const SymbolShape* SymbolShapeFor(std::string_view name) {
         if (d.name == name) return &d.shape;
     }
     return nullptr;
+}
+
+std::optional<ShapePlacement> PlaceDrawnSymbol(std::string_view name, float size) {
+    for (const DrawnSymbol& d : Drawn()) {
+        if (d.name != name) continue;
+        ShapePlacement placement{&d.shape, size / kSymbolShapeSize, 0, 0};
+        if (size == kHeaderSymbolSize) {
+            const ShapeBounds& b = d.bounds;
+            placement.dx = d.header.x - placement.scale * (b.left + b.right) / 2;
+            placement.dy = d.header.y - placement.scale * (b.top + b.bottom) / 2;
+        }
+        return placement;
+    }
+    return std::nullopt;
 }
 
 const std::vector<std::string_view>& DrawnSymbols() {
