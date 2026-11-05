@@ -25,6 +25,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "core/FindBar.h"
 #include "shell/Capture.h"
@@ -79,9 +80,12 @@ public:
     void LoseKeyboard();
     // The bar's corners, in px (the page's hole is the bar's shape).
     float CornerRadiusPx() const;
-    // For the tests: the middle of the field or a button, in client px.
-    enum class Part { Field, Previous, Next, Close };
+    // For the tests: the middle of the field (or 8pt into it, or 4pt before its end) or a button, in client px; whether
+    // the field has the window's focus; its selection (UTF-16 offsets, start and end).
+    enum class Part { Field, FieldStart, FieldEnd, Previous, Next, Close };
     POINT ClientPointOf(Part part) const;
+    bool FieldFocused() const;
+    std::pair<size_t, size_t> FieldSelection() const;
     // Return, Shift+Return, Ctrl+G, Ctrl+Shift+G and the arrows.
     void Step(bool forward);
     // Types `text` into the field as the keyboard would, searching (--find, the smoke test).

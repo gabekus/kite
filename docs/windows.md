@@ -260,7 +260,13 @@ rename takes it from the find field, and Ctrl+F or a press in the find field end
 another field or the page takes the keyboard; a press on the arrows or close leaves it where it
 was, as a borderless NSButton never becomes first responder. Losing it collapses the selection
 and drops the undo history, as the Mac's field editor leaves a field. While the find field has
-the keyboard, a navigation doesn't move it to the page, and activating Kite doesn't either.
+the keyboard, a navigation doesn't move it to the page, and activating Kite doesn't either; nor
+does Ctrl+F over the open command bar as it closes (Kite sets that it keeps the keyboard before the
+bar closes, CEF's thread asks again before focusing the page, and Chromium's own focus as the page
+windows are enabled again is declined). A press in the field that already has the keyboard only
+moves the caret (Shift extends the selection). Not yet: closing the command bar gives the keyboard
+to the page even when the find field had it before, where the Mac's first responder would return
+to the field; it waits for knowing what the Mac does after a row is committed.
 
 The field is `shell/TextField`, the one-line field the command bar's field and the rename field
 are to share (W21b): `shell/TextEditing` and `shell/TextLine` (from W9d), undo and redo as the

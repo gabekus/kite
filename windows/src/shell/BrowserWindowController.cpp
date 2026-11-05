@@ -172,7 +172,7 @@ std::wstring BrowserWindowController::Init() {
     FindBarView::Callbacks find;
     find.search = [this](const FindQuery::Search& search) { FindInPage(search); };
     find.close = [this] { HideFindBar(true); };
-    find.takeKeyboard = [this] { GiveKeyboard(KeyboardField::Find); };
+    find.takeKeyboard = [this] { GiveKeyboard(KeyboardField::Find, false); };
     find.dpi = [this] { return window_.Dpi(); };
     findBar_ = FindBarView::Create(window_.Handle(), std::move(find), error);
     if (findBar_) findBar_->UseCompositor(compositor_.get());
@@ -635,13 +635,12 @@ void BrowserWindowController::ShowFind() {
         MessageBeep(MB_OK);
         return;
     }
-    // Ctrl+F over the command bar: the bar goes and the field takes the keyboard.
-    if (commandBar_ && commandBar_->IsOpen()) commandBar_->Hide();
     findTabID_ = tab->id;
     findBar_->SetCard(ContentBounds());
     findBar_->Show(FindBarDark());
+    // Ctrl+F over the command bar: the bar goes and the field takes the keyboard (GiveKeyboard
+    // keeps the page from taking it as the bar closes).
     GiveKeyboard(KeyboardField::Find);
-    UpdateFindHole();
 }
 
 BrowserWindowController::KeyboardField BrowserWindowController::KeyboardOwner() const {
@@ -651,18 +650,21 @@ BrowserWindowController::KeyboardField BrowserWindowController::KeyboardOwner() 
     return KeyboardField::None;
 }
 
-void BrowserWindowController::GiveKeyboard(KeyboardField to) {
-    // The others first, so their system carets go before `to` makes its own.
-    if (to != KeyboardField::Find && findBar_) findBar_->LoseKeyboard();
-    if (to != KeyboardField::Rename) sidebar_->EndRenaming(true);
+void BrowserWindowController::GiveKeyboard(KeyboardField to, bool focusFindField) {
     if (to == KeyboardField::Find && findBar_) {
-        if (commandBar_ && commandBar_->IsOpen()) commandBar_->Hide();
-        // Before the field takes it: a navigation landing meanwhile doesn't take it back.
+        // First, so nothing on the way hands the keyboard to the page: not the command bar
+        // closing (BlockPages' Focus), not a navigation landing meanwhile.
 #ifdef KITE_HAS_CEF
         if (chromium_) chromium_->KeepKeyboard(true);
 #endif
-        findBar_->Focus();
+        if (commandBar_ && commandBar_->IsOpen()) commandBar_->Hide();
     }
+    // The others, so their system carets go before `to` makes its own.
+    if (to != KeyboardField::Find && findBar_) findBar_->LoseKeyboard();
+    if (to != KeyboardField::Rename) sidebar_->EndRenaming(true);
+    if (to == KeyboardField::Find && findBar_ && focusFindField) findBar_->Focus();
+    // A press in the field takes it itself, after this (focusFindField false): Kite keeps it.
+    if (to == KeyboardField::Find && !focusFindField) return;
     UpdateFindHole();
 }
 

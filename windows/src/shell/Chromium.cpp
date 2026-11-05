@@ -71,7 +71,7 @@ HWND FindPageWidget(HWND host) {
 
 }  // namespace
 
-struct Chromium::Shared {
+struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
     HWND window = nullptr;
     // Where Post's wakes go: the window until it's about to be destroyed, then null, so CEF's
     // late callbacks never post to a handle Windows may have reused.
@@ -85,6 +85,8 @@ struct Chromium::Shared {
     std::atomic<bool> keysToKite{false};
     // KeepKeyboard: a navigation doesn't move the keyboard to the page.
     std::atomic<bool> kiteKeepsKeyboard{false};
+    // BlockInput(false) is enabling the page windows again (CEF's thread only).
+    bool reenabling = false;
     // Use Both's "second press" bookkeeping, on CEF's UI thread only (OnPreKeyEvent, OnKeyEvent).
     ShortcutPriorityGate gate;
 
@@ -275,7 +277,12 @@ struct Chromium::Shared {
         // Nor while Kite's find field has it: a page made after Ctrl+F (its Attach) leaves it there.
         if (inputBlocked || kiteKeepsKeyboard) return;
         auto it = pages.find(shown);
-        if (it != pages.end() && it->second.browser) it->second.browser->GetHost()->SetFocus(true);
+        if (it == pages.end() || !it->second.browser) return;
+        // Asked again on CEF's thread, as it runs: a field of Kite's may have taken the keyboard
+        // since (Ctrl+F as the command bar closed), and the page doesn't take it back then.
+        RunOnCefUIThread([shared = shared_from_this(), browser = it->second.browser] {
+            if (!shared->inputBlocked && !shared->kiteKeepsKeyboard) browser->GetHost()->SetFocus(true);
+        });
     }
 
     Page* PageFor(const std::string& tabID, const CefRefPtr<CefBrowser>& browser) {
@@ -616,8 +623,11 @@ public:
     // While Kite's command bar is open, a page never takes the keyboard back (Chromium
     // focuses a page as it navigates), as the Mac blurs its pages while the bar is open.
     // Nor, while Kite's find field has the keyboard, on a navigation (a click is the system's).
+    // Nor as its window is enabled again (the command bar closing, which Chromium answers with a
+    // focus of its own, inside EnableWindow) while Kite keeps the keyboard: Ctrl+F over the bar.
     bool OnSetFocus(CefRefPtr<CefBrowser>, FocusSource source) override {
-        return shared_->inputBlocked || (source == FOCUS_SOURCE_NAVIGATION && shared_->kiteKeepsKeyboard);
+        if (shared_->kiteKeepsKeyboard && (source == FOCUS_SOURCE_NAVIGATION || shared_->reenabling)) return true;
+        return shared_->inputBlocked;
     }
 
     // CefFindHandler
@@ -990,8 +1000,10 @@ void Chromium::BlockInput(bool blocked) {
     // Disabled, the page windows are skipped when Windows looks for the window under the
     // pointer, so clicks reach Kite's window. On CEF's thread, which owns them.
     if (!hosts.empty()) {
-        RunOnCefUIThread([hosts = std::move(hosts), blocked] {
+        RunOnCefUIThread([shared = shared_, hosts = std::move(hosts), blocked] {
+            shared->reenabling = !blocked;
             for (HWND host : hosts) EnableWindow(host, blocked ? FALSE : TRUE);
+            shared->reenabling = false;
         });
     }
 }

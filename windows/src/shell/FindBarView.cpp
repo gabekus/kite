@@ -257,6 +257,8 @@ POINT FindBarView::ClientPointOf(Part part) const {
     float x = 0;
     switch (part) {
     case Part::Field: x = (M::kTextX + FieldRight()) / 2; break;
+    case Part::FieldStart: x = M::kTextX + 8; break;
+    case Part::FieldEnd: x = FieldRight() - 4; break;
     case Part::Previous: x = M::kPreviousCenterX - M::kFullWidth + w; break;
     case Part::Next: x = M::kNextCenterX - M::kFullWidth + w; break;
     case Part::Close: x = M::kCloseCenterX - M::kFullWidth + w; break;
@@ -266,6 +268,10 @@ POINT FindBarView::ClientPointOf(Part part) const {
 }
 
 void FindBarView::FocusChanged() { field_.SetFocused(open_ && keyboard_ && GetFocus() == window_); }
+
+bool FindBarView::FieldFocused() const { return field_.Focused(); }
+
+std::pair<size_t, size_t> FindBarView::FieldSelection() const { return {field_.SelectionStart(), field_.SelectionEnd()}; }
 
 void FindBarView::Step(bool forward) {
     if (!open_) return;
@@ -418,14 +424,16 @@ bool FindBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, LRES
         if (!InBar(p)) return false;
         if (field_.Contains(p.x, p.y)) {
             // A press in the field makes it the first responder, as clicking an NSTextField does
-            // (the controller takes the keyboard from the other fields first).
-            if (callbacks_.takeKeyboard) callbacks_.takeKeyboard();
-            keyboard_ = true;
+            // (the controller takes the keyboard from the other fields first). One that already
+            // has it just moves the caret, so Shift extends from where the selection was.
+            if (!keyboard_) {
+                if (callbacks_.takeKeyboard) callbacks_.takeKeyboard();
+                keyboard_ = true;
+            }
             if (GetFocus() != window_) SetFocus(window_);
             FocusChanged();
             SetCapture(window_);
-            Edited(field_.Press(p.x, (wParam & MK_SHIFT) != 0));
-            Draw();  // the caret, for a press that left the selection as it was
+            Edited(field_.Press(p.x, (wParam & MK_SHIFT) != 0));  // draws once, with the caret
             return true;
         }
         // The arrows and close are borderless NSButtons, which never become first responder:

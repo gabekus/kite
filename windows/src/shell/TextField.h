@@ -52,6 +52,8 @@ public:
     void SetText(std::wstring text, bool selectAll);
     void SelectAll();
     bool HasSelection() const { return line_.Edit().HasSelection(); }
+    size_t SelectionStart() const { return line_.Edit().SelectionStart(); }
+    size_t SelectionEnd() const { return line_.Edit().SelectionEnd(); }
     // Editing ended (another field or the page took the keyboard): the selection collapses to the
     // caret and there's nothing to undo, as when the Mac's field editor leaves a field.
     void EndEditing();

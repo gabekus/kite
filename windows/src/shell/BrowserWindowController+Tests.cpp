@@ -564,6 +564,38 @@ std::wstring BrowserWindowController::SmokeTestKeyboard() {
     if (KeyboardOwner() != KeyboardField::CommandBar || findBar_->HasKeyboard()) return L"the command bar didn't take the keyboard from the find field";
     commandBar_->Hide();
     if (KeyboardOwner() != KeyboardField::None || !findBar_->IsOpen()) return L"the command bar closing didn't leave the find bar open without the keyboard";
+    // Ctrl+F over the open command bar: its close mustn't hand the keyboard to the page, not by
+    // BlockPages' Focus (CEF's thread asks again as it runs it) and not by Chromium's own focus as
+    // the page windows are enabled again. First the page takes it from the close above, which it
+    // does on CEF's thread a moment later.
+    RunUntil([] { return false; }, 0.5);
+    // The field takes the window's focus from the page (a press in it), so a page taking it back
+    // would show even in a quiet run.
+    for (UINT message : {WM_LBUTTONDOWN, WM_LBUTTONUP}) {
+        SendMouse(window_.Handle(), message, findBar_->ClientPointOf(FindBarView::Part::FieldEnd), message == WM_LBUTTONDOWN ? MK_LBUTTON : 0);
+    }
+    const bool focused = GetFocus() == window_.Handle();
+    OpenCommandBar(CommandBarMode::NewTab);
+    ShowFind();
+    RunUntil([] { return false; }, 0.5);
+    if (KeyboardOwner() != KeyboardField::Find) return L"Ctrl+F over the command bar left the keyboard elsewhere";
+    if (focused && (GetFocus() != window_.Handle() || !findBar_->FieldFocused())) {
+        return L"Ctrl+F over the command bar: the page took the focus as the bar closed";
+    }
+    // A Shift-press in a field that has the keyboard extends from where the selection was: here
+    // from the query's end (a plain press past the text), not from its start.
+    ShowFind();
+    const size_t length = Widen(findBar_->Query().Query()).size();
+    const auto press = [&](FindBarView::Part part, WPARAM keys) {
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, findBar_->ClientPointOf(part), MK_LBUTTON | keys);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, findBar_->ClientPointOf(part), keys);
+    };
+    press(FindBarView::Part::FieldEnd, 0);
+    if (findBar_->FieldSelection() != std::pair<size_t, size_t>{length, length}) return L"a press past the query didn't put the caret at its end";
+    press(FindBarView::Part::FieldStart, MK_SHIFT);
+    if (const auto [start, end] = findBar_->FieldSelection(); end != length || start >= length) {
+        return L"a Shift-press in the find field didn't extend from the caret";
+    }
     ShowFind();
     return {};
 }

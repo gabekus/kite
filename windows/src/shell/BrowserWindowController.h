@@ -254,7 +254,9 @@ private:
     // from the find field, and Ctrl+F or a press in the find field ends a rename.
     enum class KeyboardField { None, CommandBar, Rename, Find };
     KeyboardField KeyboardOwner() const;
-    void GiveKeyboard(KeyboardField to);
+    // With `focusFindField` false (a press in it), the find field takes it itself, the caret
+    // where the press is rather than its text all selected.
+    void GiveKeyboard(KeyboardField to, bool focusFindField = true);
     // The content card in client px (the page's bounds).
     RECT ContentBounds() const;
     CommandBarView::Look BarLook() const;
