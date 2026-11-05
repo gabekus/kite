@@ -86,7 +86,7 @@ function Pump([int] $ms) {
 
 $profileDir = Join-Path ([IO.Path]::GetTempPath()) "kite-covered-launch-$([guid]::NewGuid())"
 New-Item -ItemType Directory -Path $profileDir | Out-Null
-$cover = $null
+$coverWindow = $null
 $previousSupportPath = $env:KITE_SUPPORT_PATH
 $process = $null
 try {
@@ -111,9 +111,9 @@ setInterval(() => { log += 'F' + Date.now() + ':' + frames + ' '; document.title
   if ($LASTEXITCODE -ne 0) { throw "kitecore open exited with $LASTEXITCODE" }
 
   if ($Cover) {
-    $cover = [KiteCheck]::MakeCover()
-    if ($cover -eq [IntPtr]::Zero -or -not [KiteCheck]::IsWindowVisible($cover)) { throw "couldn't show the cover window" }
-    Write-Host "cover: $([KiteCheck]::Describe($cover))"
+    $coverWindow = [KiteCheck]::MakeCover()
+    if ($coverWindow -eq [IntPtr]::Zero -or -not [KiteCheck]::IsWindowVisible($coverWindow)) { throw "couldn't show the cover window" }
+    Write-Host "cover: $([KiteCheck]::Describe($coverWindow))"
     Pump 300
   }
   $env:KITE_SUPPORT_PATH = $profileDir
@@ -155,7 +155,7 @@ setInterval(() => { log += 'F' + Date.now() + ':' + frames + ' '; document.title
   Write-Host "covered launch: the page ended hidden, rAF stopped at $($recent[-1].n) frames"
 } finally {
   if ($process -and -not $process.HasExited) { $process.Kill() }
-  if ($cover) { [KiteCheck]::DestroyWindow($cover) | Out-Null }
+  if ($coverWindow) { [KiteCheck]::DestroyWindow($coverWindow) | Out-Null }
   $env:KITE_SUPPORT_PATH = $previousSupportPath
   Remove-Item -Recurse -Force -LiteralPath $profileDir -ErrorAction SilentlyContinue
 }
