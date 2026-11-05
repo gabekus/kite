@@ -374,6 +374,9 @@ private:
     bool firstPageMade_ = false;
     bool pageLoading_ = false, pageLoaded_ = false;
     ULONGLONG closeAskedAt_ = 0;  // when the smoke test asked the window to close
+    // The smoke test's read of Chromium's Energy Saver preference (Chromium::ReadEnergySaver).
+    bool energySaverRead_ = false;
+    std::optional<int> energySaverState_;
 #endif
 };
 
