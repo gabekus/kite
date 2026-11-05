@@ -26,13 +26,13 @@
 #     "name": "drag",                               NAME.png; [a-z0-9._-]
 #     "holds": "what the capture should show",
 #     "session": {"ref": …, "path": …} | {"inline": {…session.json…}},           default: the top-level one
-#     "env": {"KITE_TEST_CONTEXT_MENU": "1"},       only the hooks in HOOKS below (exactly "1" for a right-click on
-#                                                   a RIGHT_CLICK_TARGETS row); the find bar's:
+#     "env": {"KITE_TEST_CONTEXT_MENU": "1"},       only the hooks in HOOKS below (KITE_TEST_CONTEXT_MENU exactly
+#                                                   "1": a menu is logged, nothing in it runs); the find bar's:
 #            {"KITE_TEST_FIND": "domain"}           the bar open searching for this ([A-Za-z0-9 ._-]{1,40}, as text), or
 #            {"KITE_TEST_FIND_OPEN": "1"}           the bar open and empty; one of the two, on a base with FIND_FLOOR,
 #                                                   and the capture waits for Kite's "KITE_TEST_FIND: ready" line
-#     "profile_files": {"test-context-menu-pick": "Rename Space…"},              test-* files in the profile, and
-#                                                   history.json (checked like a session, 1 MB at most)
+#     "profile_files": {"test-name": "text"},       test-* files in the profile (never test-context-menu-pick),
+#                                                   and history.json (checked like a session, 1 MB at most)
 #     "steps": [{"ui": "input", "args": {"from": [86,795], "to": [150,795], "steps": 10, "hold": 10}},
 #               {"wait": 1}],                       kite ui ACTION ARGS (see STEPS below), or a pause
 #     "settle": 1,                                  seconds between the last step and the capture (default 1;
@@ -52,14 +52,20 @@
 #   inside the profile.
 # - Sessions: URLs must be public http(s) (or about:), no path-like values, profileSettings cut to its includesSearchSuggestions booleans, and every
 #   profile's WebKit dataStoreID replaced with a fresh one whose store is deleted afterwards.
-# - STEPS: clicks and drag starts must land on a visible view in SAFE_TARGETS (from the tree, just before the step);
-#   right- and ⌃-clicks also need a non-empty KITE_TEST_CONTEXT_MENU. A right-click (and nothing else: no left click,
-#   ⌃-click, double click or drag) may also land on a RIGHT_CLICK_TARGETS row, only with KITE_TEST_CONTEXT_MENU
-#   exactly "1" and no test-context-menu-pick file (so the menu is logged and nothing in it runs), without modifiers,
-#   as the state's first step (waits aside). Every click and drag start is also checked with Kite's own hit test
-#   (ui hit, so only on a base with HIT_FLOOR) just before it's sent: the view AppKit hits must be the approved view
-#   itself, or for a row's right-click a RIGHT_CLICK_INSIDE view whose superviews up to the row are too; the step
-#   then goes to the window the tree and the hit test read. No keys or modifier flags. Text only as
+# - STEPS: clicks and drag starts must land on a visible view in SAFE_TARGETS (from the tree, just before the step).
+#   Every right-click needs KITE_TEST_CONTEXT_MENU exactly "1" and no test-context-menu-pick file, so the menu
+#   it builds is logged and nothing in it runs (PageContextMenuItems.testPick runs the item a pick file, or any other
+#   hook value, names: on a SpaceCellView, Edit Theme Color…, What's This Space For?…, New Profile…, Change Space
+#   Icon…); any other value and the pick file are refused for every state, whatever its steps. A right-click (and
+#   nothing else: no left click, ⌃-click, double click or drag) may also land on a RIGHT_CLICK_TARGETS row, without
+#   modifiers, as the state's first step (waits aside). Every click and drag start is checked with Kite's own hit test
+#   (ui hit, on a base with HIT_FLOOR) just before it's sent: the view AppKit hits must be the approved view itself,
+#   or for a row's right-click a RIGHT_CLICK_INSIDE view whose superviews up to the row are too. The step then goes
+#   to the window the tree and the hit test read, with that view as its "expect" (EXPECT_FLOOR), so Kite hit-tests
+#   again and sends the press in one main-thread turn, or sends nothing and the state fails. No `ui pointer` steps
+#   (synthetic hover: a favorite's preview, the space tip window, ⇧ link previews). No keys or modifier flags: no
+#   ⌃-click either (a right-click reaches the same menus through the views' own rightMouseDown and the hook, while a
+#   ⌃-left-click could also meet AppKit's own context-menu handling, which no hook covers). Text only as
 #   [A-Za-z0-9 ._-]{1,40}, straight after ⌘T (the only key chord allowed) or a click on a COMMAND_BAR_OPENERS view,
 #   into a visible CommandBarField
 #   (Kite's own command bar, which acts only on Return, and Return can't be sent), and only on a base that has
@@ -106,13 +112,28 @@ FIND_FLOOR=9b086b836c07ad064b047523fe04fbd38207fefb
 # clipped by a layer mask, over the page) and hidden only from isHidden, so a view's frame can be "visible" where
 # AppKit hits the web view instead. If that branch lands by squash or rebase, set this to the commit it landed as.
 HIT_FLOOR=5117e208294a3c212895b52b28b09192864bc50f
+# The oldest Kite a click or drag may run on, too: ci/capture-hardening 0201403, `ui input`'s "expect". Kite hit-tests
+# the press point (the chain `ui hit` reports) and sends the mouse down in the same main-thread turn, with no
+# suspension between (UIInputSender.checkExpectation), so the view the script approved is the view the press reaches;
+# a `ui hit` answer alone is a socket round trip (~100-300 ms) older than the press. It also refuses a left press on a
+# view that could move the window (mouseDownCanMoveWindow, in a window movable by its background). Older Kites ignore
+# "expect" and send anyway, so clicks and drags are refused there. If that branch lands by squash or rebase, set this
+# to the commit it landed as on main.
+EXPECT_FLOOR=02014036530de2327bbbb55f7dc345fc6063c4ed
 # How long a state waits, after Kite's socket answers, for that ready line. Kite writes it by 20 s after launch at the
 # latest (FindTestHook.pageLoadTimeout: a find result, or the fallback when the page never loads), and
 # FindTestHookTests checks that this stays at least 5 s above that.
 FIND_READY_SECONDS=30
 
 # Views a click, right-click (through showSidebarMenu's KITE_TEST_CONTEXT_MENU hook) or drag may start on. Each was
-# read in the Mac source: no hookless NSMenu, no window drag. Add one only after the same check. Not safe, for
+# read in the Mac source: no hookless NSMenu, no window drag. Window drag: the browser window is movable by its
+# background (BrowserWindowController.swift:168), but AppKit moves it from a press only when the view hit returns true
+# from mouseDownCanMoveWindow, and both return false: SpaceCellView (SidebarSpaceBar.swift:334; its hitTest, 388,
+# answers itself for any point inside it) and NewTabRowCell, a SidebarRowCell (SidebarListCells.swift:41, 1217). The
+# hit test below requires the view hit to be that view itself for every left press; the press goes to the window by
+# sendEvent (UIInputSender.swift), never through the window server's drag regions; PageTopWindowDragger's performDrag
+# arms only on a page's top band (PageTopWindowDragger.swift:24-27, 45-53); and Kite's "expect" refuses a left press
+# on any view that could move the window. Add one only after the same check. Not safe, for
 # example: the sidebar header's Developer and More buttons (SidebarHeader.swift, menu.popUp without the hook), the
 # link preview's Share button (LinkPreviewCard.swift, popUpAtPointer at the REAL pointer), and the window background
 # and page-top band (isMovableByWindowBackground, PageTopWindowDragger: a window-server drag follows the real
@@ -255,9 +276,9 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 # --- Plan: validate the request and lay each state out as files for the loop below. ---
-python3 -I - "$REQUEST" "$WORK/plan" "$ROOT" "$SAFE_TARGETS" "$TEXT_FLOOR" "$FIND_FLOOR" "$HIT_FLOOR" <<'PY'
+python3 -I - "$REQUEST" "$WORK/plan" "$ROOT" "$SAFE_TARGETS" "$TEXT_FLOOR" "$FIND_FLOOR" "$HIT_FLOOR" "$EXPECT_FLOOR" <<'PY'
 import copy, ipaddress, json, os, re, subprocess, sys, urllib.parse, uuid
-request_path, plan, root, safe_targets, text_floor, find_floor, hit_floor = sys.argv[1:8]
+request_path, plan, root, safe_targets, text_floor, find_floor, hit_floor, expect_floor = sys.argv[1:9]
 def fail(message):
     sys.exit(f"request.json refused: {message}")
 try:
@@ -274,7 +295,9 @@ if not NAME.fullmatch(str(request.get("id", ""))):
 #   value kinds: "text" one line; "flag" exactly 1; "number"; "name" a file name, given to Kite as $PROFILE/name;
 #   "url" a public http(s) URL (the session rule); "findtext" a text step's text (TEXT below).
 HOOKS = {
-    "KITE_TEST_CONTEXT_MENU": "text",          # logs a context menu instead of showing it; text = the item to pick
+    # Logs a context menu instead of showing it. Exactly 1: any other value, like a test-context-menu-pick file
+    # (refused below), names an item, which Kite then runs (PageContextMenuItems.testPick).
+    "KITE_TEST_CONTEXT_MENU": "flag",
     "KITE_TEST_BOOST_MENU": "text",            # presses the Boost editor's menu items without the menu
     "KITE_TEST_ZAP_PICKER": ("1", "copy"),     # opens the Zap picker in its own (test-safe) window
     "KITE_TEST_LITTLE_PROFILE_PICK": "text",   # logs Little Kite's profile menu (KITE_TEST_LITTLE_PROFILE_MENU:) and picks
@@ -469,7 +492,6 @@ def session(spec, where):
 
 # --- Steps ---
 MODIFIERS = {"cmd", "command", "meta", "super", "win", "ctrl", "control", "⌃", "alt", "option", "opt", "shift"}
-CONTROL = {"ctrl", "control", "⌃"}
 def modifier_tokens(text, where):
     # As KeyChord.parse reads them: "+"-separated, case-insensitive.
     if not isinstance(text, str):
@@ -506,21 +528,37 @@ def has_hit_fix():
     if not _hit_fix:
         _hit_fix.append(git("merge-base", "--is-ancestor", hit_floor, "HEAD", lazy=False).returncode == 0)
     return _hit_fix[0]
+_expect_fix = []
+def has_expect_fix():
+    # Checked once, on the checkout's HEAD; an EXPECT_FLOOR missing from the clone counts as not there.
+    if not _expect_fix:
+        _expect_fix.append(git("merge-base", "--is-ancestor", expect_floor, "HEAD", lazy=False).returncode == 0)
+    return _expect_fix[0]
 def needs_hit(where):
     if not has_hit_fix():
         fail(f"{where}: clicks and drags need a base with `ui hit` ({hit_floor[:7]}), which this base doesn't contain: "
              "without it a click can't be checked against what AppKit would hit")
+    if not has_expect_fix():
+        fail(f"{where}: clicks and drags need a base with `ui input`'s \"expect\" ({expect_floor[:7]}), which this base "
+             "doesn't contain: without it the hit test and the press aren't one step, and Kite ignores the check")
 _find_fix = []
 def has_find_fix():
     # Checked once, on the checkout's HEAD; a FIND_FLOOR missing from the clone counts as not there.
     if not _find_fix:
         _find_fix.append(git("merge-base", "--is-ancestor", find_floor, "HEAD", lazy=False).returncode == 0)
     return _find_fix[0]
-def check_step(action, args, menu_hook, where, previous, row_menu):
+def check_step(action, args, menu_refused, where, previous, row_menu):
     """Returns what must be true when the step runs: points on SAFE_TARGETS views, or (text) the command bar open.
+    menu_refused is None when the state's env and profile make a context menu only log itself, else what's missing.
     row_menu is None when a right-click here may also land on a RIGHT_CLICK_TARGETS row, else why not."""
     if action == "trace" and "keys" in args:
         fail(f"{where}: trace keys aren't allowed (keys aren't reviewed for headless safety)")
+    if action == "pointer":
+        # Synthetic hover (UIPointerProbe): mouseEntered and mouseMoved straight to tracking-area owners, with its
+        # modifiers held. That previews favorites, shows the space tip window and, with ⇧, opens link previews
+        # (LinkPreviewWindow), none of it checked against SAFE_TARGETS. No request has used one (W12's and W13's hover
+        # states are skipped).
+        fail(f"{where}: pointer steps aren't allowed (synthetic hover reaches views no one reviewed for headless safety)")
     if action != "input":
         return []
     extra = set(args) - INPUT_KEYS
@@ -556,8 +594,14 @@ def check_step(action, args, menu_hook, where, previous, row_menu):
         if args.get("count", 1) != 1:
             fail(f"{where}: only single clicks")
         mods = modifier_tokens(args.get("modifiers", ""), where)
-        if (button == "right" or mods & CONTROL) and not menu_hook:
-            fail(f"{where}: a right- or ⌃-click needs KITE_TEST_CONTEXT_MENU in env (a real menu needs a real screen)")
+        # No modifiers, ⌃ included. Kite takes a ⌃-click as a right-click (SidebarRowCell.mouseDown,
+        # SpaceCellView.mouseDown), but it's a left mouse down with the control flag, and AppKit may show the view's
+        # menu(for:) itself for one (a real NSMenu, which no test hook sees) before mouseDown runs. A right-click
+        # reaches the same menu only through the view's own rightMouseDown and showSidebarMenu's hook.
+        if mods:
+            fail(f"{where}: no modifiers on a click (for a ⌃-click's menu, send a right-click)")
+        if button == "right" and menu_refused:
+            fail(f"{where}: a right-click needs {menu_refused}")
         needs_hit(where)
         check = {"point": at, "what": f"{button} click", "click": True}
         # Rows (RIGHT_CLICK_TARGETS) take a plain right-click that only logs their menu; anything else is checked
@@ -665,6 +709,8 @@ for i, state in enumerate(request["states"]):
             if problems:
                 fail(f"{where}: " + "; ".join(problems[:5]))
             files[k] = text
+        elif k == "test-context-menu-pick":
+            fail(f"{where}: profile_files can't have test-context-menu-pick (Kite runs the menu item it names)")
         elif not (re.fullmatch(r"test-[a-z0-9-]+", k) and isinstance(v, str) and len(v) <= 10_000):
             fail(f"{where}: profile_files maps test-* names (or history.json) to text")
     steps = state.get("steps") or []
@@ -672,14 +718,18 @@ for i, state in enumerate(request["states"]):
         fail(f"{where}: steps is a list")
     lines, shown = [], []
     previous = None
-    menu_hook = bool(str(env.get("KITE_TEST_CONTEXT_MENU", "")).strip())
-    # A row's right-click only logs its menu when nothing names an item to run (PageContextMenuItems.testPick).
-    if env.get("KITE_TEST_CONTEXT_MENU") != "1":
-        row_menu = "KITE_TEST_CONTEXT_MENU isn't exactly 1 (any other value picks a menu item)"
+    # A context menu only logs itself when the hook is on and nothing names an item to run
+    # (PageContextMenuItems.testPick). HOOKS and profile_files above already refuse the rest; checked again here,
+    # where it decides a right-click.
+    if "KITE_TEST_CONTEXT_MENU" not in env:
+        menu_refused = "KITE_TEST_CONTEXT_MENU set to 1 in env (a real menu needs a real screen)"
+    elif env["KITE_TEST_CONTEXT_MENU"] != "1":
+        menu_refused = "KITE_TEST_CONTEXT_MENU exactly 1 (any other value picks a menu item)"
     elif "test-context-menu-pick" in files:
-        row_menu = "the profile's test-context-menu-pick file picks a menu item"
+        menu_refused = "no test-context-menu-pick file (it picks a menu item)"
     else:
-        row_menu = None
+        menu_refused = None
+    row_menu = menu_refused
     for j, step in enumerate(steps):
         if not isinstance(step, dict):
             fail(f"{where}: steps[{j}] is an object")
@@ -700,7 +750,7 @@ for i, state in enumerate(request["states"]):
         # popover) can be over the row, and the row is as the session laid it out.
         first = row_menu if row_menu else ("a step comes before it (a row's right-click is the state's first step)"
                                            if any(not line.startswith("wait\t") for line in lines) else None)
-        checks = check_step(action, args, menu_hook, f"{where} steps[{j}]", previous, first)
+        checks = check_step(action, args, menu_refused, f"{where} steps[{j}]", previous, first)
         previous = (action, args)
         encoded = json.dumps(args, ensure_ascii=False, separators=(",", ":"))
         lines.append(f"ui\t{action}\t{encoded}\t{json.dumps(checks, separators=(',', ':')) if checks else ''}")
@@ -821,6 +871,15 @@ print(json.dumps({"window": int(sys.argv[2]), "point": c["point"]}))' "$1" "$2"
 with_window() {
     python3 -I -c 'import json,sys; a = json.loads(sys.argv[1]); a["window"] = int(sys.argv[2])
 print(json.dumps(a, ensure_ascii=False, separators=(",", ":")))' "$1" "$2"
+}
+
+# with_expect ARGS WINDOW PATH CLASS ALLOWED: the step's `ui input` arguments aimed at that window, with the approved
+# view as "expect" (EXPECT_FLOOR): Kite hit-tests again as it sends the press, and sends nothing if the view hit isn't
+# that view (or, with ALLOWED, views of those classes inside it).
+with_expect() {
+    python3 -I -c 'import json,sys; a = json.loads(sys.argv[1]); a["window"] = int(sys.argv[2])
+a["expect"] = {"path": sys.argv[3], "class": sys.argv[4], "inside": sys.argv[5].split()}
+print(json.dumps(a, ensure_ascii=False, separators=(",", ":")))' "$1" "$2" "$3" "$4" "$5"
 }
 
 # hit_reaches CHECKS HITFILE WINDOW PATH CLASS ALLOWED: prints "ok" when Kite's own hit test (`ui hit`, in HITFILE)
@@ -967,6 +1026,7 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
     : >"$folder/steps.out"
     while IFS=$'\t' read -r kind action args checks <&4; do
         [[ -n "$kind" ]] || continue
+        pressed=0   # 1: a checked click or drag, sent with "expect"
         if [[ "$kind" == wait ]]; then sleep "$action"; last_hit=""; continue; fi
         if [[ "$checks" == *'"needs":"command bar"'* ]]; then
             # Text only straight after a click on a command-bar opener, and only into Kite's own open command bar.
@@ -1021,7 +1081,9 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
                     reached="$(hit_reaches "$checks" "$folder/hit.txt" "$win" "$target_path" "$target" "$allowed")"
                     if [[ "$reached" == ok ]]; then
                         last_hit="$target"
-                        args="$(with_window "$args" "$win")"   # the click goes to the window just hit-tested
+                        # The press goes to the window just hit-tested, and Kite checks the same view as it sends it.
+                        args="$(with_expect "$args" "$win" "$target_path" "$target" "$allowed")"
+                        pressed=1
                     else
                         refused="$reached"
                     fi
@@ -1034,7 +1096,19 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
         fi
         if [[ -n "$refused" ]]; then echo "refused: $refused" >>"$folder/steps.out"; break; fi
         echo "\$ kite ui $action '$args'" >>"$folder/steps.out"
-        tmo 60 "$CLI" ui "$action" "$args" >>"$folder/steps.out" 2>&1 || { step_status=$?; echo "(exit $step_status)" >>"$folder/steps.out"; }
+        status=0
+        tmo 60 "$CLI" ui "$action" "$args" >"$folder/step.out" 2>&1 || status=$?
+        cat "$folder/step.out" >>"$folder/steps.out"
+        if [[ "$status" != 0 ]]; then
+            step_status=$status
+            echo "(exit $status)" >>"$folder/steps.out"
+            # A press Kite refused (its "expect" didn't hold) or may not have sent: the state didn't happen.
+            if [[ "$pressed" == 1 ]]; then
+                refused="the press failed or Kite refused it (exit $status): $(tail -c 300 "$folder/step.out" | tr '\n' ' ')"
+                echo "refused: $refused" >>"$folder/steps.out"
+                break
+            fi
+        fi
     done 4<"$folder/steps"
     if [[ -n "$refused" ]]; then
         echo "failed: refused a step: $refused" >"$folder/status"

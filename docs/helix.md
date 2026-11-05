@@ -86,8 +86,8 @@ PNGs, `NAME.tree.txt` frames and a NOTES.md to `review/<id>-mac` (logs go to the
     {"name": "rest", "holds": "the three spaces at rest"},
     {"name": "drag", "steps": [{"ui": "input", "args": {"from": [86, 795], "to": [150, 795], "steps": 10, "hold": 10}}],
      "hold": 10},
-    {"name": "rename", "env": {"KITE_TEST_CONTEXT_MENU": "Rename Space…"},
-     "steps": [{"ui": "input", "args": {"click": [86, 795], "button": "right"}}], "settle": 1}
+    {"name": "menu", "env": {"KITE_TEST_CONTEXT_MENU": "1"}, "capture": false,
+     "steps": [{"ui": "input", "args": {"click": [86, 795], "button": "right"}}]}
   ]
 }
 ```
@@ -116,16 +116,20 @@ request that could reach past that, before anything runs:
   keeps only its `includesSearchSuggestions` booleans (download folders and the save-panel choice
   go), and every profile gets a fresh WebKit store that's deleted afterwards;
 - keys (except exactly `{"keys":"cmd+t"}`, which opens Kite's own command bar, on a base with
-  `TEXT_FLOOR`) or modifier flags; a click or drag that doesn't start on a visible view in
-  `SAFE_TARGETS` (found in the tree just before the step, then confirmed with Kite's own hit test,
-  `ui hit`, which must reach that very view: a tree frame alone isn't proof, since frames are
-  unclipped and a clipped view is never hit; so clicks and drags need a base with `HIT_FLOOR`, and
-  the step goes to the window that was hit-tested); a right- or ⌃-click without a non-empty
-  `KITE_TEST_CONTEXT_MENU`, which logs the menu instead of showing it. The sidebar's rows
+  `TEXT_FLOOR`) or modifier flags (no ⌃-click either: a right-click reaches the same menu); `ui pointer`
+  steps (synthetic hover, which previews favorites, shows the space tip and, with ⇧, opens link
+  previews); a click or drag that doesn't start on a visible view in `SAFE_TARGETS` (found in the
+  tree just before the step, then confirmed with Kite's own hit test, `ui hit`, which must reach that
+  very view: a tree frame alone isn't proof, since frames are unclipped and a clipped view is never
+  hit). The step then goes to the window that was hit-tested with that view as its `expect`, so Kite
+  hit-tests again and sends the press in the same main-thread turn, or sends nothing and the state
+  fails; clicks and drags need a base with `HIT_FLOOR` and `EXPECT_FLOOR`;
+- `KITE_TEST_CONTEXT_MENU` set to anything but exactly `1`, or a `test-context-menu-pick` profile
+  file: either names a menu item, which Kite then runs instead of only logging the menu. Every
+  right-click needs `KITE_TEST_CONTEXT_MENU` set to `1`. The sidebar's rows
   (`RIGHT_CLICK_TARGETS`: `TabRowCell`, `FolderRowCell`, `FavoritePaneView`) take a plain right-click
-  and nothing else, as the state's first step, with `KITE_TEST_CONTEXT_MENU` exactly `1` and no
-  `test-context-menu-pick` file, so their menu is logged and no item runs; the hit test may reach a
-  `RIGHT_CLICK_INSIDE` view inside the row (a button with no menu of its own) instead of the row;
+  and nothing else, as the state's first step; the hit test may reach a `RIGHT_CLICK_INSIDE` view
+  inside the row (a button with no menu of its own) instead of the row;
 - text, except 1–40 of `A-Z a-z 0-9 space . _ -` straight after `cmd+t` or a plain click on a
   command-bar opener (`NewTabRowCell`; a background window drops that click, as the row doesn't take
   first mouse, so `cmd+t` is the one that works headless), into a visible `CommandBarField`: Kite's own command bar, which acts
