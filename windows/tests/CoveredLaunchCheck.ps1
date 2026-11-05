@@ -2,7 +2,7 @@
 # first page, made after Kite's occlusion already said "covered", ends up hidden and its
 # requestAnimationFrame stops, and stays that way while Kite stays covered.
 #
-#   pwsh windows/tests/CoveredLaunchCheck.ps1 -Kite windows\build\Release\Kite.exe [-Cover] [-Seconds 8]
+#   pwsh windows/tests/CoveredLaunchCheck.ps1 -Kite windows\build\Release\Kite.exe [-Cover] [-Seconds 12]
 #        [-Attack none|stopPropagation|spoofState]
 #
 # Kite runs as a quiet --perf-log run on a fresh %TEMP% test profile, so it opens at the bottom of
@@ -13,13 +13,18 @@
 # Kite's verdict was hidden and the page ended hidden with rAF stopped; 1 otherwise, with why.
 # -Attack makes the page try to keep itself drawing: stopPropagation stops every visibilitychange
 # in a capture listener on window, spoofState makes document.visibilityState always read
-# "hidden". The page's own log reads Document.prototype's getter, so it sees through the spoof.
-# Never run -Cover on a PC in use: it blacks out every monitor for the run.
+# "hidden". docOpen loads a stub that, once loaded, rewrites itself with document.open/write/close,
+# which drops every listener on the document and the window (an old document.write page does the
+# same); docOpenStop also adds stopPropagation's listener to the new document. The page's own log
+# reads Document.prototype's getter, so it sees through the spoof.
+# The run is 12 s so its last 3 s come after Kite's last re-hide after the load (6 s after it):
+# each one shows the page for a few ms, a frame or two. Never run -Cover on a PC in use: it
+# blacks out every monitor for the run.
 param(
   [Parameter(Mandatory)] [string] $Kite,
   [switch] $Cover,
-  [int] $Seconds = 8,
-  [ValidateSet('none', 'stopPropagation', 'spoofState')] [string] $Attack = 'none'
+  [int] $Seconds = 12,
+  [ValidateSet('none', 'stopPropagation', 'spoofState', 'docOpen', 'docOpenStop')] [string] $Attack = 'none'
 )
 $ErrorActionPreference = 'Stop'
 Add-Type @"
@@ -98,14 +103,17 @@ $process = $null
 try {
   New-Item -ItemType File -Path (Join-Path $profileDir 'kite-test-profile') | Out-Null
   $page = Join-Path $profileDir 'page.html'
+  $stop = "<script>window.addEventListener('visibilitychange', e => e.stopImmediatePropagation(), true);</script>"
   $attacks = @{
     none = ''
-    stopPropagation = "<script>window.addEventListener('visibilitychange', e => e.stopImmediatePropagation(), true);</script>"
+    stopPropagation = $stop
     spoofState = "<script>Object.defineProperty(document, 'visibilityState', { get: () => 'hidden' }); Object.defineProperty(document, 'hidden', { get: () => true });</script>"
+    docOpen = ''
+    docOpenStop = $stop
   }
   # "vis:" then words: V or H (visibilityState changed) or F<ms>:<frames>, each with Date.now().
   # The state is read with Document.prototype's own getter, on each change and every second.
-  [IO.File]::WriteAllText($page, '<!doctype html><meta charset="utf-8"><title>vis:</title>' + $attacks[$Attack] + @'
+  $html = '<!doctype html><meta charset="utf-8"><title>vis:</title>' + $attacks[$Attack] + @'
 <canvas id="c" width="200" height="100"></canvas>
 <script>
 let log = '', frames = 0, last = '';
@@ -120,7 +128,15 @@ requestAnimationFrame(draw);
 document.addEventListener('visibilitychange', vis); vis();
 setInterval(() => { vis(); log += 'F' + Date.now() + ':' + frames + ' '; document.title = 'vis:' + log; }, 1000);
 </script>
-'@)
+'@
+  if ($Attack -like 'docOpen*') {
+    # The stub, rewritten with the page once it has loaded.
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($html))
+    $html = '<!doctype html><meta charset="utf-8"><title>vis:</title><script>addEventListener("load", () => setTimeout(() => {' +
+            "document.open(); document.write(new TextDecoder().decode(Uint8Array.from(atob('$encoded'), c => c.charCodeAt(0)))); document.close();" +
+            '}, 0));</script>'
+  }
+  [IO.File]::WriteAllText($page, $html)
   $kitecore = Join-Path (Split-Path -Parent (Resolve-Path $Kite)) 'kitecore.exe'
   & $kitecore --profile $profileDir open ([uri]$page).AbsoluteUri | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "kitecore open exited with $LASTEXITCODE" }
