@@ -59,8 +59,8 @@ void BrowserWindowController::BeginRenaming(const std::string& spaceID) {
         state_.SelectSpace(spaceID);
         SelectionMoved();
     }
-    TakeKeyboardForRename();
-    sidebar_->BeginRenaming(spaceID, state_.spaces[*index].name);
+    const std::string name = state_.spaces[*index].name;
+    TakeKeyboardForRename([&] { sidebar_->BeginRenaming(spaceID, name); });
 }
 
 void BrowserWindowController::RenameSpace(const std::string& spaceID, const std::string& name) {
