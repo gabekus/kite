@@ -108,6 +108,53 @@ import Testing
         #expect(throws: (any Error).self) { try ui(["action": "hit", "point": [1]]) }
         #expect(throws: (any Error).self) { try ui(["action": "hit", "point": "120,364"]) }
     }
+    @Test func inputTakesAnExpectationForAClickOrDragOnly() throws {
+        let rowExpect: JSONValue = ["path": "0.3.3.0.5.1", "class": "TabRowCell", "inside": ["SymbolButton", "SidebarPassthroughView"]]
+        let row = UIHitExpectation(path: "0.3.3.0.5.1", className: "TabRowCell", inside: ["SymbolButton", "SidebarPassthroughView"])
+        let rightClick = UIInputEvent.click(UIPoint(x: 120, y: 364.5), button: .right, count: 1, modifiers: [])
+        let parsedClick = try ui(["action": "input", "window": 7, "click": [120, 364.5], "button": "right", "expect": rowExpect])
+        #expect(parsedClick == UIInspection.input(window: 7, event: rightClick, expect: row))
+
+        let spaceExpect: JSONValue = ["path": "0.3.4.0.1", "class": "SpaceCellView"]
+        let drag = UIInputEvent.drag(from: UIPoint(x: 86, y: 795), to: UIPoint(x: 150, y: 795), steps: 10)
+        let parsedDrag = try ui(["action": "input", "from": [86, 795], "to": [150, 795], "expect": spaceExpect])
+        #expect(parsedDrag == UIInspection.input(window: nil, event: drag, expect: UIHitExpectation(path: "0.3.4.0.1", className: "SpaceCellView")))
+
+        // Without one, nothing changes.
+        let leftClick = UIInputEvent.click(UIPoint(x: 1, y: 2), button: .left, count: 1, modifiers: [])
+        let none: UIHitExpectation? = nil
+        #expect(try ui(["action": "input", "click": [1, 2]]) == UIInspection.input(window: nil, event: leftClick, expect: none))
+
+        // Not a press: nothing to hit-test.
+        let expect: JSONValue = ["path": "0.3", "class": "NewTabRowCell"]
+        let notPresses: [[String: JSONValue]] = [
+            ["action": "input", "keys": "cmd+t", "expect": expect],
+            ["action": "input", "text": "a", "expect": expect],
+            ["action": "input", "scroll": [1, 2], "dy": 3, "expect": expect],
+            ["action": "input", "flags": "ctrl", "expect": expect],
+        ]
+        for arguments in notPresses {
+            #expect(throws: AutomationCommand.InvalidArguments.self, "\(arguments)") { try ui(arguments) }
+        }
+        // Malformed.
+        let malformed: [JSONValue] = [
+            "0.3",
+            ["class": "NewTabRowCell"],
+            ["path": "0.3"],
+            ["path": "", "class": "A"],
+            ["path": "0..3", "class": "A"],
+            ["path": "0.3.", "class": "A"],
+            ["path": "titlebar", "class": "A"],
+            ["path": "0.3", "class": ""],
+            ["path": "0.3", "class": "A", "inside": "B"],
+            ["path": "0.3", "class": "A", "inside": [""]],
+            ["path": "0.3", "class": "A", "window": 3],
+        ]
+        for bad in malformed {
+            let arguments: [String: JSONValue] = ["action": "input", "click": [1, 2], "expect": bad]
+            #expect(throws: AutomationCommand.InvalidArguments.self, "\(bad)") { try ui(arguments) }
+        }
+    }
 }
 
 @Suite struct UIReportTests {
@@ -220,39 +267,6 @@ import Testing
             - NSThemeFrame [0,0 1280×820] hidden=true
             """)
         #expect(UIReport.hit(UIPoint(x: -1, y: -1), chain: []) == "Hit at (-1, -1): nothing.")
-    }
-
-    @Test func inputTakesAnExpectationForAClickOrDragOnly() throws {
-        let row = UIHitExpectation(path: "0.3.3.0.5.1", className: "TabRowCell", inside: ["SymbolButton", "SidebarPassthroughView"])
-        #expect(try ui(["action": "input", "window": 7, "click": [120, 364.5], "button": "right",
-                        "expect": ["path": "0.3.3.0.5.1", "class": "TabRowCell", "inside": ["SymbolButton", "SidebarPassthroughView"]]])
-            == .input(window: 7, event: .click(UIPoint(x: 120, y: 364.5), button: .right, count: 1, modifiers: []), expect: row))
-        #expect(try ui(["action": "input", "from": [86, 795], "to": [150, 795], "expect": ["path": "0.3.4.0.1", "class": "SpaceCellView"]])
-            == .input(window: nil, event: .drag(from: UIPoint(x: 86, y: 795), to: UIPoint(x: 150, y: 795), steps: 10),
-                      expect: UIHitExpectation(path: "0.3.4.0.1", className: "SpaceCellView")))
-        // Without one, nothing changes.
-        #expect(try ui(["action": "input", "click": [1, 2]])
-            == .input(window: nil, event: .click(UIPoint(x: 1, y: 2), button: .left, count: 1, modifiers: []), expect: nil))
-        let expect: JSONValue = ["path": "0.3", "class": "NewTabRowCell"]
-        for arguments: [String: JSONValue] in [
-            // Not a press: nothing to hit-test.
-            ["action": "input", "keys": "cmd+t", "expect": expect], ["action": "input", "text": "a", "expect": expect],
-            ["action": "input", "scroll": [1, 2], "dy": 3, "expect": expect], ["action": "input", "flags": "ctrl", "expect": expect],
-            // Malformed.
-            ["action": "input", "click": [1, 2], "expect": "0.3"],
-            ["action": "input", "click": [1, 2], "expect": ["class": "NewTabRowCell"]],
-            ["action": "input", "click": [1, 2], "expect": ["path": "0.3"]],
-            ["action": "input", "click": [1, 2], "expect": ["path": "", "class": "A"]],
-            ["action": "input", "click": [1, 2], "expect": ["path": "0..3", "class": "A"]],
-            ["action": "input", "click": [1, 2], "expect": ["path": "0.3.", "class": "A"]],
-            ["action": "input", "click": [1, 2], "expect": ["path": "titlebar", "class": "A"]],
-            ["action": "input", "click": [1, 2], "expect": ["path": "0.3", "class": ""]],
-            ["action": "input", "click": [1, 2], "expect": ["path": "0.3", "class": "A", "inside": "B"]],
-            ["action": "input", "click": [1, 2], "expect": ["path": "0.3", "class": "A", "inside": [""]]],
-            ["action": "input", "click": [1, 2], "expect": ["path": "0.3", "class": "A", "window": 3]],
-        ] {
-            #expect(throws: AutomationCommand.InvalidArguments.self, "\(arguments)") { try ui(arguments) }
-        }
     }
 
     @Test func anExpectationIsMetOnlyByTheApprovedViewOrWhatItAllowsInsideIt() {
