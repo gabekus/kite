@@ -221,6 +221,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A test-safe run can open the main window's find bar (KITE_TEST_FIND_OPEN=1), with a query
         // (KITE_TEST_FIND=text), once its page has loaded: FindTestHook. A real profile ignores both.
         FindTestHookRunner.start(in: windowController)
+        // A test-safe run can open the icon picker for a named space (KITE_TEST_ICON_PICKER=name), or Create a Space
+        // (KITE_TEST_NEW_SPACE=1, with a name and a preset picked and the theme editor open): SidebarTestHook. A real
+        // profile ignores them.
+        SidebarTestHookRunner.start(in: windowController)
 
         diagnostics = DiagnosticsRecorder(directory: Self.supportDirectory.appendingPathComponent("Diagnostics", isDirectory: true))
         diagnostics.start()

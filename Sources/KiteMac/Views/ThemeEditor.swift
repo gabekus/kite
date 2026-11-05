@@ -352,6 +352,8 @@ extension ThemeEditor {
     }
 
     @MainActor private static weak var shown: NSPopover?
+    /// Whether an editor is on screen now (SidebarTestHookRunner's ready line).
+    @MainActor static var isShown: Bool { shown?.isShown == true }
 }
 
 /// sRGB ⇄ HSL, the space Arc's colour grid is laid out in.

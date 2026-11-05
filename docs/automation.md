@@ -231,6 +231,16 @@ What works with Kite in the background (checked on a test build behind other win
   `committed`, `finished`, `failed (domain code)`, `content process ended`), and a page's window occlusion detection
   is off, as with `KITE_TEST_CONTEXT_MENU`. Pages on the headless Mac runner have so far never loaded at all: the
   page area of every reference it took is blank.
+- The sidebar's popovers and Create a Space without clicks: on a test-safe run, `KITE_TEST_ICON_PICKER=name` opens
+  Change Space Icon…'s picker for the one space named exactly `name`, as the space menu does
+  (`requestIconPicker`), and `KITE_TEST_NEW_SPACE=1` opens + › New Space's Create a Space page (`beginNewSpace`).
+  With it, `KITE_TEST_NEW_SPACE_NAME=text` sets the name field's value (its binding, no key events) and
+  `KITE_TEST_NEW_SPACE_THEME=n` (1–7) picks the theme editor's preset `n` for the draft as its swatch does (the
+  intensity kept) and opens the theme editor from Choose a Theme's own row. Exact values only (a flag is `1`, a
+  name one short line); anything else, or the picker beside the page, turns them off, and a real profile ignores
+  them (`SidebarTestHook`). Nothing is pressed, activated or fronted. It writes `KITE_TEST_SIDEBAR: armed: …`, then
+  `KITE_TEST_SIDEBAR: ready: …` once the state is up (the popover shown), or `failed: …` after 10 s. An in-process
+  `kite ui capture` draws an open popover (a child window) over the window.
 - `menu`: AppKit ignores fn when matching a key against the menu bar, so a system item on fn E (Emoji &
   Symbols) or fn F (Enter Full Screen) fires on a plain "e" or "f" that reaches the menu bar, and is flagged.
 

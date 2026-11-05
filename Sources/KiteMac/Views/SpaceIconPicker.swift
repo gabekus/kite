@@ -252,6 +252,8 @@ struct SpaceIconPicker: View {
     }
 
     @MainActor private static weak var shown: NSPopover?
+    /// Whether a picker is on screen now (SidebarTestHookRunner's ready line).
+    @MainActor static var isShown: Bool { shown?.isShown == true }
     @MainActor private static var closeHandler: () -> Void = {}
     @MainActor private static let delegate = Delegate()
 
