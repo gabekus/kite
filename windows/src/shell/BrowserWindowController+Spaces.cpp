@@ -53,7 +53,8 @@ void BrowserWindowController::RunSpaceMenuItem(const std::string& spaceID, Space
 void BrowserWindowController::BeginRenaming(const std::string& spaceID) {
     const auto index = state_.SpaceIndex(spaceID);
     if (!index) return;
-    // beginRenaming(space:): its space selected, then its header's field.
+    // beginRenaming(space:): the sidebar shown, its space selected, then its header's field.
+    SetSidebarShown(true);
     if (state_.selectedSpaceID != spaceID) {
         state_.SelectSpace(spaceID);
         SelectionMoved();
@@ -110,7 +111,8 @@ void BrowserWindowController::RequestIconPicker(const std::string& spaceID, bool
     // The header holds its icon's slot from the request on (the Mac's pickerOpen, set as
     // openPicker is asked), before the selection closes any picker open for another space.
     sidebar_->SetIconPickerSpace(spaceID);
-    // requestIconPicker: its space selected (the sidebar is always shown on Windows yet).
+    // requestIconPicker: the sidebar shown, and its space selected.
+    if (!sidebarShown_) SetSidebarShown(true);
     if (state_.selectedSpaceID != spaceID) {
         state_.SelectSpace(spaceID);
         SelectionMoved();

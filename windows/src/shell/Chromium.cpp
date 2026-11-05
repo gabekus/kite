@@ -339,10 +339,6 @@ struct Chromium::Shared {
 
 namespace {
 
-// On a quiet run's renderers' command lines: the renderer skips window.print() (KiteHelperApp)
-// and sends this process message instead.
-constexpr char kQuietSwitch[] = "kite-quiet-run";
-constexpr char kPrintSkipped[] = "kite.printSkipped";
 // The Mac's ApplyEnergySaver, on CEF's UI thread. Energy Saver is a local-state preference, one
 // for all profiles: only the global preferences have it, as on the Mac, and no request
 // context's (a space's own profile) does.
@@ -360,6 +356,10 @@ void ApplyEnergySaver(const Chromium::Shared& shared) {
         OutputDebugStringW((L"Kite: couldn't set Energy Saver: " + error.ToWString() + L"\n").c_str());
     }
 }
+// On a quiet run's renderers' command lines: the renderer skips window.print() (KiteHelperApp)
+// and sends this process message instead.
+constexpr char kQuietSwitch[] = "kite-quiet-run";
+constexpr char kPrintSkipped[] = "kite.printSkipped";
 
 // Kite's CefApp in the browser process: one Kite per profile, as Chromium allows. A second
 // launch hands over to this one instead of opening a Chrome window of its own.
@@ -369,6 +369,11 @@ public:
         : shared_(std::move(shared)), switches_(std::move(switches)) {}
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
 
+    // Where the Mac applies Energy Saver after CefInitialize, and again at its first browser in
+    // case the context wasn't ready: here the global preferences exist, and no browser does
+    // yet, so one try covers both, and the browsers Chromium makes itself (the Mac's
+    // KCDefaultClient) too.
+    void OnContextInitialized() override { ApplyEnergySaver(*shared_); }
     // --chromium-switches, in the browser process only (its helpers get what Chromium passes on).
     void OnBeforeCommandLineProcessing(const CefString& processType, CefRefPtr<CefCommandLine> commandLine) override {
         if (!processType.empty()) return;
@@ -389,11 +394,6 @@ public:
             commandLine->AppendSwitchWithValue(name, value);
         }
     }
-    // Where the Mac applies Energy Saver after CefInitialize, and again at its first browser in
-    // case the context wasn't ready: here the global preferences exist, and no browser does
-    // yet, so one try covers both, and the browsers Chromium makes itself (the Mac's
-    // KCDefaultClient) too.
-    void OnContextInitialized() override { ApplyEnergySaver(*shared_); }
 
     bool OnAlreadyRunningAppRelaunch(CefRefPtr<CefCommandLine>, const CefString&) override {
         shared_->Post([shared = shared_] {
@@ -826,10 +826,12 @@ public:
 
     // CefLoadHandler
 
-    void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading, bool, bool) override {
+    void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading, bool canGoBack, bool canGoForward) override {
         perf::Mark(isLoading ? "load-begin" : "load-end", tabID_);
-        shared_->Post([shared = shared_, id = tabID_, browser, isLoading] {
-            if (shared->PageFor(id, browser) && shared->events.loadingChanged) shared->events.loadingChanged(id, isLoading);
+        shared_->Post([shared = shared_, id = tabID_, browser, isLoading, canGoBack, canGoForward] {
+            if (shared->PageFor(id, browser) && shared->events.loadingChanged) {
+                shared->events.loadingChanged(id, isLoading, canGoBack, canGoForward);
+            }
         });
     }
 

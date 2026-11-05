@@ -22,9 +22,12 @@ RECT BrowserWindowController::ContentBounds() const {
     GetClientRect(window_.Handle(), &client);
     const int dpi = static_cast<int>(window_.Dpi());
     auto px = [dpi](int points) { return MulDiv(points, dpi, USER_DEFAULT_SCREEN_DPI); };
-    // Its top under the caption buttons.
-    RECT card{px(kSidebarWidth), px(static_cast<int>(title_bar::kContentTop)), client.right - px(kContentInset),
-              client.bottom - px(kContentInset)};
+    // Its top under the caption buttons; its leading edge the sidebar's, or the inset once the
+    // sidebar is hidden (not while it's still sliding off: a tab switch or a resize then would put
+    // the page over it).
+    const int left = static_cast<int>(CardLeft(sidebarShown_ || toggling_, static_cast<float>(kSidebarWidth)));
+    const int inset = static_cast<int>(sidebar_toggle::kContentInset);
+    RECT card{px(left), px(static_cast<int>(title_bar::kContentTop)), client.right - px(inset), client.bottom - px(inset)};
     card.right = std::max(card.right, card.left + 1);
     card.bottom = std::max(card.bottom, card.top + 1);
     return card;
@@ -82,7 +85,10 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         tab->faviconURL = icon;
         StateChanged(SessionSaveDelay::PageEvent);
     };
-    events.loadingChanged = [this](const std::string&, bool loading) {
+    events.loadingChanged = [this](const std::string& id, bool loading, bool canGoBack, bool canGoForward) {
+        // The Mac's navigationState: the top row shows the selected tab's.
+        pageStatus_[id] = PageStatus{loading, canGoBack, canGoForward};
+        if (const Tab* tab = state_.SelectedTab(); tab && tab->id == id) ShowPageStatus();
         // A smoke test closes once the first page has loaded (or shown its error page).
         if (loading) {
             pageLoading_ = true;
@@ -121,6 +127,7 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     events.pageClosed = [this](const std::string& id) {
         // A page that closed itself (window.close() after a sign-in): its tab closes, and a
         // popup on screen hands it back to its opener, as the Mac's PagePool does.
+        pageStatus_.erase(id);
         const auto opener = popupOpeners_.extract(id);
         state_.PageClosedItself(id, opener ? std::optional<std::string>(opener.mapped()) : std::nullopt);
         std::erase_if(popupOpeners_, [&](const auto& entry) { return entry.second == id; });
@@ -131,6 +138,9 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     // limit can't be anyone's opener or popup again (the Mac's PagePool.discard).
     events.keepAlive = [this](const std::string& id) { return IsLinkedToPopup(popupOpeners_, state_, id); };
     events.pageDiscarded = [this](const std::string& id) {
+        // Its tab loads again, with no history, when it's next shown (BrowserStore.clearPage).
+        pageStatus_.erase(id);
+        if (const Tab* tab = state_.SelectedTab(); tab && tab->id == id) ShowPageStatus();
         std::erase_if(popupOpeners_, [&](const auto& entry) { return entry.first == id || entry.second == id; });
         // The Mac's clearPage: the page that loads again when the tab is next shown records its
         // address as a new visit.

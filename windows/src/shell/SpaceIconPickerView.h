@@ -98,7 +98,7 @@ public:
     // A redraw of its own (a press, a key, the wheel, the caret) found the GPU gone: the owner
     // rebuilds (and the picker closes with the old device).
     std::function<void()> onDeviceLost;
-    // The caret's blink (the owner's timer, a view's: 0x4B42–0x4B48 are taken).
+    // The caret's blink (the owner's timer, a view's: 0x4B42–0x4B48 are taken or reserved).
     static constexpr UINT_PTR kCaretTimer = 0x4B49;
 
 private:
