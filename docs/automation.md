@@ -348,8 +348,14 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
     1.5 s, so a page left is noticed. Between those it looks twice a second only while a step's page is on screen in
     a visible window, so the ring follows a page that redraws, and only for a day after the handoff
     (`UserHandoff.watchLimit`): older steps keep their dot and ring but wait for one of those events, so steps
-    left waiting cost an idle Kite nothing. The top frame and same-origin frames are searched; a control in a
-    cross-origin frame (Apple's sign-in form) isn't found.
+    left waiting cost an idle Kite nothing. The top frame and same-origin frames are searched first; when the control
+    isn't there, frames of another origin are probed (up to 24, drawing nothing) and the first that has it gets the
+    ring and tag, drawn inside that frame. A frame of the same site runs in the tab's own process (Apple's sign-in
+    form, idmsa.apple.com on appleid.apple.com) and gets Kite's world through the tab's own session; a cross-site
+    frame runs in a renderer of its own, reached through the session Kite auto-attaches to it (`FrameSessions`, which
+    also carries the ad blocker's frame scriptlets), with its Runtime domain on so its binding reports a click that
+    navigates the frame away. Refs don't reach into cross-site frames (read_page can't read them), so Claude names
+    such a control by its text or a selector.
   - **The sidebar.** A tab with a step waiting gets an orange dot at its row's end (tooltip: the step); a folded
     folder holding one gets the dot too.
   - **A step the page can't show.** When Kite can't find the control of the step a tab shows (after three looks

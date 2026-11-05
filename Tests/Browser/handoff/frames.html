@@ -1,0 +1,10 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Handoff: another origin's frame</title>
+<!-- A sign-in form in a frame of another origin, as on appleid.apple.com (whose form is idmsa.apple.com's):
+     the top page's look can't reach into it, so Kite looks in the frame itself. ?src= is the frame's address:
+     another port of 127.0.0.1 (same site, the tab's own process) or localhost (another site, its own process). -->
+<style>body{font:14px system-ui;margin:0} iframe{position:absolute;left:40px;top:60px;width:560px;height:200px;border:1px solid #ccc}</style>
+<p style="margin:20px 40px">Sign in below.</p>
+<iframe id="form"></iframe>
+<script>document.getElementById('form').src = new URLSearchParams(location.search).get('src') || 'form.html';</script>

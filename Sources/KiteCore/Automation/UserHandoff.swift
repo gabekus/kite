@@ -43,6 +43,8 @@ public enum UserHandoff {
     /// handoff_status returns to tell Claude. Longer than `blockedReportDelay`: the page a click leads to may still
     /// be loading the next step's control.
     public static let unshownReportDelay: TimeInterval = 5
+    /// How many frames of another origin a look searches for a step's control, when the top frame doesn't have it.
+    public static let maxFramesLooked = 24
     /// The isolated world the ring lives in, and the binding it reports clicks through.
     public static let worldName = "kite-handoff"
     public static let bindingName = "kiteHandoffEvent"

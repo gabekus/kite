@@ -109,10 +109,9 @@ extension AutomationController {
             for step in handoff.waiting where step.locator != nil {
                 guard let tab = step.tab, waitingStep(on: tab)?.id == step.id, let page = host.livePages[tab] else { continue }
                 if !isOnScreen(page), let actions = page.automation as? PageActions {
-                    let script = UserHandoff.ringScript(.init(step: step, why: handoff.reason, scroll: false, probe: true))
                     let at = store.state.tab(tab)?.url
-                    guard let json = try? await actions.runIsolated(script, world: UserHandoff.worldName, binding: UserHandoff.bindingName),
-                          let state = UserHandoff.RingState(json: json) else { continue }
+                    guard let state = await ringLook(step, why: handoff.reason, scroll: false, probe: true, tab: tab, actions: actions)
+                    else { continue }
                     setLook(step.id, state, tab: tab, at: at)
                 }
                 if handoffs.first(where: { $0.id == id })?.steps.first(where: { $0.id == step.id })?.found == false { missing = true }
@@ -394,10 +393,8 @@ extension AutomationController {
                 try? await track(id, page: page, actions: actions)
                 let first = ringShown[id] != step.id
                 let reason = handoffs.first { $0.id == handoffID(of: step.id) }?.reason
-                let script = UserHandoff.ringScript(.init(step: step, why: reason, scroll: first))
                 let at = store.state.tab(id)?.url
-                guard let json = try? await actions.runIsolated(script, world: UserHandoff.worldName, binding: UserHandoff.bindingName),
-                      let state = UserHandoff.RingState(json: json) else { continue }
+                guard let state = await ringLook(step, why: reason, scroll: first, probe: false, tab: id, actions: actions) else { continue }
                 ringShown[id] = step.id
                 let handoff = handoffID(of: step.id)
                 if let done = state.done {
@@ -410,11 +407,59 @@ extension AutomationController {
                 }
             } else {
                 _ = try? await actions.runIsolated(UserHandoff.clearScript, world: UserHandoff.worldName, binding: UserHandoff.bindingName)
+                if let frame = ringFrames.removeValue(forKey: id) {
+                    _ = try? await actions.runIsolated(UserHandoff.clearScript, world: UserHandoff.worldName,
+                                                       binding: UserHandoff.bindingName, in: frame)
+                }
                 ringShown[id] = nil
             }
         }
         // Pages that went away (hibernated or closed) took their ring along.
         for id in Array(ringShown.keys) where host.livePages[id] == nil { ringShown[id] = nil }
+        for id in Array(ringFrames.keys) where host.livePages[id] == nil { ringFrames[id] = nil }
+    }
+
+    /// Shows a step's ring where its control is, and says what the look saw. The top frame first: its look walks
+    /// into same-origin frames itself. Then the frame of another origin that had the ring, then the others (a
+    /// sign-in form in Apple's or another site's frame), probed without drawing until one has the control, which
+    /// then gets the ring. One place shows it at a time: the frame that had it is cleared when it moves. `probe`
+    /// only looks, drawing nothing.
+    private func ringLook(_ step: Handoff.Step, why: String?, scroll: Bool, probe: Bool, tab: UUID,
+                          actions: PageActions) async -> UserHandoff.RingState? {
+        func run(_ config: UserHandoff.RingConfig, in frame: PageFrame?) async -> UserHandoff.RingState? {
+            let script = UserHandoff.ringScript(config)
+            guard let json = try? await actions.runIsolated(script, world: UserHandoff.worldName, binding: UserHandoff.bindingName, in: frame)
+            else { return nil }
+            return UserHandoff.RingState(json: json)
+        }
+        func clear(_ frame: PageFrame) async {
+            _ = try? await actions.runIsolated(UserHandoff.clearScript, world: UserHandoff.worldName, binding: UserHandoff.bindingName, in: frame)
+        }
+        let config = UserHandoff.RingConfig(step: step, why: why, scroll: scroll, probe: probe)
+        guard let top = await run(config, in: nil) else { return nil }
+        let held = ringFrames[tab]
+        if top.found || top.done != nil {
+            if let held, !probe { await clear(held); ringFrames[tab] = nil }
+            return top
+        }
+        let frames = (try? await actions.childFrames()) ?? []
+        let same = { (a: PageFrame, b: PageFrame?) in a.id == b?.id && a.session == b?.session }
+        if let held {
+            if frames.contains(where: { same($0, held) }), let state = await run(config, in: held), state.found || state.done != nil {
+                return state
+            }
+            if !probe { await clear(held); ringFrames[tab] = nil }
+        }
+        let look = UserHandoff.RingConfig(step: step, why: why, scroll: false, probe: true)
+        for frame in frames.prefix(UserHandoff.maxFramesLooked) where !same(frame, held) {
+            guard let seen = await run(look, in: frame), seen.found else { continue }
+            if probe { return seen }
+            // Newly ringed there: scroll the frame to it.
+            guard let state = await run(.init(step: step, why: why, scroll: true), in: frame) else { continue }
+            ringFrames[tab] = frame
+            return state
+        }
+        return top
     }
 
     /// The ring's click listener (and its tag's Skip and Done), through the binding: ends the step at once, even if the
