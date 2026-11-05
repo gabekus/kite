@@ -8,7 +8,8 @@
 // Ported so far: tabs, folders, spaces, themes, favorites per profile, selection,
 // opening, selecting, closing, archiving and reopening tabs (TabClosing.cpp), spaces and
 // editing them (SpaceEditing.cpp), pinning, favoriting, renaming, duplicating and folders
-// (TabEditing.cpp), pinned URLs (PinnedURL.cpp), and splits as data (closing keeps them whole). Not yet:
+// (TabEditing.cpp), pinned URLs (PinnedURL.cpp), the sidebar menus' edits (SidebarContextMenu.cpp),
+// and splits as data (closing keeps them whole). Not yet:
 // making splits, profiles, live folders, Tidy Tabs. Those arrive as Helix checkpoints (docs/helix.md).
 
 #include <functional>
@@ -341,6 +342,36 @@ struct BrowserState {
     std::optional<std::string> RevealTab(const std::string& tabID);
     // The top-level sidebar row (SidebarGroup) that holds the tab.
     std::optional<std::string> SidebarRowID(const std::string& tabID) const;
+
+    // MARK: The sidebar's tab and folder menus (SidebarContextMenu.cpp, SidebarContextMenu.swift)
+
+    // The Today tabs that Archive Other Tabs / Below / Above would archive for the row of tab `id`
+    // (the tab, and the split's other panes when it's in one), in Today's order. Empty when the
+    // tab isn't in Today or there's nothing on that side (Arc greys Archive Tabs Above out on the
+    // top row).
+    enum class ArchiveTabsRelative { Others, Below, Above };
+    std::vector<std::string> TabsToArchive(ArchiveTabsRelative which, const std::string& id) const;
+    // Archives them. When the selected tab goes, the row the menu was opened on is selected.
+    std::vector<Tab> ArchiveTabs(ArchiveTabsRelative which, const std::string& id, Timestamp now = Now());
+    // Whether the folder menu offers Duplicate: not for a Claude (ephemeral) folder or a live one.
+    bool CanDuplicateFolder(const std::string& id) const;
+    // Arc's folder Duplicate: a copy of the folder, its nested folders and tabs (new ids, not
+    // loaded) right after it in the same place, live folders inside left out. The copy's id.
+    std::optional<std::string> DuplicateFolder(const std::string& id, Timestamp now = Now());
+    // New Nested Folder…: an empty folder at the end of folder `id`, which opens to show it.
+    std::optional<std::string> CreateNestedFolder(const std::string& id, std::string name = "New Folder");
+    // Whether Turn "<folder>" into Space is enabled: a plain folder with tabs in it, never a Claude
+    // folder, one with Claude or live folders inside, or one named Claude (claudeMayCreateSpace).
+    bool CanTurnFolderIntoSpace(const std::string& id) const;
+    // Turn "<folder>" into Space: a new space right after the folder's, named after it, with the
+    // folder's items as its pinned tabs, the old space's theme and profile, no icon, selected.
+    // Splits made only of the folder's tabs go along. The new space's id.
+    std::optional<std::string> TurnFolderIntoSpace(const std::string& id);
+    // Delete Live Folder (LiveFolders.swift's deleteLiveFolder): its source goes into
+    // liveFoldersTurnedOff (kept in `extra`, as the Mac writes it), and the folder goes with its tabs,
+    // unarchived (the Mac's next refresh would bring them back). A selected tab among them hands the
+    // selection to the space's first tab. The tabs that went; none for a folder that isn't live.
+    std::vector<std::string> DeleteLiveFolder(const std::string& id);
 
     // MARK: Closing, archiving and reopening (TabClosing.cpp, BrowserState.swift)
     // The mutators take the id by value: a caller's id is often the tab's own (SelectedTab()->id),

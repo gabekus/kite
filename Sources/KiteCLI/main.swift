@@ -339,7 +339,7 @@ func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.
         }
     case "ui":
         tool = "ui"
-        json["action"] = .string(try first("an action (windows, tree, capture, pointer, input, menu, key_log, trace)"))
+        json["action"] = .string(try first("an action (windows, tree, capture, pointer, hit, input, menu, key_log, trace)"))
         if args.positional.count > 1 {
             guard case .object(let given)? = try? JSONValue.decode(Data(args.positional[1].utf8)) else {
                 throw CLIError("The arguments must be a JSON object.")

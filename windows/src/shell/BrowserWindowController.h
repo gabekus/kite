@@ -5,7 +5,8 @@
 // session, and runs one of these. Like the Mac's BrowserWindowController+*.swift, its parts have
 // files of their own: +Spaces.cpp (editing spaces: the space menu, renaming, deleting,
 // reordering), +Tabs.cpp (pinning, renaming tabs and folders, New Folder, Duplicate, Back to Pinned
-// URL, Reset), +Chromium.cpp (the pages) and +Tests.cpp (--smoke-test and --capture).
+// URL, Reset), +SidebarMenus.cpp (the rows' and favorites' menus), +Chromium.cpp (the pages)
+// and +Tests.cpp (--smoke-test and --capture).
 //
 // Everything here is on Kite's UI thread. The session is the caller's, borrowed for the
 // window's life. The window changes it and saves it as it changes, as the Mac's BrowserStore
@@ -55,6 +56,7 @@
 #include "core/OneShotFlags.h"
 #include "core/SessionSaveDelay.h"
 #include "core/SessionWriter.h"
+#include "core/SidebarContextMenu.h"
 #include "core/SidebarTopRow.h"
 #include "core/SpaceEditing.h"
 #include "core/SpaceSwipe.h"
@@ -72,6 +74,7 @@
 #include "shell/FrameClock.h"
 #include "shell/MainWindow.h"
 #include "shell/MemoryPressure.h"
+#include "shell/Occlusion.h"
 #include "shell/Renderer.h"
 #include "shell/SidebarView.h"
 #include "shell/SpaceIconPickerView.h"
@@ -116,6 +119,8 @@ public:
         bool perfControl = false;
         // --chromium-switches: added to Chromium's command line (test profiles only).
         std::vector<std::string> chromiumSwitches;
+        // --occlusion-log: shell/Occlusion's verdicts, a JSON line each (empty: none).
+        std::filesystem::path occlusionLog;
         // The profile's SpaceIcons folder: the pictures chosen as space icons (a capture
         // decodes them in place, the rest on a worker).
         std::filesystem::path spaceIcons;
@@ -213,6 +218,14 @@ public:
     // For a capture: what Capture composes over the frame next, space `index`'s menu opened
     // over its cell in the bar (Windows' own menu, read back as it shows).
     void HoldSpaceMenu(size_t index) { heldMenu_ = index; }
+    // For a capture: row `index`'s menu (from 0, as kitecore's `sidebar` lists the selected space's
+    // rows; a tab's or a folder's: the header's is the space's, which HoldSpaceMenu holds), or
+    // favorite pane `index`'s (in the grid's order), opened as a right-click on its middle opens it.
+    // Its line goes to stderr, as the Mac's KITE_TEST_CONTEXT_MENU logs one.
+    std::wstring HoldRowMenu(size_t index);
+    std::wstring HoldFavoriteMenu(size_t index);
+    // Capture's part: the held row menu read back and composed over `pixels`.
+    std::wstring RenderHeldRowMenu(Pixels& pixels);
     // For a capture (which has no pages): the selected tab's page reporting `page`, as Chromium
     // would (back and forward, loading).
     void HoldPageStatus(const PageStatus& page);
@@ -312,6 +325,8 @@ private:
     static constexpr UINT_PTR kIconPickerTimer = 12;
     // Posted by history's worker when a profile's file has been read (HistoryStores::SetWake).
     static constexpr UINT kHistoryMessage = WM_APP + 8;
+    // Posted by shell/Occlusion when its verdict changes (the shared WM_APP allocation gives P2 +12).
+    static constexpr UINT kOcclusionMessage = WM_APP + 12;
     // Posted by the downloads writer's worker once it has read downloads.json.
     static constexpr UINT kDownloadsReadMessage = WM_APP + 11;
     // --perf-control's queued requests (QueuePerfRequest).
@@ -363,6 +378,24 @@ private:
     // swipe's step drawn for the composition frame at `time` (the pages' slide runs on the
     // compositor). `rateHz` is the display's, for --perf-log (0 when it isn't on).
     void Frame(double time, double rateHz);
+    // Whether anyone can see the window: shown, not minimized, and not hidden by shell/
+    // Occlusion (covered, locked, display off, another desktop). What animates on screen
+    // (the crossfade, the pages' slide) runs only while it is.
+    bool Seen() const;
+    // shell/Occlusion's verdict changed: while the window can't be seen, its page is hidden
+    // (Chromium stops drawing it) and a crossfade lands at once, as the Mac's ThemeView skips
+    // it for an occluded window.
+    void OcclusionChanged();
+    void SetOccluded(bool hidden);
+    // Watching whether the window can be seen, or not: on from the start but for test runs;
+    // under --perf-control only while kiteperf asks ({"occlusion":"on"}, its covered phase).
+    void StartOcclusion();
+    void StopOcclusion();
+    // A window of Kite's process is the foreground window.
+    bool KiteInFront() const;
+    // The frame clock stops for an unseen window, unless something that isn't drawing still
+    // needs its frames.
+    void StopFrameClockUnseen();
     std::wstring DrawAt(double time, Pixels* readBack);
     // The smoke test's space switch, there and back, run to rest.
     std::wstring SmokeTestSpaces();
@@ -563,6 +596,25 @@ private:
     // A pinned tab's Back to Pinned URL, and Tabs › Reset all tabs in this Space.
     void BackToPinnedURL(const std::string& tabID);
     void ResetAllTabsInSpace();
+    // MARK: The sidebar's row menus (BrowserWindowController+SidebarMenus.cpp, W17)
+    // A right-click (or Ctrl+click) on a tab's or folder's row or a favorite's pane: its menu at
+    // `screen` (px), then what it chose. The menu is built as it opens (a rename open ends first,
+    // as for the space's menu); nothing is kept while it's closed.
+    void ShowRowMenu(SidebarMenuKind kind, const std::string& id, POINT screen);
+    std::vector<SidebarMenuItem> OpenRowMenu(SidebarMenuKind kind, const std::string& id);
+    void RunRowMenuItem(SidebarMenuKind kind, const std::string& id, const SidebarMenuItem& item);
+    // The items' actions that need the window (the Mac's SidebarActions): Separate From Pinned Tab,
+    // Archive Other Tabs / Below / Above, a folder's Delete (asking first), New Nested Folder…
+    // (then its rename), Turn into Space, and the Copy items.
+    void SeparateFromPinnedTab(const std::string& tabID);
+    void ArchiveTabs(BrowserState::ArchiveTabsRelative which, const std::string& tabID);
+    void DeleteFolder(const std::string& folderID);
+    void NewNestedFolder(const std::string& folderID);
+    void TurnFolderIntoSpace(const std::string& folderID);
+    void CopyToClipboard(const std::optional<std::string>& text);
+    // The smoke test's row menus: each kind's menu read as a right-click and a Ctrl+click open it,
+    // Pin Tab from a tab's, a folder's Rename… opening its rename, New Nested Folder… and Delete.
+    std::wstring SmokeTestRowMenus();
     // Whether an open rename still has its header (its space shown) or row (listed by the
     // selected space's page); and what one ending renames, in the session only.
     bool RenameStillShown(const SidebarView::RenameTarget& target) const;
@@ -605,7 +657,7 @@ private:
     // from the message loop (RunPerfRequests), so the sender isn't held while it runs and its
     // dispatch is timed like any other. False when it isn't one, or the command does nothing now.
     struct PerfRequest {
-        enum class Kind { Command, Mark, Open, Move, Leave } kind;
+        enum class Kind { Command, Mark, Open, Move, Leave, Occlusion } kind;
         std::string text;
         int64_t x = 0, y = 0, qpc = 0;
     };
@@ -717,6 +769,11 @@ private:
     bool swipeMoved_ = false;  // since the clock's last frame drew
     // A touchpad gesture decided vertical over the list: the rest of it scrolls the list.
     bool listScrolling_ = false;
+    // Whether the window can be seen (after the window, which it posts to, in destruction).
+    std::unique_ptr<Occlusion> occlusion_;
+    bool occluded_ = false;   // the verdict as last handled: hidden for any reason
+    bool touchpadFrames_ = false;  // the touchpad still needed frames at the clock's last one
+    occlusion::PointerRecovery pointerRecovery_;
     std::unique_ptr<Compositor> compositor_;
     std::unique_ptr<Favicons> favicons_;
     OneShotFlags oneShotFlags_;  // the profile's (the favorites' empty state)
@@ -782,6 +839,19 @@ private:
 
     // A capture's space menu, composed over the frame (HoldSpaceMenu).
     std::optional<size_t> heldMenu_;
+    // A capture's row or favorite menu (HoldRowMenu, HoldFavoriteMenu): what it's for, where the
+    // right-click was (client px).
+    struct HeldRowMenu {
+        SidebarMenuKind kind;
+        std::string id;
+        POINT at;
+    };
+    std::optional<HeldRowMenu> heldRowMenu_;
+    // How a row's menu is shown and answered: Windows' (ShowSidebarMenu), or the smoke test's,
+    // which reads it and picks an item as the Mac's KITE_TEST_CONTEXT_MENU does (a real menu is
+    // modal). And a folder's Delete question (AskToDeleteFolder; a quiet run answers Cancel).
+    std::function<std::optional<SidebarMenuItem>(const std::vector<SidebarMenuItem>&, POINT)> showRowMenu_;
+    std::function<bool(const FolderDeletion&)> askToDeleteFolder_;
     // Delete Space's question for a space with tabs: the task dialog; never a dialog in a test
     // run (it answers Cancel, unless the smoke test answers).
     std::function<bool(const SpaceDeletion&)> askToDelete_;

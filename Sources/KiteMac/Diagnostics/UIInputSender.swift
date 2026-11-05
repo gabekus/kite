@@ -13,6 +13,8 @@ import WebKit
 struct UIInputSender {
     let window: NSWindow
     let keyLog: KeyRoutingLog
+    /// What a click's or drag's mouse down must reach (`ui input`'s `expect`), checked just before it's sent.
+    var expect: UIHitExpectation? = nil
 
     func send(_ event: UIInputEvent) async throws -> String {
         switch event {
@@ -59,6 +61,8 @@ struct UIInputSender {
             let hit = hitName(point), note = firstMouseNote(at: point)
             var rest: [Gesture] = [(up, point, 1)]
             for click in Swift.stride(from: 2, through: count, by: 1) { rest += [(down, point, click), (up, point, click)] }
+            // No suspension between the check and the send: the view checked is the view the press reaches.
+            try checkExpectation(at: point, down: down)
             send(down, then: rest, at: point, flags: flags)
             try? await Task.sleep(for: .milliseconds(50))
             return "\(count == 1 ? "Clicked" : "\(count)× clicked") \(button.rawValue) at (\(UIReport.number(point.x)), \(UIReport.number(point.y))) on \(hit)." + note
@@ -68,6 +72,7 @@ struct UIInputSender {
                 let t = Double(step) / Double(steps)
                 return (.leftMouseDragged, UIPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t), 1)
             }
+            try checkExpectation(at: from, down: .leftMouseDown)
             send(.leftMouseDown, then: moves + (hold > 0 ? [] : [(.leftMouseUp, to, 1)]), at: from, flags: [])
             if hold > 0 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + hold) { [self] in
@@ -308,6 +313,22 @@ struct UIInputSender {
             }
         }
         if let event = mouseEvent(down, at: point, flags: flags, clickCount: 1) { window.sendEvent(event) }
+    }
+
+    /// With `expect`, throws (and nothing is sent) unless a mouse down at `point` reaches the expected view, as the
+    /// hit test NSWindow.sendEvent makes for it, right now. A left press is also refused where AppKit could start a
+    /// window drag from it (the browser window is movable by its background, BrowserWindowController): the view hit
+    /// must return false from mouseDownCanMoveWindow, as SidebarRowCell and SpaceCellView do.
+    private func checkExpectation(at point: UIPoint, down: NSEvent.EventType) throws {
+        guard let expect else { return }
+        let (chain, hit) = window.uiHitChain(at: point)
+        let at = "(\(UIReport.number(point.x)), \(UIReport.number(point.y)))"
+        if let why = expect.refusal(for: chain) {
+            throw AutomationError(.denied, "Nothing sent: the press at \(at) doesn't reach the expected \(expect.className) at \(expect.path): \(why).")
+        }
+        if down == .leftMouseDown, window.isMovableByWindowBackground, let hit, hit.mouseDownCanMoveWindow {
+            throw AutomationError(.denied, "Nothing sent: the press at \(at) is on a \(UIFormat.className(hit)), which can move the window.")
+        }
     }
 
     private func mouseEvent(_ type: NSEvent.EventType, at point: UIPoint, flags: NSEvent.ModifierFlags, clickCount: Int) -> NSEvent? {

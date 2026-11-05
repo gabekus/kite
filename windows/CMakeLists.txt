@@ -79,7 +79,9 @@ add_library(KiteCoreWin STATIC
   src/core/SpaceSwipeGesture.cpp
   src/core/TouchpadPhases.cpp
   src/core/LiveTabPolicy.cpp
+  src/core/Occlusion.cpp
   src/core/Sidebar.cpp
+  src/core/SidebarContextMenu.cpp
   src/core/SidebarTopRow.cpp
   src/core/TabClosing.cpp
   src/core/TabEditing.cpp
@@ -148,6 +150,7 @@ if(WIN32)
     src/shell/BrowserWindowController.cpp
     src/shell/BrowserWindowController+Chromium.cpp
     src/shell/BrowserWindowController+Spaces.cpp
+    src/shell/BrowserWindowController+SidebarMenus.cpp
     src/shell/BrowserWindowController+Tabs.cpp
     src/shell/BrowserWindowController+Tests.cpp
     src/shell/BrowserWindowControllerArcImport.cpp
@@ -163,6 +166,7 @@ if(WIN32)
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
     src/shell/MemoryPressure.cpp
+    src/shell/Occlusion.cpp
     src/shell/PerfLog.cpp
     src/shell/QuietRun.cpp
     src/shell/QuitDialog.cpp
@@ -175,6 +179,8 @@ if(WIN32)
     src/shell/SpaceIconPainter.cpp
     src/shell/SpaceIconPickerView.cpp
     src/shell/SpaceMenu.cpp
+    src/shell/ContextMenu.cpp
+    src/shell/SidebarMenus.cpp
     src/shell/SpaceTipView.cpp
     src/shell/TextEditing.cpp
     src/shell/TextField.cpp
@@ -183,7 +189,7 @@ if(WIN32)
     resources/Version.rc
     ${KITE_SHADER_HEADERS}
   )
-  set(KITE_SHELL_LIBRARIES KiteCoreWin user32 dwmapi shell32 ole32 uuid windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp comctl32 advapi32)
+  set(KITE_SHELL_LIBRARIES KiteCoreWin user32 dwmapi shell32 ole32 uuid windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp comctl32 advapi32 wtsapi32)
 
   # Chromium (CEF), from windows/scripts/fetch-cef.ps1. Without it (no download yet, or the
   # MinGW check, which can't link CEF's MSVC wrapper) Kite.exe builds without pages.
@@ -227,7 +233,7 @@ if(WIN32)
     target_compile_options(Kite PRIVATE /guard:cf)
     target_link_options(Kite PRIVATE /guard:cf /CETCOMPAT
       /DELAYLOAD:user32.dll /DELAYLOAD:dwmapi.dll /DELAYLOAD:shell32.dll /DELAYLOAD:ole32.dll /DELAYLOAD:advapi32.dll
-      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll
+      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll /DELAYLOAD:wtsapi32.dll
       /DELAYLOAD:comctl32.dll /DELAYLOAD:gdi32.dll)
     set_target_properties(Kite PROPERTIES
       RUNTIME_OUTPUT_DIRECTORY "${KITE_OUT}"
@@ -351,7 +357,9 @@ add_executable(KiteCoreTests
   tests/KeyBindingsTests.cpp
   tests/ModelTests.cpp
   tests/LiveTabPolicyTests.cpp
+  tests/OcclusionTests.cpp
   tests/SessionSaveTests.cpp
+  tests/SidebarContextMenuTests.cpp
   tests/SidebarTests.cpp
   tests/SidebarTopRowTests.cpp
   tests/SpaceBarTests.cpp

@@ -166,8 +166,9 @@ visibility: they report `hidden` and stop drawing, and `visible` when
 they're back. They keep their size, as on the Mac, so a tab switch doesn't
 resize and reflow them. That leans on Chromium's window layout, so `--smoke-test` fails
 if the widget isn't found; W10's off-screen pages replace it with `WasHidden`.
-A Kite window that's covered rather than minimized still draws its page
-(Chromium's occlusion tracking covers only its own top-level windows).
+A covered Kite (and a locked, display-off or other-desktop one) hides its
+shown page the same way (P2, "A window no one can see draws nothing" below):
+Chromium's own occlusion tracking covers only its top-level windows.
 `windows/helix/pages/popup-opener.html` logs the page's `visibilityState`,
 resizes and opener messages in its title to check all this (on Gabe's PC,
 not in CI). CEF runs its own UI
@@ -424,8 +425,7 @@ unchanged from W8).
   empty state and its close button), and `kitecore click` on a pane selects it,
   on the close button dismisses the empty state.
 - **Not yet:** dragging tiles and the drop gap (W18b, which also shows the tray
-  while a drag is on with no favorites), the tile's menu and its Ctrl+click
-  (W17), Add to / Remove from Favorites (W14, W17), the preview cards over a
+  while a drag is on with no favorites), the preview cards over a
   hovered favorite (FavoritePreviewCard, W38), accessibility for the panes (W35c),
   and hiding the tray while Create a Space shows (the Mac's `creating`, W9f).
   Corners are circular rather than continuous, as in the rest of the sidebar.
@@ -1193,8 +1193,8 @@ nothing (the Mac's split is one SplitRowCell, with no doubleTapped). A folder's 
 placeholder, and a blank name keeps the old one. The fields are visuals in their page, clipped to
 the list, so a keystroke draws only the field (the smoke test checks the page doesn't draw). A
 favorite or a split's pane has no row to rename in: the Mac's Rename Tab… dialog for those, and
-for a hidden sidebar, comes with ArcDialog (W19), a beep until then. A folder's rename has no
-way in yet but `--rename-row`: the Mac's is its menu's Rename… (W17).
+for a hidden sidebar, comes with ArcDialog (W19), a beep until then. A folder's rename comes in by
+its menu's Rename… (W17), as on the Mac.
 
 `kitecore tab pin|favorite|rename|duplicate|reset|reset-all|separate|reveal|pinned-url|replace-pin`
 and `kitecore folder new|rename|delete|move` (a folder by id or name) do the same headless;
@@ -1202,13 +1202,73 @@ and `kitecore folder new|rename|delete|move` (a folder by id or name) do the sam
 the page lists a row, and `click … --double` is a double-click's second press.
 `--capture FILE --rename-row N` opens row N's field (from 1, as `sidebar` lists the selected
 space's rows), `--hover-row N` rests the pointer on row N, and `--run-command ID` runs a command
-first (`pinTab` on a pinned tab is the "after unpin" state). Until W17's menus, a folder New Folder
-makes can't be renamed, deleted or filled from the window (only by kitecore, or a drag once W18a
-lands). Not yet: the rows' context menus
-(Pin/Unpin, Rename…, Back to Pinned URL, Separate From Pinned Tab, Edit Pinned Page, a folder's
-Rename… and Delete: W17, whose model is here and in kitecore), Undo (W16: `EditState` is where
-it records), the command bar's command rows (the commands are there to bind, not to search),
-Back to Pinned URL's tooltip, and the "Pin Tab"/"Unpin Tab" retitling (no menu shows it).
+first (`pinTab` on a pinned tab is the "after unpin" state). The rows' menus (W17, below) rename,
+delete and fill folders from the window; a folder is filled by kitecore until W18a's drag. Not yet:
+Undo (W16: `EditState` is where it records), the command bar's command rows (the commands are there
+to bind, not to search), Back to Pinned URL's tooltip, and the "Pin Tab"/"Unpin Tab" retitling of
+the shortcut (the tab's menu has it).
+
+## The sidebar's row menus
+
+A right-click on a tab's row, a folder's row or a favorite's pane opens its menu (W17), ported
+from the Mac's TabRowCell, FolderRowCell and FavoritePaneView menus (SidebarListCells.swift,
+SidebarFavorites.swift) with their items, order, words, separators and enabled states
+(`core/SidebarContextMenu.h`, which also has SidebarContextMenu.swift's edits: Archive Other Tabs /
+Below / Above, a folder's Duplicate, New Nested Folder…, Turn “Name” into Space, and LinkFormat's
+Markdown links). As on the Mac, a Ctrl+click is a right-click there (and on a space's cell or its
+header, the space's menu), opening the menu when it's let go over the row it pressed; the empty
+sidebar, the divider and the address field have none, and the gaps between pills take nothing. New
+Tab has no menu: a right-click there opens nothing and a Ctrl+click is spent (the Mac's mouseDown
+hands it to rightMouseDown, which finds no menu), never opening the command bar. A right-click on
+one of a row's own buttons (a tab's close or Back to Pinned URL, the header's chevron and, with W9e,
+its icon) passes the menu up to the row, as AppKit's buttons pass rightMouseDown on; a Ctrl+click
+presses the button instead, as the Mac's SymbolButtons (controlClickShowsMenu false) and the
+header's icon button do. Rows and panes don't take a Ctrl+click that brings the window forward (they
+don't accept first mouse); the space bar's cells do. Known trade-off: Ctrl+click as the Mac's
+Control-click spends the gesture a ⌘-click's Windows counterpart would use for selecting several
+rows, which Kite doesn't have; if multi-select comes, it needs another gesture (Shift+click, say).
+
+- **A tab's:** Add to Favorites, Pin Tab or Unpin Tab, Back to Pinned URL and Separate From
+  Pinned Tab (a pinned tab off its page), Edit Pinned Page ▸ (Edit…, Replace Pinned URL with
+  Current; a pinned tab with a pinned URL), Copy Link and Copy link as Markdown (greyed out with
+  no page), Rename… (the row's field), then Add Split View on the tab on screen or Open in Split
+  View on another, Duplicate, Move to ▸ (the spaces), then Close Tab (Unload Tab when pinned) and,
+  for a Today tab, Archive Other Tabs, Archive Tabs Below and Archive Tabs Above, each greyed out
+  with nothing on its side.
+- **A folder's:** Duplicate (not for Claude's folders), Delete, New Nested Folder… (made open at
+  the folder's end, its rename opened), Turn “Name” into Space (a plain folder with tabs, never one
+  named Claude), Copy All Links and Copy All Links as Markdown (greyed out with no links), Rename….
+  Delete asks first in Arc's words ("Delete your “Name” folder?", "Deleting this folder will
+  archive the tabs inside it.", Delete Folder and Cancel; a task dialog, always light, as Delete
+  Space's), then archives the tabs inside, their pages closing (the selection, if it was there,
+  goes to the space's first tab). A live folder's menu is Refresh (disabled: live folders don't
+  refresh on Windows yet; its status line, filters and Repositories ▸ aren't built) and Delete Live
+  Folder, which works as the Mac's does without its refresher: it asks Arc's question ("Delete your
+  GitHub Live Folder?", "You can restore this folder at any time by right-clicking the sidebar.",
+  Delete and Cancel), then removes the folder and its tabs unarchived and records the source in the
+  session's `liveFoldersTurnedOff`, so a live folder the Mac made isn't stuck on Windows.
+- **A favorite's:** Remove from Favorites, Edit Pinned Page ▸ (with a pinned URL), Copy Link (always
+  enabled, as the Mac's), Unload Tab.
+
+The menu is Windows' own, through `shell/ContextMenu` (W9d's machinery, moved out of SpaceMenu for
+both): TrackPopupMenuEx on the right button's release (a Ctrl+click's on the left button's), dark
+in a dark space through uxtheme's ordinals 135 and 136 as the space's menu is. It's built as it
+opens, from the session as it is then, and nothing is kept while it's closed; a rename open ends
+first, keeping what was typed. Disabled until their checkpoints: Edit Pinned Page › Edit… (Arc's
+dialog, W19), Add Split View and Open in Split View (W36), Move to ▸ and its spaces (moving between
+spaces and profiles, with Arc's cross-profile warning: W18b), and a live folder's Refresh. Never shown, as on a Mac
+where nothing plays and Claude drives no tab: Stop Claude, Mute Tab / Unmute Tab (Windows doesn't
+follow pages' sound yet) and the Peek badge. Not yet: the split row's menu (Windows shows no split
+rows), Tidy Tabs' Remove header, the "Archived N tabs" and "Folder deleted" toasts (W16), Undo
+(W16), and a keyboard way in (the Mac has none: its sidebar never takes the keyboard, so the Menu
+key and Shift+F10 open nothing there until the sidebar's accessibility, W35c).
+
+`kitecore menu tab|favorite TAB_ID|folder FOLDER` prints a menu as `space menu` prints the space's,
+with its `line` in the Mac's KITE_TEST_CONTEXT_MENU format; `--pick TITLE` (or "Submenu ▸ Item")
+runs an item as the window does. `kitecore click X Y --button right` says which menu a right-click
+there opens. `--capture FILE --row-menu N` (a row from 1, as `sidebar` lists them) and
+`--favorite-menu N` (a pane from 1) open one as a right-click on its middle does, read back from
+Windows' menu like `--space-menu`'s, and print its line to stderr.
 
 ## Middle-click to close (a Windows addition)
 
@@ -1286,6 +1346,108 @@ Windows that means:
   Settings (W31). `--smoke-test` reads it back and fails unless it's 1. That's
   Chromium's own default too, so CI's smoke writes a Local State with it off (0)
   first, and a 1 then shows that Kite set it.
+- **A window no one can see draws nothing** (`shell/Occlusion.h`, P2), as the
+  Mac's AppKit occlusion stops a covered window's page and its `ThemeView`
+  crossfade. Kite counts as hidden while the session is locked
+  (`WTSRegisterSessionNotification`), the display is off
+  (`GUID_SESSION_DISPLAY_STATUS`; dimmed still shows), its window is cloaked on
+  another virtual desktop (`DWMWA_CLOAKED`), or opaque windows cover it (fewer
+  than 64 of its pixels left, `core/Occlusion.h`). Then the shown page's widget
+  is hidden as when minimized, so Chromium stops drawing it, and a theme
+  crossfade lands at once with the frame clock stopped (`Seen()` in the browser
+  window). Covered is worked out as Chromium's `NativeWindowOcclusionTrackerWin`
+  does: out-of-context WinEvent hooks and an `EnumWindows` pass that subtracts
+  the windows above Kite's from its rect.
+  - **What covers.** A window covers only when nothing about it says it may be
+    see-through. These never cover: layered windows with alpha or a colour
+    key, click-through, acrylic, cloaked, minimized and tool windows, owned
+    popups, and windows with a shaped or empty region. Nor do windows drawn by
+    DirectComposition without a class known to be opaque (Chromium's and
+    Electron's `Chrome_WidgetWin_1`, and `ApplicationFrameWindow` for UWP
+    frames). That rules out the full-monitor `Windows.UI.Core.CoreWindow` the
+    emoji panel and touch keyboard use. WezTerm and Windows Terminal never
+    cover, since their opacity settings leave no trace in their styles.
+  - **The class list's caveats.** A transparent Electron window (a
+    `Chrome_WidgetWin_1` drawn with alpha, not layered) counts as opaque, and so
+    does a UWP app whose `ApplicationFrameWindow` hosts an in-app acrylic (host
+    backdrop) brush. Zen (acrylic), WezTerm and Windows Terminal never cover,
+    even at full opacity, so a Kite under them earns no savings.
+  - **What counts as seen.** It errs towards visible: Kite in front (a window
+    of Kite's process is the foreground window when a verdict arrives, asked of
+    Windows then; `WM_ACTIVATEAPP` clears covered at once), a window being dragged over or near a
+    visible Kite or off a covered one (until the pass after the drop), or a
+    taskbar thumbnail, Alt+Tab or Task View up. So does a screen recorder that
+    runs only to record (OBS, XSplit, Bandicam, Camtasia's recorder,
+    ScreenToGif, Zoom's sharing host), but not ones that stay resident (Windows
+    11's Snipping Tool, ShareX, Snagit, Loom), which would switch covered
+    detection off for good. Chromium makes no recorder exception at all.
+  - **Hooks.** They run on their own thread, so other apps' windows never wake
+    Kite's UI thread. Each one is on only while it can change the verdict:
+    none while locked, display-off, minimized or on another desktop; while
+    Kite is in front, only foreground changes and drags (a drag that starts in
+    front comes too soon after the foreground change for a hook made then).
+    System-wide hooks are kept only for events a person causes at a person's
+    rate: an app coming forward, a drag, a minimize, a desktop switch. Per
+    thread, the shell's shows on its preview threads (the taskbars' and the
+    hosts of Alt+Tab and Task View) while Kite is covered, and their hides
+    while one of those is up: never Explorer's whole process, where renaming
+    a file or typing in Win+R raises a caret's show per key (File Explorer's
+    windows each run on a thread of their own). Moves, z-order, state changes, shows, hides and destroys aren't
+    hooked otherwise, not even for the windows over Kite. Measured: a caret
+    raises a show, a hide and a move on every key (in the app being typed in,
+    usually the one over Kite), a tooltip a show and a hide, every Win32 menu
+    a create and a destroy (it's a window made each time it opens: 23.5
+    context switches a second covered, for menus twice a second), and a moving
+    window tens of moves a second, at 5 to 8 context switches each, past the
+    watcher's 20 a second. And a maximize or restore raises only
+    `LOCATIONCHANGE`, never a `STATECHANGE`. So a window newly over a visible
+    Kite without coming forward is found at the next pass (it costs rendering,
+    never a blank), and a closed occluder by the heartbeat. Kite's own move or
+    resize pokes the thread once, when it ends (`WM_EXITSIZEMOVE`).
+  - **Heartbeat.** What uncovers a covered Kite without an event (a
+    restore-down, Win+Arrow, a FancyZones snap, leaving full screen, a monitor
+    change, a window closed, hidden or turning translucent) is found by a
+    heartbeat that runs only while Kite is covered. Twice a second it re-reads
+    the windows that covered it with user32 alone (`IsWindow`, visible,
+    minimized, maximized, its owner, `GetWindowRect`, the style, the extended
+    style and layered alpha), and runs a pass on any change. Every 4 s it runs
+    a whole pass, asking DWM afresh too, for z-order changes, new windows and
+    a cloak or backdrop change. It's the watcher's MsgWait timeout, not a
+    timer, and stops when Kite is uncovered. The first `WM_SETCURSOR` or
+    `WM_MOUSEMOVE` to reach a covered Kite asks for a pass too. A drop, and a
+    monitor, work-area or scale change, get a second pass 0.3 s later, once
+    snaps and refits have settled. What it costs, measured per thread in
+    kiteperf's covered phase: the browser process makes 5 to 8 more context
+    switches a second than a build without P2, all of them on the occlusion
+    watcher (the unnamed thread that starts in Kite.dll,
+    `Occlusion::ThreadMain`; Chromium's threads are unchanged), which makes 7
+    to 9. About 6.5 of those are the twice-a-second wake itself and about 2.5
+    the whole pass's DWM questions every 4 s, more while another window
+    animates (measured: 15 to 21 with a window moving 60 times a second, 7 to
+    11 without the whole pass's DWM questions).
+  - **DWM's answers** (a window's frame, backdrop and cloak, each a round trip
+    to dwm.exe) are cached per window by its rect, and asked again for every
+    window when they could be stale: the end of a lock or display-off, the
+    pointer on a covered Kite, Kite's activation, any cloak event, and the
+    heartbeat's whole passes.
+  - **Off for test runs.** `--smoke-test` and `--frame-log` run without
+    occlusion, so their checks of the slide and the crossfade can't pass
+    unseen, and so does `--perf-control` until kiteperf asks for it in its
+    covered phase: kiteperf opens Kite behind other windows, so its other
+    phases would measure whatever the desktop happened to cover.
+    `--occlusion-log FILE` (test profiles) writes each verdict and the
+    thread's counters.
+  - **Known gaps.** A covered Kite uncovered without an event shows its card
+    until the heartbeat sees it, or the pointer reaches it. That's up to half
+    a second for what the half-second check reads (an occluder moved, resized,
+    minimized, restored, hidden, closed, or made translucent or
+    click-through), and up to 4 s, the next whole pass, for what it doesn't:
+    an occluder sent behind Kite without a foreground change, a window region
+    set on it (`SetWindowRgn`), or its backdrop switched to acrylic. A Kite
+    captured as a window by an app not on the recorder list (a meeting app
+    sharing it while covered) shows its card. While a recorder runs, a covered
+    Kite draws (the verdict is visible, so there's no heartbeat); the watcher
+    waits on the recorder's process, and its exit runs a pass.
 
 ## Measuring performance
 
@@ -1320,7 +1482,9 @@ behind other windows, without asking for the focus, and never shows a dialog, as
 - `--perf-control`: requests by `WM_COPYDATA` (`dwData` 'KPRF', a UTF-8 JSON object):
   `{"command":ID}` runs a shortcut's command by its id (`kitecore shortcuts`), `{"mark":NAME}`
   logs a mark, `{"open":URL}` opens an http or https page in a tab, `{"input":"move","x":X,
-  "y":Y,"qpc":Q}` posts a pointer move at client pixels, and `{"input":"leave"}` takes it away.
+  "y":Y,"qpc":Q}` posts a pointer move at client pixels, `{"input":"leave"}` takes it away, and
+  `{"occlusion":"on"}` or `"off"` starts or stops watching whether the window can be seen
+  (off under `--perf-control` until asked).
   A request is checked and queued, and the answer is 1, or 0 for one Kite can't run; it then
   runs from the message loop, so the sender isn't held and its dispatch is timed like any
   other. While a posted pointer is over the window the system's `WM_MOUSELEAVE` is ignored,
@@ -1367,7 +1531,9 @@ frame intervals from one clock, p50/p99 and missed, and switch-to-present); swit
 reload (every 0.5 s for 10 s); hover (pointer moves posted at 120 Hz for 10 s over the rows:
 moves sent, committed and move-to-present); titleTick (a page that retitles itself every
 second, 20 s); anim (a CSS and requestAnimationFrame page selected, 10 s), hiddenAnim (the
-same in a background tab, 20 s), covered (under kiteperf's own black window, 20 s) and
+same in a background tab, 20 s), covered (under kiteperf's own black window, with Kite's
+occlusion turned on for the phase and off after it, 20 s; a Kite without the request, like a
+build from before P2, refuses it and is measured as it is) and
 minimized (20 s); then one `WM_CLOSE` and the time until every process is gone. `--phases`
 runs some of them (open and settle always first); `--scenario idle` stops after idle,
 `startup` after the first page, and `smoke` (CI) is a few seconds each of open, idle,

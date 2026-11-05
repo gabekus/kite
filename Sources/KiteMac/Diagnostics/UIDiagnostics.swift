@@ -49,9 +49,12 @@ final class UIDiagnostics {
             let window = try self.window(number)
             let probe = UIPointerProbe(window: window, modifiers: UIInputSender.flags(modifiers))
             return .text(header(window) + UIReport.pointer(probe.sweep(points)))
-        case let .input(number, event):
+        case let .hit(number, point):
             let window = try self.window(number)
-            let result = try await UIInputSender(window: window, keyLog: keyLog).send(event)
+            return .text(header(window) + UIReport.hit(point, chain: window.uiHitChain(at: point).chain))
+        case let .input(number, event, expect):
+            let window = try self.window(number)
+            let result = try await UIInputSender(window: window, keyLog: keyLog, expect: expect).send(event)
             return .text(result)
         case .menu(let match):
             return .text(UIReport.menu(UIMenuReader.items(), match: match))
@@ -154,6 +157,24 @@ extension NSWindow {
     func basePoint(_ point: UIPoint) -> NSPoint {
         let half = 0.5 / backingScaleFactor
         return NSPoint(x: point.x + half, y: frame.height - point.y - half)
+    }
+
+    /// What a mouse down at `point` reaches (`ui hit`, and `ui input`'s `expect`): the frame view's hit test, as
+    /// NSWindow.sendEvent does it for a mouse down and as `ui input` names it (UIInputSender.hitName), then each
+    /// superview, with the view hit itself. Read only: no event is made or sent, so nothing hovers, moves or runs.
+    @MainActor
+    func uiHitChain(at point: UIPoint) -> (chain: [UIHitView], hit: NSView?) {
+        guard let frameView = contentView?.superview ?? contentView,
+              let hit = frameView.hitTest(frameView.convert(basePoint(point), from: nil)) else { return ([], nil) }
+        let paths = UITreeBuilder.paths(in: self)
+        var chain: [UIHitView] = []
+        var view: NSView? = hit
+        while let current = view {
+            chain.append(UIHitView(path: paths[ObjectIdentifier(current)], className: UIFormat.className(current),
+                                   frame: uiRect(current.convert(current.bounds, to: nil)), isHidden: current.isHidden))
+            view = current.superview
+        }
+        return (chain, hit)
     }
 
     func uiPoint(_ point: NSPoint) -> UIPoint {

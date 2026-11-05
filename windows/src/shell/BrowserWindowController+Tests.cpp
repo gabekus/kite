@@ -61,7 +61,7 @@ bool BrowserWindowController::BoostsBalance() const {
 }
 
 std::wstring BrowserWindowController::RunToRest(const wchar_t* what) {
-    const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
+    const bool visible = Seen();
     const bool fades = theme_.Fading();
     if (visible && !sidebarSliding_) return std::wstring(what) + L" didn't slide the pages";
     if (!visible && (sidebarSliding_ || fades)) return std::wstring(what) + L" animated a hidden window";
@@ -475,6 +475,8 @@ std::wstring BrowserWindowController::SmokeTestWindow() {
     if (std::wstring problem = SmokeTestTabEditing(); !problem.empty()) return problem;
     // A middle click on a tab's row closes it, as its close button does.
     if (std::wstring problem = SmokeTestMiddleClick(); !problem.empty()) return problem;
+    // The rows' and favorites' menus, on a right-click and a Ctrl+click, and their items.
+    if (std::wstring problem = SmokeTestRowMenus(); !problem.empty()) return problem;
     // And the caption buttons their glyphs.
     Pixels buttons;
     if (std::wstring problem = caption_->Draw(&buttons); !problem.empty()) return L"the caption buttons couldn't draw: " + problem;
@@ -567,6 +569,8 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
                                   window_.Dpi(), menu);
         if (problem.empty()) ComposeOver(pixels, menu, POINT{at->x, at->y - static_cast<LONG>(menu.height)});
     }
+    // A row's or favorite's menu, where a right-click on it opens it (W17).
+    if (problem.empty()) problem = RenderHeldRowMenu(pixels);
     if (problem.empty() && barText) {
         // The bar as Ctrl+T opens it, with the text typed in.
         if (!commandBar_) return L"Kite couldn't make the command bar";
