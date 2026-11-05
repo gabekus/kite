@@ -85,10 +85,11 @@ TEXT_FLOOR=92611226a9834ac52b95a77268bf1f5647f08490
 # menu, nothing activated), then writes "KITE_TEST_FIND: ready: …" on stderr. Older Kites ignore the hooks, so the
 # capture would show no bar. 3a9a2f1 (the review's hardening) opens the bar with Ask on Page always off, so captures
 # don't depend on the runner's saved askOnPageEnabled and the Ask button (which runs Claude) never shows, and turns
-# Writing Tools off. 0586646 (fix/test-find-hook-occlusion) is the first where the hooks fire headless: before it
-# the covered test window's WebKit page never finished loading, so every state timed out (W21, built from 46ed602).
-# If that branch lands by squash or rebase, set this to the commit it landed as on main.
-FIND_FLOOR=0586646024f49c6ef16fa2184bf018af9c3b50da
+# Writing Tools off. 0586646 keeps a covered page answering. 8b84c62 (fix/test-find-hook-fallback) is the first where
+# the hooks give a ready line headless: no page loads on the runner (W21 timed out on 46ed602 and d8e9ec7), so after
+# 20 s Kite opens the bar anyway and writes "KITE_TEST_FIND: ready (fallback, the page never loaded): …" (a query then
+# shows no result). If that branch lands by squash or rebase, set this to the commit it landed as on main.
+FIND_FLOOR=8b84c620eb22a067a8a14b3337c2ae4139652769
 # How long a state waits, after Kite's socket answers, for that ready line (Kite itself gives up 30 s after launch).
 FIND_READY_SECONDS=30
 
