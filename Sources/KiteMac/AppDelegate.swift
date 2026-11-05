@@ -218,6 +218,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.windowController.showZapPicker(boostID: nil, mode: zap == "copy" ? .copySelector : .zap)
             }
         }
+        // A test-safe run can open the main window's find bar (KITE_TEST_FIND_OPEN=1), with a query
+        // (KITE_TEST_FIND=text), once its page has loaded: FindTestHook. A real profile ignores both.
+        FindTestHookRunner.start(in: windowController)
 
         diagnostics = DiagnosticsRecorder(directory: Self.supportDirectory.appendingPathComponent("Diagnostics", isDirectory: true))
         diagnostics.start()
