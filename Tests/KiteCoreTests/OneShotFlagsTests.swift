@@ -51,6 +51,27 @@ struct OneShotFlagsTests {
         #expect(!OneShotFlags(defaults: defaults, environment: ["KITE_SUPPORT_PATH": second.path]).bool(forKey: "asked"))
     }
 
+    /// Tests/Fixtures/one-shot-flags.plist is the flags file Kite for Windows (windows/) shares with a test
+    /// profile's (every Windows profile keeps its flags in one): both test suites read it.
+    static let fixture = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Fixtures/one-shot-flags.plist")
+
+    @Test func readsTheSharedFixture() throws {
+        let data = try Data(contentsOf: Self.fixture)
+        let decoded = try PropertyListDecoder().decode([String: Bool].self, from: data)
+        #expect(decoded == ["favoritesEmptyStateDismissed": true, "passwordManagerOfferShown": false])
+        // Through the read a test profile's flags take.
+        let (defaults, suite) = scratchDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let folder = scratchFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try data.write(to: folder.appendingPathComponent(OneShotFlags.fileName))
+        let flags = OneShotFlags(defaults: defaults, environment: ["KITE_SUPPORT_PATH": folder.path])
+        #expect(flags.bool(forKey: "favoritesEmptyStateDismissed"))
+        #expect(!flags.bool(forKey: "passwordManagerOfferShown"))
+    }
+
     @Test func settingPostsDidChangeWithTheKey() {
         let (defaults, suite) = scratchDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }

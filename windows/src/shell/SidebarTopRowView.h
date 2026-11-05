@@ -9,9 +9,9 @@
 // size), faded by its effect group to SymbolButton's 0.6, or 0.125 disabled: a button turning on or
 // off changes an opacity (Update says so, for the caller to commit) and draws nothing, and only a
 // new symbol (reload's X), appearance or scale draws that button's surface again. As on the Mac
-// the buttons show no hover or press of their own. Hovering one shows its tooltip, Windows' own: a
-// comctl32 tooltip made on the first hover over a button (so comctl32 isn't loaded before), with a
-// tool for each button's rectangle and the window's mouse messages relayed to it (RelayMouse).
+// the buttons show no hover or press of their own. Hovering one shows its tooltip, Windows' own
+// (shell/RelayedTooltips: made on the first hover over a button, a tool for each button's
+// rectangle, the window's mouse messages relayed to it by RelayMouse).
 // sidebar.left, reload's arrow.clockwise and the X are Kite's own geometry (core's TopRowShape),
 // measured from the Mac's renders; back and forward are Segoe Fluent Icons' (Segoe MDL2 Assets' on
 // Windows 10) stand-ins, scaled and placed to the Mac's ink.
@@ -32,6 +32,7 @@
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
 #include "shell/FadedLayer.h"
+#include "shell/RelayedTooltips.h"
 
 namespace kite {
 
@@ -58,7 +59,7 @@ public:
     // the first move over a button makes them. Inactive (the sidebar hidden) they go.
     void RelayMouse(UINT message, WPARAM wParam, LPARAM lParam);
     void SetTooltipsActive(bool active);
-    bool HasTooltips() const { return tooltip_ != nullptr; }
+    bool HasTooltips() const { return tooltips_.Made(); }
     const std::vector<TopRowItem>& Items() const { return items_; }
 
     bool NeedsDraw() const;
@@ -72,7 +73,7 @@ public:
     size_t SurfaceDraws() const { return surfaceDraws_; }
 
 private:
-    explicit SidebarTopRowView(HWND window) : window_(window) {}
+    SidebarTopRowView(HWND window, bool tooltips) : window_(window), tooltips_(window, tooltips) {}
 
     struct ButtonGpu {
         FadedLayer layer;
@@ -86,15 +87,12 @@ private:
     void DrawSymbol(ID2D1DeviceContext* context, const std::string& symbol, D2D1_POINT_2F centre);
     // Sets each shown button's place and opacity; true when an opacity changed.
     bool Place();
-    void MakeTooltips();
+    // The tooltips' tools, one a button (their places change only with the width and the scale).
     void UpdateTooltips();
     float Scale() const { return static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI; }
 
     HWND window_;
-    bool tooltipsAllowed_ = true;
-    HWND tooltip_ = nullptr;
-    bool tooltipsActive_ = true;
-    std::vector<UINT_PTR> tools_;  // the tooltip's tools, by button
+    RelayedTooltips tooltips_;
 
     Compositor* compositor_ = nullptr;
     IDCompositionVisual* parent_ = nullptr;

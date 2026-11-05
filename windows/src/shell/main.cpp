@@ -44,6 +44,15 @@
 //   Kite.exe --capture FILE.png --toggle-sidebar N
 //                            the same after Toggle Sidebar (Ctrl+S) ran N times, each slide run to
 //                            its end (1: hidden, 2: shown again).
+//   Kite.exe --capture FILE.png --favicons
+//                            the same with the favicons fetched as the window fetches them (the
+//                            network, as the Mac's capture does), waiting for them (20 s at most).
+//   Kite.exe --capture FILE.png --empty-favorites-hover
+//                            the same with the pointer on the favorites' empty state (a profile with no
+//                            favorites), its close button showing.
+//   Kite.exe --capture FILE.png --favorite-hover N | --favorite-click N
+//                            the same with the pointer resting on the Nth favorite's pane (from 1, in
+//                            the grid's order), or after a click on it (pressed and let go there).
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
@@ -249,8 +258,8 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // prefixes; so no argument Chromium could read as a switch gets past this, not even as a
     // value (core/CommandLine.h).
     kite::command_line::Spec spec;
-    spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control"};
-    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--save-log", "--perf-log"};
+    spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control", "--favicons", "--empty-favorites-hover"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log"};
     // Its value is switches ("--a --b"), each checked against the allow-list below; Chromium's
     // raw read sees them too, so only allowed ones get this far.
     spec.switchValueOptions = {"--chromium-switches"};
@@ -389,6 +398,20 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         heldToggles = option.value ? ParseInt(*option.value) : std::nullopt;
         if (!heldToggles || *heldToggles < 1 || *heldToggles > 9) return Fail(quiet, L"--toggle-sidebar takes how many times, 1 to 9", kUsage);
         if (!captureOption.present) return Fail(quiet, L"--toggle-sidebar only goes with --capture", kUsage);
+    }
+    // The favorites' states, for a capture: their favicons, and a pane hovered or clicked.
+    const bool captureFavicons = HasFlag(args, L"--favicons");
+    if (captureFavicons && !captureOption.present) return Fail(quiet, L"--favicons only goes with --capture", kUsage);
+    const bool heldEmptyHover = HasFlag(args, L"--empty-favorites-hover");
+    if (heldEmptyHover && !captureOption.present) return Fail(quiet, L"--empty-favorites-hover only goes with --capture", kUsage);
+    std::optional<size_t> heldFavoriteHover, heldFavoriteClick;
+    for (const auto& [flag, out] :
+         {std::pair<const wchar_t*, std::optional<size_t>*>{L"--favorite-hover", &heldFavoriteHover}, {L"--favorite-click", &heldFavoriteClick}}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        *out = option.value ? place(*option.value) : std::nullopt;
+        if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a favorite's place, from 1", kUsage);
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
     }
     const PathOptionValue frameLogOption = PathOption(args, L"--frame-log", L"a file");
     if (!frameLogOption.problem.empty()) return Fail(quiet, frameLogOption.problem, kUsage);
@@ -600,6 +623,7 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     std::wstring problem;
     kite::BrowserWindowController::Options options;
     options.capture = capture.has_value();
+    options.captureFavicons = captureFavicons;
     options.smokeTest = smokeTest;
     options.frameLog = frameLogOption.present;
     options.saveLog = saveLogOption.present;
@@ -700,6 +724,16 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
         if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
         if (heldMenu) controller->HoldSpaceMenu(*heldMenu);
+        if (captureError.empty() && heldFavoriteClick) captureError = controller->ClickFavorite(*heldFavoriteClick);
+        if (captureError.empty() && heldFavoriteHover) captureError = controller->HoldFavoriteHover(*heldFavoriteHover);
+        if (captureError.empty() && heldEmptyHover) captureError = controller->HoldEmptyFavoritesHover();
+        // Last, so the favicons of whatever the states above show have come. Favorites whose icons
+        // didn't load show the globe, as on the Mac; the run says which.
+        if (captureError.empty() && captureFavicons) {
+            std::vector<std::string> failed;
+            captureError = controller->WaitForFavicons(20, failed);
+            for (const std::string& url : failed) WriteUtf8(STD_ERROR_HANDLE, L"Kite: no favicon from " + Widen(url) + L" (the globe shows)\n");
+        }
         if (captureError.empty()) captureError = controller->Capture(pixels, barText, tipIndex);
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);
         PostMessageW(window.Handle(), WM_CLOSE, 0, 0);

@@ -32,8 +32,13 @@
 // `sidebar` prints what the sidebar shows for a space (default the selected one): the address
 // field's text and the space page's rows, top to bottom, with their place in points, then the
 // space bar's cells (in the bar's points, for a 240pt sidebar, exact: the window snaps them to
-// its pixels, under 1px from these at a fractional scale). `click` in the bar's 50pt along the
-// bottom selects the space whose cell it hits.
+// its pixels, under 1px from these at a fractional scale). Its `favorites` are the grid over the
+// page: its columns, its height with its gaps, where the page's rows start (`listTop`: their `top`s
+// are from there), and each tile with its panes and their frames, in sidebar points; with none,
+// the empty state (until the profile's One-Shot Flags.plist says it was dismissed).
+// `click` in the bar's 50pt along the bottom selects the space whose cell it hits; on a favorite's
+// pane, it selects that favorite (in the space you're in); on the empty state's close button, it
+// dismisses it (the one-shot flag, written to the profile).
 // `collapse` is View → Collapse / Expand Pinned Tabs for a space.
 // `space swipe` is two fingers sideways over the sidebar: the content dragged DX points (positive
 // towards the previous space) at a steady pace over SECONDS (default 0.25), an event every
@@ -95,11 +100,13 @@
 
 #include "core/ArcImportController.h"
 #include "core/CommandBar.h"
+#include "core/Favorites.h"
 #include "core/History.h"
 #include "core/HistoryStore.h"
 #include "core/KeyBindings.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
+#include "core/OneShotFlags.h"
 #include "core/Profiles.h"
 #include "core/SessionSaveDelay.h"
 #include "core/SessionStore.h"
@@ -591,6 +598,8 @@ int main(int argc, char** argv) {
         return kLoadFailed;
     }
     const bool existed = std::holds_alternative<BrowserState>(loaded);
+    // The profile's one-shot flags (the favorites' empty state, dismissed or not).
+    OneShotFlags flags = OneShotFlags::Load(std::get<std::filesystem::path>(resolved));
     state = existed ? std::move(std::get<BrowserState>(loaded)) : BrowserState::MakeDefault();
 
     // The page the selected tab shows, as Chromium would report it (kitecore has no pages): what the
@@ -778,8 +787,47 @@ int main(int argc, char** argv) {
             button.emplace("command", TopRowCommand(item.button));
             topRow.emplace_back(std::move(button));
         }
+        // The favorites over the page (FavoritesTrayView), for a 240pt sidebar.
+        const FavoritesTray tray =
+            LayOutFavorites(state, *space, 240, flags.Get(OneShotFlags::kFavoritesEmptyStateDismissed));
+        const auto frameOf = [](json::Object& o, const BarRect& r) {
+            o.emplace("left", static_cast<double>(r.left));
+            o.emplace("top", static_cast<double>(r.top));
+            o.emplace("width", static_cast<double>(r.Width()));
+            o.emplace("height", static_cast<double>(r.Height()));
+        };
+        json::Array tiles;
+        for (const FavoriteTile& tile : tray.tiles) {
+            json::Array panes;
+            for (const FavoritePane& pane : tile.panes) {
+                json::Object p{{"id", pane.tabID}, {"title", pane.title}, {"selected", pane.selected}};
+                if (pane.favicon.url) p.emplace("favicon", *pane.favicon.url);
+                // Its fill at rest, with no favicon colour known (kitecore decodes no icons).
+                const FavoriteLook look = FavoriteLookOf(pane.selected, false, !PrefersDarkForeground(state.spaces[*space].theme), false);
+                p.emplace("fill", static_cast<double>(look.fill));
+                frameOf(p, pane.frame);
+                panes.emplace_back(std::move(p));
+            }
+            json::Object t{{"id", tile.id}, {"split", tile.split}, {"panes", json::Value(std::move(panes))}};
+            if (tile.split) t.emplace("vertical", tile.vertical);
+            frameOf(t, tile.frame);
+            tiles.emplace_back(std::move(t));
+        }
+        json::Object favorites{{"columns", tray.columns},
+                               {"height", static_cast<double>(tray.height)},
+                               {"listTop", static_cast<double>(SidebarListTop(tray))},
+                               {"tiles", json::Value(std::move(tiles))}};
+        if (tray.emptyState) {
+            json::Object empty{{"title", std::string(favorites_empty::kTitle)}, {"subtitle", std::string(favorites_empty::kSubtitle)}};
+            frameOf(empty, tray.emptyFrame);
+            json::Object close{{"tooltip", std::string(favorites_empty::kCloseTooltip)}};
+            frameOf(close, tray.closeFrame);
+            empty.emplace("close", json::Value(std::move(close)));
+            favorites.emplace("emptyState", json::Value(std::move(empty)));
+        }
         json::Object out{{"address", AddressFieldText(state)},
                          {"topRow", json::Value(std::move(topRow))},
+                         {"favorites", json::Value(std::move(favorites))},
                          {"shown", !hidden},
                          {"sidebarLeft", static_cast<double>(SidebarLeft(!hidden, 240))},
                          {"cardLeft", static_cast<double>(CardLeft(!hidden, 240))},
@@ -797,6 +845,9 @@ int main(int argc, char** argv) {
         }
         const auto rows = SidebarRows(state, state.SelectedSpaceIndex());
         const std::vector<TopRowItem> topRow = LayOutTopRow(240, TopRowModelOf(state, page));
+        const FavoritesTray tray =
+            LayOutFavorites(state, state.SelectedSpaceIndex(), 240, flags.Get(OneShotFlags::kFavoritesEmptyStateDismissed));
+        const float listTop = SidebarListTop(tray);
         // The space bar along the bottom: a click on a space's cell selects it (pressed and let
         // go at the point, as the window's).
         if (const auto button = values[0] >= 0 && values[0] < 240 ? TopRowItemAt(topRow, values[0], values[1]) : std::nullopt) {
@@ -821,15 +872,39 @@ int main(int argc, char** argv) {
                 }
             }
             std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (InFavorites(tray, 240, values[0], values[1])) {
+            // The tray's band: a pane's press selects its favorite on release (FavoritePaneView's
+            // mouseUp), the empty state's close button dismisses it; the rest takes the press and
+            // does nothing.
+            const auto press = FavoritePressAt(tray, values[0], values[1]);
+            const bool close = press && press->target == FavoritePress::Target::CloseEmptyState;
+            json::Object out{{"target", std::string(close ? "favoritesClose" : press ? "favorite" : "favorites")}};
+            if (press) {
+                if (!close) out.emplace("id", press->tabID);
+                const FavoriteTap tap = FavoriteRelease(*press, tray, values[0], values[1]);
+                out.emplace("action", std::string(tap.action == FavoriteTap::Action::SelectTab           ? "selectTab"
+                                                  : tap.action == FavoriteTap::Action::DismissEmptyState ? "dismissEmptyState"
+                                                                                                         : "none"));
+                if (tap.action == FavoriteTap::Action::SelectTab) {
+                    state.Select(tap.tabID);
+                    changed = true;
+                } else if (tap.action == FavoriteTap::Action::DismissEmptyState) {
+                    if (const std::string problem = flags.Set(OneShotFlags::kFavoritesEmptyStateDismissed, true); !problem.empty()) {
+                        std::fprintf(stderr, "kitecore: %s\n", problem.c_str());
+                        return kLoadFailed;
+                    }
+                }
+            }
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else {
-            const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], 1);
+            const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], 1, false, listTop);
             static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron", "closeButton"};
             static constexpr const char* kActions[] = {"none",      "editAddress", "togglePinnedSection", "selectTab", "setFolderExpanded",
                                                        "newTab",    "closeTab"};
             json::Object out{{"target", std::string(kTargets[static_cast<int>(press ? press->target : SidebarHit::Target::None)])}};
             if (press) {
                 if (!press->id.empty()) out.emplace("id", press->id);
-                const SidebarTap tap = SidebarRelease(*press, rows, 240, values[2], values[3], values[0], values[1]);
+                const SidebarTap tap = SidebarRelease(*press, rows, 240, values[2], values[3], values[0], values[1], listTop);
                 out.emplace("action", std::string(kActions[static_cast<int>(tap.action)]));
                 switch (tap.action) {
                 case SidebarTap::Action::SelectTab: state.Select(tap.id); changed = true; break;

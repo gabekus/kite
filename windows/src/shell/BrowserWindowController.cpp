@@ -121,12 +121,15 @@ std::wstring BrowserWindowController::Init() {
     if (perf::On()) perf::SetWindow(window_.Handle());
 
     // The sidebar, over the backdrop: what the session lists, with favicons fetched off the UI
-    // thread (none in a capture, which mustn't depend on the network).
-    if (!options_.capture) favicons_ = Favicons::Create(window_.Handle(), kFaviconsMessage);
+    // thread (none in a capture, which mustn't depend on the network, unless it's asked for them).
+    if (!options_.capture || options_.captureFavicons) favicons_ = Favicons::Create(window_.Handle(), kFaviconsMessage);
     sidebar_ = SidebarView::Create(window_.Handle(), favicons_.get(),
                                    SpaceIconPainter::Pictures{options_.spaceIcons, kSpaceIconsMessage, options_.capture}, error);
     if (!sidebar_) return L"Kite couldn't make the sidebar: " + error;
     sidebar_->UseCompositor(compositor_.get());
+    // Its empty favorites tray shows until it's dismissed (a small file, read before the window shows).
+    oneShotFlags_ = OneShotFlags::Load(options_.supportDirectory);
+    sidebar_->SetFavoritesEmptyStateDismissed(oneShotFlags_.Get(OneShotFlags::kFavoritesEmptyStateDismissed));
     sidebar_->Layout(static_cast<float>(kSidebarWidth), window_.Dpi());
     sidebar_->Update(state_);
 
@@ -236,6 +239,13 @@ std::wstring BrowserWindowController::Init() {
     actions.beginRenaming = [this](const std::string& spaceID) { BeginRenaming(spaceID); };
     // The top row's buttons run the commands of the same names (the Mac's SidebarActions).
     actions.topRow = [this](TopRowButton button) { RunCommand(TopRowCommand(button)); };
+    // The empty favorites tray's Dismiss (the Mac's OneShotFlags.set): a write of a few bytes.
+    actions.dismissFavoritesEmptyState = [this] {
+        if (const std::string problem = oneShotFlags_.Set(OneShotFlags::kFavoritesEmptyStateDismissed, true); !problem.empty()) {
+            OutputDebugStringW((L"Kite: " + Widen(problem) + L"\n").c_str());
+        }
+        sidebar_->SetFavoritesEmptyStateDismissed(true);
+    };
     sidebar_->SetActions(std::move(actions));
     if (options_.quiet) askToDelete_ = [](const SpaceDeletion&) { return false; };
     else askToDelete_ = [this](const SpaceDeletion& deletion) { return AskToDeleteSpace(window_.Handle(), deletion); };
