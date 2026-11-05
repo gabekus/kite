@@ -22,8 +22,9 @@ using occlusion::Event;
 using occlusion::Hidden;
 using occlusion::Rect;
 
-// Posted to the worker thread: Kite's UI thread has news (Occlusion's atomics).
-constexpr UINT kPokeMessage = WM_APP + 1;
+// Posted to the worker thread: Kite's UI thread has news (Occlusion's atomics). A thread
+// message, but numbered from the shared WM_APP allocation all the same (P2 has +12 and +13).
+constexpr UINT kPokeMessage = WM_APP + 13;
 // How long a pass waits after the event that asked for it, so a burst of events (a window
 // animating over Kite) costs one pass per interval rather than one per event. It's also how
 // long a covered Kite takes to show again when uncovered by anything but a drag, a thumbnail

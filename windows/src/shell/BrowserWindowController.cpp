@@ -37,8 +37,8 @@ constexpr UINT kFaviconsMessage = WM_APP + 4;
 // Posted by the frame clock once a composition frame while something animates.
 constexpr UINT kFrameMessage = WM_APP + 5;
 constexpr UINT kSpaceIconsMessage = WM_APP + 6;
-// Posted by shell/Occlusion when its verdict changes.
-constexpr UINT kOcclusionMessage = WM_APP + 7;
+// Posted by shell/Occlusion when its verdict changes (the shared WM_APP allocation gives P2 +12).
+constexpr UINT kOcclusionMessage = WM_APP + 12;
 
 // Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
 bool CopyText(HWND owner, const std::wstring& text) {
