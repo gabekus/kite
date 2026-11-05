@@ -3,7 +3,7 @@
 // lays it out, scrolled sideways to keep the caret in view, hit tests, the selection's highlight,
 // the caret's blink and Windows' caret timeout, the IME's windows at the caret, and the caret
 // itself as a small visual of its own, so a blink is a commit and not a redraw. The command bar's
-// field and the space header's rename field (shell/SpaceRenameField) each place and draw it.
+// field and the sidebar's rename fields (shell/RenameField) each place and draw it.
 
 #include <windows.h>  // first: the DirectX headers need its types
 

@@ -67,6 +67,8 @@ add_library(KiteCoreWin STATIC
   src/core/SymbolShape.cpp
   src/core/TextMatch.cpp
   src/core/PictureLoads.cpp
+  src/core/PinnedTree.cpp
+  src/core/PinnedURL.cpp
   src/core/Plist.cpp
   src/core/Profiles.cpp
   src/core/SiteSearch.cpp
@@ -78,6 +80,7 @@ add_library(KiteCoreWin STATIC
   src/core/Sidebar.cpp
   src/core/SidebarTopRow.cpp
   src/core/TabClosing.cpp
+  src/core/TabEditing.cpp
   src/core/SupportDirectory.cpp
   src/core/ThemeBackdrop.cpp
   src/core/TitleBar.cpp
@@ -143,6 +146,7 @@ if(WIN32)
     src/shell/BrowserWindowController.cpp
     src/shell/BrowserWindowController+Chromium.cpp
     src/shell/BrowserWindowController+Spaces.cpp
+    src/shell/BrowserWindowController+Tabs.cpp
     src/shell/BrowserWindowController+Tests.cpp
     src/shell/BrowserWindowControllerArcImport.cpp
     src/shell/CaptionButtonsView.cpp
@@ -160,13 +164,13 @@ if(WIN32)
     src/shell/QuietRun.cpp
     src/shell/QuitDialog.cpp
     src/shell/RelayedTooltips.cpp
+    src/shell/RenameField.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarTopRowView.cpp
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
     src/shell/SpaceIconPainter.cpp
     src/shell/SpaceMenu.cpp
-    src/shell/SpaceRenameField.cpp
     src/shell/SpaceTipView.cpp
     src/shell/TextEditing.cpp
     src/shell/TextLine.cpp
@@ -353,6 +357,7 @@ add_executable(KiteCoreTests
   tests/TouchpadPhasesTests.cpp
   tests/SymbolShapeTests.cpp
   tests/TabClosingTests.cpp
+  tests/TabEditingTests.cpp
   tests/SupportDirectoryTests.cpp
   tests/ThemeBackdropTests.cpp
   tests/ThemeTests.cpp

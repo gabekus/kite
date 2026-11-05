@@ -54,6 +54,8 @@ SidebarRow TabRow(const Tab& tab, bool pinned, bool selected, int depth) {
     row.pinned = pinned;
     row.selected = selected;
     row.favicon = FaviconSourceOf(tab.url, tab.faviconURL);
+    row.canReset = pinned && tab.HasLeftPinnedURL();
+    row.renamed = tab.customTitle.has_value();
     return row;
 }
 
@@ -274,14 +276,15 @@ SidebarHit SidebarHitTest(const std::vector<SidebarRow>& rows, float width, floa
     default: {
         const float pillTop = (M::kRowPitch - M::kPillHeight) / 2;
         if (inRow < pillTop || inRow >= pillTop + M::kPillHeight) return {};
-        // A tab's close button: 24pt, 6pt in from the pill's end, centred in it. It shows
-        // whenever the pointer is on the row, so it's there to press whenever it's pointed at.
-        if (row.kind == SidebarRow::Kind::Tab && row.showsClose) {
-            const float right = width - M::kPadding - M::kCloseButtonEndInset;
+        // A tab's close button and Back to Pinned URL: 24pt each, from 6pt in from the pill's end,
+        // centred in it. They show whenever the pointer is on the row, so they're there to press
+        // whenever they're pointed at.
+        if (row.kind == SidebarRow::Kind::Tab) {
+            const TabRowTrailing trailing = TabRowTrailingOf(row, width, true);
             const float buttonTop = pillTop + (M::kPillHeight - M::kCloseButtonSize) / 2;
-            if (x >= right - M::kCloseButtonSize && x < right && inRow >= buttonTop && inRow < buttonTop + M::kCloseButtonSize) {
-                return {Target::CloseButton, *index};
-            }
+            const bool level = inRow >= buttonTop && inRow < buttonTop + M::kCloseButtonSize;
+            if (level && trailing.close && x >= trailing.close->first && x < trailing.close->second) return {Target::CloseButton, *index};
+            if (level && trailing.reset && x >= trailing.reset->first && x < trailing.reset->second) return {Target::ResetButton, *index};
         }
         return {Target::Row, *index};
     }
@@ -320,11 +323,15 @@ SidebarTap SidebarRelease(const SidebarPress& press, const std::vector<SidebarRo
         if (SidebarHitTest(rows, width, height, scroll, x, y, listTop).target == Target::AddressField) return {Action::EditAddress, {}, false};
         return {};
     case Target::PinnedChevron:
-    case Target::CloseButton: {
+    case Target::CloseButton:
+    case Target::ResetButton: {
         // A button acts when let go over itself (SymbolButton's mouseUp), whatever the clicks.
         const auto row = pressedRow();
         if (!row || SidebarHitTest(rows, width, height, scroll, x, y, listTop) != SidebarHit{press.target, *row}) return {};
-        return {press.target == Target::CloseButton ? Action::CloseTab : Action::TogglePinnedSection, press.id, false};
+        const Action action = press.target == Target::CloseButton   ? Action::CloseTab
+                              : press.target == Target::ResetButton ? Action::ResetTab
+                                                                    : Action::TogglePinnedSection;
+        return {action, press.id, false};
     }
     case Target::Row: {
         const auto row = pressedRow();
@@ -342,6 +349,74 @@ SidebarTap SidebarRelease(const SidebarPress& press, const std::vector<SidebarRo
     case Target::None: return {};
     }
     return {};
+}
+
+std::optional<std::string> SidebarRenameOnPress(const SidebarPress& press) {
+    if (press.target != SidebarHit::Target::Row || press.kind != SidebarRow::Kind::Tab || press.clicks != 2) return std::nullopt;
+    return press.id;
+}
+
+TabRowTrailing TabRowTrailingOf(const SidebarRow& row, float width, bool hovered) {
+    // place(_:width:height:shown:): each button that shows takes its width from the end, then a gap.
+    TabRowTrailing out;
+    float end = width - M::kPadding - M::kCloseButtonEndInset;
+    bool any = false;
+    if (hovered && row.showsClose) {
+        out.close = std::make_pair(end - M::kCloseButtonSize, end);
+        end -= M::kCloseButtonSize + M::kTrailingGap;
+        any = true;
+    }
+    if (hovered && row.canReset) {
+        out.reset = std::make_pair(end - M::kResetButtonSize, end);
+        end -= M::kResetButtonSize + M::kTrailingGap;
+        any = true;
+    }
+    // The spacer after the title keeps the gap on both sides of it.
+    out.titleEnd = any ? end - M::kTrailingGap : width - M::kPadding - M::kCloseButtonEndInset - M::kTrailingGap;
+    return out;
+}
+
+namespace {
+
+// Where the item `id` (a tab or folder) sits in the tree: found, and whether every folder above it
+// is open.
+struct TreePlace {
+    bool found = false;
+    bool open = true;
+};
+TreePlace PlaceIn(const std::vector<PinnedItem>& items, SidebarRow::Kind kind, const std::string& id) {
+    for (const PinnedItem& item : items) {
+        const bool isFolder = std::holds_alternative<Folder>(item.value);
+        if (item.Id() == id && isFolder == (kind == SidebarRow::Kind::Folder)) return {true, true};
+        if (!isFolder) continue;
+        const Folder& folder = std::get<Folder>(item.value);
+        TreePlace inside = PlaceIn(folder.items, kind, id);
+        if (inside.found) return {true, inside.open && folder.isExpanded};
+    }
+    return {};
+}
+
+}  // namespace
+
+bool SidebarShowsRow(const BrowserState& state, size_t space, SidebarRow::Kind kind, const std::string& id) {
+    if (space >= state.spaces.size()) return false;
+    const Space& s = state.spaces[space];
+    switch (kind) {
+    case SidebarRow::Kind::Header: return id == s.id;
+    case SidebarRow::Kind::NewTab: return id == s.id;
+    case SidebarRow::Kind::Divider: return id == s.id && (!s.pinnedItems.empty() || !s.tabs.empty());
+    case SidebarRow::Kind::Tab:
+        if (std::any_of(s.tabs.begin(), s.tabs.end(), [&](const Tab& tab) { return tab.id == id; })) return true;
+        [[fallthrough]];
+    case SidebarRow::Kind::Folder: {
+        const TreePlace place = PlaceIn(s.pinnedItems, kind, id);
+        if (!place.found) return false;
+        // The selected pinned tab shows from under a closed folder or a collapsed section.
+        const bool selected = kind == SidebarRow::Kind::Tab && s.selectedTabID == id;
+        return selected || (place.open && !IsPinnedSectionCollapsed(state, s.id));
+    }
+    }
+    return false;
 }
 
 }  // namespace kite

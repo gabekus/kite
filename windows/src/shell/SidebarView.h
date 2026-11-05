@@ -13,8 +13,9 @@
 // code or draws anything. It shows hover and takes
 // clicks and the wheel (HandleMouse); what a click does goes to Actions. Under the pages, the
 // space bar (shell/SpaceBarView), whose cells drag to new places, and the space's menu on a
-// right-click on a cell or the header (Actions::spaceMenu). While a space is renamed its header
-// shows the name field (shell/SpaceRenameField). Over the address field, the top row: the toggle,
+// right-click on a cell or the header (Actions::spaceMenu). While a space, a tab or a folder is
+// renamed, its header or row shows the name field (shell/RenameField). A pinned tab off its
+// pinned page shows Back to Pinned URL on hover. Over the address field, the top row: the toggle,
 // back, forward and reload, each its own visual (shell/SidebarTopRowView). Under it, the space's
 // profile's favorites, each pane its own visuals (shell/FavoritesView), which stay put while the
 // pages slide; the page starts under them (core's SidebarListTop). Everything sits in one root
@@ -51,7 +52,7 @@
 #include "shell/SidebarTopRowView.h"
 #include "shell/SpaceBarView.h"
 #include "shell/SpaceIconPainter.h"
-#include "shell/SpaceRenameField.h"
+#include "shell/RenameField.h"
 #include "shell/SpaceTipView.h"
 
 namespace kite {
@@ -85,6 +86,13 @@ public:
         std::function<void(const std::string& spaceID, const std::string& name)> renameSpace;
         // A click on the current space's name: its rename field (the Mac's beginRenaming).
         std::function<void(const std::string& spaceID)> beginRenaming;
+        // A tab's or folder's row field committed with `name` (the Mac's RenameField.onCommit).
+        std::function<void(const std::string& tabID, const std::string& name)> renameTab;
+        std::function<void(const std::string& folderID, const std::string& name)> renameFolder;
+        // The second press of a double-click on a tab's row (TabRowCell.doubleTapped: renameTab).
+        std::function<void(const std::string& tabID)> beginRenamingTab;
+        // A pinned tab's Back to Pinned URL button (actions.resetTab).
+        std::function<void(const std::string& tabID)> resetTab;
         // A click on an enabled top-row button (the toggle, back, forward, reload).
         std::function<void(TopRowButton button)> topRow;
         // The favorites' empty state's close button (its Dismiss): a one-shot flag.
@@ -100,15 +108,27 @@ public:
     // Forgets the pointer and any press (the command bar opened over the window).
     void ClearHover();
 
-    // Renaming a space in its header (the Mac's renamingSpaceID): the selected space's, whose
-    // header shows the name field (shell/SpaceRenameField) instead of its name, with the keyboard.
-    // EndRenaming commits what's typed (renameSpace) or, with `commit` false, drops it.
-    void BeginRenaming(const std::string& spaceID, const std::string& name);
+    // What's renamed in place: a space in its header (Header, the space's id; the Mac's
+    // renamingSpaceID), or a tab or folder in its row of the selected space's page (Tab or Folder;
+    // renamingTabID, renamingFolderID).
+    struct RenameTarget {
+        SidebarRow::Kind kind = SidebarRow::Kind::Header;
+        std::string id;
+        bool operator==(const RenameTarget&) const = default;
+    };
+    // Renaming: the row (or header) shows the name field (shell/RenameField) instead of its
+    // name, with the keyboard, `text` all selected. Another rename open ends first, keeping what was
+    // typed. EndRenaming commits what's typed (renameSpace, renameTab, renameFolder) or, with
+    // `commit` false, drops it.
+    void BeginRenaming(const std::string& spaceID, const std::string& name) { BeginRenaming(RenameTarget{SidebarRow::Kind::Header, spaceID}, name); }
+    void BeginRenaming(const RenameTarget& target, const std::string& text);
     void EndRenaming(bool commit);
-    // Closes the field and gives back its space and what was typed, renaming nothing (the
+    // Closes the field and gives back what it renamed and what was typed, renaming nothing (the
     // window renames it in the same update that ends it).
-    std::optional<std::pair<std::string, std::string>> TakeRename();
-    std::optional<std::string> Renaming() const;
+    std::optional<std::pair<RenameTarget, std::string>> TakeRename();
+    std::optional<RenameTarget> Renaming() const;
+    // The space whose header is renamed, if that's what is.
+    std::optional<std::string> RenamingSpace() const;
     // The window's keys, characters, IME and focus while renaming (after the command bar's).
     // True when the field took `message`.
     bool HandleKey(UINT message, WPARAM wParam, LPARAM lParam);
@@ -120,12 +140,23 @@ public:
     // For the tests: the rename's Done, its centre in client px; and the rename drawn with the
     // keyboard (a quiet capture's window never has it), its selection in the focused colour.
     std::optional<POINT> RenameDoneCentre() const;
+    // The open field's right end, mid-line, in client px (a test's press just past it).
+    std::optional<POINT> RenameFieldEnd() const;
     // The middle of the selected space's name in its header, client px (a click there renames).
     std::optional<POINT> HeaderNameCentre();
     void FocusRenameForCapture();
     // Where space `index`'s cell is, in client px (its centre), for the tests' presses and the
     // menu's place.
     std::optional<POINT> SpaceCellCentre(size_t index) const;
+    // The selected space's page's rows (core's SidebarRows), and where row `index`'s pill (its
+    // middle) or, for a tab, its Back to Pinned URL button is in client px, for the tests' presses
+    // and hovers; none for a row out of view or a button it doesn't have.
+    const std::vector<SidebarRow>& Rows() const { return model_.rows; }
+    std::optional<POINT> RowCentre(size_t index) const;
+    std::optional<POINT> ResetButtonCentre(size_t index) const;
+    // How many times the selected page's surface has drawn (the smoke test checks a keystroke in a
+    // rename draws only the field).
+    size_t PageDraws() const { return pageDraws_; }
     // A left press went to something else (the command bar): the click that brought the window
     // forward is over, and the next one on a row taps.
     void ForgetActivation();
@@ -295,8 +326,16 @@ private:
     void DragSpaceTo(D2D1_POINT_2F barPoint);
     void DropSpace(D2D1_POINT_2F barPoint);
     void FinishDrop();
-    // Where the rename field sits over the header drawn at `top` (DrawRow's).
-    void PlaceRenameField(float x, float top);
+    // Whether `row` is the one being renamed.
+    bool Renames(const SidebarRow& row) const;
+    // Whether a point on the selected page (page points) is in the pill of the tab or folder row
+    // being renamed.
+    bool InRenamedRow(D2D1_POINT_2F q) const;
+    // Where the rename field sits over its row drawn at `top` (DrawRow's), even one out of view
+    // (the field's clip hides it there).
+    void PlaceRenameField(const SidebarRow& row, float top);
+    // A row's pill, from its top: whole pixels at 2x, snapped to them at other scales.
+    std::pair<float, float> PillSpan(float top) const;
     // The header's name as DrawRow lays it out at `top` (page points): where a click renames.
     D2D1_RECT_F HeaderNameRect(const SidebarRow& row, float top);
     void SetScroll(float scroll);
@@ -369,7 +408,10 @@ private:
     };
     std::optional<Toggle> toggle_;
     std::unique_ptr<SpaceTipView> tip_;
-    std::unique_ptr<SpaceRenameField> rename_;  // while a space is renamed
+    std::unique_ptr<RenameField> rename_;  // while a space, tab or folder is renamed
+    RenameTarget renameTarget_;            // what it renames
+    std::string renamePage_;               // the space whose page it's in
+    size_t pageDraws_ = 0;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> doneFormat_;  // the rename's Done
     bool barDragging_ = false;  // the press on a cell dragged it (BeginDrag)
     bool renamePressed_ = false;  // a left press went to the rename field

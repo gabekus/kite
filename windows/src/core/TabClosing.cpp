@@ -7,74 +7,18 @@
 #include <set>
 
 #include "core/Models.h"
+#include "core/PinnedTree.h"
 
 namespace kite {
 
+using pinned_tree::DropEmptyEphemeralFolders;
+using pinned_tree::FindFolder;
+using pinned_tree::IsEmptyEphemeralFolder;
+using pinned_tree::ParentFolder;
+using pinned_tree::RemoveFolder;
+using pinned_tree::RemoveTab;
+
 namespace {
-
-// The folder, at any depth, whose own items hold `id` (a tab or folder).
-const Folder* ParentFolder(const std::vector<PinnedItem>& items, const std::string& id) {
-    for (const PinnedItem& item : items) {
-        const Folder* folder = std::get_if<Folder>(&item.value);
-        if (!folder) continue;
-        for (const PinnedItem& child : folder->items) {
-            if (child.Id() == id) return folder;
-        }
-        if (const Folder* found = ParentFolder(folder->items, id)) return found;
-    }
-    return nullptr;
-}
-
-const Folder* FindFolder(const std::vector<PinnedItem>& items, const std::string& id) {
-    for (const PinnedItem& item : items) {
-        const Folder* folder = std::get_if<Folder>(&item.value);
-        if (!folder) continue;
-        if (folder->id == id) return folder;
-        if (const Folder* found = FindFolder(folder->items, id)) return found;
-    }
-    return nullptr;
-}
-
-// Takes the tab out of the tree, at any depth ([PinnedItem].removeTab).
-std::optional<Tab> RemoveTab(std::vector<PinnedItem>& items, const std::string& id) {
-    for (auto it = items.begin(); it != items.end(); ++it) {
-        if (Tab* tab = std::get_if<Tab>(&it->value); tab && tab->id == id) {
-            Tab removed = std::move(*tab);
-            items.erase(it);
-            return removed;
-        }
-        if (Folder* folder = std::get_if<Folder>(&it->value)) {
-            if (auto removed = RemoveTab(folder->items, id)) return removed;
-        }
-    }
-    return std::nullopt;
-}
-
-bool RemoveFolder(std::vector<PinnedItem>& items, const std::string& id) {
-    for (auto it = items.begin(); it != items.end(); ++it) {
-        Folder* folder = std::get_if<Folder>(&it->value);
-        if (!folder) continue;
-        if (folder->id == id) {
-            items.erase(it);
-            return true;
-        }
-        if (RemoveFolder(folder->items, id)) return true;
-    }
-    return false;
-}
-
-// Claude's folders (ephemeral) left empty go, from the inside out (dropEmptyEphemeralFolders).
-bool IsEmptyEphemeralFolder(const PinnedItem& item) {
-    const Folder* folder = std::get_if<Folder>(&item.value);
-    return folder && folder->ephemeral == true && folder->items.empty();
-}
-
-void DropEmptyEphemeralFolders(std::vector<PinnedItem>& items) {
-    for (PinnedItem& item : items) {
-        if (Folder* folder = std::get_if<Folder>(&item.value)) DropEmptyEphemeralFolders(folder->items);
-    }
-    std::erase_if(items, IsEmptyEphemeralFolder);
-}
 
 // The pinned tree without the stale tabs in Claude's folders, and without the Claude folders
 // that leaves empty. Ordinary folders and pinned tabs stay (archivingStaleEphemeralTabs).

@@ -1,6 +1,6 @@
 // The window controller's test runs: --smoke-test's checks and --capture's frames and the states
-// they hold (a swipe, a drag in the space bar, the space menu, the rename field). See
-// BrowserWindowController.h.
+// they hold (a swipe, a drag in the space bar, the space menu, the rename fields, a row hovered, a
+// command run). See BrowserWindowController.h.
 
 #include "shell/BrowserWindowController.h"
 
@@ -471,6 +471,8 @@ std::wstring BrowserWindowController::SmokeTestWindow() {
     if (std::wstring problem = SmokeTestTopRow(); !problem.empty()) return problem;
     // The favorites: a grid over the page, whose hover and selection draw nothing.
     if (std::wstring problem = SmokeTestFavorites(); !problem.empty()) return problem;
+    // Pin Tab, renaming a tab and a folder, New Folder, Duplicate Tab, Back to Pinned URL and Reset.
+    if (std::wstring problem = SmokeTestTabEditing(); !problem.empty()) return problem;
     // And the caption buttons their glyphs.
     Pixels buttons;
     if (std::wstring problem = caption_->Draw(&buttons); !problem.empty()) return L"the caption buttons couldn't draw: " + problem;
@@ -491,6 +493,8 @@ std::wstring BrowserWindowController::SmokeTestWindow() {
     // draw again (a real device removal can't be caused from a test).
     DropCompositor();
     if (std::wstring problem = Draw(); !problem.empty()) return L"Kite couldn't rebuild its renderer: " + problem;
+    // Last, as it runs the pages' reports: Back to Pinned URL on the shown page, loaded for real.
+    if (std::wstring problem = SmokeTestLiveReset(); !problem.empty()) return problem;
     // With Chromium it waits for the first page instead, for at most 30 s.
     UINT smokeMs = 1000;
 #ifdef KITE_HAS_CEF
@@ -597,9 +601,30 @@ std::wstring BrowserWindowController::HoldRename(size_t index, const std::option
     if (switches) {
         if (std::wstring problem = RunToRest(L"Rename Space"); !problem.empty()) return problem;
     }
-    if (sidebar_->Renaming() != id) return L"the rename field didn't open";
+    if (sidebar_->RenamingSpace() != id) return L"the rename field didn't open";
     if (text) sidebar_->TypeInRename(*text);
     if (focused) sidebar_->FocusRenameForCapture();
+    return {};
+}
+
+std::wstring BrowserWindowController::HoldRowRename(size_t index, const std::optional<std::string>& text, bool focused) {
+    const std::vector<SidebarRow>& rows = sidebar_->Rows();
+    if (index >= rows.size() || (rows[index].kind != SidebarRow::Kind::Tab && rows[index].kind != SidebarRow::Kind::Folder)) {
+        return L"that row isn't a tab or a folder";
+    }
+    const SidebarView::RenameTarget target{rows[index].kind, rows[index].id};
+    if (target.kind == SidebarRow::Kind::Tab) BeginRenamingTab(target.id, false);
+    else BeginRenamingFolder(target.id);
+    if (sidebar_->Renaming() != target) return L"the row's rename field didn't open";
+    if (text) sidebar_->TypeInRename(*text);
+    if (focused) sidebar_->FocusRenameForCapture();
+    return {};
+}
+
+std::wstring BrowserWindowController::RunCommandForCapture(const std::string& command) {
+    if (!commands_.contains(command)) return L"there's no command " + Widen(command);
+    if (!CommandEnabled(command)) return L"the command " + Widen(command) + L" is disabled here";
+    RunCommand(command);
     return {};
 }
 
@@ -842,7 +867,7 @@ std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
     // Another app taking it doesn't end the rename (AppKit keeps a field's editing).
     if (std::wstring problem = HoldRename(index, "Elsewhere"); !problem.empty()) return problem;
     SendMessageW(window_.Handle(), WM_KILLFOCUS, 0, 0);
-    if (sidebar_->Renaming() != selected) return L"another app taking the keyboard ended the rename";
+    if (sidebar_->RenamingSpace() != selected) return L"another app taking the keyboard ended the rename";
     // The space menu opening ends it, keeping what was typed.
     if (OpenSpaceMenu(selected).empty() || sidebar_->Renaming() || state_.spaces[index].name != "Elsewhere") {
         return L"the space menu opening didn't end the rename";
@@ -860,7 +885,7 @@ std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
     if (const std::optional<POINT> nameAt = sidebar_->HeaderNameCentre()) {
         SendMouse(window_.Handle(), WM_LBUTTONDOWN, *nameAt, MK_LBUTTON);
         SendMouse(window_.Handle(), WM_LBUTTONUP, *nameAt, 0);
-        if (sidebar_->Renaming() != selected) return L"a click on the space's name didn't rename it";
+        if (sidebar_->RenamingSpace() != selected) return L"a click on the space's name didn't rename it";
         SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
     } else {
         return L"the header has no name to click";
@@ -924,6 +949,222 @@ std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
     }
     frames_.clear();
     return {};
+}
+
+std::wstring BrowserWindowController::HoldRowHover(size_t index) {
+    const std::optional<POINT> at = sidebar_->RowCentre(index);
+    if (!at) return L"there's no such row in view";
+    SendMouse(window_.Handle(), WM_MOUSEMOVE, *at, 0);
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestTabEditing() {
+    // Everything here is undone at the end: the session as it was, the pages it made closed.
+    const BrowserState before = state_;
+#ifdef KITE_HAS_CEF
+    holdPages_ = true;
+#endif
+    const auto done = [&](std::wstring problem) {
+        std::vector<std::string> made;
+        for (const Tab* tab : state_.SelectedSpace().AllTabs()) {
+            if (!before.FindTabByID(tab->id)) made.push_back(tab->id);
+        }
+        if (sidebar_->Renaming()) sidebar_->TakeRename();
+        state_ = before;
+#ifdef KITE_HAS_CEF
+        holdPages_ = false;
+#endif
+        ShowPage();
+        for (const std::string& id : made) PageGone(id);
+        StateChanged();
+        return problem;
+    };
+    const size_t space = state_.SelectedSpaceIndex();
+    const auto rowOf = [&](SidebarRow::Kind kind, const std::string& id) -> std::optional<size_t> {
+        const std::vector<SidebarRow>& rows = sidebar_->Rows();
+        for (size_t i = 0; i < rows.size(); ++i) {
+            if (rows[i].kind == kind && rows[i].id == id) return i;
+        }
+        return std::nullopt;
+    };
+    const auto typed = [&](std::wstring_view text) {
+        for (wchar_t c : text) SendMessageW(window_.Handle(), WM_CHAR, c, 0);
+    };
+
+    // Pin Tab (Ctrl+D's command): the selected tab goes to the end of the pinned items; again, to
+    // the top of Today.
+    const std::string tab = state_.OpenTab("data:text/html,pin", std::nullopt, true);
+    StateChanged();
+    if (!CommandEnabled("pinTab")) return done(L"Pin Tab is disabled with a tab selected");
+    RunCommand("pinTab");
+    const auto& pinned = state_.spaces[space].pinnedItems;
+    if (pinned.empty() || pinned.back().Id() != tab || !rowOf(SidebarRow::Kind::Tab, tab)) return done(L"Pin Tab didn't pin the tab last");
+    if (state_.FindTabByID(tab)->pinnedURL != "data:text/html,pin") return done(L"a pinned tab didn't remember its page");
+    RunCommand("pinTab");
+    if (state_.spaces[space].tabs.empty() || state_.spaces[space].tabs.front().id != tab || state_.FindTabByID(tab)->pinnedURL) {
+        return done(L"Unpin Tab didn't put the tab on top of Today");
+    }
+
+    // A double-click on its row renames it in place: a keystroke draws only the field, Return renames.
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    const auto row = rowOf(SidebarRow::Kind::Tab, tab);
+    const std::optional<POINT> at = row ? sidebar_->RowCentre(*row) : std::nullopt;
+    if (!at) return done(L"the test tab's row isn't in view");
+    // A press elsewhere first, so the row's two presses count from one.
+    SendMouse(window_.Handle(), WM_LBUTTONDOWN, POINT{0, 0}, MK_LBUTTON);
+    SendMouse(window_.Handle(), WM_LBUTTONUP, POINT{0, 0}, 0);
+    SendMouse(window_.Handle(), WM_LBUTTONDOWN, *at, MK_LBUTTON);
+    SendMouse(window_.Handle(), WM_LBUTTONUP, *at, 0);
+    if (sidebar_->Renaming()) return done(L"a single click on a tab's row renamed it");
+    SendMouse(window_.Handle(), WM_LBUTTONDOWN, *at, MK_LBUTTON);
+    SendMouse(window_.Handle(), WM_LBUTTONUP, *at, 0);
+    if (sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Tab, tab}) return done(L"a double-click on a tab's row didn't rename it");
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the tab's rename field couldn't draw: " + problem);
+    // A press in its row past the field's end (where the hidden close button would be) does nothing:
+    // the tab stays, still renaming.
+    if (const std::optional<POINT> end = sidebar_->RenameFieldEnd()) {
+        const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+        const POINT past{end->x + std::lround(4 * scale), end->y};
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, past, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, past, 0);
+        if (!state_.FindTabByID(tab)) return done(L"a press past a renamed tab's field closed the tab");
+        if (sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Tab, tab}) return done(L"a press in a renamed tab's row ended its rename");
+    } else {
+        return done(L"the tab's rename field has no place");
+    }
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the tab's rename field couldn't draw: " + problem);
+    const size_t pageDraws = sidebar_->PageDraws();
+    typed(L"Smoke");
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the tab's rename field couldn't draw: " + problem);
+    if (sidebar_->PageDraws() != pageDraws) return done(L"typing in a tab's rename drew its page, not only the field");
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
+    if (sidebar_->Renaming() || state_.FindTabByID(tab)->DisplayTitle() != "Smoke") return done(L"Return didn't rename the tab");
+    // Rename Current Tab…: Escape keeps the name; a blank name goes back to the page's title.
+    RunCommand("renameCurrentTab");
+    typed(L"Not this");
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+    if (sidebar_->Renaming() || state_.FindTabByID(tab)->DisplayTitle() != "Smoke") return done(L"Escape renamed the tab");
+    RunCommand("renameCurrentTab");
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_BACK, 0);
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
+    if (state_.FindTabByID(tab)->customTitle) return done(L"a blank name didn't take the tab's rename away");
+    // Pinning it mid-rename keeps the field on its row; its row going (into a closed folder) ends it,
+    // keeping what was typed.
+    RunCommand("renameCurrentTab");
+    typed(L"Moved");
+    RunCommand("pinTab");
+    if (sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Tab, tab}) return done(L"pinning a tab ended its rename");
+    const std::string closed = state_.CreateFolder("Closed", space);
+    state_.SetFolderExpanded(closed, false);
+    state_.MoveTabToFolder(tab, closed);
+    state_.spaces[space].selectedTabID = state_.spaces[space].tabs.empty() ? std::nullopt : std::optional(state_.spaces[space].tabs.front().id);
+    StateChanged();
+    if (sidebar_->Renaming() || state_.FindTabByID(tab)->DisplayTitle() != "Moved") return done(L"a rename whose row went didn't end, renamed");
+
+    // New Folder: "New Folder" at the end of the pinned items; renamed in its row (Return), and a
+    // blank name keeps it.
+    RunCommand("newFolder");
+    const auto* folder = pinned.empty() ? nullptr : std::get_if<Folder>(&pinned.back().value);
+    if (!folder || folder->name != "New Folder") return done(L"New Folder made no folder");
+    const std::string folderID = folder->id;
+    BeginRenamingFolder(folderID);
+    if (sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Folder, folderID}) return done(L"the folder's rename didn't open");
+    typed(L"Smoke folder");
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
+    if (!state_.FolderMatching(folderID) || state_.FolderMatching(folderID)->folder->name != "Smoke folder") return done(L"Return didn't rename the folder");
+    BeginRenamingFolder(folderID);
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_BACK, 0);
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
+    if (state_.FolderMatching(folderID)->folder->name != "Smoke folder") return done(L"a blank name renamed the folder");
+
+    // Duplicate Tab: a copy below the selected tab, selected.
+    const std::string original = state_.OpenTab("data:text/html,duplicate", std::nullopt, true);
+    StateChanged();
+    RunCommand("duplicate");
+    const auto& today = state_.spaces[space].tabs;
+    if (today.size() < 2 || today[0].id != original || today[1].url != "data:text/html,duplicate" || state_.SelectedTab()->id != today[1].id) {
+        return done(L"Duplicate Tab didn't put a copy below the tab");
+    }
+
+    // Back to Pinned URL: a pinned tab off its page shows the button on hover, and a click on it
+    // takes the tab home; Reset all tabs in this Space does the same for every one.
+    state_.Select(original);
+    RunCommand("pinTab");
+    if (CommandEnabled("resetTab") || CommandEnabled("resetSpace")) return done(L"Reset was enabled for a tab on its pinned page");
+    state_.TabAt(*state_.Location(original))->url = "data:text/html,away";
+    StateChanged();
+    if (!CommandEnabled("resetTab") || !CommandEnabled("resetSpace") || !CommandEnabled("replacePinnedTab")) {
+        return done(L"Reset wasn't enabled for a tab off its pinned page");
+    }
+    const auto pinnedRow = rowOf(SidebarRow::Kind::Tab, original);
+    const std::optional<POINT> reset = pinnedRow ? sidebar_->ResetButtonCentre(*pinnedRow) : std::nullopt;
+    if (!reset) return done(L"a pinned tab off its page has no Back to Pinned URL");
+    SendMouse(window_.Handle(), WM_MOUSEMOVE, *reset, 0);
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the hovered row couldn't draw: " + problem);
+    SendMouse(window_.Handle(), WM_LBUTTONDOWN, *reset, MK_LBUTTON);
+    SendMouse(window_.Handle(), WM_LBUTTONUP, *reset, 0);
+    if (state_.FindTabByID(original)->url != "data:text/html,duplicate") return done(L"Back to Pinned URL didn't take the tab home");
+    state_.TabAt(*state_.Location(original))->url = "data:text/html,away";
+    RunCommand("resetSpace");
+    if (state_.FindTabByID(original)->url != "data:text/html,duplicate") return done(L"Reset all tabs in this Space didn't take the tab home");
+    SendMouse(window_.Handle(), WM_MOUSELEAVE, POINT{}, 0);
+    return done({});
+}
+
+std::wstring BrowserWindowController::SmokeTestLiveReset() {
+#ifdef KITE_HAS_CEF
+    const Tab* shown = state_.SelectedTab();
+    // The CI smoke's page (windows/helix/pages/smoke.html), whose neighbour audio.html is where it
+    // goes: a page of the same origin (file://, no network), so it stays in its renderer.
+    if (!chromium_) return {};  // a build or run without pages: nothing live to reset
+    // With pages, the smoke test runs on the CI's smoke page: anything else fails, rather than skip.
+    if (!firstPageMade_ || !shown || !shown->url || !shown->url->ends_with("/smoke.html")) {
+        return L"Back to Pinned URL's live check needs the shown tab on windows/helix/pages/smoke.html";
+    }
+    const std::string id = shown->id, home = *shown->url;
+    const bool wasPinned = state_.Location(id)->section == TabSection::Pinned;
+    // The page's reports (its address, its title) as the message loop would run them, for at most
+    // `seconds`; the window's timers go on meanwhile.
+    const auto wait = [&](const std::function<bool()>& done, double seconds) {
+        const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(seconds * 1000);
+        MSG message;
+        while (!done() && GetTickCount64() < deadline) {
+            chromium_->RunPending();
+            if (PeekMessageW(&message, window_.Handle(), WM_TIMER, WM_TIMER, PM_REMOVE)) DispatchMessageW(&message);
+            else Sleep(5);
+        }
+        return done();
+    };
+    const auto titled = [&](std::string_view prefix) {
+        const Tab* tab = state_.FindTabByID(id);
+        return tab && tab->title.starts_with(prefix);
+    };
+    const ULONGLONG closeAsked = closeAskedAt_;
+    const std::wstring problem = [&]() -> std::wstring {
+        if (!wasPinned) RunCommand("pinTab");
+        if (state_.FindTabByID(id)->pinnedURL != home) return L"pinning the shown tab didn't remember its page";
+        // Its page goes elsewhere, as a link would take it.
+        LoadInTab(id, home.substr(0, home.size() - std::string_view("smoke.html").size()) + "audio.html");
+        if (!wait([&] { return titled("audio:") && state_.CanReset(id); }, 15)) return L"the shown page didn't go elsewhere";
+        if (!CommandEnabled("resetTab")) return L"Reset Tab was disabled for the live page off its pinned page";
+        RunCommand("resetTab");
+        // Home, and done loading there (a navigation still under way would hold up the window's close).
+        const auto loaded = [&] {
+            const auto status = pageStatus_.find(id);
+            return status != pageStatus_.end() && !status->second.isLoading;
+        };
+        if (!wait([&] { return titled("Kite smoke page") && loaded(); }, 15)) return L"Back to Pinned URL didn't take the live page home";
+        if (state_.CanReset(id)) return L"the live page came home but still offers Back to Pinned URL";
+        return {};
+    }();
+    if (!wasPinned && state_.Location(id) && state_.Location(id)->section == TabSection::Pinned) RunCommand("pinTab");
+    // The first page's load may have asked the window to close while this held the loop: its
+    // deadline counts from now, when the loop gets back to it (this runs last in the smoke test).
+    if (closeAskedAt_ && closeAskedAt_ != closeAsked) closeAskedAt_ = GetTickCount64();
+    return problem;
+#else
+    return {};
+#endif
 }
 
 std::wstring BrowserWindowController::HoldFavoriteHover(size_t index) {
