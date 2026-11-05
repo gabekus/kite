@@ -237,6 +237,14 @@
       }
     },
     {
+      "name": "empty",
+      "holds": "a fresh profile with no favorites: the dashed \"Drag to add Favorites\" box (59pt, its subtitle on two lines) between the address field and Personal's header (near y 157), no close button (the pointer isn't on it)",
+      "session": {
+        "ref": "origin/helix/W13-favorites",
+        "path": "windows/helix/states/sidebar.json"
+      }
+    },
+    {
       "name": "hover",
       "holds": "a hovered unselected favorite (white 0.20 for 0.10)",
       "skip": "a pointer resting on a FavoritePaneView: not a SAFE_TARGETS view and no hover hook; Windows' --favorite-hover only"
