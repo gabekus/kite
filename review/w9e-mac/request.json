@@ -1,7 +1,7 @@
 {
   "id": "w9e",
   "title": "W9e Mac references: Change Space Icon…'s picker",
-  "about": "The Windows side is helix/W9e-space-icon (PR to main). Kite for Mac from origin/main: W9e changes no Mac code.",
+  "about": "The Windows side is helix/W9e-space-icon (#390, merged). Kite for Mac from origin/main once it has the sidebar test hooks (#412, the capture script's SIDEBAR_FLOOR): KITE_TEST_ICON_PICKER=name opens Change Space Icon…'s picker for that space through requestIconPicker (the space menu's path), on the tab its icon came from, and the in-process capture draws the open popover. Nothing is clicked, typed or activated.",
   "base": "origin/main",
   "window_size": [
     1280,
@@ -39,13 +39,17 @@
     },
     {
       "name": "picker-emoji",
-      "holds": "Change Space Icon…'s popover under Personal's header icon on the Emoji tab: Emoji | Icon | Image with the bin, Search, the first five rows of Smileys & People, the category bar",
-      "skip": "needs a test hook to open the picker and capture its window: KITE_TEST_ICON_PICKER=emoji|icon (proposed, not in Kite for Mac yet: it needs the safety review Mac-side hooks get). On a test-safe run only, once the main window is up, it would run BrowserStore.requestIconPicker for the selected space and select that tab (emoji or icon) in the SpaceIconPicker it opens, nothing activated and no key events, and log \"KITE_TEST_ICON_PICKER: ready\" once the popover has shown; the capture would need the popover's window drawn too (kite ui capture draws the main window in-process, and NSPopover is a window of its own). With it, add {\"KITE_TEST_ICON_PICKER\": ...} to HOOKS as (\"emoji\", \"icon\") and drop these skips."
+      "holds": "Change Space Icon…'s popover under Personal's header icon on the Emoji tab (Personal's icon is an emoji): Emoji | Icon | Image with the bin, Search, the first five rows of Smileys & People, the category bar",
+      "env": {
+        "KITE_TEST_ICON_PICKER": "Personal"
+      }
     },
     {
       "name": "picker-icon",
-      "holds": "the same popover on the Icon tab: 7 rows of 8 symbols",
-      "skip": "needs the same proposed hook with KITE_TEST_ICON_PICKER=icon (the Icon segment isn't a SAFE_TARGETS view, and shouldn't be added for this)"
+      "holds": "the same popover for Work, on the Icon tab (Work's icon is the briefcase symbol): 7 rows of 8 symbols, the briefcase lit. Work is selected, so the backdrop and header are Work's; compare the popover's boxes, not its colours",
+      "env": {
+        "KITE_TEST_ICON_PICKER": "Work"
+      }
     },
     {
       "name": "icon-changed",
