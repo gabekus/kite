@@ -111,23 +111,25 @@ Reading them:
   - Chromium's tracker had hidden such a page on lock and display off (P12a's display-off
     runs were such runs, and their "on" arm stayed `hidden`). With the tracker off, it would
     have run through a lock or display off.
-  - #410 has the page report whether it reads as visible. Kite re-hides one it has hidden by
-    showing and hiding its windows (docs/windows.md, P2, "A page Kite hides stays hidden").
+  - #410 re-hides a page Kite has hidden by showing and hiding its windows: when the page
+    reports it reads as visible, and at 0.5, 1.5, 3 and 6 s after each of its load ends
+    whatever it says (docs/windows.md, P2, "A page Kite hides stays hidden").
   - Measured with `--p2-from-launch` (P2 on from Kite's start, Kite covered by the desktop
-    from about 0.16 s), 3 runs per arm, medians. CPU is Kite's total, "off" arm (Kite's
-    default), before #410 → with it:
+    from about 0.16 s), medians. CPU is Kite's total, "off" arm (Kite's default), before #410
+    → with it. The animating page, 3 runs per arm; `--page docopen`, the same page written over
+    a stub with `document.open()` after its load (which drops Kite's listener), 2 runs per arm:
 
-    | phase | Kite CPU ms/s | page hidden % | rAF fps |
-    |---|---:|---:|---:|
-    | idle | 488 → 10.0 | 0 → 100 | 351 → 0 |
-    | nearMover | 471 → 2.1 | 0 → 100 | 349 → 0 |
-    | covered | 484 → 3.1 | 0 → 100 | 350 → 0 |
-    | overMover | 474 → 3.1 | 0 → 100 | 350 → 0 |
-    | lockNotice | 482 → 2.9 | 0 → 100 | 351 → 0 |
+    | phase | anim: Kite CPU ms/s | docopen: Kite CPU ms/s | page hidden %, rAF fps (both) |
+    |---|---:|---:|---|
+    | idle | 488 → 7.6 | 561 → 9.9 | 0 %, 350 → 100 %, 0 |
+    | nearMover | 471 → 2.2 | 519 → 2.1 | 0 %, 348 → 100 %, 0 |
+    | covered | 484 → 3.2 | 561 → 3.1 | 0 %, 350 → 100 %, 0 |
+    | overMover | 474 → 3.2 | 502 → 3.0 | 0 %, 348 → 100 %, 0 |
+    | lockNotice | 482 → 2.3 | 521 → 2.2 | 0 %, 350 → 100 %, 0 |
 
-    The "on" arm (tracker back on) went the same way: covered 481 → 4.4, lockNotice 477 → 2.3.
-    Its movers stayed at 22.8 and 23.0 ms/s, the tracker's ~1,840–1,930 cs/s. ("with it" is
-    #410 as merged, after its review.)
+    The "on" arm (tracker back on) went the same way: covered 481 → 3.5 (docopen 579 → 4.2),
+    lockNotice 477 → 2.3. Its movers stayed at 21–23 ms/s, the tracker's ~1,840–1,930 cs/s.
+    ("with it" is #410 as merged, after its review.)
 
 ## Short answer (P12a)
 
@@ -357,7 +359,8 @@ cl /nologo /O2 /EHsc /std:c++20 /W4 /DUNICODE /D_UNICODE /DNOMINMAX occlusion-ab
   is on from the start, idle included, so a Kite that opened covered makes its page while it
   can't be seen.
 - Per phase it also gives the share of the phase the page was `hidden` and its rAF rate, from
-  the page's own log in its title.
+  the page's own log in its title. `--page docopen` writes the animating page over a stub with
+  `document.open()` once the stub has loaded, as an old `document.write` page does.
 
 - It waits for the display to be on and never wakes it. It keeps the display on while a run
   goes, and leaves out of the medians any run whose display went off. Pass `--any-display` to

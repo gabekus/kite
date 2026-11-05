@@ -11,7 +11,7 @@
 //   cl /nologo /O2 /EHsc /std:c++20 /W4 /DUNICODE /D_UNICODE /DNOMINMAX occlusion-ab.cpp
 //
 //   occlusion-ab display    prints the session display's state: 0 off, 1 on, 2 dimmed
-//   occlusion-ab --kite PATH\Kite.exe [--runs 3] [--idle 60] [--phase 20] [--page static|anim]
+//   occlusion-ab --kite PATH\Kite.exe [--runs 3] [--idle 60] [--phase 20] [--page static|anim|docopen]
 //                [--out runs.jsonl] [--any-display] [--p2-from-launch]
 //
 // Each run launches Kite.exe (kitecore.exe beside it makes the session) on a fresh %TEMP% test
@@ -59,12 +59,14 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #pragma comment(lib, "advapi32.lib")
@@ -458,6 +460,25 @@ PageLog ParsePageLog(const std::string& text) {
     return log;
 }
 
+// --page docopen: a stub that, once loaded, rewrites itself as `page` with document.open/write/
+// close, as an old document.write page does. That drops every listener on the document and the
+// window, Kite's visibility report's too (#410).
+std::string DocOpenPage(std::string_view page) {
+    static constexpr char kDigits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string encoded;
+    for (size_t i = 0; i < page.size(); i += 3) {
+        const uint32_t n = (static_cast<uint8_t>(page[i]) << 16) | (i + 1 < page.size() ? static_cast<uint8_t>(page[i + 1]) << 8 : 0) |
+                           (i + 2 < page.size() ? static_cast<uint8_t>(page[i + 2]) : 0);
+        encoded += kDigits[(n >> 18) & 63];
+        encoded += kDigits[(n >> 12) & 63];
+        encoded += i + 1 < page.size() ? kDigits[(n >> 6) & 63] : '=';
+        encoded += i + 2 < page.size() ? kDigits[n & 63] : '=';
+    }
+    return "<!doctype html><meta charset=\"utf-8\"><title>vis:</title><script>addEventListener('load', () => setTimeout(() => {"
+           "document.open(); document.write(new TextDecoder().decode(Uint8Array.from(atob('" +
+           encoded + "'), c => c.charCodeAt(0)))); document.close(); }, 0));</script>";
+}
+
 struct Options {
     fs::path kite;
     int runs = 3;
@@ -499,7 +520,8 @@ RunResult RunOnce(const Options& o, const std::string& arm, int index, double ts
     fs::remove_all(profile, ec);
     fs::create_directories(profile, ec);
     std::ofstream(profile / L"kite-test-profile").put('\n');
-    std::ofstream(profile / L"page.html", std::ios::binary) << (o.page == "anim" ? kAnimPage : kStaticPage);
+    std::ofstream(profile / L"page.html", std::ios::binary)
+        << (o.page == "anim" ? std::string(kAnimPage) : o.page == "docopen" ? DocOpenPage(kAnimPage) : std::string(kStaticPage));
 
     // The session: one tab with the page (kitecore, beside Kite.exe).
     {
@@ -724,7 +746,7 @@ double Median(std::vector<double> v) {
 int Usage() {
     std::fprintf(stderr,
                  "usage: occlusion-ab display\n"
-                 "       occlusion-ab --kite PATH\\Kite.exe [--runs 3] [--idle 60] [--phase 20] [--page static|anim] [--out FILE] [--any-display] [--p2-from-launch]\n");
+                 "       occlusion-ab --kite PATH\\Kite.exe [--runs 3] [--idle 60] [--phase 20] [--page static|anim|docopen] [--out FILE] [--any-display] [--p2-from-launch]\n");
     return 1;
 }
 
@@ -751,7 +773,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--out") o.out = v, ++i;
         else return Usage();
     }
-    if (o.kite.empty() || o.runs < 1 || (o.page != "static" && o.page != "anim")) return Usage();
+    if (o.kite.empty() || o.runs < 1 || (o.page != "static" && o.page != "anim" && o.page != "docopen")) return Usage();
     o.kite = fs::absolute(o.kite);
     const double tscPerMs = TscPerMs();
     std::ofstream out;
