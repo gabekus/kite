@@ -53,7 +53,7 @@
 # - Sessions: URLs must be public http(s) (or about:), no path-like values, profileSettings cut to its includesSearchSuggestions booleans, and every
 #   profile's WebKit dataStoreID replaced with a fresh one whose store is deleted afterwards.
 # - STEPS: clicks and drag starts must land on a visible view in SAFE_TARGETS (from the tree, just before the step).
-#   Every right- and ⌃-click needs KITE_TEST_CONTEXT_MENU exactly "1" and no test-context-menu-pick file, so the menu
+#   Every right-click needs KITE_TEST_CONTEXT_MENU exactly "1" and no test-context-menu-pick file, so the menu
 #   it builds is logged and nothing in it runs (PageContextMenuItems.testPick runs the item a pick file, or any other
 #   hook value, names: on a SpaceCellView, Edit Theme Color…, What's This Space For?…, New Profile…, Change Space
 #   Icon…); any other value and the pick file are refused for every state, whatever its steps. A right-click (and
@@ -63,8 +63,9 @@
 #   or for a row's right-click a RIGHT_CLICK_INSIDE view whose superviews up to the row are too. The step then goes
 #   to the window the tree and the hit test read, with that view as its "expect" (EXPECT_FLOOR), so Kite hit-tests
 #   again and sends the press in one main-thread turn, or sends nothing and the state fails. No `ui pointer` steps
-#   (synthetic hover: a favorite's preview, the space tip window, ⇧ link previews). No keys or modifier flags, but ⌃
-#   alone on a left click (a ⌃-click, which is a right-click). Text only as
+#   (synthetic hover: a favorite's preview, the space tip window, ⇧ link previews). No keys or modifier flags: no
+#   ⌃-click either (a right-click reaches the same menus through the views' own rightMouseDown and the hook, while a
+#   ⌃-left-click could also meet AppKit's own context-menu handling, which no hook covers). Text only as
 #   [A-Za-z0-9 ._-]{1,40}, straight after ⌘T (the only key chord allowed) or a click on a COMMAND_BAR_OPENERS view,
 #   into a visible CommandBarField
 #   (Kite's own command bar, which acts only on Return, and Return can't be sent), and only on a base that has
@@ -491,7 +492,6 @@ def session(spec, where):
 
 # --- Steps ---
 MODIFIERS = {"cmd", "command", "meta", "super", "win", "ctrl", "control", "⌃", "alt", "option", "opt", "shift"}
-CONTROL = {"ctrl", "control", "⌃"}
 def modifier_tokens(text, where):
     # As KeyChord.parse reads them: "+"-separated, case-insensitive.
     if not isinstance(text, str):
@@ -594,12 +594,14 @@ def check_step(action, args, menu_refused, where, previous, row_menu):
         if args.get("count", 1) != 1:
             fail(f"{where}: only single clicks")
         mods = modifier_tokens(args.get("modifiers", ""), where)
-        # The one modifier: ⌃ alone on a left click, which Kite takes as a right-click (SidebarRowCell.mouseDown,
-        # SpaceCellView.mouseDown).
-        if mods and not (button == "left" and mods <= CONTROL):
-            fail(f"{where}: no modifiers on a click, except ctrl alone on a left click (a ⌃-click)")
-        if (button == "right" or mods) and menu_refused:
-            fail(f"{where}: a right- or ⌃-click needs {menu_refused}")
+        # No modifiers, ⌃ included. Kite takes a ⌃-click as a right-click (SidebarRowCell.mouseDown,
+        # SpaceCellView.mouseDown), but it's a left mouse down with the control flag, and AppKit may show the view's
+        # menu(for:) itself for one (a real NSMenu, which no test hook sees) before mouseDown runs. A right-click
+        # reaches the same menu only through the view's own rightMouseDown and showSidebarMenu's hook.
+        if mods:
+            fail(f"{where}: no modifiers on a click (for a ⌃-click's menu, send a right-click)")
+        if button == "right" and menu_refused:
+            fail(f"{where}: a right-click needs {menu_refused}")
         needs_hit(where)
         check = {"point": at, "what": f"{button} click", "click": True}
         # Rows (RIGHT_CLICK_TARGETS) take a plain right-click that only logs their menu; anything else is checked
@@ -718,7 +720,7 @@ for i, state in enumerate(request["states"]):
     previous = None
     # A context menu only logs itself when the hook is on and nothing names an item to run
     # (PageContextMenuItems.testPick). HOOKS and profile_files above already refuse the rest; checked again here,
-    # where it decides a click.
+    # where it decides a right-click.
     if "KITE_TEST_CONTEXT_MENU" not in env:
         menu_refused = "KITE_TEST_CONTEXT_MENU set to 1 in env (a real menu needs a real screen)"
     elif env["KITE_TEST_CONTEXT_MENU"] != "1":

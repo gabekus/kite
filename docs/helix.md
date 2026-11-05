@@ -116,7 +116,7 @@ request that could reach past that, before anything runs:
   keeps only its `includesSearchSuggestions` booleans (download folders and the save-panel choice
   go), and every profile gets a fresh WebKit store that's deleted afterwards;
 - keys (except exactly `{"keys":"cmd+t"}`, which opens Kite's own command bar, on a base with
-  `TEXT_FLOOR`) or modifier flags (except `ctrl` alone on a left click: a ⌃-click); `ui pointer`
+  `TEXT_FLOOR`) or modifier flags (no ⌃-click either: a right-click reaches the same menu); `ui pointer`
   steps (synthetic hover, which previews favorites, shows the space tip and, with ⇧, opens link
   previews); a click or drag that doesn't start on a visible view in `SAFE_TARGETS` (found in the
   tree just before the step, then confirmed with Kite's own hit test, `ui hit`, which must reach that
@@ -126,7 +126,7 @@ request that could reach past that, before anything runs:
   fails; clicks and drags need a base with `HIT_FLOOR` and `EXPECT_FLOOR`;
 - `KITE_TEST_CONTEXT_MENU` set to anything but exactly `1`, or a `test-context-menu-pick` profile
   file: either names a menu item, which Kite then runs instead of only logging the menu. Every
-  right- and ⌃-click needs `KITE_TEST_CONTEXT_MENU` set to `1`. The sidebar's rows
+  right-click needs `KITE_TEST_CONTEXT_MENU` set to `1`. The sidebar's rows
   (`RIGHT_CLICK_TARGETS`: `TabRowCell`, `FolderRowCell`, `FavoritePaneView`) take a plain right-click
   and nothing else, as the state's first step; the hit test may reach a `RIGHT_CLICK_INSIDE` view
   inside the row (a button with no menu of its own) instead of the row;
