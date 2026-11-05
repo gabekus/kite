@@ -24,6 +24,9 @@ struct Color {
 // profile: its primaries, D65, gamma 1.8; an sRGB colour outside its gamut clipped to it), each
 // component and the alpha mixed `fraction` of the way from `a` to `b` there, and the result shown
 // in sRGB again. `fraction` is clamped to 0...1, as NSColor clamps it.
+// At a fraction of 0 or 1 the result is `a` or `b` clipped to Generic RGB's gamut (a saturated sRGB
+// red comes back a little less red). Whether AppKit returns the colour unchanged there instead is
+// unconfirmed: check it on the Mac before the theme editor's colour slider relies on it.
 Color BlendCalibrated(const Color& a, const Color& b, double fraction);
 
 }  // namespace kite::color

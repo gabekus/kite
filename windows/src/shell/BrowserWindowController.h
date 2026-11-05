@@ -297,6 +297,7 @@ private:
     std::wstring SmokeTestTopRow();
     std::wstring SmokeTestFavorites();
     std::wstring SmokeTestEmptyFavorites();
+    std::wstring SmokeTestFavoritesScroll();
     void MakeCommands();
     void RunCommand(const std::string& command);
     bool PageCommand(const std::string& command);

@@ -271,8 +271,9 @@ fullest of twelve hue bins in the icon drawn 16px a side) half way to white as
 `NSColor.blended(withFraction:of:)` mixes it: in calibrated RGB (Apple's Generic
 RGB, gamma 1.8), not sRGB, which is what makes YouTube's ring (255, 149, 150) and
 not (255, 129, 129). That mix is `core/ColorSpaces.h`'s `BlendCalibrated` (alpha
-too), with sRGB's transfer function, shared with the OKLab maths and the backdrop. A grey or missing favicon has no colour: the pane is just
-white, the globe in its middle (Segoe's globe fills its em square, so it's set at
+too), with sRGB's transfer function, shared with the OKLab maths and the backdrop.
+A grey or missing favicon has no colour: the pane is just white, the globe in its
+middle (Segoe's globe fills its em square, so it's set at
 the favicon's 18pt, the Mac's 36px at 2×; the rows' globes with it). A click
 selects the favorite (released inside the pane, not after a 4pt drag, not the
 click that brings the window forward), the window's whole band is the tray's (no

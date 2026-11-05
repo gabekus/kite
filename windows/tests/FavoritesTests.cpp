@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "Check.h"
+#include "core/ColorSpaces.h"
 #include "core/Favorites.h"
 #include "core/OneShotFlags.h"
 #include "core/Sidebar.h"
@@ -572,4 +573,41 @@ TEST(oneShotFlagsLiveInTheProfilesFolder) {
     CHECK(problem.find("couldn't create") == 0 && problem.find("profile") != std::string::npos);
     std::error_code error;
     fs::remove_all(folder, error);
+}
+
+TEST(oneShotFlagsReadABooleanTwoFlagsShare) {
+    // CF's writer (and plistlib) keeps one object for equal values: both keys' values are object 3.
+    static const uint8_t shared[] = {
+        0x62, 0x70, 0x6c, 0x69, 0x73, 0x74, 0x30, 0x30, 0xd2, 0x01, 0x02, 0x03, 0x03, 0x5f, 0x10, 0x1c, 0x66, 0x61, 0x76, 0x6f, 0x72,
+        0x69, 0x74, 0x65, 0x73, 0x45, 0x6d, 0x70, 0x74, 0x79, 0x53, 0x74, 0x61, 0x74, 0x65, 0x44, 0x69, 0x73, 0x6d, 0x69, 0x73, 0x73,
+        0x65, 0x64, 0x5f, 0x10, 0x19, 0x70, 0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x4d, 0x61, 0x6e, 0x61, 0x67, 0x65, 0x72, 0x4f,
+        0x66, 0x66, 0x65, 0x72, 0x53, 0x68, 0x6f, 0x77, 0x6e, 0x09, 0x08, 0x0d, 0x2c, 0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x49};
+    const auto flags = OneShotFlags::Parse(std::string_view(reinterpret_cast<const char*>(shared), sizeof(shared)));
+    CHECK(flags == (std::map<std::string, bool>{{"favoritesEmptyStateDismissed", true}, {"passwordManagerOfferShown", true}}));
+}
+
+// MARK: BlendCalibrated (NSColor.blended(withFraction:of:))
+
+TEST(blendCalibratedMixesInGenericRGB) {
+    using color::Color;
+    const auto near = [](const Color& c, float r, float g, float b, float a, float within = 0.5f / 255) {
+        return Near(c.r, r, within) && Near(c.g, g, within) && Near(c.b, b, within) && Near(c.a, a, 1e-6);
+    };
+    // YouTube's red half way to white: the Mac's ring, (255, 149, 150).
+    const Color ring = color::BlendCalibrated(Color{1, 0.0106f, 0.0106f, 1}, Color{1, 1, 1, 1}, 0.5);
+    CHECK(near(ring, 1, 149.2f / 255, 150.0f / 255, 1));
+    // White with white stays white, whatever the fraction.
+    CHECK(near(color::BlendCalibrated(Color{1, 1, 1, 1}, Color{1, 1, 1, 1}, 0.3), 1, 1, 1, 1, 1e-4f));
+    // Alpha mixes straight: a quarter of the way from opaque to clear.
+    const Color faded = color::BlendCalibrated(Color{0.2f, 0.4f, 0.6f, 1}, Color{0.2f, 0.4f, 0.6f, 0}, 0.25);
+    CHECK(near(faded, 0.2f, 0.4f, 0.6f, 0.75f, 2.0f / 255));
+    // Fractions past the ends are clamped: -1 is the first colour, 2 the second (each through the
+    // calibrated space, so a grey comes back as itself).
+    const Color grey{0.5f, 0.5f, 0.5f, 0.8f}, black{0, 0, 0, 1};
+    CHECK(color::BlendCalibrated(grey, black, -1) == color::BlendCalibrated(grey, black, 0));
+    CHECK(color::BlendCalibrated(grey, black, 2) == color::BlendCalibrated(grey, black, 1));
+    CHECK(near(color::BlendCalibrated(grey, black, -1), 0.5f, 0.5f, 0.5f, 0.8f, 1.0f / 255));
+    CHECK(near(color::BlendCalibrated(grey, black, 2), 0, 0, 0, 1, 1.0f / 255));
 }

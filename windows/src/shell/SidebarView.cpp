@@ -57,8 +57,8 @@ constexpr float kLabelAlpha = 0.85f;
 // The Mac's SidebarLabel line box: SF Pro's ascender plus descender (0.952 + 0.241 of the
 // size), rounded up to whole points; its text sits in the middle of the row, rounded down,
 // with SF's baseline at the ascender. Kite puts Segoe UI's baseline where SF's is.
-constexpr float kAscender = 0.952f;
-constexpr float kDescender = 0.241f;
+constexpr float kAscender = favorites_empty::kAscender;
+constexpr float kDescender = favorites_empty::kDescender;
 float LineHeight(float size) { return std::ceil(size * (kAscender + kDescender)); }
 // The text's top in a box `height` tall: SidebarLabel's centring, half a point when odd.
 float TextTop(float height, float line) {

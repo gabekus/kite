@@ -487,7 +487,7 @@ int main(int argc, char** argv) {
         if (tray.emptyState) {
             json::Object empty{{"title", std::string(favorites_empty::kTitle)}, {"subtitle", std::string(favorites_empty::kSubtitle)}};
             frameOf(empty, tray.emptyFrame);
-            json::Object close{{"tooltip", std::string("Dismiss")}};
+            json::Object close{{"tooltip", std::string(favorites_empty::kCloseTooltip)}};
             frameOf(close, tray.closeFrame);
             empty.emplace("close", json::Value(std::move(close)));
             favorites.emplace("emptyState", json::Value(std::move(empty)));

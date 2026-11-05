@@ -122,7 +122,6 @@ namespace {
 // A stroke from `a` to `p`, `half` its thickness either side, with round caps centred on its ends:
 // a rectangle reaching `half` past each end, its four corners rounded to `half`, which turns its
 // short ends into half circles.
-void Stroke(ShapeBuilder& b, ShapePoint a, ShapePoint p, float half) { AddStroke(b, a, p, half); }
 
 // Reload's and the X's stroke: 2.36 px at 2× in the Mac's arrow.clockwise.
 constexpr float kStrokeHalf = 1.18f / 2;
@@ -147,9 +146,9 @@ const SymbolShape& ReloadShape() {
         b.Circle(cx + r * std::cos(start * pi / 180), cy + r * std::sin(start * pi / 180), h);
         // The tail from the top to the chevron's point, and the chevron.
         const ShapePoint top{cx, cy - r}, point{2.65f, -4.45f};
-        Stroke(b, top, point, h);
-        Stroke(b, ShapePoint{point.x - 2.71f, point.y - 2.71f}, point, h);
-        Stroke(b, ShapePoint{point.x - 3.16f, point.y + 3.16f}, point, h);
+        AddStroke(b, top, point, h);
+        AddStroke(b, ShapePoint{point.x - 2.71f, point.y - 2.71f}, point, h);
+        AddStroke(b, ShapePoint{point.x - 3.16f, point.y + 3.16f}, point, h);
         return b.Build();
     }();
     return shape;
@@ -161,8 +160,8 @@ const SymbolShape& StopShape() {
     static const SymbolShape shape = [] {
         constexpr float reach = 5.5f - kStrokeHalf, y = 0.25f;
         ShapeBuilder b;
-        Stroke(b, ShapePoint{-reach, y - reach}, ShapePoint{reach, y + reach}, kStrokeHalf);
-        Stroke(b, ShapePoint{-reach, y + reach}, ShapePoint{reach, y - reach}, kStrokeHalf);
+        AddStroke(b, ShapePoint{-reach, y - reach}, ShapePoint{reach, y + reach}, kStrokeHalf);
+        AddStroke(b, ShapePoint{-reach, y + reach}, ShapePoint{reach, y - reach}, kStrokeHalf);
         return b.Build();
     }();
     return shape;

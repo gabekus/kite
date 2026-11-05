@@ -49,6 +49,9 @@ Matrix ToXYZ(const double (&xy)[3][2]) {
     return p;
 }
 
+// The transfer function in Double throughout, for the calibrated mix: its matrices and gamma are
+// Double, as AppKit's colour conversions are, and a float step between them would round the
+// result by a level (the public float functions keep their callers' exact arithmetic instead).
 double ToLinear(double c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); }
 double ToGamma(double c) {
     c = std::clamp(c, 0.0, 1.0);

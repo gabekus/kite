@@ -984,14 +984,60 @@ std::wstring BrowserWindowController::SmokeTestFavorites() {
     state_.spaces[space].selectedTabID = selected;
     sidebar_->Update(state_, pagesAnchor_);
     if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
-    // From some favorites to none: the page back where the tray as it is now ends it, its scroll
-    // within the shorter or longer list, and (not dismissed) the empty state's layers made.
+    // From some favorites to none: the page back where the tray as it is now ends it, and (not
+    // dismissed) the empty state's layers made.
     if (failure.empty() && before.empty()) {
         const FavoritesTray& now = sidebar_->Favorites();
         if (sidebar_->ListTop() != SidebarListTop(now) || !now.tiles.empty()) return L"the page didn't come back up when the favorites went";
-        if (sidebar_->ListScroll() < 0) return L"the list's scroll left its list when the favorites went";
         if (now.emptyState && !sidebar_->FavoritesEmptyStateDrawn()) return L"the empty state didn't draw when the favorites went";
     }
+    if (!failure.empty()) return failure;
+    return SmokeTestFavoritesScroll();
+}
+
+std::wstring BrowserWindowController::SmokeTestFavoritesScroll() {
+    // The list scrolled to its end under a tall grid (nine favorites, three rows), then the grid
+    // gone: the page starts higher, so it has less to scroll, and the scroll comes within it. Then
+    // the session as it was.
+    const std::vector<Tab> before = state_.Favorites();
+    const size_t space = state_.SelectedSpaceIndex();
+    const size_t tabsBefore = state_.spaces[space].tabs.size();
+    std::vector<Tab> grid = before;
+    for (int i = 0; i < 9; ++i) {
+        Tab tab;
+        tab.id = NewUuid();
+        tab.url = "about:blank";
+        tab.title = "Kite smoke favorite " + std::to_string(i + 1);
+        grid.push_back(std::move(tab));
+    }
+    // Enough of today's tabs that the list scrolls (never selected: no pages for them).
+    std::vector<std::string> added;
+    for (int i = 0; i < 30; ++i) added.push_back(state_.OpenTab("about:blank", state_.spaces[space].id, false));
+    state_.SetFavorites(grid);
+    sidebar_->Update(state_, pagesAnchor_);
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    RECT client{};
+    GetClientRect(window_.Handle(), &client);
+    const float height = static_cast<float>(client.bottom) / scale;
+    const auto maxScroll = [&] { return SidebarMaxScroll(SidebarRows(state_, space), height, scale, sidebar_->ListTop()); };
+    const std::wstring failure = [&]() -> std::wstring {
+        const POINT overList{std::lround(100 * scale), std::lround((sidebar_->ListTop() + 40) * scale)};
+        if (!sidebar_->ScrollList(overList, 100000)) return L"the list under the favorites took no scroll";
+        const float tall = sidebar_->ListScroll();
+        if (tall <= 0 || tall != maxScroll()) return L"the list under the favorites didn't scroll to its end";
+        // The grid goes (to the empty state or none): less to scroll, and the scroll within it.
+        state_.SetFavorites(before);
+        sidebar_->Update(state_, pagesAnchor_);
+        if (!(maxScroll() < tall)) return L"the page had no less to scroll without the grid";
+        if (sidebar_->ListScroll() > maxScroll()) return L"the list's scroll stayed past its end when the favorites went";
+        return {};
+    }();
+    state_.SetFavorites(before);
+    auto& tabs = state_.spaces[space].tabs;
+    std::erase_if(tabs, [&](const Tab& tab) { return std::find(added.begin(), added.end(), tab.id) != added.end(); });
+    sidebar_->Update(state_, pagesAnchor_);
+    if (tabs.size() != tabsBefore && failure.empty()) return L"the smoke test's tabs didn't go";
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
     return failure;
 }
 
