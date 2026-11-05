@@ -140,8 +140,9 @@ What works with Kite in the background (checked on a test build behind other win
   `WindowPresentation`: they're AppKit's own child windows of their anchor's window, and
   `WindowPresenter.show(_:relativeTo:of:preferredEdge:)` shows them as AppKit does on every run (behind the user's
   windows with their parent; showing one doesn't activate Kite or take the keyboard from another app). The guard
-  below counts every `.show(relativeTo`, so none bypasses that route; the sharing pickers, which are menus, are
-  exempt. SidebarTestHook's ready line reports where its popover went. Floating levels (Stay On Top, the Essential
+  below counts every `.show(relativeTo`, so none bypasses that route. The Share menu (`NSSharingServicePicker`)
+  goes through `WindowPresenter.showSharingPicker`, which a test-safe run skips with a `KITE_TEST_MODAL:` line.
+  SidebarTestHook's ready line reports where its popover went. Floating levels (Stay On Top, the Essential
   Keyboard Shortcuts window) aren't applied: Kite keeps the level asked for, so Stay On Top's checkmark still follows it.
   About Kite: AppKit creates its panel and orders it front in one call, so Kite finds it as the window that
   appeared (its class only breaks a tie) and moves it behind in the same main-thread turn; if it can't tell which

@@ -17,7 +17,7 @@ extension BrowserWindowController {
         let later = { (body: @escaping () -> Void) in DispatchQueue.main.async(execute: body) }
         var actions = SiteControlsModel.Actions(
             copyURL: { [weak self] in self?.copyURL(nil) },
-            share: { view in NSSharingServicePicker(items: [url]).show(relativeTo: view.bounds, of: view, preferredEdge: .minY) }, // presenter-exempt: a sharing picker is a menu, from a click or command
+            share: { view in WindowPresenter.showSharingPicker(items: [url], relativeTo: view.bounds, of: view, preferredEdge: .minY) },
             toggleAdblock: { [weak self] in self?.toggleAdblockForSite(nil) },
             clearCache: { [weak self] in self?.clearCacheAndRefresh(nil) },
             clearCookies: { [weak self] in self?.clearCookiesAndRefresh(nil) },
