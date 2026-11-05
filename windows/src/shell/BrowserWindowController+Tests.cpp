@@ -364,7 +364,10 @@ std::wstring BrowserWindowController::SmokeTest() {
     // Switching spaces: the pages slide on the compositor and the theme crossfades on the
     // clock's frames, and both come to rest on the next space, then back on this one.
     if (state_.spaces.size() > 1) {
+        const uint64_t armed = saveArms_;
         if (std::wstring problem = SmokeTestSpaces(); !problem.empty()) return problem;
+        // A change arms the session's save (it may have fired already: the settling ran timers).
+        if (writer_ && writer_->MaySave() && saveArms_ == armed) return L"switching spaces didn't schedule a save";
         // And swiping between them with two fingers on a touchpad.
         if (std::wstring problem = SmokeTestSwipe(); !problem.empty()) return problem;
         // And editing them: drags in the bar, the menu, renaming, New Folder, Delete Space.

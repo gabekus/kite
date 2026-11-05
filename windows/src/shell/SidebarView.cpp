@@ -10,6 +10,7 @@
 
 #include "core/OKLab.h"
 #include "core/SpaceSwipe.h"
+#include "core/SymbolShape.h"
 #include "shell/Errors.h"
 #include "shell/FrameClock.h"
 #include "shell/Text.h"
@@ -32,7 +33,9 @@ constexpr float kHeaderIconX = 13;   // in the window
 constexpr float kHeaderTextX = 41;   // in the window
 constexpr float kHeaderFontSize = 13;
 constexpr float kHeaderTextOpacity = 0.45f;
-constexpr float kHeaderIconFontSize = 15;  // SpaceIconImageView's size in the header: emoji, symbols, pictures
+// SpaceIconImageView's size in the header: emoji, symbols, pictures. The drawn symbols' header
+// places are for this size (PlaceDrawnSymbol), so it's theirs.
+constexpr float kHeaderIconFontSize = kHeaderSymbolSize;
 constexpr float kDoneFontSize = kHeaderFontSize - 1;  // the rename's Done (SidebarDoneButton)
 constexpr float kIconSize = 18;
 constexpr float kIconTextGap = 8;
