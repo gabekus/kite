@@ -1,0 +1,89 @@
+## at launch
+Window 17906, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.3.0.0 SymbolButton [71,7.5 32×32] alpha=0.6 opacity=0.6
+0.3.0.1 SymbolButton [134,7.5 32×32] alpha=0.13 opacity=0.13
+0.3.0.2 SymbolButton [168,7.5 32×32] alpha=0.13 opacity=0.13
+0.3.0.3 SymbolButton [202,7.5 32×32] alpha=0.6 opacity=0.6
+0.3.0.4 SymbolButton [0,0 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.0.5 SymbolButton [0,0 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.0.6.2.0 SymbolButton [8,46 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.0.6.2.1 SymbolButton [198,49 30×30] alpha=0.6 opacity=0.6
+0.3.0.6.2.2 SymbolButton [8,46 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.0.6.3 SymbolButton [8,46 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.1.0.2 SymbolButton [210,100 18×18] hidden=true alpha=0.5 opacity=0.5
+0.3.2.0.0 SymbolButton [8,779 32×32] alpha=0.7 opacity=0.7
+0.3.2.1 SymbolButton [200,779 32×32] alpha=0.7 opacity=0.7
+0.3.3.0.0.0.0.0.0.1.2 SymbolButton [205,150 26×26] alpha=0 opacity=0
+0.3.3.0.0.0.0.0.1.1.1.5 SymbolButton [8,186.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.0.0.0.0.1.1.1.6 SymbolButton [8,186.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.0.0.0.0.1.1.2.1 SymbolButton [207,188.5 16×16] alpha=0 opacity=0
+0.3.3.0.0.0.0.0.2.1.5 SymbolButton [8,225 0×0] hidden=true
+0.3.3.0.0.0.0.0.5.1.1.5 SymbolButton [8,334.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.0.0.0.0.5.1.1.6 SymbolButton [8,334.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.0.0.0.0.5.1.2.1 SymbolButton [207,336.5 16×16] alpha=0 opacity=0
+0.3.3.0.1.0.0.0.0.1.2 SymbolButton [445,150 26×26] alpha=0 opacity=0
+0.3.3.0.1.0.0.0.1.1.1.5 SymbolButton [248,186.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.1.0.0.0.1.1.1.6 SymbolButton [248,186.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.1.0.0.0.1.1.2.1 SymbolButton [447,188.5 16×16] alpha=0 opacity=0
+</untrusted-page-content>
+
+## before the capture
+Window 17906, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.3.0.0 SymbolButton [71,7.5 32×32] alpha=0.6 opacity=0.6
+0.3.0.1 SymbolButton [134,7.5 32×32] alpha=0.13 opacity=0.13
+0.3.0.2 SymbolButton [168,7.5 32×32] alpha=0.13 opacity=0.13
+0.3.0.3 SymbolButton [202,7.5 32×32] alpha=0.6 opacity=0.6
+0.3.0.4 SymbolButton [0,0 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.0.5 SymbolButton [0,0 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.0.6.2.0 SymbolButton [8,46 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.0.6.2.1 SymbolButton [198,49 30×30] alpha=0.6 opacity=0.6
+0.3.0.6.2.2 SymbolButton [8,46 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.0.6.3 SymbolButton [8,46 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.1.0.2 SymbolButton [210,100 18×18] hidden=true alpha=0.5 opacity=0.5
+0.3.2.0.0 SymbolButton [8,779 32×32] alpha=0.7 opacity=0.7
+0.3.2.1 SymbolButton [200,779 32×32] alpha=0.7 opacity=0.7
+0.3.3.0.0.0.0.0.0.1.2 SymbolButton [205,150 26×26] alpha=0 opacity=0
+0.3.3.0.0.0.0.0.1.1.1.5 SymbolButton [8,186.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.0.0.0.0.1.1.1.6 SymbolButton [8,186.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.0.0.0.0.1.1.2.1 SymbolButton [207,188.5 16×16] alpha=0 opacity=0
+0.3.3.0.0.0.0.0.2.1.5 SymbolButton [8,225 0×0] hidden=true
+0.3.3.0.0.0.0.0.5.1.1.5 SymbolButton [8,334.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.0.0.0.0.5.1.1.6 SymbolButton [8,334.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.0.0.0.0.5.1.2.1 SymbolButton [207,336.5 16×16] alpha=0 opacity=0
+0.3.3.0.1.0.0.0.0.1.2 SymbolButton [445,150 26×26] alpha=0 opacity=0
+0.3.3.0.1.0.0.0.1.1.1.5 SymbolButton [248,186.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.1.0.0.0.1.1.1.6 SymbolButton [248,186.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.1.0.0.0.1.1.2.1 SymbolButton [447,188.5 16×16] alpha=0 opacity=0
+</untrusted-page-content>
+
+## after the capture
+Window 17906, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.3.0.0 SymbolButton [71,7.5 32×32] alpha=0.6 opacity=0.6
+0.3.0.1 SymbolButton [134,7.5 32×32] alpha=0.13 opacity=0.13
+0.3.0.2 SymbolButton [168,7.5 32×32] alpha=0.13 opacity=0.13
+0.3.0.3 SymbolButton [202,7.5 32×32] alpha=0.6 opacity=0.6
+0.3.0.4 SymbolButton [0,0 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.0.5 SymbolButton [0,0 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.0.6.2.0 SymbolButton [8,46 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.0.6.2.1 SymbolButton [198,49 30×30] alpha=0.6 opacity=0.6
+0.3.0.6.2.2 SymbolButton [8,46 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.0.6.3 SymbolButton [8,46 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.1.0.2 SymbolButton [210,100 18×18] hidden=true alpha=0.5 opacity=0.5
+0.3.2.0.0 SymbolButton [8,779 32×32] alpha=0.7 opacity=0.7
+0.3.2.1 SymbolButton [200,779 32×32] alpha=0.7 opacity=0.7
+0.3.3.0.0.0.0.0.0.1.2 SymbolButton [205,150 26×26] alpha=0 opacity=0
+0.3.3.0.0.0.0.0.1.1.1.5 SymbolButton [8,186.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.0.0.0.0.1.1.1.6 SymbolButton [8,186.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.0.0.0.0.1.1.2.1 SymbolButton [207,188.5 16×16] alpha=0 opacity=0
+0.3.3.0.0.0.0.0.2.1.5 SymbolButton [8,225 0×0] hidden=true
+0.3.3.0.0.0.0.0.5.1.1.5 SymbolButton [8,334.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.0.0.0.0.5.1.1.6 SymbolButton [8,334.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.0.0.0.0.5.1.2.1 SymbolButton [207,336.5 16×16] alpha=0 opacity=0
+0.3.3.0.1.0.0.0.0.1.2 SymbolButton [445,150 26×26] alpha=0 opacity=0
+0.3.3.0.1.0.0.0.1.1.1.5 SymbolButton [248,186.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.1.0.0.0.1.1.1.6 SymbolButton [248,186.5 0×0] hidden=true alpha=0.6 opacity=0.6
+0.3.3.0.1.0.0.0.1.1.2.1 SymbolButton [447,188.5 16×16] alpha=0 opacity=0
+</untrusted-page-content>
