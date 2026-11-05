@@ -76,6 +76,35 @@ their own PR, never as a side effect of a checkpoint.
   rest before moving, for at most 10 s, after which the contact goes back to
   the system. An offset, a scale or an opacity is always an
   `IDCompositionAnimation`.
+- Idle means drawing nothing, and waking only for one narrow exception: Kite may
+  watch the system for a signal that lets it stop drawing or working (whether
+  its window can be seen, covered, locked, the display's power), never for one
+  that starts work. Showing again what it stopped is allowed. Otherwise
+  polling and timers are still never allowed for it. A one-shot wait after an
+  event (a debounce) is not a timer. Such a watcher:
+  - runs off the UI thread, which hears only when the outcome changes;
+  - drops each event at the first check unless it can matter, and debounces
+    the work the rest asks for;
+  - hooks system-wide only events that can't be tied to a process in advance,
+    and only in the states where they can change the outcome; everything else
+    per process, in the same way. Events a person causes at a person's rate
+    (an app coming forward, a drag, a minimize, a desktop switch) count as
+    those when no process can be named for them, and the PR measures them;
+  - enumerates nothing (EnumWindows, process lists) while nothing changed,
+    with one exception: a verification heartbeat is allowed only while Kite
+    has stopped drawing because it's covered, at most twice a second,
+    re-reading only the windows that covered it (and a whole pass every few
+    seconds). A covered Kite stops ~650 ms/s of rendering, and the events that
+    would uncover it (a restore-down, a keyboard snap, leaving full screen, a
+    window turning translucent) don't exist. It stops when Kite is no longer
+    covered;
+  - stays within 20 context switches a second on its thread in the worst case,
+    with 0 more on the UI thread;
+  - and has its PR measure each Kite thread's context switches per second
+    against origin/main in every state that keeps hooks, under the worst input
+    for each hook (another app's window moving, the mouse over a hooked app,
+    typing into it, its tooltips and menus), with real focused input where it
+    can be had and repeated runs, reporting the spread and the noise floor.
 - Render at the display's refresh rate with no 60fps caps (docs/windows.md,
   Refresh rate).
 - No work on the UI thread that can block: file I/O over a few KB, network,
