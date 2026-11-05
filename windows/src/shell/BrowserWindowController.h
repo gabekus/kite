@@ -99,12 +99,16 @@ public:
     UINT MaxTextureSize() const { return renderer_ ? renderer_->MaxTextureSize() : 0; }
 
 #ifdef KITE_HAS_CEF
-    // Starts Chromium for the window's pages, its profiles under `root`. AlreadyRunning: another
-    // Kite has the profile and was told to come forward.
-    Chromium::StartResult StartChromium(const std::filesystem::path& root, std::wstring& error);
+    // Starts Chromium for the window's pages, its profiles under `root`, with the sandbox the
+    // bootstrap handed Kite.dll (RunWinMain). AlreadyRunning: another Kite has the profile and
+    // was told to come forward.
+    Chromium::StartResult StartChromium(const std::filesystem::path& root, void* sandboxInfo, std::wstring& error);
     // After the message loop: Chromium's shutdown, then what a smoke test checks of it. Empty
     // when it all went well (or there was no Chromium).
     std::wstring ShutDownChromium();
+    // What a smoke test read of the sandbox (shell/Sandbox.h): the first page's renderer and
+    // every helper, a line each; empty before the renderer reported.
+    const std::wstring& SandboxReport() const { return sandboxReport_; }
 #endif
     // Shows the window (behind other windows for a quiet run) and, with Chromium, the first page,
     // and starts the auto-archive's timer.
@@ -424,6 +428,12 @@ private:
     std::map<std::string, std::string> popupOpeners_;
     bool firstPageMade_ = false;
     bool pageLoading_ = false, pageLoaded_ = false;
+    // A smoke test's check of the first page's renderer (shell/Sandbox.h): whether one reported
+    // in, what was wrong with its sandbox and the helpers' (empty when nothing was), and what
+    // they were.
+    bool rendererChecked_ = false;
+    std::wstring rendererProblem_, helperProblem_, sandboxReport_;
+    void CloseWhenSmokeTestIsDone();
     ULONGLONG closeAskedAt_ = 0;  // when the smoke test asked the window to close
     // The smoke test's read of Chromium's Energy Saver preference (Chromium::ReadEnergySaver).
     bool energySaverRead_ = false;

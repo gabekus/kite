@@ -1,4 +1,6 @@
-// Kite for Windows. See docs/windows.md.
+// Kite for Windows. See docs/windows.md. With Chromium this is Kite.dll, and Kite.exe is CEF's
+// bootstrap, which puts Chromium's helpers in the sandbox and calls RunWinMain below (the Mac's
+// KiteHelper/main.mm enters the sandbox the same way, before the framework loads).
 //
 //   Kite.exe                 normal launch
 //   Kite.exe --smoke-test    opens the window, runs the message loop for a second (with
@@ -7,7 +9,7 @@
 //                            saves the session and exits 0 (CI). Errors go to the exit
 //                            code, never a dialog. Fails if any window of Kite's (Chromium's
 //                            too) became the foreground window: a quiet run stays behind.
-//   Kite.exe --capture FILE.png [--window-size W,H] [--capture-scale N]
+//   Kite.exe --capture FILE.png [--window-size W,H] [--capture-scale N]   (absolute paths)
 //                            opens the window at W×H points (client area), saves the frame
 //                            it presents as a PNG and exits: the Helix UI gate
 //                            (docs/helix.md). The window is laid out at N× (default: the
@@ -88,6 +90,8 @@
 #include "shell/BackdropTest.h"
 #include "shell/BrowserWindowController.h"
 #ifdef KITE_HAS_CEF
+#include "include/cef_sandbox_win.h"
+#include "include/cef_version.h"
 #include "shell/Chromium.h"
 #endif
 #include "shell/Capture.h"
@@ -189,9 +193,33 @@ int Fail(bool quiet, const std::wstring& message, int code) {
 }
 #endif
 
-}  // namespace
+// Every path Kite is given (a file option, KITE_SUPPORT_PATH) must be absolute: Kite.exe runs
+// from its own folder (CEF's bootstrap makes it the working directory, docs/windows.md
+// "Chromium's sandbox"), so a relative one would land there rather than where it was typed.
+// The refusal for `what`, or empty when `path` is absolute.
+std::wstring RelativePathProblem(std::wstring_view what, const std::filesystem::path& path) {
+    if (path.is_absolute()) return {};
+    return std::wstring(what) + L" takes an absolute path (Kite.exe runs from its own folder)";
+}
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
+// A file option (--capture, --frame-log, --save-log, --perf-log): its value, and the usage error
+// when it's given without one (`takes` says what it wants) or with a relative path. Every option
+// naming a file goes through here.
+struct PathOptionValue {
+    bool present = false;
+    std::optional<std::wstring> value;
+    std::wstring problem;
+};
+
+PathOptionValue PathOption(const std::vector<std::wstring>& args, std::wstring_view name, std::wstring_view takes) {
+    const OptionValue option = Option(args, name);
+    PathOptionValue out{option.present, option.value, {}};
+    if (option.present && !option.value) out.problem = std::wstring(name) + L" takes " + std::wstring(takes);
+    else if (option.value) out.problem = RelativePathProblem(name, *option.value);
+    return out;
+}
+
+int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxInfo) {
     const std::vector<std::wstring> args = Arguments();
     std::vector<std::string> utf8;
     for (const std::wstring& a : args) utf8.push_back(Narrow(a));
@@ -199,12 +227,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // Chromium starts Kite.exe again for its renderer, GPU and utility processes, and reads the
     // raw command line in each (CefExecuteProcess parses GetCommandLineW itself). Those launches
     // are Chromium's own, so a --type spelled any other way, or naming a helper Kite doesn't run
-    // (a crashpad handler, say), is someone else's: it ends here.
+    // (a crashpad handler, say), is someone else's: it ends here. The bootstrap has already put
+    // each helper in its sandbox, and Kite.dll does nothing else in them.
     if (const auto type = kite::command_line::ChromiumProcessType(utf8)) {
         static constexpr std::string_view kHelpers[] = {"renderer", "gpu-process", "utility"};
         if (!type->canonical || std::find(std::begin(kHelpers), std::end(kHelpers), type->value) == std::end(kHelpers)) return kUsage;
     }
-    if (const int code = kite::RunChromiumSubprocess(instance); code >= 0) return code;
+    if (const int code = kite::RunChromiumSubprocess(instance, sandboxInfo); code >= 0) return code;
 #endif
     // Kite takes only its own flags and their values: anything else is an error, never a normal
     // launch on the real profile (a typo like --smoketest or --capture-scale=2). Chromium reads
@@ -233,11 +262,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return kWindowFailed;
     }
     const bool smokeTest = HasFlag(args, L"--smoke-test");
-    const OptionValue captureOption = Option(args, L"--capture");
+    const PathOptionValue captureOption = PathOption(args, L"--capture", L"a PNG path");
     const OptionValue sizeOption = Option(args, L"--window-size");
     const std::optional<std::wstring>& capture = captureOption.value;
-    const OptionValue saveLogOption = Option(args, L"--save-log");
-    const OptionValue perfLogOption = Option(args, L"--perf-log");
+    const PathOptionValue saveLogOption = PathOption(args, L"--save-log", L"a file");
+    const PathOptionValue perfLogOption = PathOption(args, L"--perf-log", L"a file");
     const bool perfControl = HasFlag(args, L"--perf-control");
     const OptionValue switchesOption = Option(args, L"--chromium-switches");
     // A quiet run: the one place that decides it (everything else reads Options::quiet). It
@@ -249,8 +278,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
                        switchesOption.present;
     std::optional<kite::ForegroundWatch> foreground;
     if (quiet) foreground.emplace();
-    if (saveLogOption.present && !saveLogOption.value) return Fail(quiet, L"--save-log takes a file", kUsage);
-    if (captureOption.present && !capture) return Fail(quiet, L"--capture takes a PNG path", kUsage);
+    if (!saveLogOption.problem.empty()) return Fail(quiet, saveLogOption.problem, kUsage);
+    if (!captureOption.problem.empty()) return Fail(quiet, captureOption.problem, kUsage);
     const OptionValue scaleOption = Option(args, L"--capture-scale");
     int captureScale = 0;
     if (scaleOption.present) {
@@ -329,9 +358,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a space's place, from 1", kUsage);
         if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
     }
-    const OptionValue frameLogOption = Option(args, L"--frame-log");
-    if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
-    if (perfLogOption.present && !perfLogOption.value) return Fail(quiet, L"--perf-log takes a file", kUsage);
+    const PathOptionValue frameLogOption = PathOption(args, L"--frame-log", L"a file");
+    if (!frameLogOption.problem.empty()) return Fail(quiet, frameLogOption.problem, kUsage);
+    if (!perfLogOption.problem.empty()) return Fail(quiet, perfLogOption.problem, kUsage);
     // "--name" or "--name=value", split on spaces, from an allow-list (shell/PerfProtocol.h):
     // nothing that weakens the sandbox, site isolation or web security, opens a debugging port,
     // or changes a path or a launched process.
@@ -354,6 +383,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
                     L"--smoke-test, --capture, --window-size, --capture-scale, --frame-log, --save-log, --perf-log, --perf-control "
                     L"and --chromium-switches need KITE_SUPPORT_PATH set to a test profile",
                     kUsage);
+    }
+    if (supportOverride && !supportOverride->empty()) {
+        if (const std::wstring problem = RelativePathProblem(L"KITE_SUPPORT_PATH", *supportOverride); !problem.empty()) {
+            return Fail(quiet, problem, kBadSupportDirectory);
+        }
     }
     auto resolved = kite::ResolveSupportDirectory(supportOverride, kite::EnvironmentPath("LOCALAPPDATA"));
     if (auto* error = std::get_if<kite::SupportDirectoryError>(&resolved)) {
@@ -570,10 +604,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             return Fail(quiet, L"the window isn't per-monitor DPI aware (v2): Kite.manifest wasn't embedded", kWindowFailed);
         }
         if (GetACP() != CP_UTF8) return Fail(quiet, L"the process code page isn't UTF-8: Kite.manifest wasn't embedded", kWindowFailed);
-        // Kite.rc's icon is in the exe, and the window has it for the taskbar and Alt+Tab.
+        // Kite.rc's icon is in the module the window code is in (Kite.dll with Chromium, else
+        // Kite.exe), and the window has it for the taskbar and Alt+Tab.
         const HWND hwnd = window.Handle();
         if (!GetClassLongPtrW(hwnd, GCLP_HICON) || !GetClassLongPtrW(hwnd, GCLP_HICONSM)) {
-            return Fail(quiet, L"the window's class has no icon: Kite.rc's icon wasn't embedded", kWindowFailed);
+            return Fail(quiet, L"the window's class has no icon: Kite.rc's icon wasn't embedded in Kite's module (Kite.dll with Chromium, else Kite.exe)", kWindowFailed);
         }
         if (!SendMessageW(hwnd, WM_GETICON, ICON_BIG, 0) || !SendMessageW(hwnd, WM_GETICON, ICON_SMALL, 0)) {
             return Fail(quiet, L"the window has no icon of its own (WM_SETICON)", kWindowFailed);
@@ -584,7 +619,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // The selected tab's page on the content card. A capture leaves Chromium out: a child
     // window isn't in the composition tree it reads back (until W10 makes pages textures).
     if (!capture) {
-        switch (controller->StartChromium(supportDirectory / L"Chromium", problem)) {
+        switch (controller->StartChromium(supportDirectory / L"Chromium", sandboxInfo, problem)) {
         case kite::Chromium::StartResult::Started: break;
         // Another Kite has this profile and was told to come forward; this one leaves quietly,
         // before its window shows or it saves anything. A test run that found one tested
@@ -643,6 +678,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         }
     }
 #ifdef KITE_HAS_CEF
+    // CI's log shows what the smoke test found of the renderer's and the helpers' sandbox.
+    if (smokeTest) WriteUtf8(STD_OUTPUT_HANDLE, controller->SandboxReport());
     if (problem = controller->ShutDownChromium(); !problem.empty()) return Fail(quiet, problem, kWindowFailed);
 #endif
     if (saveLogOption.value) {
@@ -665,3 +702,38 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
     return kOk;
 }
+
+}  // namespace
+
+#ifdef KITE_HAS_CEF
+// Kite.exe is CEF's bootstrap.exe (docs/windows.md, "Chromium's sandbox"), which calls this in
+// every process: the browser, and each helper already in the sandbox, whose `sandboxInfo`
+// goes to CefExecuteProcess and CefInitialize. A bootstrap from another CEF, or none at all,
+// is a broken build, so Kite stops. In a helper (Chromium gives it --type) that's only the exit
+// code: it may be under win32k lockdown, where a dialog (user32) can't load. The browser
+// process shows it as any other failure, unless it's a test run.
+CEF_BOOTSTRAP_EXPORT int RunWinMain(HINSTANCE instance, LPWSTR, int showCommand, void* sandboxInfo, cef_version_info_t* version) {
+    std::wstring problem;
+    if (!version || version->cef_version_major != CEF_VERSION_MAJOR || version->cef_version_minor != CEF_VERSION_MINOR ||
+        version->cef_version_patch != CEF_VERSION_PATCH || version->cef_commit_number != CEF_COMMIT_NUMBER) {
+        problem = L"Kite.exe isn't the bootstrap of the CEF Kite.dll was built with: reinstall Kite";
+    } else if (!sandboxInfo) {
+        problem = L"Kite.exe gave Kite.dll no sandbox (it isn't CEF's bootstrap): reinstall Kite";
+    }
+    if (!problem.empty()) {
+        // A helper is anything Chromium would read a --type from (core/CommandLine.h, as RunKite
+        // checks it); the rest is quiet as RunKite decides it, plus --backdrop-test.
+        const std::vector<std::wstring> args = Arguments();
+        std::vector<std::string> utf8;
+        for (const std::wstring& a : args) utf8.push_back(Narrow(a));
+        const bool helper = kite::command_line::ChromiumProcessType(utf8).has_value();
+        const bool quiet = helper || HasFlag(args, L"--smoke-test") || HasFlag(args, L"--backdrop-test") || Option(args, L"--capture").present ||
+                           Option(args, L"--save-log").present || Option(args, L"--perf-log").present || HasFlag(args, L"--perf-control") ||
+                           Option(args, L"--chromium-switches").present;
+        return Fail(quiet, problem, kWindowFailed);
+    }
+    return RunKite(instance, showCommand, sandboxInfo);
+}
+#else
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) { return RunKite(instance, showCommand, nullptr); }
+#endif
