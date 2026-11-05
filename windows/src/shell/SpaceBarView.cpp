@@ -8,6 +8,7 @@
 #include <cmath>
 #include <set>
 
+#include "core/SymbolShape.h"
 #include "shell/Errors.h"
 #include "shell/Text.h"
 
@@ -35,6 +36,8 @@ constexpr float kPlusLength = 12;
 // the bar); Segoe UI Emoji's 🏠 inks 12.75pt at 12.5 (the PC's capture), so it's set larger to
 // ink the same.
 constexpr float kEmojiFontSize = space_bar_metrics::kIconFontSize * 14.5f / 12.75f;
+// The drawn symbols are designed at the bar's size, so they draw there as they are.
+static_assert(space_bar_metrics::kIconFontSize == kSymbolShapeSize);
 // The saturation effect's D2D1_SATURATION_PROP_SATURATION (MinGW's headers don't name it).
 constexpr UINT32 kSaturationProperty = 0;
 

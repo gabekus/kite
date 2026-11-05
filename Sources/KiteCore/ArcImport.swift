@@ -99,6 +99,10 @@ public enum ArcImport {
         return formatter.date(from: String(stamp))
     }
 
+    /// How many levels of folders and splits the import follows. Real sidebars nest a few;
+    /// a damaged file's endless chain stops here instead of overflowing the stack.
+    static let maxDepth = 64
+
     /// Fills in panes without a stored width; nil (equal widths) if the stored ones don't add up.
     static func splitWidthFactors(_ known: [Double?]) -> [Double]? {
         let stored = known.compactMap { $0 }
@@ -114,10 +118,24 @@ public enum ArcImport {
         let now: Date
         var spaceObjects: [[String: Any]] = []
         var items: [String: [String: Any]] = [:]
+        /// Each item's `childrenIds`, read once.
+        var childrenIDs: [String: [String]] = [:]
         /// Arc profile folder ("Default", "Profile 1"…) → favorites container item ID.
         var favoritesContainers: [String: String] = [:]
 
         var usedIDs: Set<UUID> = []
+        /// Arc item IDs already placed in the tree. Arc gives each item one parent, so an
+        /// ID seen again is a cycle or a repeat in `childrenIds`, and following it would
+        /// recurse forever (or, for a repeat, multiply).
+        var placedItems: Set<String> = []
+        /// The parent ID each item a space reaches goes under (see `assignHomes`). Nil while
+        /// favorites are walked: each grid takes what it lists.
+        var home: [String: String]?
+        /// Entries in `childrenIds` that repeat an item under the same parent or loop back to
+        /// an ancestor, skipped. A listing whose item has its home elsewhere isn't one.
+        var skippedRepeats = 0
+        /// Items nested past `maxDepth`, left out.
+        var leftOut = 0
         var tabCount = 0
         var folderCount = 0
         var splitCount = 0
@@ -142,7 +160,9 @@ public enum ArcImport {
                     spaceObjects.append(space)
                 }
                 for case let item as [String: Any] in container["items"] as? [Any] ?? [] {
-                    if let id = item["id"] as? String { items[id] = item }
+                    guard let id = item["id"] as? String else { continue }
+                    items[id] = item
+                    childrenIDs[id] = item["childrenIds"] as? [String] ?? []
                 }
                 let favorites = container["topAppsContainerIDs"] as? [Any] ?? []
                 for i in stride(from: 0, to: favorites.count - 1, by: 2) {
@@ -154,6 +174,14 @@ public enum ArcImport {
         }
 
         mutating func buildSpaces() -> Result {
+            placedItems.reserveCapacity(items.count)
+            var roots: [String] = []
+            for object in spaceObjects {
+                let containers = pairs(object["containerIDs"])
+                roots += [containers["pinned"], containers["unpinned"]].compactMap { $0 }
+            }
+            home = assignHomes(from: roots)
+
             var spaces: [Space] = []
             for object in spaceObjects {
                 if let space = buildSpace(object, index: spaces.count) { spaces.append(space) }
@@ -162,11 +190,15 @@ public enum ArcImport {
             // Favorites: a grid per profile, in Arc and in Kite.
             var favorites: [String: [BrowserTab]] = [:]
             // Default's too: Kite always has that profile, even with no space in it.
+            home = nil
             for profile in Result.withDefault(profiles) {
                 guard let containerID = favoritesContainers[profile] else { continue }
+                // Each grid is walked on its own: profiles that share a container all get its
+                // grid, and a favorite that's also in a space stays in both.
+                placedItems = []
                 // A split in the favorites grid can't stay one: favorites belong to no space.
                 spaceSplits = []
-                let tabs = children(of: containerID).flatMap { flatTabs($0) }
+                let tabs = children(of: containerID).flatMap { flatTabs($0, depth: 0) }
                 spaceSplits = []
                 var grid: [BrowserTab] = []
                 for tab in tabs where !grid.contains(where: { $0.url == tab.url }) {
@@ -181,6 +213,12 @@ public enum ArcImport {
             }
             if !skippedKinds.isEmpty {
                 notes.append("Skipped unsupported sidebar items: \(skippedKinds.sorted().joined(separator: ", ")).")
+            }
+            if leftOut > 0 {
+                notes.append("\(leftOut) item\(leftOut == 1 ? "" : "s") nested more than \(ArcImport.maxDepth) levels deep \(leftOut == 1 ? "was" : "were") left out.")
+            }
+            if skippedRepeats > 0 {
+                notes.append("Skipped \(skippedRepeats) repeated or circular sidebar entr\(skippedRepeats == 1 ? "y" : "ies").")
             }
             return Result(
                 spaces: spaces,
@@ -197,8 +235,8 @@ public enum ArcImport {
         private mutating func buildSpace(_ object: [String: Any], index: Int) -> Space? {
             let containers = pairs(object["containerIDs"])
             spaceSplits = []
-            let pinned = containers["pinned"].map { children(of: $0).flatMap { pinnedItems($0) } } ?? []
-            let unpinned = containers["unpinned"].map { children(of: $0).flatMap { flatTabs($0) } } ?? []
+            let pinned = containers["pinned"].map { children(of: $0).flatMap { pinnedItems($0, depth: 0) } } ?? []
+            let unpinned = containers["unpinned"].map { children(of: $0).flatMap { flatTabs($0, depth: 0) } } ?? []
 
             let profile = profileKey(object["profile"]) ?? Profile.defaultDirectory
 
@@ -230,27 +268,129 @@ public enum ArcImport {
 
         // MARK: Items
 
-        private func children(of id: String) -> [[String: Any]] {
-            let ids = items[id]?["childrenIds"] as? [String] ?? []
-            return ids.compactMap { items[$0] }
+        /// The children of item `id` that go here, each placed once. A listing that repeats an
+        /// item here or loops back to an ancestor is skipped and counted; one whose item has
+        /// its home under another parent is skipped quietly, since that loses nothing.
+        private mutating func children(of id: String) -> [[String: Any]] {
+            placedItems.insert(id)
+            var result: [[String: Any]] = []
+            for childID in childrenIDs[id] ?? [] {
+                guard let child = items[childID] else { continue }
+                guard goesUnder(childID, id) else {
+                    if let home = home, Self.isAtOrBelow(id, childID, in: home) { skippedRepeats += 1 }
+                    continue
+                }
+                guard placedItems.insert(childID).inserted else {
+                    skippedRepeats += 1
+                    continue
+                }
+                result.append(child)
+            }
+            return result
+        }
+
+        /// Whether `childID` goes under `parentID`: under its home in a space, under whatever
+        /// lists it in a favorites grid.
+        private func goesUnder(_ childID: String, _ parentID: String?) -> Bool {
+            home.map { $0[childID] == parentID } ?? true
+        }
+
+        /// Whether the walk goes into an item's children (besides a space's containers):
+        /// folders and split views. A tab's, an easel's or an empty item's children stay out.
+        private static func expands(_ item: [String: Any]?) -> Bool {
+            let data = item?["data"] as? [String: Any] ?? [:]
+            return data["list"] != nil || data["splitView"] != nil
+        }
+
+        /// Each item's home in the spaces whose containers are `roots`: the first parent the
+        /// walk goes into that lists it, in the order the walk meets them, so every item a
+        /// space reaches is placed. Favorites containers are never a child. Iterative, so no
+        /// file overflows the stack here.
+        private func assignHomes(from roots: [String]) -> [String: String] {
+            let rootSet = Set(roots)
+            var homes: [String: String] = [:]
+            var claimed = rootSet.union(favoritesContainers.values)
+            var order: [String] = []
+            for root in roots {
+                var pending = [root]
+                while let id = pending.popLast() {
+                    // A parent claims all its children before any is walked, as `children(of:)` does.
+                    var claimedHere: [String] = []
+                    for childID in childrenIDs[id] ?? [] {
+                        guard items[childID] != nil, claimed.insert(childID).inserted else { continue }
+                        homes[childID] = id
+                        claimedHere.append(childID)
+                    }
+                    order += claimedHere
+                    pending += claimedHere.reversed().filter { Self.expands(items[$0]) }
+                }
+            }
+            return preferringParentIDs(homes, order: order, roots: rootSet)
+        }
+
+        /// `homes` with each item listed under several parents (a stale or sync-damaged file)
+        /// moved to the one its `parentID` names, if the walk goes into that parent, it lists
+        /// the item, and it isn't the item or below it.
+        private func preferringParentIDs(_ homes: [String: String], order: [String], roots: Set<String>) -> [String: String] {
+            var homes = homes
+            for childID in order {
+                guard let parent = items[childID]?["parentID"] as? String, parent != homes[childID],
+                      roots.contains(parent) || (homes[parent] != nil && Self.expands(items[parent])),
+                      (childrenIDs[parent] ?? []).contains(childID),
+                      !Self.isAtOrBelow(parent, childID, in: homes)
+                else { continue }
+                homes[childID] = parent
+            }
+            return homes
+        }
+
+        /// Whether `id` is `ancestor` or under it in `home`. Too deep to tell (it would be cut
+        /// anyway) counts as under, so the first listing stays.
+        private static func isAtOrBelow(_ id: String, _ ancestor: String, in home: [String: String]) -> Bool {
+            var current: String? = id
+            // A walked item sits at most `maxDepth` levels under a container, which has no home.
+            for _ in 0...(ArcImport.maxDepth + 1) {
+                guard let next = current else { return false }
+                if next == ancestor { return true }
+                current = home[next]
+            }
+            return true
+        }
+
+        /// Whether an item `depth` levels down is past `maxDepth`. If so it and everything
+        /// under it are counted as left out, without recursing.
+        private mutating func leavesOut(_ item: [String: Any], depth: Int) -> Bool {
+            guard depth >= ArcImport.maxDepth else { return false }
+            var pending = [item]
+            while let next = pending.popLast() {
+                leftOut += 1
+                guard Self.expands(next), let id = next["id"] as? String else { continue }
+                for childID in childrenIDs[id] ?? [] {
+                    guard let child = items[childID], goesUnder(childID, id), placedItems.insert(childID).inserted else { continue }
+                    pending.append(child)
+                }
+            }
+            return true
         }
 
         /// A pinned tab, a folder, or a split view's tabs side by side (the split itself
         /// is recorded in `spaceSplits`).
-        private mutating func pinnedItems(_ item: [String: Any]) -> [PinnedItem] {
+        private mutating func pinnedItems(_ item: [String: Any], depth: Int) -> [PinnedItem] {
+            guard !leavesOut(item, depth: depth) else { return [] }
             let data = item["data"] as? [String: Any] ?? [:]
             if data["list"] != nil {
                 folderCount += 1
                 let id = item["id"] as? String ?? ""
-                let contents = children(of: id).flatMap { pinnedItems($0) }
+                let contents = children(of: id).flatMap { pinnedItems($0, depth: depth + 1) }
                 let name = (item["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Folder"
                 return [.folder(TabFolder(id: uniqueID(id), name: name, items: contents))]
             }
-            return flatTabs(item).map(PinnedItem.tab)
+            return flatTabs(item, depth: depth).map(PinnedItem.tab)
         }
 
         /// Tabs in an item, flattening split views and (outside the pinned section) folders.
-        private mutating func flatTabs(_ item: [String: Any]) -> [BrowserTab] {
+        private mutating func flatTabs(_ item: [String: Any], depth: Int) -> [BrowserTab] {
+            guard !leavesOut(item, depth: depth) else { return [] }
             let data = item["data"] as? [String: Any] ?? [:]
             if let tab = data["tab"] as? [String: Any] {
                 tabCount += 1
@@ -268,10 +408,10 @@ public enum ArcImport {
             }
             let id = item["id"] as? String ?? ""
             if let split = data["splitView"] as? [String: Any] {
-                return splitTabs(id: id, split)
+                return splitTabs(id: id, split, depth: depth)
             }
             if data["list"] != nil {
-                return children(of: id).flatMap { flatTabs($0) }
+                return children(of: id).flatMap { flatTabs($0, depth: depth + 1) }
             }
             if let kind = data.keys.first { skippedKinds.insert(kind) }
             return []
@@ -280,12 +420,12 @@ public enum ArcImport {
         /// A split view's tabs, in pane order, recording the split for the space.
         /// Arc's `itemWidthFactors` is a flat [itemID, factor, ...] list and may leave
         /// panes out; those share what's left.
-        private mutating func splitTabs(id: String, _ split: [String: Any]) -> [BrowserTab] {
+        private mutating func splitTabs(id: String, _ split: [String: Any], depth: Int) -> [BrowserTab] {
             let widths = doublePairs(split["itemWidthFactors"])
             var tabs: [BrowserTab] = []
             var factors: [Double?] = []
             for child in children(of: id) {
-                let childTabs = flatTabs(child)
+                let childTabs = flatTabs(child, depth: depth + 1)
                 tabs += childTabs
                 let factor = (child["id"] as? String).flatMap { widths[$0] }
                 factors += childTabs.indices.map { $0 == 0 ? factor : nil }

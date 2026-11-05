@@ -22,9 +22,16 @@ namespace kite {
 
 namespace {
 
-// The Mac's briefcase at 12.5pt semibold inks 15pt wide (30px in its 2x capture of the bar).
-constexpr float kBriefcaseInkPerPoint = 15.0f / 12.5f;
-constexpr char16_t kBriefcase = u'\uE821';  // in both fonts (the PC's cmap check)
+// The Mac's briefcase at 12.5pt semibold inks 14.65pt wide, edge to edge, as a glyph outline's
+// bounds are: in its 2x bar captures (review/w9b-mac, w9c-mac, w9d-mac, the dark ones, where no
+// grain sits on the edges), each side's edge pixel moved in by the part of it left uncovered,
+// averaged over rows through the walls (the three agree to 0.003pt). Counting pixels more than
+// half covered gives 14.5, and more than 40 levels from the background 15.
+constexpr float kBriefcaseInkPerPoint = 14.65f / 12.5f;
+// The calibration's glyph, in both fonts (the PC's cmap check). The briefcase itself draws as
+// Kite's own shape (core/SymbolShape.h); its glyph sizes every other, and draws the briefcase
+// if the shape's geometry can't be made.
+constexpr char16_t kBriefcase = u'\uE821';
 // Outlines are made at this em and scaled down, so their bounds keep their precision.
 constexpr float kOutlineEm = 100;
 // What the worker will decode: Kite's own pictures are 128px PNGs of a few tens of KB.
@@ -315,16 +322,11 @@ ComPtr<ID2D1PathGeometry> LayerPath(ID2D1Factory* d2d, const ShapeLayer& layer) 
 // pixel at the header's 15pt (1.2x the shape) on a 4x screen, inside Direct2D's default quarter.
 constexpr float kShapeTolerance = 0.04f;
 
-}  // namespace
-
-ID2D1Geometry* SpaceIconPainter::ShapeGeometry(const SymbolShape& shape) {
-    if (auto it = shapes_.find(&shape); it != shapes_.end()) return it->second.Get();
-    if (!d2d_) return nullptr;
-    // Kept even when it fails, so a failure isn't retried every frame (the next factory tries).
-    ComPtr<ID2D1Geometry>& made = shapes_[&shape];
+// The shape's layers joined and cut in order; null if Direct2D fails at any step.
+ComPtr<ID2D1Geometry> JoinedLayers(ID2D1Factory* d2d, const SymbolShape& shape) {
     ComPtr<ID2D1Geometry> joined;
     for (const ShapeLayer& layer : shape.layers) {
-        ComPtr<ID2D1PathGeometry> path = LayerPath(d2d_.Get(), layer);
+        ComPtr<ID2D1PathGeometry> path = LayerPath(d2d, layer);
         if (!path) return nullptr;
         if (!joined) {
             if (layer.cut) continue;  // nothing to cut yet
@@ -334,13 +336,26 @@ ID2D1Geometry* SpaceIconPainter::ShapeGeometry(const SymbolShape& shape) {
         ComPtr<ID2D1PathGeometry> combined;
         ComPtr<ID2D1GeometrySink> sink;
         const D2D1_COMBINE_MODE mode = layer.cut ? D2D1_COMBINE_MODE_EXCLUDE : D2D1_COMBINE_MODE_UNION;
-        if (FAILED(d2d_->CreatePathGeometry(combined.GetAddressOf())) || FAILED(combined->Open(sink.GetAddressOf())) ||
+        if (FAILED(d2d->CreatePathGeometry(combined.GetAddressOf())) || FAILED(combined->Open(sink.GetAddressOf())) ||
             FAILED(joined->CombineWithGeometry(path.Get(), mode, nullptr, kShapeTolerance, sink.Get())) || FAILED(sink->Close())) {
             return nullptr;
         }
         joined = combined;
     }
-    made = std::move(joined);
+    return joined;
+}
+
+}  // namespace
+
+ID2D1Geometry* SpaceIconPainter::ShapeGeometry(const SymbolShape& shape) {
+    if (auto it = shapes_.find(&shape); it != shapes_.end()) return it->second.Get();
+    if (!d2d_) return nullptr;
+    // Kept even when it fails, so a failure isn't retried every frame (the next factory tries).
+    ComPtr<ID2D1Geometry>& made = shapes_[&shape];
+    made = JoinedLayers(d2d_.Get(), shape);
+    // Said once per factory, as the failure is kept; the caller draws the symbol's glyph instead
+    // where it has one.
+    if (!made) OutputDebugStringW(L"Kite: a drawn space symbol's geometry couldn't be made\n");
     return made.Get();
 }
 
@@ -439,17 +454,19 @@ void SpaceIconPainter::Draw(ID2D1DeviceContext* context, ID2D1SolidColorBrush* b
     UseFactoryOf(context);
     if (look.kind == SpaceIconLook::Kind::Symbol) {
         if (look.glyph && look.glyph->drawn) {
-            // Kite's own shape, from the bar's 12.5 to `size`, its origin on `centre`.
-            const SymbolShape* shape = SymbolShapeFor(look.text);
-            if (ID2D1Geometry* geometry = shape ? ShapeGeometry(*shape) : nullptr) {
-                const float factor = size / kSymbolShapeSize;
+            // Kite's own shape, placed for `size` about `centre` (core's PlaceDrawnSymbol).
+            const auto placement = PlaceDrawnSymbol(look.text, size);
+            if (ID2D1Geometry* geometry = placement ? ShapeGeometry(*placement->shape) : nullptr) {
                 D2D1_MATRIX_3X2_F transform{};
                 context->GetTransform(&transform);
-                context->SetTransform(D2D1::Matrix3x2F::Scale(factor, factor) * D2D1::Matrix3x2F::Translation(centre.x, centre.y) *
-                                      transform);
+                context->SetTransform(D2D1::Matrix3x2F::Scale(placement->scale, placement->scale) *
+                                      D2D1::Matrix3x2F::Translation(centre.x + placement->dx, centre.y + placement->dy) * transform);
                 brush->SetColor(symbol);
                 context->FillGeometry(geometry, brush);
                 context->SetTransform(transform);
+            } else if (look.glyph->fluent || look.glyph->mdl2) {
+                // The geometry couldn't be made (logged): the symbol's glyph, where it has one.
+                DrawSymbol(context, brush, *look.glyph, centre, size, symbol);
             }
         } else if (look.glyph) {
             DrawSymbol(context, brush, *look.glyph, centre, size, symbol);
