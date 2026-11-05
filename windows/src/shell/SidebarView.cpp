@@ -165,6 +165,8 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
     if (!view->topRow_) return nullptr;
     view->favorites_ = FavoritesView::Create(window, view->dwrite_.Get(), favicons, !pictures.synchronous, error);
     if (!view->favorites_) return nullptr;
+    view->creationView_ = SpaceCreationView::Create(window, view->dwrite_.Get(), error);
+    if (!view->creationView_) return nullptr;
     view->drawIcon_ = [raw = view.get()](ID2D1DeviceContext* context, const FaviconSource& favicon, D2D1_RECT_F box) {
         return raw->DrawFavicon(context, favicon, box);
     };
@@ -182,6 +184,7 @@ SidebarView::~SidebarView() {
     if (bar_) bar_->UseCompositor(nullptr, nullptr);
     if (topRow_) topRow_->UseCompositor(nullptr, nullptr);
     if (favorites_) favorites_->UseCompositor(nullptr, nullptr);
+    if (creationView_) creationView_->UseCompositor(nullptr, nullptr);
     ReleaseRoot();
 }
 
@@ -190,6 +193,7 @@ void SidebarView::UseCompositor(Compositor* compositor) {
     bar_->UseCompositor(nullptr, nullptr);
     topRow_->UseCompositor(nullptr, nullptr);
     favorites_->UseCompositor(nullptr, nullptr);
+    creationView_->UseCompositor(nullptr, nullptr);
     ReleaseRoot();
     compositor_ = compositor;
     deviceLost_ = false;
@@ -207,7 +211,45 @@ void SidebarView::UseCompositor(Compositor* compositor) {
     bar_->UseCompositor(compositor, root_.Get());
     topRow_->UseCompositor(compositor, root_.Get());
     favorites_->UseCompositor(compositor, root_.Get());
+    creationView_->UseCompositor(compositor, root_.Get());
     tip_->UseCompositor(compositor);
+}
+
+void SidebarView::SetActions(Actions actions) {
+    actions_ = std::move(actions);
+    SpaceCreationView::Callbacks callbacks;
+    callbacks.create = [this](const std::string& name, const std::string& about) {
+        if (actions_.createSpace) actions_.createSpace(name, about);
+    };
+    callbacks.cancel = [this] {
+        if (actions_.cancelCreation) actions_.cancelCreation();
+    };
+    callbacks.chooseTheme = [this](const BarRect& row) {
+        if (actions_.chooseTheme) actions_.chooseTheme(row);
+    };
+    callbacks.profileMenu = [this](POINT screen) {
+        if (actions_.creationProfileMenu) actions_.creationProfileMenu(screen);
+    };
+    callbacks.takeKeyboard = [this](SpaceCreationView::Field field) {
+        if (actions_.creationTakesKeyboard) actions_.creationTakesKeyboard(field);
+    };
+    // Drawn again on the next pass: a GPU gone shows there (DeviceLost) and the window rebuilds.
+    callbacks.drawFailed = [this] { ScheduleDraw(); };
+    creationView_->SetCallbacks(std::move(callbacks));
+}
+
+std::optional<POINT> SidebarView::PlusCentre() const {
+    if (bar_->Creating()) return std::nullopt;
+    const BarRect& plus = bar_->Geometry().plus;
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    const float top = SpaceBarTop(Height());
+    return POINT{std::lround(((plus.left + plus.right) / 2 + Left()) * scale), std::lround(((plus.top + plus.bottom) / 2 + top) * scale)};
+}
+
+POINT SidebarView::PlusTop() const {
+    const BarRect& plus = bar_->Geometry().plus;
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    return POINT{std::lround(((plus.left + plus.right) / 2 + Left()) * scale), std::lround((plus.top + SpaceBarTop(Height())) * scale)};
 }
 
 void SidebarView::ReleaseRoot() {
@@ -355,7 +397,20 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
         if (cell.look.kind == SpaceIconLook::Kind::Picture) pictures.insert(cell.look.text);
     }
     icons_->Retain(pictures);
-    bar_->Update(std::move(cells), next.dark);
+    // Create a Space: open, and shown while its space is selected (SidebarColumnView.update).
+    const std::optional<SpaceCreation> none;
+    const std::optional<SpaceCreation>& creation = creation_ ? *creation_ : none;
+    next.creating = creation.has_value() && state.SpaceIndex(creation->spaceID).has_value();
+    next.creationShown = next.creating && ShowsCreation(state, creation);
+    if (next.creationShown) {
+        const Space& space = state.SelectedSpace();
+        next.creation.dark = next.dark;
+        next.creation.profile = state.ProfileName(state.SelectedProfileDirectory());
+        // Only a space with no pages yet changes profile here (Windows can't move a space's pages:
+        // the space menu's Set Profile waits for that too).
+        next.creation.profileEnabled = space.AllTabs().empty();
+    }
+    bar_->Update(std::move(cells), next.dark, next.creating);
     // The spaces' tips; one showing (or waiting) for a space that's gone goes (the Mac's bar
     // hides a removed cell's).
     tips_.clear();
@@ -383,7 +438,18 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
         if (index == selected) next.rows = page.rows;
         next.pages.push_back(std::move(page));
     }
+    // Create a Space takes the place of the favorites and the pages: the tray goes, and the strip
+    // is hidden (its pages stay built, so a slide from or to the draft still runs).
+    if (next.creationShown) next.favorites.clear();
     if (next == model_) return;
+    const bool creationChanged = next.creationShown != model_.creationShown;
+    if (creationChanged) {
+        dirty_ = true;  // the address field goes, or comes back
+        // The page appears with its fields empty, or goes, its visuals with it.
+        if (!next.creationShown) creationView_->Hide();
+        commitPending_ = true;
+    }
+    if (next.creationShown) creationView_->Show(next.creation);
     // Each space keeps its own place in its list, as each of the Mac's has its scroll view.
     if (next.spaceID != model_.spaceID) {
         if (!model_.spaceID.empty()) scrolls_[model_.spaceID] = scrollExact_;
@@ -418,6 +484,10 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
         it = pages_.erase(it);
     }
     model_ = std::move(next);
+    if (creationChanged) {
+        ClipPages();
+        hover_.reset();
+    }
     built_.clear();
     for (const PageModel& page : model_.pages) built_.push_back(page.index);
     PlaceFavorites();
@@ -470,6 +540,12 @@ float SidebarView::PageOffset() const {
     return static_cast<float>(slide_->to + ValueAt(slide_->segments, slide_->duration, FrameClock::Now() - slide_->start));
 }
 
+void SidebarView::ClipPages() {
+    if (!pagesClip_ || !compositor_) return;
+    const float largest = static_cast<float>(compositor_->GetRenderer().MaxTextureSize());
+    pagesClip_->SetClip(model_.creationShown ? D2D_RECT_F{0, 0, 0, 0} : D2D_RECT_F{0, 0, static_cast<float>(clipWidth_), largest});
+}
+
 void SidebarView::PlaceStrip() {
     if (!strip_) return;
     // The slide runs on the compositor from the next commit; at rest the strip just sits.
@@ -491,7 +567,9 @@ void SidebarView::PlacePages() {
 void SidebarView::PlaceFavorites() {
     // A pane's hover or selection is its opacities, which the next pass commits; anything else
     // that changed draws (NeedsDraw).
-    if (favorites_->Update(LayOutFavorites(model_.favorites, width_, emptyStateDismissed_, favorites_->EmptyStateHeight(width_)), model_.dark,
+    // Create a Space hides the tray, its empty state too (FavoritesTrayView.rebuild's `creating`).
+    if (favorites_->Update(LayOutFavorites(model_.favorites, width_, emptyStateDismissed_ || model_.creationShown, favorites_->EmptyStateHeight(width_)),
+                           model_.dark,
                            SidebarLeft(shown_, width_))) {
         commitPending_ = true;
     }
@@ -531,6 +609,10 @@ void SidebarView::Layout(float width, UINT dpi) {
         // A slide's animation is in the old scale's pixels: it lands.
         if (slide_) SetPageOffset(pageOffset_);
     }
+    // Create a Space's page fills the room down to the bar: a new height lays it out again (in
+    // points at the new scale, so after dpi_).
+    creationView_->Layout(width_, Height(), dpi_);
+    if (creationView_->NeedsDraw()) ScheduleDraw();
     // A taller window (or another scale) can leave the list past its end, and the pointer
     // over something else.
     SetScroll(scrollExact_);
@@ -606,6 +688,7 @@ void SidebarView::ScheduleDraw() {
 
 bool SidebarView::NeedsDraw() const {
     return dirty_ || bar_->NeedsDraw() || topRow_->NeedsDraw() || favorites_->NeedsDraw() || (rename_ && rename_->NeedsDraw()) ||
+           creationView_->NeedsDraw() ||
            std::any_of(pages_.begin(), pages_.end(), [](const auto& entry) { return entry.second.dirty; });
 }
 
@@ -777,7 +860,7 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
     // The pages show only over the sidebar, whichever way they slide.
     if (width != clipWidth_) {
         clipWidth_ = width;
-        pagesClip_->SetClip(D2D_RECT_F{0, 0, static_cast<float>(width), static_cast<float>(largest)});
+        ClipPages();
         PlacePages();
         PlaceStrip();
     }
@@ -847,6 +930,14 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         }
     }
 
+    // Create a Space's page over all of it but the bar and the top row.
+    Pixels creation;
+    creationView_->SetLeft(Left());
+    if (error = creationView_->Draw(readBack && model_.creationShown ? &creation : nullptr); !error.empty()) {
+        deviceLost_ = deviceLost_ || creationView_->DeviceLost();
+        return error;
+    }
+
     if (readBack) {
         // As the screen shows it: the pages over the address field where the strip has them
         // (at rest, the selected one), clipped to the sidebar, and the bar at the window's
@@ -861,6 +952,7 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         const RECT clip{0, 0, static_cast<LONG>(width), static_cast<LONG>(readBack->height)};
         const float strip = PageOffset() * scale;
         for (const auto& [index, shot] : pageShots) {
+            if (model_.creationShown) break;  // the strip is hidden under Create a Space
             const float x = (static_cast<float>(index) - static_cast<float>(model_.index)) * static_cast<float>(clipWidth_) + strip;
             if (std::abs(x) < static_cast<float>(width)) ComposeOver(*readBack, shot, POINT{std::lround(x), 0}, 1, &clip);
             if (rename_ && index == model_.index && !field.bgra.empty()) {
@@ -870,6 +962,7 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
                 ComposeOver(*readBack, field, POINT{std::lround(x) + fieldAt.x, fieldAt.y}, 1, &list);
             }
         }
+        if (!creation.bgra.empty()) ComposeOver(*readBack, creation, POINT{0, 0});
         ComposeOver(*readBack, bar, POINT{0, client.bottom - static_cast<LONG>(bar.height)});
     }
     commitPending_ = false;  // the caller's commit carries it
@@ -1222,6 +1315,8 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
 }
 
 void SidebarView::DrawHeader(ID2D1DeviceContext* context) {
+    // Create a Space hides the address field (SidebarHeaderView's showsField).
+    if (model_.creationShown) return;
     const float left = M::kPadding, right = width_ - M::kPadding;
     // The address field: the white wash (stronger on a light theme) and the host.
     const float fieldTop = M::kTopRowY + M::kTopRowHeight + M::kUrlFieldTopGap;
@@ -1284,6 +1379,8 @@ D2D1_POINT_2F SidebarView::OnPage(D2D1_POINT_2F p) const {
 
 SidebarHit SidebarView::HitAt(D2D1_POINT_2F p) const {
     if (p.x < 0 || p.x >= width_) return {};
+    // Create a Space hides the address field and the strip: nothing of them is under the pointer.
+    if (model_.creationShown && creationView_->Contains(p)) return {};
     const D2D1_POINT_2F q = OnPage(p);
     return SidebarHitTest(model_.rows, width_, Height(), scroll_, q.x, q.y, listTop_);
 }
@@ -1339,6 +1436,8 @@ std::optional<D2D1_POINT_2F> SidebarView::BarPoint(D2D1_POINT_2F p) const {
 std::optional<SidebarMenuTarget> SidebarView::MenuTargetAt(D2D1_POINT_2F p) const {
     using K = SidebarMenuTarget::Kind;
     if (p.x < 0 || p.x >= width_) return std::nullopt;
+    // Create a Space's page has no menu (the Mac's SwiftUI page doesn't).
+    if (model_.creationShown && creationView_->Contains(p)) return std::nullopt;
     // The bar is over the favorites (SidebarColumnView's subviews), and both over the page.
     if (const auto b = BarPoint(p)) {
         if (const std::optional<std::string> space = bar_->SpaceAt(b->x, b->y)) return SidebarMenuTarget{K::Space, *space, false};
@@ -1538,6 +1637,8 @@ void SidebarView::TypeInRename(std::string_view text) {
 }
 
 bool SidebarView::HandleKey(UINT message, WPARAM wParam, LPARAM lParam) {
+    // Create a Space's fields (the controller's KeyboardField::Creation), their carets' timers too.
+    if (creationView_->HandleKey(message, wParam, lParam)) return true;
     if (!rename_) return false;
     using Outcome = RenameField::Outcome;
     const auto apply = [this](Outcome outcome) {
@@ -1596,6 +1697,15 @@ void SidebarView::ClearHover() {
     // A cell being dragged goes back where it came from.
     if (barDragging_) DropSpace(D2D1_POINT_2F{-1, -1});
     renamePressed_ = false;
+    if (creationPress_) {
+        creationPress_ = false;
+        creationView_->CaptureLost();
+        if (GetCapture() == window_) ReleaseCapture();
+    }
+    if (plusPress_) {
+        plusPress_ = false;
+        if (GetCapture() == window_) ReleaseCapture();
+    }
     // A press it drops lets go of the mouse too.
     if ((press_ || barPress_ || topPress_ || favoritePress_ || middlePress_ || menuPress_) && GetCapture() == window_) {
         menuPress_.reset();
@@ -1711,6 +1821,10 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             trackingLeave_ = TrackMouseEvent(&track) != FALSE;
         }
         pointer_ = POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        if (creationPress_) {
+            creationView_->Move(PointOf(*pointer_));
+            return true;
+        }
         if (renamePressed_ && rename_) {
             const D2D1_POINT_2F q = OnPage(PointOf(*pointer_));
             if (rename_->Move(q.x, q.y) != RenameField::Outcome::None) ScheduleDraw();
@@ -1806,11 +1920,23 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             return true;
         }
+        // Create a Space's page: everything between the top row and the bar is its.
+        if (model_.creationShown && creationView_->Press(p, (wParam & MK_SHIFT) != 0)) {
+            creationPress_ = true;
+            return true;
+        }
         RefreshHover();
         // A space's cell, which takes the click that brings the window forward too (the Mac's
         // acceptsFirstMouse). The bar is over the favorites (SidebarColumnView's subviews), so it's
         // asked first.
         if (const auto b = BarPoint(p)) {
+            // The + button (a SymbolButton: it takes the click that brings the window forward too, and
+            // acts on release over it). Hidden on Create a Space.
+            if (!bar_->Creating() && bar_->Geometry().plus.Contains(b->x, b->y)) {
+                plusPress_ = true;
+                SetCapture(window_);
+                return true;
+            }
             barPress_ = SpaceBarPressAt(bar_->Geometry(), bar_->Cells(), b->x, b->y);
             if (barPress_) SetCapture(window_);
             return true;
@@ -1846,6 +1972,24 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             const POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             const std::optional<SidebarMenuTarget> target = MenuTargetAt(PointOf(at));
             if (target && target->kind == pressed.kind && target->id == pressed.id) OpenMenu(pressed, at);
+            return true;
+        }
+        if (plusPress_) {
+            plusPress_ = false;
+            if (GetCapture() == window_) ReleaseCapture();
+            const auto b = BarPoint(PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}));
+            // mouseUp: inside its bounds. The menu shows over the button, as Arc's popover does.
+            if (b && !bar_->Creating() && bar_->Geometry().plus.Contains(b->x, b->y) && actions_.newItemMenu) {
+                HideTip();
+                POINT screen = PlusTop();
+                ClientToScreen(window_, &screen);
+                actions_.newItemMenu(screen);
+            }
+            return true;
+        }
+        if (creationPress_) {
+            creationPress_ = false;
+            creationView_->Release(PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}));
             return true;
         }
         if (topPress_) {
@@ -1927,6 +2071,11 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         return true;
     }
     case WM_CAPTURECHANGED:
+        if (creationPress_) {
+            creationPress_ = false;
+            creationView_->CaptureLost();
+        }
+        plusPress_ = false;
         // The mouse went elsewhere mid-drag (another window took it): the cell goes back.
         if (barDragging_) DropSpace(D2D1_POINT_2F{-1, -1});
         renamePressed_ = false;
@@ -1965,6 +2114,8 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         if (p.x < 0 || p.x >= width_) return false;
         if (press_ || barPress_ || topPress_ || favoritePress_ || renamePressed_) return true;
         middlePress_.reset();
+        // Create a Space's page: no rows under it to close.
+        if (model_.creationShown && creationView_->Contains(p)) return true;
         // While something is renamed, as a left press: in its field (or on Done), or elsewhere in a
         // renamed tab's or folder's row (InRenamedRow), it does nothing and the field keeps editing
         // (the row's close button is hidden while it renames, and closing a Today tab would lose
@@ -2039,7 +2190,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             return true;
         }
-        if (!OverList(p)) return false;
+        if (model_.creationShown || !OverList(p)) return false;
         UINT lines = 3;
         if (!SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0)) lines = 3;
         const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;

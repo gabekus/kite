@@ -19,7 +19,6 @@ namespace {
 
 namespace P = icon_picker_metrics;
 
-constexpr wchar_t kClassName[] = L"KiteSpaceIconPicker";
 
 // NSColor.labelColor's alpha.
 constexpr float kLabelAlpha = 0.85f;
@@ -48,19 +47,6 @@ constexpr size_t kKeptRows = 10;
 constexpr float kWheelLine = 100.0f / 3;
 
 D2D1_RECT_F ToD2D(const PickerRect& r) { return D2D1_RECT_F{r.left, r.top, r.right, r.bottom}; }
-
-bool RegisterOnce(HINSTANCE instance, WNDPROC proc) {
-    static const bool registered = [&] {
-        WNDCLASSEXW wc{};
-        wc.cbSize = sizeof(wc);
-        wc.lpfnWndProc = proc;
-        wc.hInstance = instance;
-        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        wc.lpszClassName = kClassName;
-        return RegisterClassExW(&wc) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
-    }();
-    return registered;
-}
 
 }  // namespace
 
@@ -100,19 +86,18 @@ std::unique_ptr<SpaceIconPickerView> SpaceIconPickerView::Create(HWND owner, IDW
         return nullptr;
     }
     view->search_.SetFormat(dwrite, view->textFormat_.Get(), P::kSearchHeight);
-    const HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(owner, GWLP_HINSTANCE));
-    if (!RegisterOnce(instance, &SpaceIconPickerView::WindowProc)) {
-        error = L"registering the icon picker's window class failed";
-        return nullptr;
-    }
-    // Owned by the browser window (over it, minimized with it), never activated, never in the
-    // taskbar or Alt+Tab; DirectComposition draws all of it.
-    view->window_ = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kClassName, L"", WS_POPUP, 0, 0, 1, 1,
-                                    owner, nullptr, instance, view.get());
-    if (!view->window_) {
-        error = L"creating the icon picker's window failed";
-        return nullptr;
-    }
+    // Its window (made as it first opens): beside the arrow there's nothing, and the window under
+    // it takes the pointer.
+    SpaceIconPickerView* raw = view.get();
+    PopoverWindow::Callbacks window;
+    window.onPopover = [raw](POINT at) {
+        const float x = static_cast<float>(at.x) / raw->Scale(), y = static_cast<float>(at.y) / raw->Scale();
+        return !(y < P::kArrowHeight && std::abs(x - raw->placement_.arrowX) > P::kArrowWidth / 2 * (1 - y / P::kArrowHeight) + 0.5f);
+    };
+    window.message = [raw](UINT message, WPARAM wParam, LPARAM lParam) { return raw->Handle(message, wParam, lParam); };
+    // Destroyed with its owner (the browser window's close): forgotten, never used again.
+    window.destroyed = [raw] { raw->state_.reset(); };
+    view->popover_.SetCallbacks(std::move(window));
     return view;
 }
 
@@ -120,44 +105,15 @@ SpaceIconPickerView::~SpaceIconPickerView() {
     search_.StopBlink();
     callbacks_ = {};
     UseCompositor(nullptr);
-    if (window_) DestroyWindow(window_);
 }
 
-LRESULT CALLBACK SpaceIconPickerView::WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
-    if (message == WM_NCCREATE) {
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams));
-    }
-    auto* view = reinterpret_cast<SpaceIconPickerView*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    if (message == WM_NCDESTROY && view) {
-        // Destroyed with its owner (the browser window's close): forgotten, never used again.
-        view->window_ = nullptr;
-        view->state_.reset();
-    }
-    if (view && view->window_ == hwnd) return view->Handle(message, wParam, lParam);
-    return DefWindowProcW(hwnd, message, wParam, lParam);
-}
-
-LRESULT SpaceIconPickerView::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
+std::optional<LRESULT> SpaceIconPickerView::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
+    const HWND window = popover_.Handle();
     switch (message) {
-    case WM_MOUSEACTIVATE: return MA_NOACTIVATE;  // the browser window keeps the keyboard
-    case WM_NCHITTEST: {
-        // Beside the arrow there's nothing: the window under it takes the pointer.
-        POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-        ScreenToClient(window_, &at);
-        const float x = static_cast<float>(at.x) / Scale(), y = static_cast<float>(at.y) / Scale();
-        if (y < P::kArrowHeight && std::abs(x - placement_.arrowX) > P::kArrowWidth / 2 * (1 - y / P::kArrowHeight) + 0.5f) {
-            return HTTRANSPARENT;
-        }
-        return HTCLIENT;
-    }
-    // Windows shows an owned window again with its restored owner: only Open shows it.
-    case WM_SHOWWINDOW:
-        if (wParam && lParam == SW_PARENTOPENING) return 0;
-        break;
     case WM_SETCURSOR: {
         POINT at{};
         GetCursorPos(&at);
-        ScreenToClient(window_, &at);
+        ScreenToClient(window, &at);
         const D2D1_POINT_2F p = ToContent(at);
         const bool field = state_ && layout_.search && layout_.search->Contains(p.x, p.y);
         SetCursor(LoadCursorW(nullptr, field ? IDC_IBEAM : IDC_ARROW));
@@ -165,7 +121,7 @@ LRESULT SpaceIconPickerView::Handle(UINT message, WPARAM wParam, LPARAM lParam) 
     }
     case WM_LBUTTONDOWN:
     case WM_LBUTTONDBLCLK:
-        SetCapture(window_);
+        SetCapture(window);
         Press(ToContent(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}));
         return 0;
     case WM_MOUSEMOVE:
@@ -174,7 +130,7 @@ LRESULT SpaceIconPickerView::Handle(UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_LBUTTONUP: {
         // Acts first: letting the mouse go reports WM_CAPTURECHANGED, which drops a press.
         Release(ToContent(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}));
-        if (window_ && GetCapture() == window_) ReleaseCapture();
+        if (window && GetCapture() == window) ReleaseCapture();
         return 0;
     }
     case WM_CAPTURECHANGED:
@@ -203,14 +159,14 @@ LRESULT SpaceIconPickerView::Handle(UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     default: break;
     }
-    return DefWindowProcW(window_, message, wParam, lParam);
+    return std::nullopt;
 }
 
 void SpaceIconPickerView::UseCompositor(Compositor* compositor) {
     if (compositor == compositor_ && compositor) return;
     Close();
     caret_.Release();
-    target_.Reset();
+    popover_.ReleaseTarget();
     root_.Reset();
     frame_.Reset();
     gridClip_.Reset();
@@ -238,15 +194,14 @@ void SpaceIconPickerView::RedrawOrReport() {
 }
 
 bool SpaceIconPickerView::MakeTree(HRESULT& hr) {
-    if (target_) return true;
+    if (popover_.HasTarget()) return true;
     IDCompositionDevice* device = compositor_->Device();
-    if (FAILED(hr = device->CreateTargetForHwnd(window_, TRUE, target_.GetAddressOf())) ||
-        FAILED(hr = device->CreateVisual(root_.GetAddressOf())) || FAILED(hr = device->CreateVisual(frame_.GetAddressOf())) ||
+    if (FAILED(hr = device->CreateVisual(root_.GetAddressOf())) || FAILED(hr = device->CreateVisual(frame_.GetAddressOf())) ||
         FAILED(hr = device->CreateVisual(gridClip_.GetAddressOf())) || FAILED(hr = device->CreateVisual(grid_.GetAddressOf())) ||
         FAILED(hr = root_->AddVisual(frame_.Get(), FALSE, nullptr)) || FAILED(hr = gridClip_->AddVisual(grid_.Get(), FALSE, nullptr)) ||
-        FAILED(hr = target_->SetRoot(root_.Get())) ||
+        FAILED(hr = popover_.MakeTarget(device, root_.Get())) ||
         FAILED(hr = compositor_->D2D()->CreateSolidColorBrush(D2D1_COLOR_F{1, 1, 1, 1}, brush_.GetAddressOf()))) {
-        target_.Reset();
+        popover_.ReleaseTarget();
         root_.Reset();
         frame_.Reset();
         gridClip_.Reset();
@@ -260,8 +215,9 @@ bool SpaceIconPickerView::MakeTree(HRESULT& hr) {
 
 std::wstring SpaceIconPickerView::Open(IconPickerState state, const std::string& icon, const PickerRect& anchor, UINT dpi, bool dark) {
     Close();
-    if (!window_) return L"the icon picker's window is gone";
     if (!compositor_) return L"no compositor";
+    if (std::wstring problem = popover_.Make(); !problem.empty()) return problem;
+    const HWND window = popover_.Handle();
     state_ = std::move(state);
     icon_ = icon;
     anchor_ = anchor;
@@ -282,7 +238,7 @@ std::wstring SpaceIconPickerView::Open(IconPickerState state, const std::string&
     PlaceWindow();
     // Shown on a monitor of another scale than the owner's: no WM_DPICHANGED comes when a hidden
     // window that was last there already has that scale, so it's asked.
-    if (const UINT actual = GetDpiForWindow(window_); state_ && actual && actual != dpi_) {
+    if (const UINT actual = GetDpiForWindow(window); state_ && actual && actual != dpi_) {
         dpi_ = actual;
         Relayout();
         frameDirty_ = true;
@@ -306,10 +262,7 @@ void SpaceIconPickerView::Close() {
     pressed_.reset();
     selecting_ = false;
     search_.StopBlink();
-    if (window_) {
-        if (GetCapture() == window_) ReleaseCapture();
-        ShowWindow(window_, SW_HIDE);
-    }
+    popover_.Hide();
     // Its pixels go with it (a picker opens fresh); the next commit, whoever's, carries it.
     caret_.Release();
     if (frame_) frame_->SetContent(nullptr);
@@ -361,12 +314,9 @@ IconPickerPlacement SpaceIconPickerView::Placement(bool inOwner) const {
                             static_cast<float>(origin.x + client.right) / scale, static_cast<float>(origin.y + client.bottom) / scale};
     } else {
         // The screen the anchor is on (AppKit keeps a popover on its positioning view's screen).
-        MONITORINFO monitor{};
-        monitor.cbSize = sizeof(monitor);
         const POINT at{std::lround(static_cast<float>(origin.x) + (anchor_.left + anchor_.right) / 2 * ownerScale),
                        std::lround(static_cast<float>(origin.y) + anchor_.bottom * ownerScale)};
-        GetMonitorInfoW(MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST), &monitor);
-        const RECT& work = monitor.rcWork;
+        const RECT work = PopoverWindow::WorkArea(at);
         bounds = PickerRect{static_cast<float>(work.left) / scale, static_cast<float>(work.top) / scale, static_cast<float>(work.right) / scale,
                             static_cast<float>(work.bottom) / scale};
     }
@@ -374,10 +324,9 @@ IconPickerPlacement SpaceIconPickerView::Placement(bool inOwner) const {
 }
 
 void SpaceIconPickerView::PlaceWindow() {
-    if (!state_ || !window_) return;
+    if (!state_ || !popover_.Handle()) return;
     const float scale = Scale();
-    SetWindowPos(window_, nullptr, std::lround(placement_.left * scale), std::lround(placement_.top * scale), static_cast<int>(frameWidth_),
-                 static_cast<int>(frameHeight_), SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER | SWP_NOZORDER);
+    popover_.Place(POINT{std::lround(placement_.left * scale), std::lround(placement_.top * scale)}, frameWidth_, frameHeight_);
 }
 
 D2D1_POINT_2F SpaceIconPickerView::ToContent(POINT client) const {
@@ -658,7 +607,7 @@ std::wstring SpaceIconPickerView::Redraw() {
     UpdateCaret();
     if (FAILED(hr = compositor_->Commit())) return Fail(L"showing the icon picker", hr);
     // The tab's frame is another size: the window follows, after the commit that draws it.
-    if (resized && IsWindowVisible(window_)) PlaceWindow();
+    if (resized && IsWindowVisible(popover_.Handle())) PlaceWindow();
     return {};
 }
 
@@ -960,7 +909,7 @@ bool SpaceIconPickerView::HandleKey(UINT message, WPARAM wParam, LPARAM) {
         const PickerRect& field = *layout_.search;
         POINT caret{std::lround((field.left + kFieldTextInset - search_.ScrollX() + search_.CaretX()) * scale),
                     std::lround((P::kArrowHeight + field.top + (field.Height() - search_.LineHeight()) / 2) * scale)};
-        ClientToScreen(window_, &caret);
+        ClientToScreen(popover_.Handle(), &caret);
         ScreenToClient(owner_, &caret);
         search_.PlaceIme(caret, std::lround(search_.LineHeight() * scale));
         return false;
@@ -994,12 +943,13 @@ bool SpaceIconPickerView::HandleTimer(WPARAM timer) {
 }
 
 bool SpaceIconPickerView::HandleWheel(WPARAM wParam, LPARAM lParam) {
-    if (!state_ || !window_) return false;
+    const HWND window = popover_.Handle();
+    if (!state_ || !window) return false;
     POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
     RECT bounds{};
-    GetWindowRect(window_, &bounds);
+    GetWindowRect(window, &bounds);
     if (!PtInRect(&bounds, at)) return false;
-    ScreenToClient(window_, &at);
+    ScreenToClient(window, &at);
     const D2D1_POINT_2F p = ToContent(at);
     if (state_->tab == IconPickerTab::Emoji && layout_.grid.Contains(p.x, p.y)) {
         UINT lines = 3;

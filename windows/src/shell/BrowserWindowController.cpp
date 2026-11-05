@@ -225,10 +225,12 @@ std::wstring BrowserWindowController::Init() {
     window_.onMove = [this] {
         sidebar_->HideTip();
         CloseIconPicker(false);
+        CloseThemeSwatches();
     };
     window_.onMinimize = [this] {
         sidebar_->HideTip();
         CloseIconPicker(false);
+        CloseThemeSwatches();
     };
 
     // Change Space Icon…'s popover, a window of its own over the browser window's.
@@ -297,7 +299,36 @@ std::wstring BrowserWindowController::Init() {
         }
         sidebar_->SetFavoritesEmptyStateDismissed(true);
     };
+    // The bar's + menu and Create a Space (+NewSpace.cpp).
+    actions.newItemMenu = [this](POINT screen) { ShowNewItemMenu(screen); };
+    actions.createSpace = [this](const std::string& name, const std::string& about) { FinishNewSpace(name, about); };
+    actions.cancelCreation = [this] { CancelNewSpace(); };
+    actions.chooseTheme = [this](const BarRect& row) { ShowThemeSwatches(row); };
+    actions.creationProfileMenu = [this](POINT screen) { ShowCreationProfileMenu(screen); };
+    actions.creationTakesKeyboard = [this](SpaceCreationView::Field field) { TakeKeyboardForCreation(field); };
     sidebar_->SetActions(std::move(actions));
+    sidebar_->SetCreation(&creation_);
+    // Choose a Theme's swatches: a window of their own, over the page.
+    ThemeSwatchesView::Callbacks swatches;
+    swatches.pick = [this](size_t preset) { PickSpaceTheme(preset); };
+    // However they close, the keyboard goes (unless a reopen replaces them: it stays theirs).
+    swatches.closed = [this] {
+        if (!openingSwatches_) ReleaseSwatchesKeyboard(std::exchange(swatchesHandBack_, false));
+    };
+    swatches_ = ThemeSwatchesView::Create(window_.Handle(), sidebar_->DWrite(), std::move(swatches), options_.quiet, error);
+    if (!swatches_) return L"Kite couldn't make Choose a Theme's swatches: " + error;
+    swatches_->UseCompositor(compositor_.get());
+    // Its own redraw found the GPU gone: rebuild and draw everything.
+    swatches_->onDeviceLost = [this] { Draw(); };
+    showNewItemMenu_ = [this](const std::vector<NewItemMenuItem>& items, POINT screen) -> std::optional<NewItemMenuItem::Command> {
+        const std::optional<size_t> chosen =
+            ShowContextMenu(window_.Handle(), NewItemEntries(items), screen, dark_.value_or(true), ContextMenuPlacement::AboveCentred);
+        if (!chosen || *chosen >= items.size()) return std::nullopt;
+        return items[*chosen].command;
+    };
+    showProfileMenu_ = [this](const std::vector<ContextMenuEntry>& entries, POINT screen) {
+        return ShowContextMenu(window_.Handle(), entries, screen, dark_.value_or(true));
+    };
     if (options_.quiet) askToDelete_ = [](const SpaceDeletion&) { return false; };
     else askToDelete_ = [this](const SpaceDeletion& deletion) { return AskToDeleteSpace(window_.Handle(), deletion); };
     if (options_.quiet) askToDeleteFolder_ = [](const FolderDeletion&) { return false; };
@@ -1072,10 +1103,15 @@ void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save)
         }
     }
     if (save) SessionChanged(*save);
+    // Create a Space follows the session (its space deleted elsewhere, it's over) before the
+    // sidebar shows it.
+    kite::CreationFollowsState(state_, creation_);
     SyncSpace();
     // The selected tab's page's status first, so the top row's update shows both together.
     ShowPageStatus();
     sidebar_->Update(state_, pagesAnchor_);
+    // Its page appearing takes the keyboard for the name field; going, gives it back.
+    FollowCreation();
     // A slide begins at once: the new page and the caption buttons' appearance drawn and the
     // strip's animation committed now, not on the next pass (the crossfade's first frame comes
     // with the clock).
@@ -1218,14 +1254,17 @@ void BrowserWindowController::ShowFind() {
 
 BrowserWindowController::KeyboardField BrowserWindowController::KeyboardOwner() const {
     if (iconPickerKeyboard_) return KeyboardField::IconPicker;
+    if (swatchesKeyboard_) return KeyboardField::ThemeSwatches;
     if (commandBar_ && commandBar_->IsOpen()) return KeyboardField::CommandBar;
     if (sidebar_->Renaming()) return KeyboardField::Rename;
     if (findBar_ && findBar_->HasKeyboard()) return KeyboardField::Find;
+    if (sidebar_->Creation().HasKeyboard()) return KeyboardField::Creation;
     return KeyboardField::None;
 }
 
-void BrowserWindowController::GiveKeyboard(KeyboardField to, bool focusFindField) {
-    if (to == KeyboardField::Find && findBar_) {
+void BrowserWindowController::GiveKeyboard(KeyboardField to, bool focusField) {
+    const bool field = (to == KeyboardField::Find && findBar_) || to == KeyboardField::Creation;
+    if (field) {
         // First, so nothing on the way hands the keyboard to the page: not the command bar
         // closing (BlockPages' Focus), not a navigation landing meanwhile.
 #ifdef KITE_HAS_CEF
@@ -1240,12 +1279,21 @@ void BrowserWindowController::GiveKeyboard(KeyboardField to, bool focusFindField
         CloseIconPicker();
         givingKeyboard_ = false;
     }
+    // Choose a Theme's too.
+    if (to != KeyboardField::None && to != KeyboardField::ThemeSwatches) {
+        givingKeyboard_ = true;
+        CloseThemeSwatches();
+        givingKeyboard_ = false;
+    }
     // The others, so their system carets go before `to` makes its own.
     if (to != KeyboardField::Find && findBar_) findBar_->LoseKeyboard();
     if (to != KeyboardField::Rename) sidebar_->EndRenaming(true);
-    if (to == KeyboardField::Find && findBar_ && focusFindField) findBar_->Focus();
-    // A press in the field takes it itself, after this (focusFindField false): Kite keeps it.
-    if (to == KeyboardField::Find && !focusFindField) return;
+    if (to != KeyboardField::Creation) sidebar_->CreationLosesKeyboard();
+    // A press in the field takes it itself, after this (focusField false): Kite keeps it, and the
+    // caller updates the page's hold once the field has it.
+    // Create a Space's field is focused by TakeKeyboardForCreation, after this.
+    if ((field && !focusField) || to == KeyboardField::Creation) return;
+    if (to == KeyboardField::Find && findBar_) findBar_->Focus();
     UpdateFindHole();
 }
 
@@ -1293,9 +1341,9 @@ void BrowserWindowController::UpdateFindHole() {
     if (!chromium_) return;
     const bool open = findBar_ && findBar_->IsOpen();
     chromium_->SetOverlayHole(open ? findBar_->Frame() : RECT{}, open ? static_cast<int>(std::lround(findBar_->CornerRadiusPx())) : 0);
-    // The find field's keyboard, or the icon picker's (from its request until it closes): a page
-    // doesn't take it back meanwhile.
-    chromium_->KeepKeyboard((open && findBar_->HasKeyboard()) || iconPickerKeyboard_);
+    // The find field's keyboard, the icon picker's (from its request until it closes) or Create a
+    // Space's: a page doesn't take it back meanwhile.
+    chromium_->KeepKeyboard((open && findBar_->HasKeyboard()) || iconPickerKeyboard_ || swatchesKeyboard_ || sidebar_->Creation().HasKeyboard());
 #endif
 }
 
@@ -1347,10 +1395,16 @@ void BrowserWindowController::ToggleSidebar() { SetSidebarShown(!sidebarShown_);
 
 void BrowserWindowController::SetSidebarShown(bool shown) {
     if (shown == sidebarShown_) return;
-    // Hiding ends a rename, keeping what was typed, as the field editor leaving a hidden view does.
-    if (!shown) sidebar_->EndRenaming(true);
-    // And closes the icon picker, whose header goes with it.
-    if (!shown) CloseIconPicker();
+    // Hiding ends a rename, keeping what was typed, as the field editor leaving a hidden view does,
+    // closes the icon picker, whose header goes with it, and Choose a Theme's swatches, and Create a
+    // Space's field lets the keyboard go.
+    if (!shown) {
+        sidebar_->EndRenaming(true);
+        CloseIconPicker();
+        CloseThemeSwatches();
+        sidebar_->CreationLosesKeyboard();
+        UpdateFindHole();
+    }
     sidebarShown_ = shown;
     KillTimer(window_.Handle(), kToggleTimer);
     // Like Arc: the final frames set once, the compositor drawing the frames between (no slide
@@ -1425,6 +1479,8 @@ void BrowserWindowController::MakeCommands() {
              if (!tab || !tab->url || !CopyText(window_.Handle(), Widen(*tab->url))) MessageBeep(MB_OK);
          }},
         {"toggleSidebar", [this] { ToggleSidebar(); }},
+        // Spaces › New Space… (the Mac's newSpace: beginNewSpace), which the + menu runs too.
+        {"newSpace", [this] { BeginNewSpace(); }},
         {"collapsePinnedSection",
          [this] {
              TogglePinnedSection(state_, state_.SelectedSpace().id);
@@ -1611,6 +1667,7 @@ void BrowserWindowController::DropCompositor() {
     caption_->UseCompositor(nullptr);
     if (commandBar_) commandBar_->UseCompositor(nullptr);
     if (findBar_) findBar_->UseCompositor(nullptr);
+    if (swatches_) swatches_->UseCompositor(nullptr);
     compositor_.reset();
 }
 
@@ -1626,6 +1683,7 @@ std::wstring BrowserWindowController::Rebuild() {
         caption_->UseCompositor(compositor_.get());
         if (commandBar_) commandBar_->UseCompositor(compositor_.get());
         if (findBar_) findBar_->UseCompositor(compositor_.get());
+        if (swatches_) swatches_->UseCompositor(compositor_.get());
     }
     return problem;
 }
@@ -1646,7 +1704,8 @@ std::wstring BrowserWindowController::DrawAt(double time, Pixels* readBack) {
     for (int attempt = 0; attempt < 2; ++attempt) {
         const auto lost = [this] {
             return !compositor_ || compositor_->DeviceLost() || sidebar_->DeviceLost() || caption_->DeviceLost() ||
-                   (findBar_ && findBar_->DeviceLost()) || (iconPicker_ && iconPicker_->DeviceLost());
+                   (findBar_ && findBar_->DeviceLost()) || (iconPicker_ && iconPicker_->DeviceLost()) ||
+                   (swatches_ && swatches_->DeviceLost());
         };
         if (lost()) {
             if (problem = Rebuild(); !problem.empty()) break;
@@ -1665,10 +1724,11 @@ std::wstring BrowserWindowController::DrawAt(double time, Pixels* readBack) {
 }
 
 void BrowserWindowController::OnSize() {
-    // The space tip is a window of its own: it goes rather than stay where the cell was. The
-    // icon picker closes.
+    // The space tip, the icon picker and Choose a Theme's swatches are windows of their own: they go
+    // rather than stay where the cell, the header or the row was.
     sidebar_->HideTip();
     CloseIconPicker();
+    CloseThemeSwatches();
 #ifdef KITE_HAS_CEF
     // The page first, so CEF's thread moves it while Kite draws.
     if (chromium_) chromium_->SetBounds(ContentBounds());
@@ -1713,7 +1773,8 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
                                     Chromium::kStallTimer, Chromium::kCloseDeadlineTimer,
 #endif
                                     CommandBarView::kCaretTimer, SidebarView::kTipTimer, SidebarView::kDropTimer,
-                                    RenameField::kCaretTimer, FindBarView::kCaretTimer, SpaceIconPickerView::kCaretTimer};
+                                    RenameField::kCaretTimer, FindBarView::kCaretTimer, SpaceIconPickerView::kCaretTimer,
+                                    SpaceCreationView::kNameCaretTimer, SpaceCreationView::kAboutCaretTimer};
         for (size_t i = 0; i < std::size(ids); ++i) {
             for (size_t j = i + 1; j < std::size(ids); ++j) {
                 if (ids[i] == ids[j]) return false;
@@ -1795,11 +1856,45 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         OpenCommandBar(CommandBarMode::NewTab);
     }
 #endif
-    // The icon picker is AppKit's transient popover: a press anywhere else in the window, or
-    // another app coming forward, closes it (the press goes on to what it's over).
-    // A press closes it without handing the keyboard to the page: what was pressed decides where it
-    // goes (the find field takes it, the page's own window takes it as it's clicked). A request
-    // still waiting on its 0.15 s goes the same ways.
+    // The popovers (the icon picker, Choose a Theme's swatches) are AppKit's transient popovers, one
+    // rule for both: a press anywhere else in the window or in the page, or another app coming
+    // forward, closes them (the press goes on to what it's over), handing the keyboard to nothing:
+    // what was pressed decides where it goes (the find field takes it, the page's own window takes
+    // it as it's clicked). Escape closes the swatches, which give it back to the page's field that
+    // had it (the picker's Search takes its own Escape). A picker request still waiting on its
+    // 0.15 s goes the same ways.
+    if (swatches_ && swatches_->IsOpen()) {
+        const bool pagePress = message == WM_PARENTNOTIFY &&
+                               (LOWORD(wParam) == WM_LBUTTONDOWN || LOWORD(wParam) == WM_RBUTTONDOWN || LOWORD(wParam) == WM_MBUTTONDOWN);
+        switch (message) {
+        case WM_KEYDOWN:
+            if (wParam == VK_ESCAPE) {
+                CloseThemeSwatches(true);
+                result = 0;
+                return true;
+            }
+            break;
+        case WM_LBUTTONDOWN:
+            // Not on Choose a Theme's row: its release opens the popover again (the outside click,
+            // then the row's action), the keyboard staying the popover's.
+            if (!sidebar_->OverChooseTheme(POINT{static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))})) CloseThemeSwatches();
+            break;
+        case WM_RBUTTONDOWN:
+        case WM_MBUTTONDOWN:
+        case WM_NCLBUTTONDOWN:
+        case WM_NCRBUTTONDOWN: CloseThemeSwatches(); break;
+        case WM_ACTIVATE:
+            if (LOWORD(wParam) == WA_INACTIVE) CloseThemeSwatches();
+            break;
+        // The page (its own window) taking the focus: a press in it.
+        case WM_KILLFOCUS:
+            if (wParam && IsChild(window_.Handle(), reinterpret_cast<HWND>(wParam))) CloseThemeSwatches();
+            break;
+        default:
+            if (pagePress) CloseThemeSwatches();
+            break;
+        }
+    }
     if (iconPicker_ && (iconPicker_->IsOpen() || pendingIconPicker_)) {
         switch (message) {
         case WM_LBUTTONDOWN:

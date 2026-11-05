@@ -21,7 +21,9 @@
 // profile's favorites, each pane its own visuals (shell/FavoritesView), which stay put while the
 // pages slide; the page starts under them (core's SidebarListTop). Everything sits in one root
 // visual, which hiding and showing the sidebar slides on the compositor (SetShown, the Mac's
-// updateSidebar).
+// updateSidebar). + › New Space's Create a Space page (shell/SpaceCreationView) takes the place of
+// the address field, the favorites and the pages while its space is selected, and the bar keeps
+// only the spaces (SidebarColumnView.update, SpaceBarView.apply).
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -46,6 +48,7 @@
 #include "core/Sidebar.h"
 #include "core/SidebarContextMenu.h"
 #include "core/SidebarTopRow.h"
+#include "core/SpaceCreation.h"
 #include "core/SpaceSwipe.h"
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
@@ -53,6 +56,7 @@
 #include "shell/FavoritesView.h"
 #include "shell/SidebarTopRowView.h"
 #include "shell/SpaceBarView.h"
+#include "shell/SpaceCreationView.h"
 #include "shell/SpaceIconPainter.h"
 #include "shell/RenameField.h"
 #include "shell/SpaceTipView.h"
@@ -104,8 +108,19 @@ public:
         std::function<void(TopRowButton button)> topRow;
         // The favorites' empty state's close button (its Dismiss): a one-shot flag.
         std::function<void()> dismissFavoritesEmptyState;
+        // The bar's + button, let go over it: its menu (NewItemMenu), with its bottom's middle at
+        // `screen` (px, the button's top).
+        std::function<void(POINT screen)> newItemMenu;
+        // Create a Space's (SpaceCreationView::Callbacks): Create Space or Return with a name, Cancel
+        // or Escape, Choose a Theme (its row in window points), the profile's pill (its menu at
+        // `screen` px), and a press in a field that doesn't have the keyboard.
+        std::function<void(const std::string& name, const std::string& about)> createSpace;
+        std::function<void()> cancelCreation;
+        std::function<void(const BarRect& row)> chooseTheme;
+        std::function<void(POINT screen)> creationProfileMenu;
+        std::function<void(SpaceCreationView::Field field)> creationTakesKeyboard;
     };
-    void SetActions(Actions actions) { actions_ = std::move(actions); }
+    void SetActions(Actions actions);
 
     // The window's mouse messages (client coordinates; the wheel's in screen ones): hover, presses
     // and releases over the sidebar, and the wheel over its list. True when it took `message`.
@@ -173,6 +188,43 @@ public:
     // The window's compositor, whose chrome it draws in; null drops every GPU object (before
     // the compositor is rebuilt after a lost device).
     void UseCompositor(Compositor* compositor);
+
+    // Create a Space (the Mac's BrowserStore.spaceCreation): the controller's, which it reads at each
+    // Update (its page while its space is selected, the bar's end buttons gone while it's open).
+    // Set once; it outlives the sidebar.
+    void SetCreation(const std::optional<SpaceCreation>* creation) { creation_ = creation; }
+    bool CreationShown() const { return model_.creationShown; }
+    // Whether the page appeared or went since the last call (the controller's keyboard follows it).
+    std::optional<bool> TakeCreationShownChange() {
+        if (creationShownTaken_ == model_.creationShown) return std::nullopt;
+        creationShownTaken_ = model_.creationShown;
+        return model_.creationShown;
+    }
+    // Whether a point (client px) is on Create a Space's Choose a Theme row: a press there is the
+    // row's, which opens its popover again, not a press outside the popover.
+    bool OverChooseTheme(POINT client) const {
+        const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+        return model_.creationShown &&
+               creationView_->OverChooseTheme(D2D1_POINT_2F{static_cast<float>(client.x) / scale - Left(), static_cast<float>(client.y) / scale});
+    }
+    SpaceCreationView& Creation() { return *creationView_; }
+    const SpaceCreationView& Creation() const { return *creationView_; }
+    // The page's keyboard (the controller's KeyboardField::Creation): a field takes it, or the
+    // page lets it go; either draws on the next pass.
+    void FocusCreation(SpaceCreationView::Field field, bool selectAll = false) {
+        creationView_->Focus(field, selectAll);
+        ScheduleDraw();
+    }
+    void CreationLosesKeyboard() {
+        if (!creationView_->HasKeyboard()) return;
+        creationView_->LoseKeyboard();
+        ScheduleDraw();
+    }
+    // Where the bar's + button's middle is, client px (for the tests' presses and the menu's place);
+    // none while Create a Space hides it.
+    std::optional<POINT> PlusCentre() const;
+    // Its top's middle in client px: where the + menu's bottom goes.
+    POINT PlusTop() const;
 
     // Hiding and showing the sidebar (the Mac's updateSidebar): it slides off the window's left
     // edge, or back, on ArcMetrics.Motion's curve on the compositor from the next commit, from
@@ -269,7 +321,8 @@ public:
     // The caller commits the compositor. Empty on success.
     std::wstring Draw(Pixels* readBack = nullptr);
     bool DeviceLost() const {
-        return deviceLost_ || (bar_ && bar_->DeviceLost()) || (topRow_ && topRow_->DeviceLost()) || (favorites_ && favorites_->DeviceLost());
+        return deviceLost_ || (bar_ && bar_->DeviceLost()) || (topRow_ && topRow_->DeviceLost()) || (favorites_ && favorites_->DeviceLost()) ||
+               (creationView_ && creationView_->DeviceLost());
     }
 
     // The window's messages: its posted redraw, and the space tip's timer. True when it handled
@@ -312,6 +365,11 @@ private:
         std::vector<PageModel> pages;  // in the session's order, the selected one among them
         std::vector<FavoriteTile> favorites;  // the selected space's grid, not yet placed
         bool hasTab = false;  // the top row's reload
+        // Create a Space: open (the bar keeps only the spaces), shown (its space selected: the page
+        // in place of the address field, the favorites and the pages), and what the page shows.
+        bool creating = false;
+        bool creationShown = false;
+        SpaceCreationView::Model creation;
         bool operator==(const Model&) const = default;
     };
     using FaviconKey = std::pair<std::string, UINT>;
@@ -432,6 +490,14 @@ private:
     std::unique_ptr<SpaceBarView> bar_;
     std::unique_ptr<SidebarTopRowView> topRow_;
     std::unique_ptr<FavoritesView> favorites_;
+    // Create a Space: the page, and the controller's creation (SetCreation).
+    std::unique_ptr<SpaceCreationView> creationView_;
+    const std::optional<SpaceCreation>* creation_ = nullptr;
+    bool creationShownTaken_ = false;  // TakeCreationShownChange's last answer
+    // The pages' clip: the sidebar's width, or nothing while Create a Space hides the strip.
+    void ClipPages();
+    bool creationPress_ = false;  // a left press went to the page
+    bool plusPress_ = false;      // a left press on the + button
     FavoritesView::DrawIcon drawIcon_;  // the favorites' icons, drawn as the rows'
     bool emptyStateDismissed_ = false;
     float listTop_ = sidebar_metrics::kHeaderAreaHeight;  // where the page starts, under the favorites

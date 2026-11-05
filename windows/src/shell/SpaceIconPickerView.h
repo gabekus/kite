@@ -37,6 +37,7 @@
 #include "core/SpaceIconPicker.h"
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
+#include "shell/PopoverWindow.h"
 #include "shell/SpaceIconPainter.h"
 #include "shell/TextLine.h"
 
@@ -84,7 +85,7 @@ public:
 
     // For the tests: the popover's window, where content point (x, y) is in its client px,
     // the grid's cell `index` there (scrolled into view first), and its surfaces' draws so far.
-    HWND Window() const { return window_; }
+    HWND Window() const { return popover_.Handle(); }
     POINT ContentToClient(float x, float y) const;
     std::optional<POINT> CellCentre(size_t index);
     size_t Draws() const { return draws_; }
@@ -107,10 +108,10 @@ public:
 
 private:
     SpaceIconPickerView(HWND owner, IDWriteFactory* dwrite, SpaceIconPainter* painter, Callbacks callbacks, bool keepInOwner)
-        : owner_(owner), dwrite_(dwrite), painter_(painter), callbacks_(std::move(callbacks)), keepInOwner_(keepInOwner),
+        : owner_(owner), popover_(owner), dwrite_(dwrite), painter_(painter), callbacks_(std::move(callbacks)), keepInOwner_(keepInOwner),
           search_(owner, kCaretTimer) {}
-    static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
-    LRESULT Handle(UINT message, WPARAM wParam, LPARAM lParam);
+    // Its window's messages (shell/PopoverWindow takes the rest): none for the default.
+    std::optional<LRESULT> Handle(UINT message, WPARAM wParam, LPARAM lParam);
 
     float Scale() const { return static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI; }
     // The layout, the cells and where the frame goes, for the state now; then the window there.
@@ -158,7 +159,7 @@ private:
     void Pick(const std::string& icon);
 
     HWND owner_;
-    HWND window_ = nullptr;
+    PopoverWindow popover_;  // its window (shell/PopoverWindow), made as it first opens
     Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_;
     SpaceIconPainter* painter_;
     Callbacks callbacks_;
@@ -168,7 +169,6 @@ private:
     Microsoft::WRL::ComPtr<IDWriteTextLayout> placeholder_;
 
     Compositor* compositor_ = nullptr;
-    Microsoft::WRL::ComPtr<IDCompositionTarget> target_;
     Microsoft::WRL::ComPtr<IDCompositionVisual> root_, frame_, gridClip_, grid_;
     Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> frameSurface_, gridSurface_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;

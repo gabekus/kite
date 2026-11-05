@@ -19,7 +19,8 @@ std::vector<SpaceMenuItem> BrowserWindowController::OpenSpaceMenu(const std::str
     // keeping what was typed, as any other way of leaving the field does (Kite's choice: the Mac
     // doesn't say, and its field may keep editing under a context menu).
     sidebar_->EndRenaming(true);
-    return SpaceMenu(state_, spaceID);
+    // Create a Space's own space can't change its icon there (core/SpaceCreation.h).
+    return SpaceMenu(state_, spaceID, creation_);
 }
 
 void BrowserWindowController::ShowSpaceMenu(const std::string& spaceID, POINT screen) {
@@ -53,6 +54,17 @@ void BrowserWindowController::RunSpaceMenuItem(const std::string& spaceID, Space
 void BrowserWindowController::BeginRenaming(const std::string& spaceID) {
     const auto index = state_.SpaceIndex(spaceID);
     if (!index) return;
+    // The space Create a Space is making has no header to rename in (the page is over it; the
+    // Mac's renames a header no one sees): its page's name field, its text all selected.
+    if (creation_ && creation_->spaceID == spaceID) {
+        SetSidebarShown(true);
+        if (state_.selectedSpaceID != spaceID) {
+            state_.SelectSpace(spaceID);
+            SelectionMoved();
+        }
+        TakeKeyboardForCreation(SpaceCreationView::Field::Name, true);
+        return;
+    }
     // beginRenaming(space:): the sidebar shown, its space selected, then its header's field.
     SetSidebarShown(true);
     if (state_.selectedSpaceID != spaceID) {
@@ -72,6 +84,8 @@ void BrowserWindowController::RenameSpace(const std::string& spaceID, const std:
 }
 
 void BrowserWindowController::DeleteSpace(std::string spaceID) {
+    // The space Create a Space is making goes as Cancel does (the Mac's deleteSpace).
+    if (creation_ && creation_->spaceID == spaceID) return CancelNewSpace();
     const SpaceDeletion deletion = DeletionOf(state_, spaceID);
     switch (deletion.kind) {
     case SpaceDeletion::Kind::Refused: MessageBeep(MB_OK); return;
@@ -102,7 +116,8 @@ void BrowserWindowController::MoveSpace(const std::string& spaceID, size_t index
 // MARK: Change Space Icon… (SpaceIconPicker.swift, BrowserStore.requestIconPicker)
 
 void BrowserWindowController::RequestIconPicker(const std::string& spaceID, bool fromMenu) {
-    if (!state_.SpaceIndex(spaceID)) return;
+    // Not for the space Create a Space is making: its header is under the page.
+    if (!state_.SpaceIndex(spaceID) || (creation_ && creation_->spaceID == spaceID)) return;
     KillTimer(window_.Handle(), kIconPickerTimer);
     pendingIconPicker_.reset();
     // The popover's Search takes the keyboard, from now (before the window's focus, whose onFocus
