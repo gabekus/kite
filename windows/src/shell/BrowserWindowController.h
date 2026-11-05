@@ -64,6 +64,11 @@ public:
         // --frame-log: each frame the clock delivered (when it was handled, the time it was
         // drawn for, the pages' offset and the theme's crossfade) is kept for SaveFrameLog.
         bool frameLog = false;
+        // --perf-control: WM_COPYDATA tagged perf::kControlTag runs a shortcut's command, logs a
+        // mark, opens a tab or posts a pointer move (QueuePerfRequest). Test profiles only.
+        bool perfControl = false;
+        // --chromium-switches: added to Chromium's command line (test profiles only).
+        std::vector<std::string> chromiumSwitches;
         // A quiet run (main.cpp's `quiet`, which alone decides it): the window opens behind
         // the others and never activates, the pages never take the focus or show a dialog
         // (Chromium::Start's `quiet`), and every shortcut command must do something.
@@ -174,6 +179,8 @@ private:
     static constexpr UINT kSpaceIconsMessage = WM_APP + 6;
     // Posted by the memory watch (MemoryPressure.h), wParam the MemoryPressure level.
     static constexpr UINT kMemoryPressureMessage = WM_APP + 7;
+    // --perf-control's queued requests (QueuePerfRequest).
+    static constexpr UINT kPerfRequestMessage = WM_APP + 20;
 
     BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
                             SessionWriter* writer, std::unique_ptr<Renderer> renderer);
@@ -216,7 +223,7 @@ private:
     // One frame of the clock's: the touchpad's movement, then the theme's crossfade or a
     // swipe's step drawn for the composition frame at `time` (the pages' slide runs on the
     // compositor).
-    void Frame(double time);
+    void Frame(double time, double rateHz);
     std::wstring DrawAt(double time, Pixels* readBack);
     // The smoke test's space switch, there and back, run to rest.
     std::wstring SmokeTestSpaces();
@@ -287,6 +294,20 @@ private:
     std::wstring Rebuild();
     void OnSize();
     bool Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result);
+    // One --perf-control request, a UTF-8 JSON object: {"command":ID[,"qpc":Q]} runs a shortcut's
+    // command (the input→present clock starting at Q, the harness's send), {"mark":NAME} logs a
+    // mark, {"open":URL} opens an http or https URL in a tab and shows it (the command bar's
+    // Open), {"input":"move","x":X,"y":Y,"qpc":Q} posts a pointer move to the window at client
+    // px (X, Y), and {"input":"leave"} the pointer's leaving. Checked here and queued, then run
+    // from the message loop (RunPerfRequests), so the sender isn't held while it runs and its
+    // dispatch is timed like any other. False when it isn't one, or the command does nothing now.
+    struct PerfRequest {
+        enum class Kind { Command, Mark, Open, Move, Leave } kind;
+        std::string text;
+        int64_t x = 0, y = 0, qpc = 0;
+    };
+    bool QueuePerfRequest(const COPYDATASTRUCT* data);
+    void RunPerfRequests();
 #ifdef KITE_HAS_CEF
     RECT ContentBounds() const;
     void ShowSelectedTab();
@@ -378,6 +399,11 @@ private:
         double handled, target, offset, theme;
     };
     std::vector<LoggedFrame> frames_;
+    // --perf-control's pointer is over the window: the system's WM_MOUSELEAVE (the real pointer
+    // is elsewhere) doesn't take its hover away.
+    bool perfPointer_ = false;
+    size_t perfMovesPosted_ = 0, perfLeavesPosted_ = 0;  // posted and not yet received
+    std::vector<PerfRequest> perfRequests_;
     std::vector<std::string> touchpadLog_;  // TouchpadInput::log's records, after the frames
     size_t touchpadLogDropped_ = 0;          // and how many didn't fit (kMaxTouchpadLog)
     std::wstring touchpadError_;            // why there's no touchpad_, when there isn't one

@@ -45,6 +45,14 @@
 //                            statistics to FILE as JSON: the live check of saving as it changes.
 //                            KITE_TEST_SLOW_BACKUP_MS=N makes each backup take N ms more
 //                            (the live check of a relaunch while Kite quits).
+//   Kite.exe --perf-log FILE [--perf-control] [--chromium-switches "--a --b=c"]
+//                            a normal window on a test profile, for windows/tools/perf/kiteperf:
+//                            FILE gets JSON lines of QPC marks, present/commit/surface-draw
+//                            counters, long dispatches, input→present and frame timings
+//                            (shell/PerfLog.h); --perf-control takes requests by WM_COPYDATA
+//                            (BrowserWindowController::QueuePerfRequest); --chromium-switches go
+//                            on Chromium's command line, from an allow-list (shell/PerfProtocol.h).
+//                            Never on the default profile. Opens behind other windows.
 //   Kite.exe --backdrop-test draws the theme backdrop on the GPU and checks every pixel against
 //                            core's CPU reference of the Mac's shader (shell/BackdropTest.h).
 //                            Prints a report; exits 0 when it matches, 5 when it differs, 3
@@ -53,11 +61,13 @@
 #include <windows.h>
 
 #include <shellapi.h>
+#include <shlobj.h>
 
 #include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -82,6 +92,7 @@
 #endif
 #include "shell/Capture.h"
 #include "shell/MainWindow.h"
+#include "shell/PerfLog.h"
 #include "shell/QuietRun.h"
 #include "shell/Text.h"
 
@@ -202,8 +213,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // prefixes; so no argument Chromium could read as a switch gets past this, not even as a
     // value (core/CommandLine.h).
     kite::command_line::Spec spec;
-    spec.flags = {"--smoke-test", "--backdrop-test"};
-    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--save-log"};
+    spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--save-log", "--perf-log"};
+    // Its value is switches ("--a --b"), each checked against the allow-list below; Chromium's
+    // raw read sees them too, so only allowed ones get this far.
+    spec.switchValueOptions = {"--chromium-switches"};
     if (const auto problem = kite::command_line::Check(utf8, spec)) return Fail(true, Widen(*problem), kUsage);
     if (HasFlag(args, L"--backdrop-test")) {
         // Touches no profile, so it needs no KITE_SUPPORT_PATH.
@@ -223,11 +237,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const OptionValue sizeOption = Option(args, L"--window-size");
     const std::optional<std::wstring>& capture = captureOption.value;
     const OptionValue saveLogOption = Option(args, L"--save-log");
+    const OptionValue perfLogOption = Option(args, L"--perf-log");
+    const bool perfControl = HasFlag(args, L"--perf-control");
+    const OptionValue switchesOption = Option(args, L"--chromium-switches");
     // A quiet run: the one place that decides it (everything else reads Options::quiet). It
     // never comes to the front, takes the focus or shows a dialog (shell/QuietRun.h, the Mac's
     // KITE_DIAGNOSTICS test-safe mode): watched from here on, and --smoke-test fails if it did.
-    // A capture and a save log are watched too, and say so on stderr.
-    const bool quiet = smokeTest || captureOption.present || saveLogOption.present;
+    // A capture, a save log and a measured run (kiteperf runs beside other work) are watched
+    // too, and say so on stderr.
+    const bool quiet = smokeTest || captureOption.present || saveLogOption.present || perfLogOption.present || perfControl ||
+                       switchesOption.present;
     std::optional<kite::ForegroundWatch> foreground;
     if (quiet) foreground.emplace();
     if (saveLogOption.present && !saveLogOption.value) return Fail(quiet, L"--save-log takes a file", kUsage);
@@ -312,23 +331,114 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
+    if (perfLogOption.present && !perfLogOption.value) return Fail(quiet, L"--perf-log takes a file", kUsage);
+    // "--name" or "--name=value", split on spaces, from an allow-list (shell/PerfProtocol.h):
+    // nothing that weakens the sandbox, site isolation or web security, opens a debugging port,
+    // or changes a path or a launched process.
+    std::vector<std::string> chromiumSwitches;
+    if (switchesOption.present) {
+        if (!switchesOption.value) return Fail(quiet, L"--chromium-switches takes Chromium's switches", kUsage);
+        std::wstring refused;
+        auto parsed = kite::perf::ParseChromiumSwitches(*switchesOption.value, refused);
+        if (!parsed) return Fail(quiet, L"--chromium-switches doesn't allow " + refused, kUsage);
+        chromiumSwitches = std::move(*parsed);
+    }
 
     const auto supportOverride = kite::EnvironmentPath("KITE_SUPPORT_PATH");
     // Test flags only run on a test profile, like the Mac's KITE_WINDOW_SIZE: a smoke test or
     // capture loads and re-saves the session, which must never be the user's own.
     if ((smokeTest || captureOption.present || sizeOption.present || scaleOption.present || frameLogOption.present ||
-         saveLogOption.present) &&
+         saveLogOption.present || perfLogOption.present || perfControl || switchesOption.present) &&
         !supportOverride) {
         return Fail(quiet,
-                    L"--smoke-test, --capture, --window-size, --capture-scale, --frame-log and --save-log need KITE_SUPPORT_PATH set to "
-                    L"a test profile",
+                    L"--smoke-test, --capture, --window-size, --capture-scale, --frame-log, --save-log, --perf-log, --perf-control "
+                    L"and --chromium-switches need KITE_SUPPORT_PATH set to a test profile",
                     kUsage);
     }
     auto resolved = kite::ResolveSupportDirectory(supportOverride, kite::EnvironmentPath("LOCALAPPDATA"));
     if (auto* error = std::get_if<kite::SupportDirectoryError>(&resolved)) {
         return Fail(quiet, Widen(error->message), kBadSupportDirectory);
     }
-    const std::filesystem::path supportDirectory = std::get<std::filesystem::path>(resolved);
+    std::filesystem::path supportDirectory = std::get<std::filesystem::path>(resolved);
+    const bool perfHooks = perfLogOption.present || perfControl || switchesOption.present;
+    // Held open for the whole run, without FILE_SHARE_DELETE, so the profile the hooks were
+    // allowed on can't be renamed away and another put in its place.
+    struct Handle {
+        HANDLE h = INVALID_HANDLE_VALUE;
+        ~Handle() {
+            if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+        }
+    } profileHandle;
+    if (perfHooks) {
+        const auto openDirectory = [](const std::filesystem::path& p, DWORD share) {
+            return CreateFileW(p.c_str(), FILE_READ_ATTRIBUTES, share, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        };
+        // A directory's identity: its volume and file id, the same however it's spelled (a
+        // different case, a junction, a UNC path or a share alias).
+        const auto identity = [](HANDLE h) -> std::optional<FILE_ID_INFO> {
+            FILE_ID_INFO id{};
+            if (h == INVALID_HANDLE_VALUE || !GetFileInformationByHandleEx(h, FileIdInfo, &id, sizeof id)) return std::nullopt;
+            return id;
+        };
+        const auto same = [](const FILE_ID_INFO& a, const FILE_ID_INFO& b) {
+            return a.VolumeSerialNumber == b.VolumeSerialNumber && std::memcmp(&a.FileId, &b.FileId, sizeof a.FileId) == 0;
+        };
+        profileHandle.h = openDirectory(supportDirectory, FILE_SHARE_READ | FILE_SHARE_WRITE);
+        const auto test = identity(profileHandle.h);
+        wchar_t finalPath[MAX_PATH * 4];
+        const DWORD length = profileHandle.h == INVALID_HANDLE_VALUE
+                                 ? 0
+                                 : GetFinalPathNameByHandleW(profileHandle.h, finalPath, static_cast<DWORD>(std::size(finalPath)), FILE_NAME_NORMALIZED);
+        if (!test || length == 0 || length >= std::size(finalPath)) {
+            return Fail(quiet, L"--perf-log, --perf-control and --chromium-switches: KITE_SUPPORT_PATH couldn't be resolved", kUsage);
+        }
+        // The rest of the run uses the directory that was checked, by its resolved path.
+        std::wstring resolvedPath(finalPath, length);
+        if (resolvedPath.starts_with(L"\\\\?\\UNC\\")) resolvedPath = L"\\\\" + resolvedPath.substr(8);
+        else if (resolvedPath.starts_with(L"\\\\?\\")) resolvedPath = resolvedPath.substr(4);
+        supportDirectory = resolvedPath;
+        // Never the default profile: from the environment and from the known folder (LOCALAPPDATA
+        // can be set to anything).
+        std::vector<std::filesystem::path> defaults;
+        if (auto fromEnvironment = kite::ResolveSupportDirectory(std::nullopt, kite::EnvironmentPath("LOCALAPPDATA"));
+            auto* path = std::get_if<std::filesystem::path>(&fromEnvironment)) {
+            defaults.push_back(*path);
+        }
+        PWSTR known = nullptr;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &known)) && known) {
+            if (auto fromShell = kite::ResolveSupportDirectory(std::nullopt, std::filesystem::path(known));
+                auto* path = std::get_if<std::filesystem::path>(&fromShell)) {
+                defaults.push_back(*path);
+            }
+        }
+        CoTaskMemFree(known);
+        for (const auto& real : defaults) {
+            HANDLE h = openDirectory(real, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+            const auto id = identity(h);
+            if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+            if (id && same(*id, *test)) {
+                return Fail(quiet, L"--perf-log, --perf-control and --chromium-switches never run on the default profile", kUsage);
+            }
+        }
+        // And only a profile that says it's a test profile (kiteperf and CI make the marker).
+        std::error_code markerError;
+        if (!std::filesystem::is_regular_file(supportDirectory / kite::perf::kTestProfileMarker, markerError)) {
+            return Fail(quiet,
+                        L"--perf-log, --perf-control and --chromium-switches need a test profile: KITE_SUPPORT_PATH has no " +
+                            std::wstring(kite::perf::kTestProfileMarker) + L" file",
+                        kUsage);
+        }
+    }
+    // The perf log is open for the rest of the run, whichever way it ends (its last line, "exit").
+    struct PerfLogClose {
+        ~PerfLogClose() { kite::perf::Close(); }
+    } perfLogClose;
+    if (perfLogOption.value) {
+        if (std::wstring problem = kite::perf::Open(*perfLogOption.value, chromiumSwitches); !problem.empty()) {
+            return Fail(quiet, L"--perf-log: " + problem, kUsage);
+        }
+        kite::perf::Mark("started");
+    }
     std::error_code ignored;
     std::filesystem::create_directories(supportDirectory, ignored);
 
@@ -419,11 +529,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     options.capture = capture.has_value();
     options.smokeTest = smokeTest;
     options.frameLog = frameLogOption.present;
+    options.perfControl = perfControl;
+    options.chromiumSwitches = std::move(chromiumSwitches);
     options.saveLog = saveLogOption.present;
     options.quiet = quiet;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
     auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
+    kite::perf::Mark("window-created");
     if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar: " + controller->CommandBarError(), kWindowFailed);
     if (archivedAtLaunch) controller->SessionChanged();
     kite::MainWindow& window = controller->Window();
@@ -447,6 +560,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
     if (size) window.SetClientSize(size->first, size->second);
     if (problem = controller->Draw(); !problem.empty()) return Fail(quiet, L"Kite couldn't draw its window: " + problem, kWindowFailed);
+    kite::perf::Mark("first-commit");
 
     if (smokeTest) {
         // Checked before Chromium starts, so a failure here leaves no browser half-created.
@@ -479,6 +593,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (found) writer.BackUpLaunch(std::move(*found));
 
     controller->Show(showCommand);
+    kite::perf::Mark("shown");
     if (capture && !window.HasClientSize(size->first, size->second)) {
         // A capture is compared pixel for pixel with the Mac's, so a window Windows resized
         // (maximized by the launcher, clamped to 32767 px) would compare the wrong thing.
@@ -504,6 +619,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
 
     controller->RunMessageLoop();
+    kite::perf::Mark("loop-end");
     // The window's close handed over the last save; wait for it now that the window is gone (no
     // frozen window), for kQuitFlush at most (the atomic write leaves the old file or the new
     // one). Before Chromium shuts down: until then this Kite holds the profile, so a launch in

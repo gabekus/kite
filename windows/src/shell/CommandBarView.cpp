@@ -226,7 +226,7 @@ bool CommandBarView::CreateGpu(std::wstring& error) {
     // In the overlay: over the page's child window (the backdrop is behind it).
     composition_ = compositor_->Device();
     if (FAILED(hr = composition_->CreateVisual(visual_.ReleaseAndGetAddressOf())) ||
-        FAILED(hr = compositor_->Overlay()->AddVisual(visual_.Get(), FALSE, nullptr)) || FAILED(hr = composition_->Commit())) {
+        FAILED(hr = compositor_->Overlay()->AddVisual(visual_.Get(), FALSE, nullptr)) || FAILED(hr = compositor_->Commit())) {
         error = HResultMessage(L"building the command bar's composition tree", hr);
         ReleaseGpu();
         return false;
@@ -245,7 +245,7 @@ void CommandBarView::ReleaseGpu() {
     caret_.Release();
     if (visual_ && compositor_) {
         compositor_->Overlay()->RemoveVisual(visual_.Get());
-        composition_->Commit();
+        compositor_->Commit();
     }
     visual_.Reset();
     composition_.Reset();
@@ -463,7 +463,7 @@ void CommandBarView::Hide() {
     // Its buffers go until it opens again; the device, target and shadow strips stay.
     ReleaseBuffers();
     caret_.Update(composition_.Get(), context_.Get(), visual_.Get(), false, {}, 0, 0, {});
-    if (composition_) composition_->Commit();
+    if (composition_ && compositor_) compositor_->Commit();
     line_.Edit().SetText(std::wstring(), 0, 0);
     line_.Relayout();
     rows_.clear();
@@ -707,7 +707,7 @@ void CommandBarView::UpdateCaret() {
     }
     // The hidden system caret follows, in client pixels.
     if (wanted && focused_) SetCaretPos(g.leftPx + std::lround(x * g.scale), g.topPx + std::lround(TextTop() * g.scale));
-    composition_->Commit();
+    compositor_->Commit();
 }
 
 // Messages -------------------------------------------------------------------------------
@@ -905,6 +905,8 @@ std::wstring CommandBarView::Draw(Pixels* readBack, POINT* origin) {
         *readBack = std::move(*pixels);
         if (origin) *origin = {g.leftPx - g.marginPx, g.topPx - g.marginPx};
     }
+    perf::CountSurfaceDraw(perf::View::CommandBar);
+    perf::CountPresent();
     if (FAILED(hr = swapChain_->Present(1, 0))) {
         deviceLost_ = IsDeviceLost(hr);
         return HResultMessage(L"presenting the command bar", hr);

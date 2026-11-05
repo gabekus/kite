@@ -27,6 +27,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "core/KeyBindings.h"
 
@@ -90,8 +91,10 @@ public:
     // `quiet`), which never comes to the front: the pages never take the focus or activate,
     // and show no dialogs (file choosers cancelled, JavaScript and Leave Page dialogs answered,
     // window.print() and Developer Tools skipped), each with a KITE_TEST_MODAL line.
+    // `switches` ("name" or "name=value", no leading dashes) go on the browser process's
+    // command line (--chromium-switches, test profiles only).
     static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events, bool quiet,
-                             std::unique_ptr<Chromium>& out, std::wstring& error);
+                             std::vector<std::string> switches, std::unique_ptr<Chromium>& out, std::wstring& error);
     // Shuts Chromium down (or does nothing if it already has); the destructor calls it too.
     ~Chromium();
     Chromium(const Chromium&) = delete;

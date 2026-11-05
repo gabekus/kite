@@ -127,6 +127,7 @@ if(WIN32)
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
     src/shell/MemoryPressure.cpp
+    src/shell/PerfLog.cpp
     src/shell/QuietRun.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarView.cpp
@@ -141,7 +142,7 @@ if(WIN32)
     ${KITE_SHADER_HEADERS}
   )
   target_include_directories(Kite PRIVATE "${KITE_SHADER_DIR}")
-  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp comctl32)
+  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 uuid windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp comctl32)
 
   # Chromium (CEF), from windows/scripts/fetch-cef.ps1. Without it (no download yet, or the
   # MinGW check, which can't link CEF's MSVC wrapper) Kite.exe builds without pages.

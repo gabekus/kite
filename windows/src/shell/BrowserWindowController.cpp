@@ -23,6 +23,7 @@
 #endif
 #include "shell/Errors.h"
 #include "shell/Keys.h"
+#include "shell/PerfLog.h"
 #include "shell/SpaceMenu.h"
 #include "shell/Text.h"
 
@@ -102,6 +103,7 @@ std::wstring BrowserWindowController::Init() {
     }
     compositor_ = Compositor::Create(window_.Handle(), *renderer_, error);
     if (!compositor_) return L"Kite couldn't start DirectComposition: " + error;
+    if (perf::On()) perf::SetWindow(window_.Handle());
 
     // The sidebar, over the backdrop: what the session lists, with favicons fetched off the UI
     // thread (none in a capture, which mustn't depend on the network).
@@ -460,11 +462,13 @@ bool BrowserWindowController::CommandEnabled(const std::string& command) const {
     return true;
 }
 
-void BrowserWindowController::Frame(double time) {
+void BrowserWindowController::Frame(double time, double rateHz) {
     ++frameCount_;
     lastFrameTime_ = time;
     // The touchpad's movement this frame first, so the frame shows it.
     const bool touchpadFrames = touchpad_ && touchpad_->Step();
+    // Before the draw, so its commit is this frame's.
+    if (perf::On()) perf::Frame(time, sidebar_->PageOffset(), theme_.Progress(time), rateHz);
     // Only what moved draws: the crossfade, or a swipe's step. The touchpad's other frames (a
     // vertical scroll's, a swipe's swallowed momentum) leave the backdrop as it is.
     if (theme_.Fading() || swipeMoved_) {
@@ -781,7 +785,87 @@ void BrowserWindowController::MakeCommands() {
 }
 
 void BrowserWindowController::RunCommand(const std::string& command) {
-    if (auto it = commands_.find(command); it != commands_.end()) it->second();
+    auto it = commands_.find(command);
+    if (it == commands_.end()) return;
+    if (!perf::On()) return it->second();
+    perf::Mark("command-begin", command);
+    it->second();
+    perf::Mark("command-end", command);
+}
+
+bool BrowserWindowController::QueuePerfRequest(const COPYDATASTRUCT* data) {
+    if (!data || data->dwData != perf::kControlTag || !data->lpData || !data->cbData) return false;
+    auto parsed = json::Parse(std::string_view(static_cast<const char*>(data->lpData), data->cbData));
+    const json::Value* request = std::get_if<json::Value>(&parsed);
+    if (!request || !request->AsObject()) return false;
+    const auto text = [&](std::string_view key) -> const std::string* {
+        const json::Value* value = request->Find(key);
+        return value ? value->AsString() : nullptr;
+    };
+    const auto number = [&](std::string_view key) -> std::optional<int64_t> {
+        const json::Value* value = request->Find(key);
+        return value ? value->AsInt() : std::nullopt;
+    };
+    PerfRequest queued{PerfRequest::Kind::Mark, {}, 0, 0, 0};
+    if (const std::string* command = text("command")) {
+        if (!commands_.contains(*command) || !CommandEnabled(*command)) return false;
+        queued = {PerfRequest::Kind::Command, *command, 0, 0, number("qpc").value_or(perf::Now())};
+    } else if (const std::string* mark = text("mark")) {
+        queued = {PerfRequest::Kind::Mark, *mark, 0, 0, 0};
+    } else if (const std::string* url = text("open")) {
+        // Web pages only: nothing of the machine's (file:, view-source:, kite: or a script).
+        if (!url->starts_with("http://") && !url->starts_with("https://")) return false;
+        queued = {PerfRequest::Kind::Open, *url, 0, 0, 0};
+    } else if (const std::string* input = text("input")) {
+        if (*input == "leave") {
+            queued = {PerfRequest::Kind::Leave, {}, 0, 0, 0};
+        } else {
+            const auto x = number("x"), y = number("y");
+            if (*input != "move" || !x || !y || *x < 0 || *y < 0 || *x > 0x7FFF || *y > 0x7FFF) return false;
+            queued = {PerfRequest::Kind::Move, {}, *x, *y, number("qpc").value_or(perf::Now())};
+        }
+    } else {
+        return false;
+    }
+    if (perfRequests_.size() >= 256) return false;  // a sender that never lets the loop run
+    perfRequests_.push_back(std::move(queued));
+    if (perfRequests_.size() == 1) PostMessageW(window_.Handle(), kPerfRequestMessage, 0, 0);
+    return true;
+}
+
+void BrowserWindowController::RunPerfRequests() {
+    std::vector<PerfRequest> requests;
+    requests.swap(perfRequests_);
+    for (PerfRequest& r : requests) {
+        switch (r.kind) {
+        case PerfRequest::Kind::Command:
+            // The state may have changed since it was queued.
+            if (!CommandEnabled(r.text)) {
+                perf::Mark("control-refused", r.text);
+                break;
+            }
+            if (perf::On()) perf::Input("command", r.qpc);
+            RunCommand(r.text);
+            break;
+        case PerfRequest::Kind::Mark: perf::Mark(r.text); break;
+        case PerfRequest::Kind::Open:
+            state_.OpenTab(r.text);
+            SelectionMoved();
+            break;
+        case PerfRequest::Kind::Move:
+            perfPointer_ = true;
+            if (PostMessageW(window_.Handle(), WM_MOUSEMOVE, 0, MAKELPARAM(r.x, r.y))) {
+                ++perfMovesPosted_;
+                if (perf::On()) perf::Input("move", r.qpc);
+            }
+            break;
+        case PerfRequest::Kind::Leave:
+            perfPointer_ = false;
+            perfMovesPosted_ = 0;
+            if (PostMessageW(window_.Handle(), WM_MOUSELEAVE, 0, 0)) ++perfLeavesPosted_;
+            break;
+        }
+    }
 }
 
 bool BrowserWindowController::PageCommand(const std::string& command) {
@@ -882,6 +966,32 @@ void BrowserWindowController::OnSize() {
 // MARK: The window's messages
 
 bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
+    if (options_.perfControl) {
+        if (message == WM_COPYDATA) {
+            result = QueuePerfRequest(reinterpret_cast<const COPYDATASTRUCT*>(lParam)) ? 1 : 0;
+            return true;
+        }
+        if (message == kPerfRequestMessage) {
+            RunPerfRequests();
+            return true;
+        }
+    }
+    // The real pointer's moves and leaves, not the ones --perf-control posted (they arrive in
+    // order), nor the leave TrackMouseEvent sends at once while a posted pointer is over the
+    // window (the real one is elsewhere).
+    if (message == WM_MOUSEMOVE && perfMovesPosted_) --perfMovesPosted_;
+    else if (message == WM_MOUSELEAVE && perfLeavesPosted_) --perfLeavesPosted_;
+    else if (message == WM_MOUSEMOVE || message == WM_NCMOUSEMOVE || message == WM_NCMOUSELEAVE ||
+             (message == WM_MOUSELEAVE && !perfPointer_)) {
+        perf::CountPointerMove();
+    }
+    if (message == WM_DISPLAYCHANGE && perf::On()) perf::DisplayChanged();
+    // The real pointer isn't over the window while --perf-control moves one: TrackMouseEvent's
+    // leave would take the hover straight off again.
+    if (message == WM_MOUSELEAVE && perfPointer_) {
+        result = 0;
+        return true;
+    }
     // The caption buttons' presses, whatever else is open.
     if (caption_->HandleMessage(message, wParam, lParam, result)) return true;
     // Two fingers coming down on a precision touchpad: over the sidebar (and nothing over it),
@@ -967,7 +1077,11 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     if (message == kFrameMessage) {
         // Delivered after the frame: a frame that takes longer than the next tick doesn't queue
         // another behind it.
-        if (clock_->Running()) Frame(FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr));
+        if (clock_->Running()) {
+            double rate = 0;
+            const double time = FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr, perf::On() ? &rate : nullptr);
+            Frame(time, rate);
+        }
         clock_->Delivered();
         return true;
     }
@@ -1048,9 +1162,13 @@ void BrowserWindowController::RunMessageLoop() {
         } else {
             retryUntil = 0;
         }
+        // --perf-log looks up when committed frames reached the screen, every 16 ms while any wait.
+        const bool polling = perf::On() && perf::Pending();
+        if (polling && timeout == INFINITE) timeout = 16;
         const DWORD woke =
             MsgWaitForMultipleObjectsEx(removed ? 1 : 0, removed ? &removed : nullptr, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-        if ((removed && woke == WAIT_OBJECT_0) || woke == WAIT_TIMEOUT) {
+        if (polling) perf::Poll();
+        if ((removed && woke == WAIT_OBJECT_0) || (woke == WAIT_TIMEOUT && !compositor_)) {
             if (renderer_ && compositor_) {
                 const HRESULT reason = renderer_->Device()->GetDeviceRemovedReason();
                 OutputDebugStringW(HResultMessage(L"Kite: the GPU device was removed", reason).append(L"\n").c_str());
@@ -1066,7 +1184,13 @@ void BrowserWindowController::RunMessageLoop() {
                 break;
             }
             TranslateMessage(&message);
-            DispatchMessageW(&message);
+            if (perf::On()) {
+                const int64_t began = perf::Now();
+                DispatchMessageW(&message);
+                perf::Dispatched(message.message, began);
+            } else {
+                DispatchMessageW(&message);
+            }
         }
     }
 }
