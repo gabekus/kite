@@ -1375,14 +1375,28 @@ Windows that means:
     or woken tab, a navigation to another renderer) went `hidden`, then `visible` about 0.4 s
     after its load, and ran rAF at 350 fps behind hidden windows, with the verdict unchanged.
     So each tab's main frame reports whether it reads as visible (`kite.pageVisibility`, as its
-    script context is made and on each trusted `visibilitychange`, `KiteHelperApp`). For a
-    page Kite has hidden, Kite shows its host and widget windows without drawing or activating
-    them and hides them again at once, on CEF's thread: hiding an already hidden window tells
-    Chromium nothing, and this hide it reads like any other. That instant shows its own
-    `visible`, so a report within 0.25 s of a re-hide is looked at again after it, and a page
-    gets at most five per placement. `windows/tests/CoveredLaunchCheck.ps1` checks it (CI
-    runs it under a cover of its own): a Kite opened covered ends with its page `hidden` and
-    rAF stopped.
+    script context is made and on each trusted `visibilitychange`; `VisibilityReporter`).
+    - **The page can't turn it off.** The reporter is set up before the page's scripts run:
+      its listener is the first capture listener on `window`, so it runs before any the page
+      adds (one calling `stopImmediatePropagation`), and it reads the state with
+      `Document.prototype`'s own getter on the document, both kept from then, so redefining
+      `visibilityState` changes nothing it reads.
+    - **The re-hide.** For a page Kite has hidden, Kite shows its host and widget windows
+      without activating them and hides them again at once, on CEF's thread (a few ms):
+      hiding an already hidden window tells Chromium nothing, and this hide it reads like any
+      other. For that instant the host has an empty window region and is at the bottom of
+      Kite's child windows, so nothing of it can show, even over the page being viewed with
+      Kite in front (child windows link in at the bottom as they're made and Layout never
+      moves them, so an older tab's host can be above a newer shown one). Measured with
+      `PrintWindow(PW_RENDERFULLCONTENT)`, DWM's own picture of the window: a shown red page
+      gave 50,310 red samples, none with an empty region on its host, all of them again
+      after.
+    - **Throttled.** The instant shows its own `visible`, so a report within 0.25 s of a
+      re-hide is looked at again after it; a page gets at most five per placement and per
+      document.
+    - **Checked.** `windows/tests/CoveredLaunchCheck.ps1` (CI runs it under a cover of its
+      own, plain and with each of the two attacks): a Kite opened covered ends with its page
+      `hidden` and rAF stopped.
   - **Off for test runs.** `--smoke-test` and `--frame-log` run without
     occlusion, so their checks of the slide and the crossfade can't pass
     unseen, and so does `--perf-control` until kiteperf asks for it in its

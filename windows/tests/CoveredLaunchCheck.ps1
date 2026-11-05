@@ -3,6 +3,7 @@
 # requestAnimationFrame stops, and stays that way while Kite stays covered.
 #
 #   pwsh windows/tests/CoveredLaunchCheck.ps1 -Kite windows\build\Release\Kite.exe [-Cover] [-Seconds 8]
+#        [-Attack none|stopPropagation|spoofState]
 #
 # Kite runs as a quiet --perf-log run on a fresh %TEMP% test profile, so it opens at the bottom of
 # the z-order and never activates; its occlusion is on from the start (no --perf-control). -Cover
@@ -10,10 +11,15 @@
 # without it the desktop's own windows must cover Kite (a PC in use). The page writes its
 # visibility and rAF count into its title, which Kite saves in the session on closing. Exit 0 when
 # Kite's verdict was hidden and the page ended hidden with rAF stopped; 1 otherwise, with why.
+# -Attack makes the page try to keep itself drawing: stopPropagation stops every visibilitychange
+# in a capture listener on window, spoofState makes document.visibilityState always read
+# "hidden". The page's own log reads Document.prototype's getter, so it sees through the spoof.
+# Never run -Cover on a PC in use: it blacks out every monitor for the run.
 param(
   [Parameter(Mandatory)] [string] $Kite,
   [switch] $Cover,
-  [int] $Seconds = 8
+  [int] $Seconds = 8,
+  [ValidateSet('none', 'stopPropagation', 'spoofState')] [string] $Attack = 'none'
 )
 $ErrorActionPreference = 'Stop'
 Add-Type @"
@@ -92,18 +98,27 @@ $process = $null
 try {
   New-Item -ItemType File -Path (Join-Path $profileDir 'kite-test-profile') | Out-Null
   $page = Join-Path $profileDir 'page.html'
+  $attacks = @{
+    none = ''
+    stopPropagation = "<script>window.addEventListener('visibilitychange', e => e.stopImmediatePropagation(), true);</script>"
+    spoofState = "<script>Object.defineProperty(document, 'visibilityState', { get: () => 'hidden' }); Object.defineProperty(document, 'hidden', { get: () => true });</script>"
+  }
   # "vis:" then words: V or H (visibilityState changed) or F<ms>:<frames>, each with Date.now().
-  [IO.File]::WriteAllText($page, @'
-<!doctype html><meta charset="utf-8"><title>vis:</title>
+  # The state is read with Document.prototype's own getter, on each change and every second.
+  [IO.File]::WriteAllText($page, '<!doctype html><meta charset="utf-8"><title>vis:</title>' + $attacks[$Attack] + @'
 <canvas id="c" width="200" height="100"></canvas>
 <script>
-let log = '', frames = 0;
+let log = '', frames = 0, last = '';
+const realState = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState').get;
 const g = document.getElementById('c').getContext('2d');
-function vis() { log += (document.visibilityState === 'visible' ? 'V' : 'H') + Date.now() + ' '; document.title = 'vis:' + log; }
+function vis() {
+  const s = realState.call(document) === 'visible' ? 'V' : 'H';
+  if (s !== last) { last = s; log += s + Date.now() + ' '; document.title = 'vis:' + log; }
+}
 function draw(t) { frames++; g.fillStyle = `hsl(${(t / 10) % 360} 80% 50%)`; g.fillRect(0, 0, 200, 100); requestAnimationFrame(draw); }
 requestAnimationFrame(draw);
 document.addEventListener('visibilitychange', vis); vis();
-setInterval(() => { log += 'F' + Date.now() + ':' + frames + ' '; document.title = 'vis:' + log; }, 1000);
+setInterval(() => { vis(); log += 'F' + Date.now() + ':' + frames + ' '; document.title = 'vis:' + log; }, 1000);
 </script>
 '@)
   $kitecore = Join-Path (Split-Path -Parent (Resolve-Path $Kite)) 'kitecore.exe'
@@ -127,7 +142,10 @@ setInterval(() => { log += 'F' + Date.now() + ':' + frames + ' '; document.title
   if ($window -eq [IntPtr]::Zero) { throw 'Kite never showed its window' }
   Write-Host "Kite's window: $([KiteCheck]::Describe($window))"
   [KiteCheck]::PostMessage($window, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null  # WM_CLOSE
-  if (-not $process.WaitForExit(30000)) { throw "Kite didn't close within 30 s" }
+  # Pumping the cover's messages meanwhile, so it never shows as not responding.
+  $deadline = [DateTime]::UtcNow.AddSeconds(30)
+  while (-not $process.HasExited -and [DateTime]::UtcNow -lt $deadline) { Pump 100 }
+  if (-not $process.HasExited) { throw "Kite didn't close within 30 s" }
 
   $verdicts = @(Get-Content $occlusionLog | Where-Object { $_ -match '"verdict":"(\w+)"' } | ForEach-Object { $Matches[1] })
   $session = Get-Content (Join-Path $profileDir 'session.json') -Raw
@@ -152,7 +170,7 @@ setInterval(() => { log += 'F' + Date.now() + ':' + frames + ' '; document.title
   if ($recent.Count -lt 2) { throw "too few rAF samples in the last 3 s ($($recent.Count))" }
   $ran = $recent[-1].n - $recent[0].n
   if ($ran -ne 0) { throw "requestAnimationFrame ran $ran frames in the last $([int](($recent[-1].t - $recent[0].t) / 1000)) s while Kite was covered" }
-  Write-Host "covered launch: the page ended hidden, rAF stopped at $($recent[-1].n) frames"
+  Write-Host "covered launch ($Attack): the page ended hidden, rAF stopped at $($recent[-1].n) frames"
 } finally {
   if ($process -and -not $process.HasExited) { $process.Kill() }
   if ($coverWindow) { [KiteCheck]::DestroyWindow($coverWindow) | Out-Null }
