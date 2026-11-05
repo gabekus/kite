@@ -196,8 +196,8 @@ struct Occlusion::Worker {
 
     // The shell's threads that show a picture of Kite's window: the taskbars' (its thumbnails)
     // and the hosts of Alt+Tab and Task View (core's IsPreviewWindowClass). Not the rest of
-    // Explorer: File Explorer's windows and Win+R's box each have a thread of their own, and a
-    // caret raises a SHOW per key. FindWindowEx walks the window list in win32k, with no round
+    // Explorer, whose File Explorer windows each run on a thread of their own (measured), and
+    // where renaming a file or typing in Win+R raises a caret's SHOW per key. FindWindowEx walks the window list in win32k, with no round
     // trip to Explorer. A host Explorer makes later (its first Alt+Tab) is hooked from the pass
     // after it appears (the heartbeat's whole pass at the latest).
     static void ShellPreviewThreads(DWORD shell, std::vector<uint32_t>& threads) {

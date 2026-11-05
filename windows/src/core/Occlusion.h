@@ -145,8 +145,8 @@ std::string_view Name(Hidden hidden);
 //   control: 21 shows and 22 hides for 20 keys) and for every tooltip and menu, at 5 to 8
 //   context switches each: so SHOW only from the shell's preview threads (its thumbnails and
 //   Alt+Tab, while covered) and HIDE only from those while one of them is up. Threads, not
-//   Explorer's process: File Explorer's windows and Win+R's box are Explorer's too, each on a
-//   thread of its own, and renaming a file raises a caret's SHOW per key.
+//   Explorer's process: File Explorer's windows are Explorer's too (each on a thread of its
+//   own, measured), and renaming a file or typing in Win+R raises a caret's SHOW per key.
 // - EVENT_OBJECT_DESTROY comes for every menu a Win32 app opens (#32768 is made and destroyed
 //   each time), in the app over Kite: measured at 23.5 context switches a second covered, for
 //   real menus twice a second. A closed occluder is found by the heartbeat's IsWindow (and

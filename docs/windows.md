@@ -1271,9 +1271,9 @@ Windows that means:
     rate: an app coming forward, a drag, a minimize, a desktop switch. Per
     thread, the shell's shows on its preview threads (the taskbars' and the
     hosts of Alt+Tab and Task View) while Kite is covered, and their hides
-    while one of those is up: never Explorer's whole process, whose File
-    Explorer windows and Win+R box raise a caret's show per key on threads of
-    their own. Moves, z-order, state changes, shows, hides and destroys aren't
+    while one of those is up: never Explorer's whole process, where renaming
+    a file or typing in Win+R raises a caret's show per key (File Explorer's
+    windows each run on a thread of their own). Moves, z-order, state changes, shows, hides and destroys aren't
     hooked otherwise, not even for the windows over Kite. Measured: a caret
     raises a show, a hide and a move on every key (in the app being typed in,
     usually the one over Kite), a tooltip a show and a hide, every Win32 menu
