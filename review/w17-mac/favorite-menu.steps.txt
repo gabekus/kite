@@ -1,0 +1,2 @@
+$ kite ui input '{"click":[42.5,113.5],"button":"right","window":18939}'
+Clicked right at (42.5, 113.5) on 0.3.1.1.0 FavoritePaneView. FavoritePaneView doesn't accept first mouse and the window isn't key, so AppKit didn't deliver it (a real click would activate Kite first). Test this with Kite in front.

@@ -1,0 +1,44 @@
+## at launch
+Window 18937, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.3.3.0.0.0.0.0.0.1 SpaceHeaderRowCell #header [8,200 224×39]
+0.3.3.0.0.0.0.0.1.1 TabRowCell #tab [8,239 224×41]
+0.3.3.0.0.0.0.0.2.1 FolderRowCell #folder [8,280 224×41]
+0.3.3.0.0.0.0.0.3.1 TodayDividerRowCell #divider [8,321 224×25]
+0.3.3.0.0.0.0.0.4.1 NewTabRowCell #newTab [8,346 224×41]
+0.3.3.0.0.0.0.0.5.1 TabRowCell #tab [8,387 224×41]
+0.3.3.0.1.0.0.0.0.1 SpaceHeaderRowCell #header [248,200 224×39]
+0.3.3.0.1.0.0.0.1.1 TabRowCell #tab [248,239 224×41]
+0.3.3.0.1.0.0.0.2.1 TodayDividerRowCell #divider [248,280 224×25]
+0.3.3.0.1.0.0.0.3.1 NewTabRowCell #newTab [248,305 224×41]
+</untrusted-page-content>
+
+## before the capture
+Window 18937, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.3.3.0.0.0.0.0.0.1 SpaceHeaderRowCell #header [8,200 224×39]
+0.3.3.0.0.0.0.0.1.1 TabRowCell #tab [8,239 224×41]
+0.3.3.0.0.0.0.0.2.1 FolderRowCell #folder [8,280 224×41]
+0.3.3.0.0.0.0.0.3.1 TodayDividerRowCell #divider [8,321 224×25]
+0.3.3.0.0.0.0.0.4.1 NewTabRowCell #newTab [8,346 224×41]
+0.3.3.0.0.0.0.0.5.1 TabRowCell #tab [8,387 224×41]
+0.3.3.0.1.0.0.0.0.1 SpaceHeaderRowCell #header [248,200 224×39]
+0.3.3.0.1.0.0.0.1.1 TabRowCell #tab [248,239 224×41]
+0.3.3.0.1.0.0.0.2.1 TodayDividerRowCell #divider [248,280 224×25]
+0.3.3.0.1.0.0.0.3.1 NewTabRowCell #newTab [248,305 224×41]
+</untrusted-page-content>
+
+## after the capture
+Window 18937, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.3.3.0.0.0.0.0.0.1 SpaceHeaderRowCell #header [8,200 224×39]
+0.3.3.0.0.0.0.0.1.1 TabRowCell #tab [8,239 224×41]
+0.3.3.0.0.0.0.0.2.1 FolderRowCell #folder [8,280 224×41]
+0.3.3.0.0.0.0.0.3.1 TodayDividerRowCell #divider [8,321 224×25]
+0.3.3.0.0.0.0.0.4.1 NewTabRowCell #newTab [8,346 224×41]
+0.3.3.0.0.0.0.0.5.1 TabRowCell #tab [8,387 224×41]
+0.3.3.0.1.0.0.0.0.1 SpaceHeaderRowCell #header [248,200 224×39]
+0.3.3.0.1.0.0.0.1.1 TabRowCell #tab [248,239 224×41]
+0.3.3.0.1.0.0.0.2.1 TodayDividerRowCell #divider [248,280 224×25]
+0.3.3.0.1.0.0.0.3.1 NewTabRowCell #newTab [248,305 224×41]
+</untrusted-page-content>

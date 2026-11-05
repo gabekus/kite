@@ -1,0 +1,29 @@
+## at launch
+Window 18933, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.3.3.0.0.0.0.0.0.1 SpaceHeaderRowCell #header [8,157 224×39]
+0.3.3.0.0.0.0.0.1.1 TabRowCell #tab [8,196 224×41]
+0.3.3.0.0.0.0.0.2.1 FolderRowCell #folder [8,237 224×41]
+0.3.3.0.0.0.0.0.3.1 TabRowCell #tab [8,278 224×41]
+0.3.3.0.0.0.0.0.4.1 TabRowCell #tab [8,319 224×41]
+0.3.3.0.0.0.0.0.5.1 FolderRowCell #folder [8,360 224×41]
+0.3.3.0.0.0.0.0.6.1 FolderRowCell #folder [8,401 224×41]
+0.3.3.0.0.0.0.0.7.1 TodayDividerRowCell #divider [8,442 224×25]
+0.3.3.0.0.0.0.0.8.1 NewTabRowCell #newTab [8,467 224×41]
+0.3.3.0.0.0.0.0.9.1 TabRowCell #tab [8,508 224×41]
+</untrusted-page-content>
+
+## before the capture
+Window 18933, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.3.3.0.0.0.0.0.0.1 SpaceHeaderRowCell #header [8,157 224×39]
+0.3.3.0.0.0.0.0.1.1 TabRowCell #tab [8,196 224×41]
+0.3.3.0.0.0.0.0.2.1 FolderRowCell #folder [8,237 224×41]
+0.3.3.0.0.0.0.0.3.1 TabRowCell #tab [8,278 224×41]
+0.3.3.0.0.0.0.0.4.1 TabRowCell #tab [8,319 224×41]
+0.3.3.0.0.0.0.0.5.1 FolderRowCell #folder [8,360 224×41]
+0.3.3.0.0.0.0.0.6.1 FolderRowCell #folder [8,401 224×41]
+0.3.3.0.0.0.0.0.7.1 TodayDividerRowCell #divider [8,442 224×25]
+0.3.3.0.0.0.0.0.8.1 NewTabRowCell #newTab [8,467 224×41]
+0.3.3.0.0.0.0.0.9.1 TabRowCell #tab [8,508 224×41]
+</untrusted-page-content>

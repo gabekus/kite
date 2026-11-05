@@ -1,0 +1,2 @@
+$ kite ui input '{"click":[120,364.5],"button":"right","window":18927}'
+Clicked right at (120, 364.5) on 0.3.3.0.0.0.0.0.5.1 TabRowCell. TabRowCell doesn't accept first mouse and the window isn't key, so AppKit didn't deliver it (a real click would activate Kite first). Test this with Kite in front.

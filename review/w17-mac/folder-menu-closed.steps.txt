@@ -1,0 +1,2 @@
+$ kite ui input '{"click":[120,421.5],"button":"right","window":18935}'
+Clicked right at (120, 421.5) on 0.3.3.0.0.0.0.0.6.1 FolderRowCell. FolderRowCell doesn't accept first mouse and the window isn't key, so AppKit didn't deliver it (a real click would activate Kite first). Test this with Kite in front.
