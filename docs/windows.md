@@ -1346,17 +1346,25 @@ Windows that means:
     resize pokes the thread once, when it ends (`WM_EXITSIZEMOVE`).
   - **Heartbeat.** What uncovers a covered Kite without an event (a
     restore-down, Win+Arrow, a FancyZones snap, leaving full screen, a monitor
-    change, a window closed, hidden or turning translucent) is found by a heartbeat
-    that runs only while Kite is covered. Twice a second it re-reads the
-    windows that covered it with user32 alone (`IsWindow`, visible, minimized,
-    maximized, its owner, `GetWindowRect`, the style, the extended style and
-    layered alpha), and runs a pass on any change. Every 4 s it runs a whole
-    pass, asking DWM afresh too, for z-order changes, new windows and a cloak
-    or backdrop change. It's the watcher's MsgWait timeout, not a timer, and
-    stops when Kite is uncovered. The first `WM_SETCURSOR` or `WM_MOUSEMOVE` to
-    reach a covered Kite asks for a pass too. A drop, and a monitor, work-area
-    or scale change, get a second pass 0.3 s later, once snaps and refits have
-    settled.
+    change, a window closed, hidden or turning translucent) is found by a
+    heartbeat that runs only while Kite is covered. Twice a second it re-reads
+    the windows that covered it with user32 alone (`IsWindow`, visible,
+    minimized, maximized, its owner, `GetWindowRect`, the style, the extended
+    style and layered alpha), and runs a pass on any change. Every 4 s it runs
+    a whole pass, asking DWM afresh too, for z-order changes, new windows and
+    a cloak or backdrop change. It's the watcher's MsgWait timeout, not a
+    timer, and stops when Kite is uncovered. The first `WM_SETCURSOR` or
+    `WM_MOUSEMOVE` to reach a covered Kite asks for a pass too. A drop, and a
+    monitor, work-area or scale change, get a second pass 0.3 s later, once
+    snaps and refits have settled. What it costs, measured per thread in
+    kiteperf's covered phase: the browser process makes 5 to 8 more context
+    switches a second than a build without P2, all of them on the occlusion
+    watcher (the unnamed thread that starts in Kite.dll,
+    `Occlusion::ThreadMain`; Chromium's threads are unchanged), which makes 7
+    to 9. About 6.5 of those are the twice-a-second wake itself and about 2.5
+    the whole pass's DWM questions every 4 s, more while another window
+    animates (measured: 15 to 21 with a window moving 60 times a second, 7 to
+    11 without the whole pass's DWM questions).
   - **DWM's answers** (a window's frame, backdrop and cloak, each a round trip
     to dwm.exe) are cached per window by its rect, and asked again for every
     window when they could be stale: the end of a lock or display-off, the
@@ -1366,14 +1374,20 @@ Windows that means:
     occlusion, so their checks of the slide and the crossfade can't pass
     unseen, and so does `--perf-control` until kiteperf asks for it in its
     covered phase: kiteperf opens Kite behind other windows, so its other
-    phases would measure whatever the desktop happened to cover. `--occlusion-log FILE` (test profiles) writes each verdict and the
+    phases would measure whatever the desktop happened to cover.
+    `--occlusion-log FILE` (test profiles) writes each verdict and the
     thread's counters.
   - **Known gaps.** A covered Kite uncovered without an event shows its card
-    for up to half a second (the heartbeat), or until the pointer reaches it.
-    A Kite captured as a window by an app not on the recorder list (a meeting
-    app sharing it while covered) shows its card. While a recorder runs, a
-    covered Kite draws (the verdict is visible, so there's no heartbeat); the
-    watcher waits on the recorder's process, and its exit runs a pass.
+    until the heartbeat sees it, or the pointer reaches it. That's up to half
+    a second for what the half-second check reads (an occluder moved, resized,
+    minimized, restored, hidden, closed, or made translucent or
+    click-through), and up to 4 s, the next whole pass, for what it doesn't:
+    an occluder sent behind Kite without a foreground change, a window region
+    set on it (`SetWindowRgn`), or its backdrop switched to acrylic. A Kite
+    captured as a window by an app not on the recorder list (a meeting app
+    sharing it while covered) shows its card. While a recorder runs, a covered
+    Kite draws (the verdict is visible, so there's no heartbeat); the watcher
+    waits on the recorder's process, and its exit runs a pass.
 
 ## Measuring performance
 
