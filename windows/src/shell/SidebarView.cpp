@@ -10,6 +10,7 @@
 
 #include "core/OKLab.h"
 #include "core/SpaceSwipe.h"
+#include "core/SymbolShape.h"
 #include "shell/Errors.h"
 #include "shell/FrameClock.h"
 #include "shell/Text.h"
@@ -32,7 +33,10 @@ constexpr float kHeaderIconX = 13;   // in the window
 constexpr float kHeaderTextX = 41;   // in the window
 constexpr float kHeaderFontSize = 13;
 constexpr float kHeaderTextOpacity = 0.45f;
-constexpr float kHeaderIconFontSize = 15;  // SpaceIconImageView's size in the header: emoji, symbols, pictures
+// SpaceIconImageView's size in the header: emoji, symbols, pictures. The drawn symbols' header
+// places are for this size (PlaceDrawnSymbol), so it's theirs.
+constexpr float kHeaderIconFontSize = kHeaderSymbolSize;
+constexpr float kDoneFontSize = kHeaderFontSize - 1;  // the rename's Done (SidebarDoneButton)
 constexpr float kIconSize = 18;
 constexpr float kIconTextGap = 8;
 constexpr float kNestingIndent = 16;
@@ -131,6 +135,7 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
     };
     if (FAILED(hr = format(text, DWRITE_FONT_WEIGHT_REGULAR, M::kUrlFieldFontSize, view->addressFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kHeaderFontSize, view->headerFormat_)) ||
+        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kDoneFontSize, view->doneFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_REGULAR, M::kTabFontSize, view->tabFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kTabFontSize, view->folderFormat_)) ||
         FAILED(hr = format(L"Segoe UI Emoji", DWRITE_FONT_WEIGHT_REGULAR, M::kHeaderIconFontSize, view->emojiFormat_)) ||
@@ -194,6 +199,7 @@ bool SidebarView::CreateGpu(std::wstring& error) {
 void SidebarView::ReleaseGpu() {
     faviconBitmaps_.clear();
     if (tip_) tip_->UseCompositor(nullptr);
+    if (rename_) rename_->UseCompositor(nullptr, nullptr);
     if (icons_) icons_->ReleaseDevice();
     for (auto& [id, page] : pages_) {
         if (page.visual && strip_) {
@@ -294,6 +300,8 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
         it = pages_.erase(it);
     }
     model_ = std::move(next);
+    built_.clear();
+    for (const PageModel& page : model_.pages) built_.push_back(page.index);
     PlacePages();
     ScheduleDraw();
     // Rows moved under a still pointer: it now hovers whatever is there.
@@ -306,7 +314,8 @@ void SidebarView::SetPageOffset(float offset) {
     pageOffset_ = offset;
     slide_.reset();
     barSlidePending_ = false;
-    bar_->Land();
+    // The bar's light with them: a swipe's frame lights the cells between the pages it shows.
+    bar_->Follow(offset, width_, built_, model_.index);
     if (bar_->NeedsDraw()) ScheduleDraw();
     PlaceStrip();
     // At rest the rows have moved under a still pointer; mid-swipe, as AppKit's, hover waits.
@@ -407,7 +416,7 @@ void SidebarView::ScheduleDraw() {
 }
 
 bool SidebarView::NeedsDraw() const {
-    return dirty_ || bar_->NeedsDraw() || std::any_of(pages_.begin(), pages_.end(), [](const auto& entry) { return entry.second.dirty; });
+    return dirty_ || bar_->NeedsDraw() || (rename_ && rename_->NeedsDraw()) || std::any_of(pages_.begin(), pages_.end(), [](const auto& entry) { return entry.second.dirty; });
 }
 
 void SidebarView::TipHoverChanged(const std::optional<std::string>& spaceID) {
@@ -465,6 +474,11 @@ bool SidebarView::HandleMessage(UINT message, WPARAM wParam) {
         ShowTip();
         return true;
     }
+    if (message == WM_TIMER && wParam == kDropTimer) {
+        FinishDrop();
+        return true;
+    }
+    if (message == WM_TIMER && rename_ && rename_->HandleTimer(wParam)) return true;
     if (message != kRedrawMessage) return false;
     redrawPosted_ = false;
     if (NeedsDraw() && compositor_) {
@@ -532,7 +546,7 @@ std::wstring SidebarView::DrawPageSurface(const PageModel& page, Page& gpu, Pixe
     std::set<FaviconKey> icons;
     drawnIcons_ = &icons;
     std::wstring error = compositor_->DrawSurface(
-        gpu.surface.Get(), width, height, dpi_,
+        perf::View::Sidebar, gpu.surface.Get(), width, height, dpi_,
         [&](ID2D1DeviceContext* context) {
             DrawPage(context, page, scroll, static_cast<float>(height) / scale, page.spaceID == model_.spaceID);
         },
@@ -580,7 +594,8 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         return HResultMessage(what, hr);
     };
     HRESULT hr = S_OK;
-    Pixels header, selectedPage;
+    Pixels header;
+    std::vector<std::pair<size_t, Pixels>> pageShots;  // each built page's, by its space's place
     if (dirty_ || readBack) {
         if (!surface_) {
             if (FAILED(hr = compositor_->Device()->CreateVirtualSurface(width, height, DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -595,7 +610,7 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         surfaceWidth_ = width;
         surfaceHeight_ = height;
         error = compositor_->DrawSurface(
-            surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawHeader(context); }, readBack ? &header : nullptr,
+            perf::View::Sidebar, surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawHeader(context); }, readBack ? &header : nullptr,
             hr);
         if (!error.empty()) {
             deviceLost_ = IsDeviceLost(hr);
@@ -606,10 +621,9 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
 
     // The built pages, each in its own surface.
     for (const PageModel& page : model_.pages) {
-        const bool selected = page.spaceID == model_.spaceID;
-        if (error = DrawPageSurface(page, pages_[page.spaceID], readBack && selected ? &selectedPage : nullptr); !error.empty()) {
-            return error;
-        }
+        Pixels* shot = nullptr;
+        if (readBack) shot = &pageShots.emplace_back(page.index, Pixels{}).second;
+        if (error = DrawPageSurface(page, pages_[page.spaceID], shot); !error.empty()) return error;
     }
     // Only the icons the pages show stay on the GPU.
     std::erase_if(faviconBitmaps_, [this](const auto& entry) {
@@ -619,15 +633,38 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
     // The space bar under them.
     Pixels bar;
     if (error = bar_->Draw(static_cast<UINT>(client.bottom), readBack ? &bar : nullptr); !error.empty()) return error;
+    // The rename field over its page's header, in the page's visual (it slides with it).
+    Pixels field;
+    POINT fieldAt{};
+    if (rename_) {
+        const auto page = pages_.find(rename_->SpaceID());
+        IDCompositionVisual* parent = page != pages_.end() ? page->second.visual.Get() : nullptr;
+        if (parent != rename_->Parent()) rename_->UseCompositor(compositor_, parent);
+        rename_->SetPageOrigin(POINT{std::lround(PageOffset() * scale), 0});
+        if (error = rename_->Draw(readBack ? &field : nullptr, &fieldAt); !error.empty()) {
+            deviceLost_ = deviceLost_ || rename_->DeviceLost();
+            return error;
+        }
+    }
 
     if (readBack) {
-        // As the screen shows it at rest: the selected page over the address field, and the bar
-        // at the window's bottom.
+        // As the screen shows it: the pages over the address field where the strip has them
+        // (at rest, the selected one), clipped to the sidebar, and the bar at the window's
+        // bottom.
         readBack->width = width;
-        readBack->height = std::max({header.height, selectedPage.height, static_cast<UINT>(client.bottom)});
+        readBack->height = std::max(header.height, static_cast<UINT>(client.bottom));
+        for (const auto& [index, shot] : pageShots) readBack->height = std::max(readBack->height, shot.height);
         readBack->bgra.assign(static_cast<size_t>(readBack->width) * readBack->height * 4, 0);
         ComposeOver(*readBack, header, POINT{0, 0});
-        ComposeOver(*readBack, selectedPage, POINT{0, 0});
+        const RECT clip{0, 0, static_cast<LONG>(width), static_cast<LONG>(readBack->height)};
+        const float strip = PageOffset() * scale;
+        for (const auto& [index, shot] : pageShots) {
+            const float x = (static_cast<float>(index) - static_cast<float>(model_.index)) * static_cast<float>(clipWidth_) + strip;
+            if (std::abs(x) < static_cast<float>(width)) ComposeOver(*readBack, shot, POINT{std::lround(x), 0}, 1, &clip);
+            if (rename_ && index == model_.index && !field.bgra.empty()) {
+                ComposeOver(*readBack, field, POINT{std::lround(x) + fieldAt.x, fieldAt.y}, 1, &clip);
+            }
+        }
         ComposeOver(*readBack, bar, POINT{0, client.bottom - static_cast<LONG>(bar.height)});
     }
     return {};
@@ -729,6 +766,43 @@ void SidebarView::DrawFavicon(ID2D1DeviceContext* context, const SidebarRow& row
     DrawGlyph(context, kGlobe, side / kGlyphInk, box, Primary(kLabelAlpha * kGlobeOpacity));
 }
 
+D2D1_RECT_F SidebarView::HeaderNameRect(const SidebarRow& row, float top) {
+    // As DrawRow lays the header out: the name from the icon's slot (or its place, with no
+    // icon), up to the chevron's slot and the gaps, as wide as its text.
+    const float x = row.icon.empty() ? M::kHeaderIconX : M::kHeaderTextX;
+    float end = width_ - M::kPadding;
+    if (row.hasPinned) end -= (M::kIconInset - M::kPadding) + M::kHeaderIconSize + kHeaderGap;
+    end -= kHeaderGap;
+    const std::wstring title = Widen(row.title);
+    ComPtr<IDWriteTextLayout> layout;
+    DWRITE_TEXT_METRICS metrics{};
+    if (FAILED(dwrite_->CreateTextLayout(title.c_str(), static_cast<UINT32>(title.size()), headerFormat_.Get(), 100000, 100,
+                                         layout.GetAddressOf())) ||
+        FAILED(layout->GetMetrics(&metrics))) {
+        return {};
+    }
+    const float rowTop = top + M::kHeaderIconTop;
+    const float line = LineHeight(M::kHeaderFontSize);
+    const float textY = rowTop + std::floor((M::kHeaderIconSize - line) / 2);
+    return Rect(x, textY, x + std::min(metrics.width, std::max(end - x, 0.0f)), textY + line);
+}
+
+void SidebarView::PlaceRenameField(float x, float top) {
+    // SpaceHeaderRowCell.layout while renaming: no chevron; from the cell's end, a gap and the
+    // icon inset, Done (its label's width), a gap, then the field takes the room from the name's
+    // place. The field's line and Done's label each sit in the 26pt row, rounded down.
+    const float right = width_ - M::kPadding;
+    const float rowTop = top + M::kHeaderIconTop;
+    float end = right - (kHeaderGap + (M::kIconInset - M::kPadding));
+    end -= rename_->DoneWidth();
+    const D2D1_RECT_F done = Rect(end, rowTop, end + rename_->DoneWidth(), rowTop + M::kHeaderIconSize);
+    end -= kHeaderGap;
+    const float line = LineHeight(M::kHeaderFontSize);
+    const float lineTop = rowTop + std::floor((M::kHeaderIconSize - line) / 2);
+    const float doneBaseline = rowTop + std::floor((M::kHeaderIconSize - LineHeight(M::kDoneFontSize)) / 2) + M::kDoneFontSize * kAscender;
+    rename_->Place(x, std::max(end, x), lineTop, line, lineTop + M::kHeaderFontSize * kAscender, done, doneBaseline, dpi_, model_.dark);
+}
+
 void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, float top, bool hovered) {
     const float left = M::kPadding, right = width_ - M::kPadding;  // the row, in window points
     // The pill sits 2.5pt into its row: whole pixels at 2x as on the Mac's screens, snapped to
@@ -779,6 +853,11 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
                 }
             }
             x = M::kHeaderTextX;
+        }
+        if (rename_ && rename_->SpaceID() == row.id) {
+            // Renaming: the field and Done (its own visual) where the name and the chevron were.
+            PlaceRenameField(x, top);
+            break;
         }
         float end = right;
         if (row.hasPinned) {
@@ -951,8 +1030,171 @@ void SidebarView::ForgetActivation() {
     activating_ = false;
 }
 
+// Dragging a space's cell ------------------------------------------------------------------
+
+void SidebarView::DragSpaceTo(D2D1_POINT_2F b) {
+    // cellDragged: the first move past 4pt picks it up (not with one space, or while another
+    // drop is still landing), and each one after moves it.
+    if (!barDragging_ && barPress_) barDragging_ = bar_->BeginDrag(*barPress_);
+    if (!barDragging_) return;
+    bar_->MoveDrag(b.x, b.y);
+    if (bar_->NeedsDraw()) ScheduleDraw();
+}
+
+void SidebarView::DropSpace(D2D1_POINT_2F b) {
+    // cellDragEnded: it settles into its slot, and the space moves once it's there.
+    barDragging_ = false;
+    bar_->DropDrag(b.x, b.y);
+    // The compositor starts the landing at the commit's frame, up to a frame after now: a frame at
+    // 60 Hz to spare, as the pages' settle timer.
+    SetTimer(window_, kDropTimer, static_cast<UINT>(std::ceil(space_bar_metrics::kReorderSlide * 1000)) + 17, nullptr);
+    if (bar_->NeedsDraw()) ScheduleDraw();
+}
+
+void SidebarView::FinishDrop() {
+    KillTimer(window_, kDropTimer);
+    const std::optional<SpaceDrag> drag = bar_->Drag();
+    if (!drag || !drag->landing) return;
+    // The completion handler: the cells back on the layout, then the move (which updates the
+    // bar with the new order before anything draws).
+    bar_->EndDrag();
+    ScheduleDraw();
+    if (actions_.moveSpace) actions_.moveSpace(drag->spaceID, drag->target.value_or(drag->from));
+    RefreshHover();
+}
+
+std::optional<POINT> SidebarView::SpaceCellCentre(size_t index) const {
+    const SpaceBarLayout& layout = bar_->Geometry();
+    if (index >= layout.cells.size()) return std::nullopt;
+    const BarRect& cell = layout.cells[index];
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    const float top = SpaceBarTop(Height());
+    return POINT{std::lround((cell.left + cell.right) / 2 * scale), std::lround(((cell.top + cell.bottom) / 2 + top) * scale)};
+}
+
+// Renaming a space ---------------------------------------------------------------------------
+
+void SidebarView::BeginRenaming(const std::string& spaceID, const std::string& name) {
+    if (rename_ && rename_->SpaceID() == spaceID) return;
+    if (rename_) EndRenaming(true);
+    std::wstring error;
+    rename_ = SpaceRenameField::Create(window_, dwrite_.Get(), headerFormat_.Get(), doneFormat_.Get(), spaceID, name, error);
+    if (!rename_) {
+        OutputDebugStringW((L"Kite: the rename field couldn't open: " + error + L"\n").c_str());
+        return;
+    }
+    HideTip();
+    InvalidateSelectedPage();
+}
+
+std::optional<std::pair<std::string, std::string>> SidebarView::TakeRename() {
+    if (!rename_) return std::nullopt;
+    std::pair<std::string, std::string> taken{rename_->SpaceID(), rename_->Text()};
+    renamePressed_ = false;
+    rename_.reset();
+    if (GetCapture() == window_ && !press_ && !barPress_) ReleaseCapture();
+    InvalidateSelectedPage();  // its draw's commit takes the field's visuals away too
+    return taken;
+}
+
+void SidebarView::EndRenaming(bool commit) {
+    const auto taken = TakeRename();
+    // The Mac's commitRename: a blank name keeps the old one (renameSpace).
+    if (taken && commit && actions_.renameSpace) actions_.renameSpace(taken->first, taken->second);
+}
+
+std::optional<POINT> SidebarView::RenameDoneCentre() const {
+    if (!rename_) return std::nullopt;
+    const D2D1_RECT_F& done = rename_->DoneBox();
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    return POINT{std::lround(((done.left + done.right) / 2 + PageOffset()) * scale), std::lround((done.top + done.bottom) / 2 * scale)};
+}
+
+std::optional<POINT> SidebarView::HeaderNameCentre() {
+    if (model_.rows.empty() || model_.rows.front().kind != SidebarRow::Kind::Header) return std::nullopt;
+    const SidebarRow& header = model_.rows.front();
+    const D2D1_RECT_F name = HeaderNameRect(header, M::kHeaderAreaHeight + header.top - scroll_);
+    if (name.right <= name.left) return std::nullopt;
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    return POINT{std::lround(((name.left + name.right) / 2 + PageOffset()) * scale), std::lround((name.top + name.bottom) / 2 * scale)};
+}
+
+void SidebarView::FocusRenameForCapture() {
+    if (!rename_) return;
+    rename_->SetFocused(true);
+    ScheduleDraw();
+}
+
+std::optional<std::string> SidebarView::Renaming() const {
+    if (!rename_) return std::nullopt;
+    return rename_->SpaceID();
+}
+
+void SidebarView::TypeInRename(std::string_view text) {
+    if (!rename_) return;
+    for (wchar_t c : Widen(std::string(text))) rename_->Character(c);
+    ScheduleDraw();
+}
+
+bool SidebarView::HandleKey(UINT message, WPARAM wParam, LPARAM lParam) {
+    if (!rename_) return false;
+    using Outcome = SpaceRenameField::Outcome;
+    const auto apply = [this](Outcome outcome) {
+        if (outcome == Outcome::Commit) EndRenaming(true);
+        else if (outcome == Outcome::Cancel) EndRenaming(false);
+        else if (outcome == Outcome::Changed) ScheduleDraw();  // the field alone
+    };
+    switch (message) {
+    case WM_KEYDOWN: {
+        // AltGr is Ctrl+Alt: its characters come as WM_CHAR, never as a Ctrl shortcut.
+        const bool alt = GetKeyState(VK_MENU) < 0;
+        const bool ctrl = GetKeyState(VK_CONTROL) < 0 && !alt;
+        const bool shift = GetKeyState(VK_SHIFT) < 0;
+        const std::optional<Outcome> outcome = rename_->KeyDown(static_cast<UINT>(wParam), ctrl, shift);
+        if (!outcome) return false;
+        apply(*outcome);
+        return true;
+    }
+    case WM_CHAR:
+        apply(rename_->Character(static_cast<wchar_t>(wParam)));
+        return true;
+    case WM_IME_STARTCOMPOSITION:
+        rename_->PlaceImeWindow();
+        return false;  // Windows' composition window draws it; the result comes as WM_CHAR
+    case WM_SETFOCUS:
+        rename_->SetFocused(true);
+        ScheduleDraw();
+        return false;
+    case WM_KILLFOCUS:
+        // The page taking the keyboard ends it, as the web view becoming first responder ends
+        // the Mac's field editor; another app's doesn't (AppKit keeps a field's editing).
+        if (wParam && IsChild(window_, reinterpret_cast<HWND>(wParam))) {
+            EndRenaming(true);
+        } else {
+            rename_->SetFocused(false);
+            ScheduleDraw();
+        }
+        return false;
+    case WM_SETCURSOR: {
+        if (LOWORD(lParam) != HTCLIENT) return false;
+        POINT cursor{};
+        GetCursorPos(&cursor);
+        ScreenToClient(window_, &cursor);
+        const D2D1_POINT_2F p = OnPage(PointOf(cursor));
+        if (!rename_->InField(p.x, p.y)) return false;
+        SetCursor(LoadCursorW(nullptr, IDC_IBEAM));
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 void SidebarView::ClearHover() {
     pointer_.reset();
+    // A cell being dragged goes back where it came from.
+    if (barDragging_) DropSpace(D2D1_POINT_2F{-1, -1});
+    renamePressed_ = false;
     // A press it drops lets go of the mouse too.
     if ((press_ || barPress_) && GetCapture() == window_) {
         press_.reset();
@@ -963,6 +1205,20 @@ void SidebarView::ClearHover() {
     barPress_.reset();
     activating_ = false;
     RefreshHover();
+}
+
+bool SidebarView::OverList(D2D1_POINT_2F p) const {
+    // The list's scroll view: inside its padding, between the header and the space bar.
+    return p.x >= M::kPadding && p.x < width_ - M::kPadding && p.y >= M::kHeaderAreaHeight && p.y < SidebarListBottom(Height());
+}
+
+bool SidebarView::ScrollList(POINT at, float distance) {
+    const D2D1_POINT_2F p = PointOf(at);
+    if (!OverList(p)) return false;
+    if (distance == 0) return true;
+    pointer_ = at;
+    SetScroll(scrollExact_ + distance);
+    return true;
 }
 
 void SidebarView::SetScroll(float scroll) {
@@ -1024,10 +1280,16 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             trackingLeave_ = TrackMouseEvent(&track) != FALSE;
         }
         pointer_ = POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        if (renamePressed_ && rename_) {
+            const D2D1_POINT_2F q = OnPage(PointOf(*pointer_));
+            if (rename_->Move(q.x, q.y) != SpaceRenameField::Outcome::None) ScheduleDraw();
+            return true;
+        }
         if (barPress_) {
             // In the bar's points, wherever the pointer has gone.
             const D2D1_POINT_2F p = PointOf(*pointer_);
             SpaceBarMove(*barPress_, p.x, p.y - SpaceBarTop(Height()));
+            if (barPress_->dragged) DragSpaceTo(D2D1_POINT_2F{p.x, p.y - SpaceBarTop(Height())});
             // A drag takes the tip away (cellDragged's setDragging), but not with one space,
             // which can't be dragged (it returns first).
             // The hover stays (no tracking-area events during a drag), so a release over the
@@ -1060,6 +1322,18 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         lastClickTime_ = time;
         lastClickAt_ = at;
         pointer_ = at;
+        // While a space is renamed, a press in its field edits it, on Done commits it on release,
+        // and anywhere else ends it (keeping what was typed) and goes on as a press.
+        if (rename_) {
+            const D2D1_POINT_2F q = OnPage(p);
+            if (rename_->Press(q.x, q.y, (wParam & MK_SHIFT) != 0)) {
+                renamePressed_ = true;
+                SetCapture(window_);
+                ScheduleDraw();
+                return true;
+            }
+            EndRenaming(true);
+        }
         RefreshHover();
         // A space's cell, which takes the click that brings the window forward too (the Mac's
         // acceptsFirstMouse).
@@ -1074,10 +1348,26 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         return true;
     }
     case WM_LBUTTONUP: {
+        if (renamePressed_) {
+            renamePressed_ = false;
+            if (GetCapture() == window_) ReleaseCapture();
+            const D2D1_POINT_2F q = OnPage(PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}));
+            if (rename_ && rename_->Release(q.x, q.y) == SpaceRenameField::Outcome::Commit) EndRenaming(true);
+            return true;
+        }
         if (barPress_) {
             const SpaceBarPress press = *barPress_;
             barPress_.reset();
+            const bool dragging = barDragging_;
+            barDragging_ = false;  // before the capture goes, so its WM_CAPTURECHANGED doesn't drop it again
             if (GetCapture() == window_) ReleaseCapture();
+            if (dragging) {
+                const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+                barDragging_ = true;
+                DropSpace(D2D1_POINT_2F{p.x, p.y - SpaceBarTop(Height())});
+                RefreshHover();
+                return true;
+            }
             // Let go inside the cell it pressed, without dragging: that space (mouseUp's
             // bounds.contains).
             const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
@@ -1097,16 +1387,54 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         const SidebarTap tap =
             p.x < 0 || p.x >= width_ ? SidebarTap{} : SidebarRelease(press, model_.rows, width_, Height(), scroll_, q.x, q.y);
         RefreshHover();
+        // A click on the current space's name renames it in place (SpaceHeaderRowCell.tapped(at:)).
+        if (tap.action == SidebarTap::Action::None && press.target == SidebarHit::Target::Row && press.kind == SidebarRow::Kind::Header &&
+            press.clicks == 1 && press.id == model_.spaceID && !rename_ && actions_.beginRenaming && !model_.rows.empty()) {
+            const SidebarRow& header = model_.rows.front();
+            if (const D2D1_RECT_F name = HeaderNameRect(header, M::kHeaderAreaHeight + header.top - scroll_);
+                q.x >= name.left && q.x < name.right && q.y >= name.top && q.y < name.bottom) {
+                actions_.beginRenaming(header.id);
+                return true;
+            }
+        }
         Perform(tap);  // a copy: the action rebuilds the rows
         return true;
     }
     case WM_CAPTURECHANGED:
+        // The mouse went elsewhere mid-drag (another window took it): the cell goes back.
+        if (barDragging_) DropSpace(D2D1_POINT_2F{-1, -1});
+        renamePressed_ = false;
         if (press_ || barPress_) {
             press_.reset();
             barPress_.reset();
             RefreshHover();
         }
         return false;
+    case WM_RBUTTONDOWN: {
+        const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+        return p.x >= 0 && p.x < width_ && !press_ && !barPress_;
+    }
+    case WM_RBUTTONUP: {
+        // The space's menu, from its cell in the bar or its header (menu(for:) and the header's
+        // contextMenu(at:)), on release as Windows' context menus open.
+        if (press_ || barPress_) return true;
+        const POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        const D2D1_POINT_2F p = PointOf(at);
+        if (p.x < 0 || p.x >= width_) return false;
+        std::optional<std::string> space;
+        if (const auto b = BarPoint(p)) {
+            space = bar_->SpaceAt(b->x, b->y);
+        } else if (const SidebarHit hit = HitAt(p); hit.target == SidebarHit::Target::Row && hit.row < model_.rows.size() &&
+                                                  model_.rows[hit.row].kind == SidebarRow::Kind::Header) {
+            space = model_.rows[hit.row].id;
+        }
+        if (!space || !actions_.spaceMenu) return true;
+        HideTip();
+        POINT screen = at;
+        ClientToScreen(window_, &screen);
+        actions_.spaceMenu(*space, screen);
+        return true;
+    }
     case WM_MOUSEHWHEEL: {
         // Sideways over the space bar: its strip, when the spaces don't fit (an NSScrollView).
         POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
@@ -1139,10 +1467,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             return true;
         }
-        // The list's scroll view: inside its padding, between the header and the space bar.
-        if (p.x < M::kPadding || p.x >= width_ - M::kPadding || p.y < M::kHeaderAreaHeight || p.y >= SidebarListBottom(height)) {
-            return false;
-        }
+        if (!OverList(p)) return false;
         UINT lines = 3;
         if (!SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0)) lines = 3;
         const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;

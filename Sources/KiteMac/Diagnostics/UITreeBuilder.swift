@@ -88,7 +88,8 @@ struct UITreeBuilder {
         if let subrole = ax.subrole { attributes.append(.init("subrole", subrole)) }
         if ax.isSelected { attributes.append(.init("selected", "true")) }
         if !ax.isEnabled { attributes.append(.init("enabled", "false")) }
-        if let value = ax.value { attributes.append(.init("value", AccessibilityOutline.quote(String(value.prefix(80))))) }
+        // Cleaned to one line like a label, so a value (a page's text, say) can't fake a tree line.
+        if let value = ax.value { attributes.append(.init("value", AccessibilityOutline.quote(AccessibilityOutline.clean(value, limit: 80)))) }
         let children = ax.children.compactMap { self.element(for: $0, depth: depth + 1) }
         return UINode(kind: ax.role ?? "AXUnknown", identifier: ax.identifier, label: ax.label, frame: ax.screenFrame.map { window.uiRect(fromScreen: $0) },
                       attributes: attributes, children: children)

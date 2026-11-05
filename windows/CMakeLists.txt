@@ -8,8 +8,8 @@
 # and windows/cmake/mingw-w64.cmake cross-compiles the whole app.
 cmake_minimum_required(VERSION 3.24)
 project(Kite LANGUAGES CXX)
-if(MINGW)
-  enable_language(RC)
+if(WIN32)
+  enable_language(RC)  # resources/Kite.rc: the app icon (and MinGW's manifest)
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -24,7 +24,10 @@ else()
   # No fused multiply-adds: the theme backdrop's grain hash ends in a fract() of values near
   # 1e4, so contracting it (clang's default, and every arm64 build) moves the reference off
   # the golden fixture the Mac shares. MSVC doesn't contract without /fp:contract.
-  add_compile_options(-Wall -Wextra -Werror -ffp-contract=off)
+  # KITE_WERROR=OFF is for the sanitizer build: -Werror from here comes after CMAKE_CXX_FLAGS,
+  # so a -Wno-error there can't undo it, and the plain build already gates warnings.
+  option(KITE_WERROR "Treat warnings as errors" ON)
+  add_compile_options(-Wall -Wextra -ffp-contract=off $<$<BOOL:${KITE_WERROR}>:-Werror>)
 endif()
 if(WIN32)
   add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
@@ -33,16 +36,24 @@ endif()
 # The model (the Windows counterpart of KiteCore): standard C++ only, unit-tested headless.
 add_library(KiteCoreWin STATIC
   src/core/CommandBar.cpp
+  src/core/CommandLine.cpp
   src/core/Json.cpp
   src/core/KeyBindings.cpp
   src/core/Models.cpp
   src/core/OKLab.cpp
+  src/core/SessionBackups.cpp
+  src/core/SessionSaveDelay.cpp
   src/core/SessionStore.cpp
+  src/core/SessionWriter.cpp
+  src/core/StoreFile.cpp
   src/core/SpaceBar.cpp
+  src/core/SpaceEditing.cpp
   src/core/SpaceIcon.cpp
   src/core/SymbolShape.cpp
   src/core/PictureLoads.cpp
   src/core/SpaceSwipe.cpp
+  src/core/SpaceSwipeGesture.cpp
+  src/core/TouchpadPhases.cpp
   src/core/LiveTabPolicy.cpp
   src/core/Sidebar.cpp
   src/core/TabClosing.cpp
@@ -55,6 +66,9 @@ add_library(KiteCoreWin STATIC
   src/core/Uuid.cpp
 )
 target_include_directories(KiteCoreWin PUBLIC src)
+# SessionWriter's worker is a std::thread (pthreads off Windows).
+find_package(Threads REQUIRED)
+target_link_libraries(KiteCoreWin PUBLIC Threads::Threads)
 if(MSVC)
   # Control Flow Guard: the model is linked into Kite.dll, which every sandboxed helper maps.
   target_compile_options(KiteCoreWin PRIVATE /guard:cf)
@@ -105,6 +119,9 @@ if(WIN32)
     src/shell/main.cpp
     src/shell/BackdropTest.cpp
     src/shell/BrowserWindowController.cpp
+    src/shell/BrowserWindowController+Chromium.cpp
+    src/shell/BrowserWindowController+Spaces.cpp
+    src/shell/BrowserWindowController+Tests.cpp
     src/shell/CaptionButtonsView.cpp
     src/shell/Capture.cpp
     src/shell/CommandBarView.cpp
@@ -113,15 +130,23 @@ if(WIN32)
     src/shell/FrameClock.cpp
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
+    src/shell/MemoryPressure.cpp
+    src/shell/PerfLog.cpp
+    src/shell/QuietRun.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
     src/shell/SpaceIconPainter.cpp
+    src/shell/SpaceMenu.cpp
+    src/shell/SpaceRenameField.cpp
     src/shell/SpaceTipView.cpp
+    src/shell/TextEditing.cpp
+    src/shell/TextLine.cpp
+    src/shell/TouchpadInput.cpp
     resources/Version.rc
     ${KITE_SHADER_HEADERS}
   )
-  set(KITE_SHELL_LIBRARIES KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp)
+  set(KITE_SHELL_LIBRARIES KiteCoreWin user32 dwmapi shell32 ole32 uuid windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp comctl32)
 
   # Chromium (CEF), from windows/scripts/fetch-cef.ps1. Without it (no download yet, or the
   # MinGW check, which can't link CEF's MSVC wrapper) Kite.exe builds without pages.
@@ -156,11 +181,15 @@ if(WIN32)
     # Every helper maps Kite.dll, renderers under win32k lockdown, where user32 (or anything that
     # loads it) fails the process: everything but kernel32 and libcef.dll is delay-loaded, so only
     # the browser process loads it. Control Flow Guard and CET shadow stacks, as Chromium's own
-    # binaries have. tests/KiteBinariesTest.cmake checks all three.
+    # binaries have. tests/KiteBinariesTest.cmake checks all three. comctl32 is for Delete Space's
+    # task dialog, gdi32 for --space-menu's read-back: only the window's process calls them
+    # (user32 loads gdi32 for itself, so delaying Kite's import of it is safe: no call of Kite's
+    # to it comes before the window, or from a loader callback).
     target_compile_options(Kite PRIVATE /guard:cf)
     target_link_options(Kite PRIVATE /guard:cf /CETCOMPAT
       /DELAYLOAD:user32.dll /DELAYLOAD:dwmapi.dll /DELAYLOAD:shell32.dll /DELAYLOAD:ole32.dll /DELAYLOAD:advapi32.dll
-      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll)
+      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll
+      /DELAYLOAD:comctl32.dll /DELAYLOAD:gdi32.dll)
     set_target_properties(Kite PROPERTIES
       RUNTIME_OUTPUT_DIRECTORY "${KITE_OUT}"
       ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib/$<CONFIG>"
@@ -218,13 +247,12 @@ if(WIN32)
     message(STATUS "Chromium: no CEF at ${KITE_CEF_ROOT}, building without pages")
     add_executable(Kite WIN32 ${KITE_SHELL_SOURCES})
     target_link_libraries(Kite PRIVATE ${KITE_SHELL_LIBRARIES})
-    # Kite.manifest: per-monitor DPI v2, the UTF-8 code page, long paths.
+    # Kite.manifest (MSVC; MinGW's comes through Kite.rc, below).
     if(MSVC)
       target_sources(Kite PRIVATE resources/Kite.manifest)
       target_compile_options(Kite PRIVATE /guard:cf)
       target_link_options(Kite PRIVATE /guard:cf /CETCOMPAT)
     else()
-      target_sources(Kite PRIVATE resources/Kite.rc)
       target_link_options(Kite PRIVATE -municode)
     endif()
   endif()
@@ -239,27 +267,53 @@ if(WIN32)
     target_link_libraries(Kite PRIVATE d3dcompiler)
   endif()
   target_link_libraries(kitecore PRIVATE shell32)
-  # kitecore gets Kite.manifest too, for the UTF-8 code page and long paths.
+  # Kite (Kite.dll with Chromium, else Kite.exe) and kitecore get Kite.rc, with the app icon:
+  # LoadAppIcon loads it from the module MainWindow.cpp is in, and Explorer shows it for
+  # kitecore.exe (the stamp puts it in the bootstrapped Kite.exe too). Kite.manifest: per-monitor
+  # DPI v2, the UTF-8 code page, long paths, Common Controls 6 (the task dialog). MSVC's linker
+  # embeds the manifest (kitecore's here, the no-Chromium Kite.exe's above, the stamp Kite.exe's);
+  # MinGW's has no manifest tool, so Kite.rc carries it there.
+  target_sources(Kite PRIVATE resources/Kite.rc)
+  target_sources(kitecore PRIVATE resources/Kite.rc)
+  set_property(SOURCE resources/Kite.rc APPEND PROPERTY OBJECT_DEPENDS
+               "${CMAKE_CURRENT_SOURCE_DIR}/resources/Kite.ico" "${CMAKE_CURRENT_SOURCE_DIR}/resources/Kite.manifest")
   if(MSVC)
     target_sources(kitecore PRIVATE resources/Kite.manifest)
   else()
-    target_sources(kitecore PRIVATE resources/Kite.rc)
+    set_property(SOURCE resources/Kite.rc APPEND PROPERTY COMPILE_DEFINITIONS KITE_RC_MANIFEST)
   endif()
+endif()
+
+# Measurement tools (docs/windows-architecture.md, windows/tools): never linked into Kite.exe,
+# never shipped. MSVC only, as they're Windows-only and measure the MSVC build.
+if(MSVC)
+  add_executable(kiteperf tools/perf/main.cpp tools/perf/LogReader.cpp tools/perf/PageServer.cpp tools/perf/Processes.cpp
+                          tools/perf/Report.cpp resources/Kite.manifest)
+  # Its session fixture and pages, read from the source tree.
+  target_compile_definitions(kiteperf PRIVATE KITEPERF_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/tools/perf")
+  target_link_libraries(kiteperf PRIVATE KiteCoreWin pdh psapi ws2_32 advapi32 user32 gdi32 dwmapi)
+  # Out of the folder that ships (windows/build/<config>), with the build tools.
+  set_target_properties(kiteperf PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tools/$<CONFIG>")
 endif()
 
 enable_testing()
 add_executable(KiteCoreTests
   tests/main.cpp
   tests/CommandBarTests.cpp
+  tests/CommandLineTests.cpp
   tests/JsonTests.cpp
   tests/KeyBindingsTests.cpp
   tests/ModelTests.cpp
   tests/LiveTabPolicyTests.cpp
+  tests/SessionSaveTests.cpp
   tests/SidebarTests.cpp
   tests/SpaceBarTests.cpp
+  tests/SpaceEditingTests.cpp
   tests/SpaceIconTests.cpp
   tests/PictureLoadsTests.cpp
   tests/SpaceSwipeTests.cpp
+  tests/SpaceSwipeGestureTests.cpp
+  tests/TouchpadPhasesTests.cpp
   tests/SymbolShapeTests.cpp
   tests/TabClosingTests.cpp
   tests/SupportDirectoryTests.cpp
@@ -282,6 +336,8 @@ target_link_libraries(gen-theme-golden PRIVATE KiteCoreWin)
 target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../Tests/Fixtures"
                                                KITE_STATES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/helix/states")
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)
+add_test(NAME chromium-ignores-kites-command-line
+  COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/shell/Chromium.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ChromiumSettingsCheck.cmake)
 add_test(NAME kitecore-cli
   COMMAND ${CMAKE_COMMAND} -DKITECORE=$<TARGET_FILE:kitecore> -DWORK=${CMAKE_CURRENT_BINARY_DIR}/kitecore-cli-test
           -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/KitecoreCliTest.cmake)

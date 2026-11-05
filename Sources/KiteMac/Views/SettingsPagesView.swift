@@ -56,6 +56,7 @@ final class ProfileDataControls {
         if types.contains(.history) {
             history?.removeVisits(since: since)
             forgetPicks(since)
+            (NSApp.delegate as? AppDelegate)?.forgetTabHistory()
         }
         if types.contains(.downloads) { DownloadsModel.shared.removeHistory(since: since) }
         if types.contains(.siteSettings), let page = page() {

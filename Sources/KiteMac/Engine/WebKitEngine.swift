@@ -27,11 +27,22 @@ final class WebKitEngine: WebEngine {
         configuration.websiteDataStore = dataStore
         // Without a Safari token some sites serve a degraded page to WKWebView.
         configuration.applicationNameForUserAgent = "Version/18.6 Safari/605.1.15"
-        configuration.preferences.isElementFullscreenEnabled = true
+        // A page's element full screen takes over the display, so a test-safe run (behind the user's windows) has none.
+        configuration.preferences.isElementFullscreenEnabled = !WindowPresenter.testSafe
         configuration.preferences.isFraudulentWebsiteWarningEnabled = true
         configuration.allowsAirPlayForMediaPlayback = true
+        // Picture in picture floats over every app, so a test-safe run has none either. macOS has no public
+        // allowsPictureInPictureMediaPlayback (it's iOS's), so it's WebKit's preference, looked up defensively.
+        if WindowPresenter.testSafe { Self.disablePictureInPicture(configuration.preferences) }
         Self.allowFullRefreshRate(configuration.preferences)
         self.configuration = configuration
+    }
+
+    private static func disablePictureInPicture(_ preferences: WKPreferences) {
+        let set = NSSelectorFromString("_setAllowsPictureInPictureMediaPlayback:")
+        guard preferences.responds(to: set) else { return }
+        typealias SetBool = @convention(c) (AnyObject, Selector, Bool) -> Void
+        unsafeBitCast(preferences.method(for: set), to: SetBool.self)(preferences, set, false)
     }
 
     /// Shares the ad blocker's compiled rules; only the website data is kept in memory.

@@ -25,7 +25,9 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "core/KeyBindings.h"
 
@@ -90,8 +92,15 @@ public:
     // default profile in root\Default, a space's other profile in root\<directory>.
     // AlreadyRunning: another Kite has this profile and has been told to come forward.
     // `sandboxInfo` is the bootstrap's (RunWinMain): every helper runs in Chromium's sandbox.
-    static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, void* sandboxInfo,
-                             PageEvents events, std::unique_ptr<Chromium>& out, std::wstring& error);
+    // Pages are always made without activating their windows (SetAsPage in Chromium.cpp), so
+    // one made while Kite is behind another app leaves it there. `quiet`: a quiet run (main.cpp's
+    // `quiet`), which never comes to the front: the pages never take the focus or activate,
+    // and show no dialogs (file choosers cancelled, JavaScript and Leave Page dialogs answered,
+    // window.print() and Developer Tools skipped), each with a KITE_TEST_MODAL line.
+    // `switches` ("name" or "name=value", no leading dashes) go on the browser process's
+    // command line (--chromium-switches, test profiles only).
+    static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, void* sandboxInfo, PageEvents events,
+                             bool quiet, std::vector<std::string> switches, std::unique_ptr<Chromium>& out, std::wstring& error);
     // Shuts Chromium down (or does nothing if it already has); the destructor calls it too.
     ~Chromium();
     Chromium(const Chromium&) = delete;
@@ -136,11 +145,25 @@ public:
     // Whether the window may close now. The first call starts closing every browser and
     // returns false (unless there are none); WM_CLOSE comes again as each one is ready.
     bool MayCloseWindow();
+    // Memory is low (the Mac's watchMemoryPressure): every page but the shown one closes,
+    // unless it's playing sound, using the camera or microphone, tied to a popup, or shown
+    // again before it answers. Their tabs stay and load again when next shown (pageDiscarded).
+    void DiscardHiddenPages();
     // Runs what CEF's thread handed over. MainWindow::kWakeMessage calls it.
     void RunPending();
     // False when a page's Chromium widget window wasn't where Kite looks for it, so hidden
     // tabs would keep drawing (a CEF update moved it). --smoke-test fails on it.
     bool PagesCanBeHidden() const;
+    // Chromium's Energy Saver, which drops pages to 30 fps on battery below 20%: the Mac's
+    // KCRuntime.energySaverEnabled. Off unless the user turns it on, so pages run at the
+    // display's full rate; set as Chromium starts, and again on each change. Nothing turns it
+    // on yet (Windows has no Settings toggle for it).
+    void SetEnergySaverEnabled(bool enabled);
+    // For --smoke-test: Chromium's Energy Saver preference as Chromium has it (nullopt: it has
+    // none), read on CEF's thread; `done` runs on Kite's UI thread, ahead of the answer to
+    // anything Kite asks of CEF after this call (CloseBrowser's DoClose). Only a fresh profile
+    // shows that Kite set it: Local State keeps a value an earlier run wrote.
+    void ReadEnergySaver(std::function<void(std::optional<int> state)> done);
     // After the main window is gone: waits (at most 10 s) for every browser to close, then
     // shuts Chromium down. False when a browser didn't close in time, here or within the
     // window's 5 s close deadline, so Chromium went down under it. --smoke-test fails on it.
