@@ -107,7 +107,7 @@ void Write(const std::string& line) {
     wake.notify_one();
 }
 
-constexpr const char* kViewNames[] = {"sidebar", "spaceBar", "spaceTip", "captionButtons", "commandBar", "findBar"};
+constexpr const char* kViewNames[] = {"sidebar", "spaceBar", "spaceTip", "captionButtons", "commandBar", "findBar", "iconPicker"};
 static_assert(std::size(kViewNames) == static_cast<size_t>(View::Count));
 
 std::string Quoted(std::string_view text) {

@@ -43,6 +43,13 @@
 //   Kite.exe --capture FILE.png --rename-space N
 //                            the same with space N's header renaming it (Rename Space…), its name
 //                            all selected.
+//   Kite.exe --capture FILE.png --icon-picker N,emoji|icon[,CATEGORY]
+//                            the same with Change Space Icon…'s picker open for space N (selected
+//                            first) on that tab, hanging from its header's icon; on the Emoji tab,
+//                            with category CATEGORY's button (from 0) clicked.
+//   Kite.exe --capture FILE.png --pick-icon N,emoji|icon,CELL
+//                            the same after a click on that tab's cell CELL (from 0) set space N's
+//                            icon, and Escape closed the picker.
 //   Kite.exe --capture FILE.png --page-status STATES
 //                            the same with the selected tab's page reporting STATES, a comma list of
 //                            back, forward and loading (or none), as Chromium would: the top row's
@@ -310,7 +317,7 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // value (core/CommandLine.h).
     kite::command_line::Spec spec;
     spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control", "--favicons", "--empty-favorites-hover"};
-    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log", "--rename-row", "--hover-row", "--row-menu", "--favorite-menu", "--run-command", "--find", "--find-result", "--occlusion-log"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log", "--rename-row", "--hover-row", "--row-menu", "--favorite-menu", "--run-command", "--find", "--find-result", "--occlusion-log", "--icon-picker", "--pick-icon"};
     // Its value is switches ("--a --b"), each checked against the allow-list below; Chromium's
     // raw read sees them too, so only allowed ones get this far.
     spec.switchValueOptions = {"--chromium-switches"};
@@ -441,6 +448,45 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         *out = option.value ? place(*option.value) : std::nullopt;
         if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a space's place, from 1", kUsage);
         if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+    }
+    // Change Space Icon…'s picker: a space's place, its tab, and for a pick the cell clicked.
+    struct HeldPicker {
+        size_t index;
+        kite::IconPickerTab tab;
+        std::optional<size_t> cell;
+        std::optional<size_t> category;
+    };
+    std::optional<HeldPicker> heldPicker;
+    for (const wchar_t* flag : {L"--icon-picker", L"--pick-icon"}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        const bool pick = std::wstring(flag) == L"--pick-icon";
+        std::vector<std::wstring> parts;
+        if (option.value) {
+            size_t start = 0;
+            for (size_t comma; (comma = option.value->find(L',', start)) != std::wstring::npos; start = comma + 1) {
+                parts.push_back(option.value->substr(start, comma - start));
+            }
+            parts.push_back(option.value->substr(start));
+        }
+        const std::optional<size_t> index = parts.empty() ? std::nullopt : place(parts[0]);
+        const bool tabOk = parts.size() >= 2 && (parts[1] == L"emoji" || parts[1] == L"icon");
+        // The third part: a pick's cell, or the picker's category (the Emoji tab's).
+        std::optional<size_t> third;
+        if (parts.size() == 3 && !parts[2].empty() && parts[2].size() <= 4 &&
+            std::all_of(parts[2].begin(), parts[2].end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; })) {
+            third = static_cast<size_t>(std::stoi(parts[2]));
+        }
+        const bool emojiTab = tabOk && parts[1] == L"emoji";
+        const bool shapeOk = pick ? parts.size() == 3 && third : parts.size() == 2 || (parts.size() == 3 && third && emojiTab);
+        if (!index || !tabOk || !shapeOk || heldPicker) {
+            return Fail(quiet, std::wstring(flag) + (pick ? L" takes N,emoji|icon,CELL" : L" takes N,emoji|icon or N,emoji,CATEGORY") +
+                                   L" (one of --icon-picker and --pick-icon)",
+                        kUsage);
+        }
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+        heldPicker = HeldPicker{*index, emojiTab ? kite::IconPickerTab::Emoji : kite::IconPickerTab::Icon, pick ? third : std::nullopt,
+                                pick ? std::nullopt : third};
     }
     // The top row's states, for a capture.
     std::optional<kite::PageStatus> heldPage;
@@ -854,6 +900,7 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         if (captureError.empty() && swipe) captureError = controller->HoldSwipe(*swipe);
         if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
         if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
+        if (captureError.empty() && heldPicker) captureError = controller->HoldIconPicker(heldPicker->index, heldPicker->tab, heldPicker->cell, heldPicker->category);
         if (captureError.empty() && runCommandOption.value) captureError = controller->RunCommandForCapture(Narrow(*runCommandOption.value));
         if (captureError.empty() && heldRowRename) captureError = controller->HoldRowRename(*heldRowRename, std::nullopt, true);
         if (captureError.empty() && heldRowHover) captureError = controller->HoldRowHover(*heldRowHover);

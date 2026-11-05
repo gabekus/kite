@@ -493,6 +493,8 @@ std::wstring BrowserWindowController::SmokeTestWindow() {
         // And editing them: drags in the bar, the menu, renaming, New Folder, Delete Space.
         if (std::wstring problem = SmokeTestSpaceEditing(); !problem.empty()) return problem;
     }
+    // Change Space Icon…'s picker.
+    if (std::wstring problem = SmokeTestIconPicker(); !problem.empty()) return L"the icon picker: " + problem;
     // The lost-GPU path, once: the renderer, swap chain and composition target are rebuilt and
     // draw again (a real device removal can't be caused from a test).
     DropCompositor();
@@ -532,6 +534,13 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
         POINT origin{};
         problem = sidebar_->RenderTip(*tip, tipPixels, origin);
         if (problem.empty()) ComposeOver(pixels, tipPixels, origin);
+    }
+    if (problem.empty() && iconPicker_ && iconPicker_->IsOpen()) {
+        // The icon picker's window over the browser window's, kept inside it in a capture.
+        Pixels picker;
+        POINT origin{};
+        problem = iconPicker_->Render(picker, origin);
+        if (problem.empty()) ComposeOver(pixels, picker, origin);
     }
     if (problem.empty() && find) {
         // The find bar as Ctrl+F opens it over the selected tab, the query typed in and the page's
@@ -1140,6 +1149,267 @@ std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
     return {};
 }
 
+namespace {
+
+// A click (press and release) in the icon picker's window at `at` (its client px).
+void ClickPicker(HWND picker, POINT at) {
+    SendMessageW(picker, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(at.x, at.y));
+    SendMessageW(picker, WM_LBUTTONUP, 0, MAKELPARAM(at.x, at.y));
+}
+
+}  // namespace
+
+std::wstring BrowserWindowController::HoldIconPicker(size_t index, IconPickerTab tab, std::optional<size_t> cell, std::optional<size_t> category) {
+    if (index >= state_.spaces.size()) return L"there's no such space";
+    const std::string id = state_.spaces[index].id;
+    const bool switches = state_.selectedSpaceID != id;
+    // From the header's icon (at once), after its space is selected and its page at rest.
+    if (switches) {
+        state_.SelectSpace(id);
+        SelectionMoved();
+        if (std::wstring problem = RunToRest(L"Change Space Icon"); !problem.empty()) return problem;
+    }
+    RequestIconPicker(id, false);
+    if (!iconPicker_->IsOpen()) return L"the icon picker didn't open";
+    if (iconPicker_->State()->tab != tab) {
+        const IconPickerLayout layout = LayOutIconPicker(iconPicker_->State()->tab, !state_.spaces[index].icon.empty());
+        const auto segment = static_cast<size_t>(std::find(std::begin(kIconPickerTabs), std::end(kIconPickerTabs), tab) - std::begin(kIconPickerTabs));
+        const PickerRect& r = layout.segments[segment];
+        ClickPicker(iconPicker_->Window(), iconPicker_->ContentToClient((r.left + r.right) / 2, (r.top + r.bottom) / 2));
+        if (iconPicker_->State()->tab != tab) return L"a click on the picker's tab didn't show it";
+    }
+    if (category) {
+        // A category's button in the bar along the bottom.
+        const IconPickerLayout layout = LayOutIconPicker(IconPickerTab::Emoji, !state_.spaces[index].icon.empty());
+        if (tab != IconPickerTab::Emoji || *category >= layout.categories.size()) return L"there's no such category";
+        const PickerRect& r = layout.categories[*category];
+        ClickPicker(iconPicker_->Window(), iconPicker_->ContentToClient((r.left + r.right) / 2, (r.top + r.bottom) / 2));
+        if (iconPicker_->State()->category != *category) return L"a click on the category didn't choose it";
+    }
+    if (!cell) return {};
+    const std::optional<POINT> at = iconPicker_->CellCentre(*cell);
+    if (!at) return L"the picker has no such cell";
+    const std::string before = state_.spaces[index].icon;
+    ClickPicker(iconPicker_->Window(), *at);
+    if (state_.spaces[index].icon == before) return L"a click on the picker's cell didn't change the icon";
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+    if (iconPicker_->IsOpen()) return L"Escape didn't close the picker";
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestIconPicker() {
+    const size_t index = state_.SelectedSpaceIndex();
+    const std::string id = state_.selectedSpaceID;
+    const std::string original = state_.spaces[index].icon;
+    const auto icon = [&] { return state_.spaces[index].icon; };
+    const auto open = [&] { return iconPicker_->IsOpen() && iconPicker_->SpaceID() == id; };
+    // From the space's menu: 0.15 s after it, the picker for that space, on the icon's tab.
+    state_.SetSpaceIcon(id, "");
+    StateChanged();
+    RunSpaceMenuItem(id, SpaceMenuItem::Command::ChangeIcon);
+    if (iconPicker_->IsOpen()) return L"it opened before the menu's 0.15 s";
+    if (sidebar_->IconPickerSpace() != id) return L"the header's placeholder didn't come with the menu's request";
+    if (!RunUntil(open, 2)) return L"Change Space Icon\u2026 didn't open it";
+    if (iconPicker_->State()->tab != IconPickerTab::Emoji) return L"it didn't open on the Emoji tab";
+    if (!IsWindowVisible(iconPicker_->Window())) return L"its window isn't shown";
+    // The whole catalog, but only the rows in view drawn.
+    if (iconPicker_->RowsDrawn() == 0 || iconPicker_->RowsDrawn() > 6) return L"the emoji grid drew rows out of view";
+    // The placeholder is the icon's button (the space has no icon): a click on it opens the picker
+    // again and renames nothing.
+    {
+        const std::optional<POINT> square = sidebar_->HeaderIconCentre();
+        if (!square) return L"the header has no placeholder to click";
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, *square, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, *square, 0);
+        if (!open() || sidebar_->Renaming() || sidebar_->IconPickerSpace() != id) return L"a click on the placeholder didn't open the picker again";
+    }
+    // The pointer over the grid draws nothing (the Mac's plain buttons have no hover).
+    const size_t draws = iconPicker_->Draws();
+    HWND picker = iconPicker_->Window();
+    for (size_t i = 0; i < 14; ++i) {
+        const POINT at = *iconPicker_->CellCentre(i);
+        SendMessageW(picker, WM_MOUSEMOVE, 0, MAKELPARAM(at.x, at.y));
+    }
+    if (iconPicker_->Draws() != draws) return L"moving over the grid drew";
+    // An emoji: the space has it at once, and the picker stays open with its bin.
+    ClickPicker(picker, *iconPicker_->CellCentre(2));
+    if (icon() != AllEmoji()[2] || !open()) return L"a click on an emoji didn't set it";
+    // A held cell draws only itself.
+    const POINT cellAt = *iconPicker_->CellCentre(4);
+    const size_t before = iconPicker_->Draws();
+    SendMessageW(picker, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(cellAt.x, cellAt.y));
+    if (iconPicker_->Draws() != before + 1) return L"a press on a cell drew more than the cell";
+    SendMessageW(picker, WM_LBUTTONUP, 0, MAKELPARAM(cellAt.x, cellAt.y));
+    if (icon() != AllEmoji()[4]) return L"letting go on a cell didn't set it";
+    // Search, typed as the keyboard would (the window keeps the keyboard): four grinning faces,
+    // and the third is 🤩.
+    for (const wchar_t c : std::wstring(L"grinning")) SendMessageW(window_.Handle(), WM_CHAR, c, 0);
+    if (iconPicker_->State()->query != "grinning") return L"typing didn't search";
+    ClickPicker(picker, *iconPicker_->CellCentre(2));
+    if (icon() != "\xF0\x9F\xA4\xA9") return L"a search's third emoji isn't \U0001F929";
+    // A category's button clears Search and scrolls to its first emoji; the wheel scrolls on.
+    const IconPickerLayout emoji = LayOutIconPicker(IconPickerTab::Emoji, true);
+    const PickerRect& animals = emoji.categories[1];
+    ClickPicker(picker, iconPicker_->ContentToClient((animals.left + animals.right) / 2, (animals.top + animals.bottom) / 2));
+    if (!iconPicker_->State()->query.empty() || iconPicker_->State()->scroll != 22 * icon_picker_metrics::kRowPitch) {
+        return L"Animals & Nature's button didn't scroll to it";
+    }
+    POINT wheel = iconPicker_->ContentToClient(100, emoji.grid.top + 50);
+    ClientToScreen(picker, &wheel);
+    SendMessageW(window_.Handle(), WM_MOUSEWHEEL, MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA)), MAKELPARAM(wheel.x, wheel.y));
+    if (iconPicker_->State()->scroll <= 22 * icon_picker_metrics::kRowPitch) return L"the wheel didn't scroll the grid";
+    if (iconPicker_->RowsDrawn() > 2 * 10 + 6) return L"the grid kept rows far from view";
+    // The Icon tab: a symbol, drawn as Windows draws it, set as symbol:NAME.
+    const PickerRect& iconTab = emoji.segments[1];
+    ClickPicker(picker, iconPicker_->ContentToClient((iconTab.left + iconTab.right) / 2, (iconTab.top + iconTab.bottom) / 2));
+    if (iconPicker_->State()->tab != IconPickerTab::Icon) return L"the Icon tab didn't show";
+    // Image is there, disabled.
+    const PickerRect& imageTab = emoji.segments[2];
+    ClickPicker(picker, iconPicker_->ContentToClient((imageTab.left + imageTab.right) / 2, (imageTab.top + imageTab.bottom) / 2));
+    if (iconPicker_->State()->tab != IconPickerTab::Icon) return L"the disabled Image tab showed";
+    ClickPicker(picker, *iconPicker_->CellCentre(1));
+    if (icon() != "symbol:bookmark.fill") return L"a click on a symbol didn't set it";
+    // The bin: no icon, and no bin.
+    const IconPickerLayout symbols = LayOutIconPicker(IconPickerTab::Icon, true);
+    ClickPicker(picker, iconPicker_->ContentToClient((symbols.remove->left + symbols.remove->right) / 2, (symbols.remove->top + symbols.remove->bottom) / 2));
+    if (!icon().empty() || !open()) return L"the bin didn't take the icon off";
+    // Opened again while open (the header's icon): the placeholder stays the new one's.
+    RequestIconPicker(id, false);
+    if (!open() || sidebar_->IconPickerSpace() != id) return L"opening it again lost the header's placeholder";
+    // Escape closes it.
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+    if (iconPicker_->IsOpen()) return L"Escape didn't close it";
+    if (sidebar_->IconPickerSpace()) return L"its placeholder stayed after Escape";
+    // A held cell let go elsewhere, then the mouse taken away: it goes back undimmed (its part drawn).
+    RequestIconPicker(id, false);
+    {
+        const POINT held = *iconPicker_->CellCentre(1);
+        SendMessageW(iconPicker_->Window(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(held.x, held.y));
+        const size_t drawn = iconPicker_->Draws();
+        ReleaseCapture();
+        if (iconPicker_->Draws() != drawn + 1) return L"a press the mouse was taken from didn't draw its cell undimmed";
+    }
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+    // From the header's icon, at once, on the tab of the icon it has.
+    state_.SetSpaceIcon(id, "symbol:leaf.fill");
+    StateChanged();
+    if (std::wstring problem = Draw(); !problem.empty()) return problem;
+    const std::optional<POINT> header = sidebar_->HeaderIconCentre();
+    if (!header) return L"the header has no icon";
+    SendMouse(window_.Handle(), WM_LBUTTONDOWN, *header, MK_LBUTTON);
+    SendMouse(window_.Handle(), WM_LBUTTONUP, *header, 0);
+    if (!open() || iconPicker_->State()->tab != IconPickerTab::Icon) return L"a click on the header's icon didn't open it on the Icon tab";
+    // A press elsewhere in the window (on the content card, where nothing takes it) closes it.
+    {
+        const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+        const POINT card{std::lround((kSidebarWidth + 200) * scale), std::lround(300 * scale)};
+        const std::string tab = state_.SelectedSpace().selectedTabID.value_or("");
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, card, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, card, 0);
+        if (iconPicker_->IsOpen()) return L"a press elsewhere didn't close it";
+        if (state_.SelectedSpace().selectedTabID.value_or("") != tab) return L"the press that closed it selected a tab";
+    }
+    if (sidebar_->IconPickerSpace()) return L"its placeholder stayed after it closed";
+    // Another space shown closes it (the header it hangs from goes).
+    if (state_.spaces.size() > 1) {
+        RequestIconPicker(id, false);
+        RunCommand(index + 1 < state_.spaces.size() ? "nextSpace" : "previousSpace");
+        if (iconPicker_->IsOpen()) return L"another space shown didn't close it";
+        if (std::wstring problem = RunToRest(L"A switch closing the picker"); !problem.empty()) return problem;
+        state_.SelectSpace(id);
+        SelectionMoved();
+        if (std::wstring problem = RunToRest(L"Back"); !problem.empty()) return problem;
+    }
+#ifdef KITE_HAS_CEF
+    // The keyboard is the picker's from its request: Kite's window taking the focus then (as it
+    // does in front; here its WM_SETFOCUS, with no activation) doesn't hand it on to the page
+    // (onFocus), and Kite's own focus of the page is held off meanwhile (KeepKeyboard), from the
+    // header's icon or through the menu's 0.15 s, and through a reopen or a replacement (Open
+    // closes the picker before it). Escape gives it up and hands it to the page; a deactivation
+    // or a press elsewhere gives it up and hands it to nothing (what was pressed decides).
+    if (chromium_) {
+        const auto holding = [&](const std::wstring& from, size_t handoffs, size_t releases) -> std::wstring {
+            RunUntil([] { return false; }, 0.3);
+            if (!open() || KeyboardOwner() != KeyboardField::IconPicker) return L"the keyboard isn't the picker's, " + from;
+            if (pageFocusHandoffs_ != handoffs) return L"the page was handed the keyboard, " + from;
+            if (pickerKeyboardReleases_ != releases || !chromium_->KeepsKeyboard()) return L"the picker's keyboard was let go, " + from;
+            return {};
+        };
+        const auto gaveUp = [&](const std::wstring& how, size_t handoffs, bool toPage) -> std::wstring {
+            if (iconPicker_->IsOpen() || pendingIconPicker_ || KeyboardOwner() != KeyboardField::None || chromium_->KeepsKeyboard()) {
+                return how + L" didn't give up the picker's keyboard";
+            }
+            if (pageFocusHandoffs_ != handoffs + (toPage ? 1 : 0)) {
+                return toPage ? how + L" didn't hand the keyboard to the page" : how + L" handed the keyboard to the page";
+            }
+            return {};
+        };
+        size_t handoffs = pageFocusHandoffs_;
+        testFocus_ = true;
+        RequestIconPicker(id, false);
+        testFocus_ = false;
+        size_t releases = pickerKeyboardReleases_;
+        if (std::wstring problem = holding(L"opened from the header's icon", handoffs, releases); !problem.empty()) return problem;
+        // Opened again from its button while open, then the menu's request over it.
+        RequestIconPicker(id, false);
+        if (std::wstring problem = holding(L"re-opened from its button", handoffs, releases); !problem.empty()) return problem;
+        RunSpaceMenuItem(id, SpaceMenuItem::Command::ChangeIcon);
+        if (KeyboardOwner() != KeyboardField::IconPicker || !chromium_->KeepsKeyboard()) return L"the menu's request over an open picker let its keyboard go";
+        if (!RunUntil([&] { return !pendingIconPicker_ && open(); }, 2)) return L"the menu's request over an open picker didn't open it";
+        if (std::wstring problem = holding(L"replaced through the menu", handoffs, releases); !problem.empty()) return problem;
+        SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+        if (std::wstring problem = gaveUp(L"Escape", handoffs, true); !problem.empty()) return problem;
+        // Through the menu's 0.15 s, with the window's focus taken as the request comes.
+        handoffs = pageFocusHandoffs_;
+        testFocus_ = true;
+        RunSpaceMenuItem(id, SpaceMenuItem::Command::ChangeIcon);
+        testFocus_ = false;
+        releases = pickerKeyboardReleases_;
+        if (KeyboardOwner() != KeyboardField::IconPicker || !chromium_->KeepsKeyboard()) return L"the menu's request didn't hold the keyboard for its 0.15 s";
+        if (!RunUntil(open, 2)) return L"Change Space Icon\u2026 didn't open it";
+        if (std::wstring problem = holding(L"opened through the menu", handoffs, releases); !problem.empty()) return problem;
+        // Another app coming forward closes it and hands the keyboard to nothing.
+        SendMessageW(window_.Handle(), WM_ACTIVATE, WA_INACTIVE, 0);
+        if (std::wstring problem = gaveUp(L"a deactivation", handoffs, false); !problem.empty()) return problem;
+        // A deactivation while the menu's request waits cancels it: nothing opens on the inactive window.
+        RunSpaceMenuItem(id, SpaceMenuItem::Command::ChangeIcon);
+        SendMessageW(window_.Handle(), WM_ACTIVATE, WA_INACTIVE, 0);
+        if (std::wstring problem = gaveUp(L"a deactivation during the menu's 0.15 s", handoffs, false); !problem.empty()) return problem;
+        RunUntil([] { return false; }, 0.3);
+        if (iconPicker_->IsOpen()) return L"the picker opened after a deactivation cancelled its request";
+        // A press elsewhere (the content card) closes it and hands the keyboard to nothing.
+        RequestIconPicker(id, false);
+        {
+            const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+            const POINT card{std::lround((kSidebarWidth + 200) * scale), std::lround(300 * scale)};
+            SendMouse(window_.Handle(), WM_LBUTTONDOWN, card, MK_LBUTTON);
+            SendMouse(window_.Handle(), WM_LBUTTONUP, card, 0);
+        }
+        if (std::wstring problem = gaveUp(L"a press elsewhere", handoffs, false); !problem.empty()) return problem;
+    }
+#endif
+    // A GPU lost inside Open (its redraw reports it, and the rebuild closes the picker before Open
+    // returns) is a failed open: no picker, so nothing holds the keyboard or the header's slot.
+    iconPicker_->LoseDeviceInNextOpenForTest();
+    RequestIconPicker(id, false);
+    if (iconPicker_->IsOpen()) return L"a picker lost inside its Open still showed";
+    if (KeyboardOwner() != KeyboardField::None || sidebar_->IconPickerSpace()) {
+        return L"a picker lost inside its Open kept the keyboard or the header's slot";
+    }
+#ifdef KITE_HAS_CEF
+    if (chromium_ && chromium_->KeepsKeyboard()) return L"a picker lost inside its Open kept the page off the keyboard";
+#endif
+    // And the rebuilt picker opens again, and Escape closes it.
+    RequestIconPicker(id, false);
+    if (!open() || KeyboardOwner() != KeyboardField::IconPicker) return L"the picker didn't open again after a lost GPU";
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+    if (iconPicker_->IsOpen() || KeyboardOwner() != KeyboardField::None) return L"Escape didn't close the picker after a lost GPU";
+    state_.SetSpaceIcon(id, original);
+    StateChanged();
+    frames_.clear();
+    return {};
+}
+
 std::wstring BrowserWindowController::HoldRowHover(size_t index) {
     const std::optional<POINT> at = sidebar_->RowCentre(index);
     if (!at) return L"there's no such row in view";
@@ -1228,6 +1498,28 @@ std::wstring BrowserWindowController::SmokeTestTabEditing() {
     if (sidebar_->PageDraws() != pageDraws) return done(L"typing in a tab's rename drew its page, not only the field");
     SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
     if (sidebar_->Renaming() || state_.FindTabByID(tab)->DisplayTitle() != "Smoke") return done(L"Return didn't rename the tab");
+#ifdef KITE_HAS_CEF
+    // A rename begun while the page has the keyboard keeps it: the window takes the focus (as it does
+    // in front; here its WM_SETFOCUS) once the field is open, so onFocus doesn't hand the keyboard on
+    // to the page, which would end the rename as it took it. A tab's (Rename Current Tab…) and a
+    // space's (Rename Space…).
+    if (chromium_) {
+        for (const bool spaceRename : {false, true}) {
+            const size_t handoffs = pageFocusHandoffs_;
+            testFocus_ = true;
+            if (spaceRename) BeginRenaming(state_.selectedSpaceID);
+            else RunCommand("renameCurrentTab");
+            testFocus_ = false;
+            if (!sidebar_->Renaming() || KeyboardOwner() != KeyboardField::Rename) return done(L"the rename didn't open");
+            if (pageFocusHandoffs_ != handoffs) {
+                return done(spaceRename ? L"Kite's window gave the page the keyboard as a space's rename opened"
+                                  : L"Kite's window gave the page the keyboard as a tab's rename opened");
+            }
+            SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+            if (sidebar_->Renaming()) return done(L"Escape didn't end the rename");
+        }
+    }
+#endif
     // Rename Current Tab…: Escape keeps the name; a blank name goes back to the page's title.
     RunCommand("renameCurrentTab");
     typed(L"Not this");
@@ -1278,8 +1570,20 @@ std::wstring BrowserWindowController::SmokeTestTabEditing() {
     // Back to Pinned URL: a pinned tab off its page shows the button on hover, and a click on it
     // takes the tab home; Reset all tabs in this Space does the same for every one.
     state_.Select(original);
+    // Reset all tabs in this Space is the space's: another pinned tab already off its page (a
+    // session's, as three-spaces.json's Docs) enables it before this one is pinned. What it should
+    // be comes from the space's pinned tabs, not from the command under test, before and after.
+    const auto spaceDrifted = [&] {
+        const auto pinnedTabs = state_.SelectedSpace().Pinned();
+        return std::any_of(pinnedTabs.begin(), pinnedTabs.end(), [](const Tab* t) { return t->HasLeftPinnedURL(); });
+    };
+    const bool drifted = spaceDrifted();
+    if (CommandEnabled("resetSpace") != drifted) return done(L"Reset all tabs in this Space didn't follow the space's pinned tabs");
     RunCommand("pinTab");
-    if (CommandEnabled("resetTab") || CommandEnabled("resetSpace")) return done(L"Reset was enabled for a tab on its pinned page");
+    if (CommandEnabled("resetTab")) return done(L"Reset was enabled for a tab on its pinned page");
+    if (spaceDrifted() != drifted || CommandEnabled("resetSpace") != drifted) {
+        return done(L"pinning a tab on its page changed Reset all tabs in this Space");
+    }
     state_.TabAt(*state_.Location(original))->url = "data:text/html,away";
     StateChanged();
     if (!CommandEnabled("resetTab") || !CommandEnabled("resetSpace") || !CommandEnabled("replacePinnedTab")) {

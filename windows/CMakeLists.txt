@@ -65,6 +65,7 @@ add_library(KiteCoreWin STATIC
   src/core/SpaceBar.cpp
   src/core/SpaceEditing.cpp
   src/core/SpaceIcon.cpp
+  src/core/SpaceIconPicker.cpp
   src/core/SymbolShape.cpp
   src/core/TextMatch.cpp
   src/core/PictureLoads.cpp
@@ -176,6 +177,7 @@ if(WIN32)
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
     src/shell/SpaceIconPainter.cpp
+    src/shell/SpaceIconPickerView.cpp
     src/shell/SpaceMenu.cpp
     src/shell/ContextMenu.cpp
     src/shell/SidebarMenus.cpp
@@ -363,6 +365,7 @@ add_executable(KiteCoreTests
   tests/SpaceBarTests.cpp
   tests/SpaceEditingTests.cpp
   tests/SpaceIconTests.cpp
+  tests/SpaceIconPickerTests.cpp
   tests/PictureLoadsTests.cpp
   tests/SpaceSwipeTests.cpp
   tests/SpaceSwipeGestureTests.cpp
@@ -406,6 +409,7 @@ target_link_libraries(gen-theme-golden PRIVATE KiteCoreWin)
 # The session fixture shared with the Mac test suite.
 target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../Tests/Fixtures"
                                                KITE_STATES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/helix/states"
+                                               KITE_MAC_PICKER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../Sources/KiteMac/Views/SpaceIconPicker.swift"
                                                KITE_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
                                                KITE_ARC_FIXTURE_DIR="${KITE_ARC_FIXTURE_DIR}")
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)

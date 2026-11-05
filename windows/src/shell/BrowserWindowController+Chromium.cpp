@@ -175,19 +175,25 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     if (options_.saveLog && options_.testAutomaticDownloads) chromium_->AllowAutomaticDownloads(*options_.testAutomaticDownloads);
     if (options_.saveLog) chromium_->LogParkedPages();
     window_.onWake = [this] { chromium_->RunPending(); };
-    window_.onMinimize = [this] {
-        sidebar_->HideTip();
+    // After Init's (the tip hides, the icon picker closes), Chromium's.
+    window_.onMinimize = [this, before = std::move(window_.onMinimize)] {
+        if (before) before();
         chromium_->Minimized();
     };
-    window_.onMove = [this] {
-        sidebar_->HideTip();
+    window_.onMove = [this, before = std::move(window_.onMove)] {
+        if (before) before();
         chromium_->WindowMoved();
     };
     window_.mayClose = [this] { return MayQuit() && chromium_->MayCloseWindow(); };
     window_.onFocus = [this] {
         // A field of Kite's with the keyboard (the command bar's, a rename, the find bar's)
         // keeps it in Kite's window; otherwise it goes on to the page.
-        if (KeyboardOwner() == KeyboardField::None) chromium_->Focus();
+        if (KeyboardOwner() == KeyboardField::None) {
+            ++pageFocusHandoffs_;
+            // A test's delivered WM_SETFOCUS (TakeFocusIfInFront) is only counted: a quiet run's
+            // page never takes the focus.
+            if (!testFocus_) chromium_->Focus();
+        }
     };
     return Chromium::StartResult::Started;
 }

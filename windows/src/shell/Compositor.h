@@ -60,6 +60,12 @@ public:
     using Content = std::function<void(ID2D1DeviceContext*)>;
     std::wstring DrawSurface(perf::View view, IDCompositionVirtualSurface* surface, UINT width, UINT height, UINT dpi,
                              const Content& content, Pixels* readBack, HRESULT& hr);
+    // Draws `content` (the surface's whole drawing, in points at `dpi`) again only inside
+    // `rect` (px of the surface), cleared first: the rest of the surface keeps its pixels. For a
+    // part that changed alone (a cell, a field), or rows of a large virtual surface drawn as
+    // they scroll into view.
+    std::wstring DrawSurfaceRect(perf::View view, IDCompositionVirtualSurface* surface, const RECT& rect, UINT dpi, const Content& content,
+                                 HRESULT& hr);
     // Shows every change made to the tree and its surfaces since the last commit, at once.
     // Every commit of the window's device comes through here, so --perf-log counts them all.
     HRESULT Commit() {
