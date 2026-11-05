@@ -1110,7 +1110,7 @@ enum SiteControlsPopover {
             }
             positioning = content
         }
-        popover.show(relativeTo: rect, of: positioning, preferredEdge: positioning.isFlipped ? .maxY : .minY)
+        WindowPresenter.show(popover, relativeTo: rect, of: positioning, preferredEdge: positioning.isFlipped ? .maxY : .minY)
         shown = popover
         shownAnchor = view
         presence.isShown = true

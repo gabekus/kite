@@ -16,7 +16,10 @@ import Foundation
 /// flag is exactly `1`, a preset one of `1`…`7`, a name or text one short line (FindTestHook's rule); anything else
 /// turns the hook off, as does the picker's hook beside the page's. Nothing is pressed, typed, activated or fronted:
 /// the popovers open from the views they hang from, in Kite's own window. Once the state is up the runner writes a
-/// `KITE_TEST_SIDEBAR: ready: …` line on stderr, which the capture script waits for.
+/// `KITE_TEST_SIDEBAR: ready: …` line on stderr, which the capture script waits for: it starts with whether Kite is
+/// the active app and where the popover went (`Shown`), and the script fails the state unless Kite isn't active and
+/// the popover, if any, is a child of the main window. If the state then goes (a transient popover closes, the page
+/// ends) or Kite becomes active, the runner writes `KITE_TEST_SIDEBAR: changed: …`, and the script drops the capture.
 public enum SidebarTestHook: Equatable, Sendable {
     /// `KITE_TEST_ICON_PICKER`: the picker for the space with this name.
     case iconPicker(space: String)
@@ -88,10 +91,48 @@ public enum SidebarTestHook: Equatable, Sendable {
 
     /// The stderr line when the runner starts.
     public var armedLine: String { "\(Self.logPrefix) armed: \(description)" }
-    /// The stderr line once the state is up.
-    public var readyLine: String { "\(Self.logPrefix) ready: \(description)" }
+    /// The stderr line once the state is up, `shown` first, so no name can stand in for it.
+    public func readyLine(_ shown: Shown) -> String { "\(Self.logPrefix) ready: \(shown.summary); \(description)" }
     /// The stderr line when the state didn't come up (`why`).
     public func failedLine(_ why: String) -> String { "\(Self.logPrefix) failed: \(description): \(why)" }
+    /// The stderr line when the state went after it was ready, or Kite became active (`why`).
+    public func changedLine(_ why: String) -> String { "\(Self.logPrefix) changed: \(description): \(why)" }
+
+    /// What the ready line reports about the run: whether Kite is the active app, and the hook's popover's window
+    /// (none for Create a Space without a theme).
+    public struct Shown: Equatable, Sendable {
+        public var appActive: Bool
+        public var popover: Popover?
+
+        public struct Popover: Equatable, Sendable {
+            /// The popover's window is the key window.
+            public var key: Bool
+            /// Its window level's raw value.
+            public var level: Int
+            /// Its window's parent is the main browser window the hook ran in.
+            public var parentIsMainWindow: Bool
+
+            public init(key: Bool, level: Int, parentIsMainWindow: Bool) {
+                self.key = key
+                self.level = level
+                self.parentIsMainWindow = parentIsMainWindow
+            }
+        }
+
+        public init(appActive: Bool, popover: Popover?) {
+            self.appActive = appActive
+            self.popover = popover
+        }
+
+        /// `app active no; popover key no, level 0, parent the main window` (or `; no popover`).
+        public var summary: String {
+            let popover = popover.map {
+                "popover key \($0.key ? "yes" : "no"), level \($0.level), "
+                    + "parent \($0.parentIsMainWindow ? "the main window" : "not the main window")"
+            } ?? "no popover"
+            return "app active \(appActive ? "yes" : "no"); \(popover)"
+        }
+    }
 
     /// The stderr line for a set hook a test-safe run doesn't take.
     public static func refusedLine(_ environment: [String: String]) -> String? {

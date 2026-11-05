@@ -132,12 +132,17 @@ What works with Kite in the background (checked on a test build behind other win
   window behind the user's windows; capture, tree, pointer and trace all work on a covered window.
 - Test-safe windows: on a `KITE_DIAGNOSTICS=1` run every Kite window and panel (browser windows, Settings,
   onboarding, About, Essential Keyboard Shortcuts and its View All list, Little Kite, web apps, Task Manager,
-  hover cards, popovers) goes through `WindowPresenter` (`WindowPresentation` in KiteCore decides). It never
-  makes a window key or activates Kite. A shown window goes at normal level directly above Kite's frontmost
-  window, which is behind the other apps' windows, so Kite's own stacking order matches real use (code that looks
-  for Kite's front window finds the newest); Kite's first window goes to the back, and child windows and popovers
-  go just above their parent or anchor. Floating levels (Stay On Top, the Essential Keyboard Shortcuts window)
-  aren't applied: Kite keeps the level asked for, so Stay On Top's checkmark still follows it.
+  hover cards, and panels that hang off a window) goes through `WindowPresenter` (`WindowPresentation` in KiteCore
+  decides). It never makes a window key or activates Kite. A shown window goes at normal level directly above
+  Kite's frontmost window, which is behind the other apps' windows, so Kite's own stacking order matches real use
+  (code that looks for Kite's front window finds the newest); Kite's first window goes to the back, and child
+  windows and panels that hang off a window go just above their parent or anchor. `NSPopover`s aren't decided by
+  `WindowPresentation`: they're AppKit's own child windows of their anchor's window, and
+  `WindowPresenter.show(_:relativeTo:of:preferredEdge:)` shows them as AppKit does on every run (behind the user's
+  windows with their parent; showing one doesn't activate Kite or take the keyboard from another app). The guard
+  below counts every `.show(relativeTo`, so none bypasses that route; the sharing pickers, which are menus, are
+  exempt. SidebarTestHook's ready line reports where its popover went. Floating levels (Stay On Top, the Essential
+  Keyboard Shortcuts window) aren't applied: Kite keeps the level asked for, so Stay On Top's checkmark still follows it.
   About Kite: AppKit creates its panel and orders it front in one call, so Kite finds it as the window that
   appeared (its class only breaks a tie) and moves it behind in the same main-thread turn; if it can't tell which
   window is the panel, every window that appeared goes to the back.
@@ -239,8 +244,10 @@ What works with Kite in the background (checked on a test build behind other win
   intensity kept) and opens the theme editor from Choose a Theme's own row. Exact values only (a flag is `1`, a
   name one short line); anything else, or the picker beside the page, turns them off, and a real profile ignores
   them (`SidebarTestHook`). Nothing is pressed, activated or fronted. It writes `KITE_TEST_SIDEBAR: armed: …`, then
-  `KITE_TEST_SIDEBAR: ready: …` once the state is up (the popover shown), or `failed: …` after 10 s. An in-process
-  `kite ui capture` draws an open popover (a child window) over the window.
+  `KITE_TEST_SIDEBAR: ready: app active no; popover key no, level 0, parent the main window; …` (or `no popover`)
+  once the state is up, or `failed: …` after 10 s or when the main window went first. It keeps watching after that
+  and writes `changed: …` if the state goes (a transient popover closes, the page ends) or Kite becomes active. An
+  in-process `kite ui capture` draws an open popover (a child window) over the window.
 - `menu`: AppKit ignores fn when matching a key against the menu bar, so a system item on fn E (Emoji &
   Symbols) or fn F (Enter Full Screen) fires on a plain "e" or "f" that reaches the menu bar, and is flagged.
 

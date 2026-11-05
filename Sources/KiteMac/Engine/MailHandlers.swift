@@ -58,7 +58,7 @@ final class MailHandlers {
         popover.contentViewController = host
         // Hangs into the page from its top edge, near the sidebar's address field.
         let top = view.isFlipped ? view.bounds.minY : view.bounds.maxY - 1
-        popover.show(relativeTo: NSRect(x: view.bounds.minX + 28, y: top, width: 1, height: 1), of: view,
+        WindowPresenter.show(popover, relativeTo: NSRect(x: view.bounds.minX + 28, y: top, width: 1, height: 1), of: view,
                      preferredEdge: view.isFlipped ? .maxY : .minY)
         prompt = popover
     }

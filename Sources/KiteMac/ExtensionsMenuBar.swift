@@ -112,7 +112,7 @@ final class ExtensionsMenuBar: NSObject, NSMenuDelegate, NSMenuItemValidation {
         let popover = NSPopover()
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: ExtensionsMenu(model: model) { [weak popover] in popover?.close() })
-        popover.show(relativeTo: rect, of: view, preferredEdge: ExtensionPopover.belowEdge(of: view))
+        WindowPresenter.show(popover, relativeTo: rect, of: view, preferredEdge: ExtensionPopover.belowEdge(of: view))
         managePopover = popover
     }
 

@@ -34,6 +34,13 @@ enum WindowPresenter {
         apply(decide(for: window, key: false, anchor: anchor), to: window, anchor: anchor)
     }
 
+    /// NSPopover's show. AppKit puts the popover in a window of its own, a child of `view`'s window (so on a
+    /// test-safe run it's behind the user's windows with its parent), and showing it doesn't activate Kite or take the
+    /// keyboard from another app. The one route for popovers, so WindowPresenterGuard can keep count.
+    static func show(_ popover: NSPopover, relativeTo rect: NSRect, of view: NSView, preferredEdge edge: NSRectEdge) {
+        popover.show(relativeTo: rect, of: view, preferredEdge: edge)
+    }
+
     /// makeKey on a child panel that's already ordered with its parent (Little Kite's Open In menu): a test-safe run
     /// only makes it key, which can't take the keyboard from another app while Kite isn't active.
     static func makeKey(childPanel panel: NSWindow) {

@@ -80,15 +80,22 @@ struct SidebarTestHookTests {
         #expect(picked.tint == 0.3)
     }
 
-    @Test func itsLinesSayWhenTheStateIsUp() {
-        // The capture script waits for "KITE_TEST_SIDEBAR: ready" before it captures.
-        #expect(SidebarTestHook.iconPicker(space: "Personal").readyLine == "KITE_TEST_SIDEBAR: ready: icon picker for \"Personal\"")
-        #expect(SidebarTestHook.newSpace(name: nil, preset: nil).readyLine == "KITE_TEST_SIDEBAR: ready: Create a Space")
-        #expect(SidebarTestHook.newSpace(name: "Reading list", preset: 3).readyLine
-            == "KITE_TEST_SIDEBAR: ready: Create a Space, name \"Reading list\", preset 4, theme editor open")
+    private let behind = SidebarTestHook.Shown(appActive: false, popover: .init(key: false, level: 0, parentIsMainWindow: true))
+
+    @Test func itsLinesSayWhenTheStateIsUpAndWhereItWent() {
+        // The capture script waits for "KITE_TEST_SIDEBAR: ready", then reads the run's facts that start it.
+        #expect(SidebarTestHook.iconPicker(space: "Personal").readyLine(behind)
+            == "KITE_TEST_SIDEBAR: ready: app active no; popover key no, level 0, parent the main window; icon picker for \"Personal\"")
+        #expect(SidebarTestHook.newSpace(name: nil, preset: nil).readyLine(.init(appActive: false, popover: nil))
+            == "KITE_TEST_SIDEBAR: ready: app active no; no popover; Create a Space")
+        #expect(SidebarTestHook.newSpace(name: "Reading list", preset: 3).readyLine(
+            .init(appActive: true, popover: .init(key: true, level: 101, parentIsMainWindow: false)))
+            == "KITE_TEST_SIDEBAR: ready: app active yes; popover key yes, level 101, parent not the main window; "
+            + "Create a Space, name \"Reading list\", preset 4, theme editor open")
         for hook in [SidebarTestHook.iconPicker(space: "x"), .newSpace(name: "y", preset: 0)] {
             #expect(!hook.armedLine.contains("ready"))
             #expect(!hook.failedLine("why").contains("ready"))
+            #expect(hook.changedLine("why").hasPrefix("KITE_TEST_SIDEBAR: changed: "))
         }
     }
 
@@ -112,6 +119,12 @@ struct SidebarTestHookTests {
             """))
         // The paths a click takes, without the click: no events, no pointer, nothing fronted or activated.
         #expect(runner.contains("store.requestIconPicker(space: id)"))
+        // A main window gone before the timer is a failed line, not silence; ready reports where the popover went
+        // and whether Kite is active, and the watch goes on after it.
+        #expect(runner.contains("return log(hook.failedLine(\"the main window went before the hook ran\"))"))
+        #expect(runner.contains("SidebarTestHook.Shown(appActive: NSApp.isActive, popover: popover.map { facts($0, main: main) })"))
+        #expect(runner.contains("parentIsMainWindow: main != nil && window?.parent === main"))
+        #expect(runner.contains("if NSApp.isActive { return log(hook.changedLine(\"Kite is the active app\")) }"))
         #expect(runner.contains("store.beginNewSpace()"))
         for banned in ["NSEvent", "sendEvent", "postEvent", "CGEvent", "makeKey", "orderFront", "activate(", "UIInputSender"] {
             #expect(!runner.contains(banned), "\(banned)")
@@ -124,9 +137,13 @@ struct SidebarTestHookTests {
         #expect(view.contains("if let typed = SidebarTestHookRunner.typedName(for: creation.spaceID) { name = typed }"))
         #expect(view.contains("guard let hookAnchor, SidebarTestHookRunner.opensThemeEditor(for: spaceID) else { return }"))
         #expect(view.contains("ThemeEditor.present(store: store, spaceID: spaceID, from: hookAnchor, pointing: true)"))
-        // Ready means shown: each popover says so.
-        #expect(try source("Views/SpaceIconPicker.swift").contains("@MainActor static var isShown: Bool { shown?.isShown == true }"))
-        #expect(try source("Views/ThemeEditor.swift").contains("@MainActor static var isShown: Bool { shown?.isShown == true }"))
+        // Ready means shown: each says which popover is up, and shows it through WindowPresenter.
+        for file in ["Views/SpaceIconPicker.swift", "Views/ThemeEditor.swift"] {
+            let view = try source(file)
+            #expect(view.contains("@MainActor static var current: NSPopover? { shown?.isShown == true ? shown : nil }"), "\(file)")
+            #expect(view.contains("WindowPresenter.show(popover, relativeTo: "), "\(file)")
+            #expect(!view.contains("popover.show("), "\(file)")
+        }
     }
 
     @Test func anInProcessCaptureDrawsAnOpenPopover() throws {

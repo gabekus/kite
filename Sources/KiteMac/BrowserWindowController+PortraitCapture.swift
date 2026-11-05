@@ -36,7 +36,7 @@ extension BrowserWindowController {
         let anchor = view.isFlipped
             ? NSRect(x: view.bounds.midX - 1, y: 0, width: 2, height: 1)
             : NSRect(x: view.bounds.midX - 1, y: view.bounds.height - 1, width: 2, height: 1)
-        popover.show(relativeTo: anchor, of: view, preferredEdge: view.isFlipped ? .maxY : .minY)
+        WindowPresenter.show(popover, relativeTo: anchor, of: view, preferredEdge: view.isFlipped ? .maxY : .minY)
     }
 
     private func takePortrait(source: PortraitSource, settings: PortraitSettings, title: String, sourceURL: URL?) {

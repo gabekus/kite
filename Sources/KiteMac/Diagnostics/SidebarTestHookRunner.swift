@@ -8,7 +8,8 @@ import KiteCore
 /// Change Space Icon…), the page through `beginNewSpace` (+ › New Space), the name through the page's field binding
 /// (`typedName`, read as the page appears) and the theme editor from Choose a Theme's own row (`opensThemeEditor`,
 /// read as the row is laid out). Nothing is pressed, typed, activated or fronted. It writes `KITE_TEST_SIDEBAR: ready`
-/// once the state is up (the popover shown), or `failed` and why.
+/// once the state is up (the popover shown), with whether Kite is active and where the popover went, or `failed` and
+/// why. After that it keeps watching, and writes `changed` if the state goes or Kite becomes active.
 @MainActor
 enum SidebarTestHookRunner {
     /// The page's field takes this name as it appears (SpaceCreationView), for the draft it was set for.
@@ -28,7 +29,9 @@ enum SidebarTestHookRunner {
         // Once the window and its sidebar have laid out (the capture script's own settle is longer).
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak controller] in
             MainActor.assumeIsolated {
-                guard let controller else { return }
+                guard let controller, controller.window != nil else {
+                    return log(hook.failedLine("the main window went before the hook ran"))
+                }
                 run(hook, in: controller)
             }
         }
@@ -36,13 +39,16 @@ enum SidebarTestHookRunner {
 
     private static func run(_ hook: SidebarTestHook, in controller: BrowserWindowController) {
         let store = controller.store
+        let main = controller.window
         switch hook {
         case .iconPicker(let name):
             guard let id = SidebarTestHook.space(named: name, in: store.state) else {
                 return log(hook.failedLine("no one space has that name"))
             }
             store.requestIconPicker(space: id)
-            waitFor(hook, until: Date().addingTimeInterval(SidebarTestHook.readyTimeout)) { SpaceIconPicker.isShown }
+            watch(hook, main: main, until: Date().addingTimeInterval(SidebarTestHook.readyTimeout)) {
+                SpaceIconPicker.current.map { .some($0) }
+            }
         case .newSpace(let name, let preset):
             store.beginNewSpace()
             guard let draft = store.spaceCreation?.spaceID else { return log(hook.failedLine("New Space opened no page")) }
@@ -53,8 +59,11 @@ enum SidebarTestHookRunner {
                 store.spaceThemeChosen()
                 pendingThemeEditor = draft
             }
-            waitFor(hook, until: Date().addingTimeInterval(SidebarTestHook.readyTimeout)) {
-                store.spaceCreation?.spaceID == draft && pendingName == nil && (preset == nil || ThemeEditor.isShown)
+            watch(hook, main: main, until: Date().addingTimeInterval(SidebarTestHook.readyTimeout)) {
+                // Up: the draft's page, its name taken, and the theme editor when there's a preset.
+                guard store.spaceCreation?.spaceID == draft, pendingName == nil else { return nil }
+                guard preset != nil else { return .some(nil) }
+                return ThemeEditor.current.map { .some($0) }
             }
         }
     }
@@ -73,12 +82,37 @@ enum SidebarTestHookRunner {
         return true
     }
 
-    private static func waitFor(_ hook: SidebarTestHook, until deadline: Date, _ ready: @escaping @MainActor () -> Bool) {
-        if ready() { return log(hook.readyLine) }
+    /// Polls `up` (nil: the state isn't up; `.some(popover)`: it is, with its popover if it has one) until it's up
+    /// or the deadline passes, then writes the ready line, and keeps polling for as long as Kite runs: the first time
+    /// the state goes or Kite is active, it writes the changed line and stops.
+    private static func watch(_ hook: SidebarTestHook, main: NSWindow?, until deadline: Date,
+                              _ up: @escaping @MainActor () -> NSPopover??) {
+        if let popover = up() {
+            let shown = SidebarTestHook.Shown(appActive: NSApp.isActive, popover: popover.map { facts($0, main: main) })
+            log(hook.readyLine(shown))
+            return stayUp(hook, up)
+        }
         guard Date() < deadline else { return log(hook.failedLine("not up in \(Int(SidebarTestHook.readyTimeout)) s")) }
         DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval) {
-            MainActor.assumeIsolated { waitFor(hook, until: deadline, ready) }
+            MainActor.assumeIsolated { watch(hook, main: main, until: deadline, up) }
         }
+    }
+
+    private static func stayUp(_ hook: SidebarTestHook, _ up: @escaping @MainActor () -> NSPopover??) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval) {
+            MainActor.assumeIsolated {
+                if NSApp.isActive { return log(hook.changedLine("Kite is the active app")) }
+                if up() == nil { return log(hook.changedLine("the state went (a popover closed or the page ended)")) }
+                stayUp(hook, up)
+            }
+        }
+    }
+
+    /// Where a popover went: its window, key or not, its level, and whether its parent is the main window.
+    private static func facts(_ popover: NSPopover, main: NSWindow?) -> SidebarTestHook.Shown.Popover {
+        let window = popover.contentViewController?.view.window
+        return .init(key: window?.isKeyWindow ?? false, level: window.map { Int($0.level.rawValue) } ?? 0,
+                     parentIsMainWindow: main != nil && window?.parent === main)
     }
 
     /// One `KITE_TEST_SIDEBAR:` line on stderr, which the capture script waits for and lists in NOTES.md.

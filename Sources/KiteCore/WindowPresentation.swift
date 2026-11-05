@@ -99,6 +99,8 @@ public enum WindowPresenterGuard {
         ".activate(options", "runModal(", "orderFrontStandardAboutPanel(", ".level = ", ".makeKey()",
         "NSWorkspace.shared.open(", "NSWorkspace.shared.openApplication(", "activateFileViewerSelecting(",
         "requestUserAttention(", "presentError(", ".begin {", ".begin(completionHandler", "orderBack(",
+        // NSPopover's show (a window of its own): WindowPresenter.show(_:relativeTo:of:preferredEdge:).
+        ".show(relativeTo",
     ]
     public static let exemptMarker = "// presenter-exempt:"
 

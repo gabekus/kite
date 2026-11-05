@@ -447,7 +447,7 @@ extension ExtensionsMenu {
                 if let token { NotificationCenter.default.removeObserver(token) }
             }
         }
-        popover.show(relativeTo: rect ?? view.bounds, of: view, preferredEdge: ExtensionPopover.belowEdge(of: view))
+        WindowPresenter.show(popover, relativeTo: rect ?? view.bounds, of: view, preferredEdge: ExtensionPopover.belowEdge(of: view))
         shown = popover
         shownAnchor = view
         model.refresh()

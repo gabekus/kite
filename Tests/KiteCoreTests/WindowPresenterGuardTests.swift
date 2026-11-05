@@ -29,4 +29,14 @@ struct WindowPresenterGuardTests {
             """
         #expect(WindowPresenterGuard.violations(in: source) == ["4: .level =  in window.level = .floating"])
     }
+
+    @Test func aPopoverShowsThroughWindowPresenter() {
+        // NSPopover's show is a window of its own: only WindowPresenter.show(_:relativeTo:of:preferredEdge:) calls it.
+        let source = """
+            WindowPresenter.show(popover, relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+            popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+            """
+        #expect(WindowPresenterGuard.violations(in: source)
+            == ["2: .show(relativeTo in popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)"])
+    }
 }

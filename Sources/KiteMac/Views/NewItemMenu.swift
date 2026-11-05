@@ -81,7 +81,7 @@ extension NewItemMenu {
         popover.contentViewController = NSHostingController(rootView: NewItemMenu(store: store, actions: actions) {
             weakPopover?.close()
         })
-        popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+        WindowPresenter.show(popover, relativeTo: view.bounds, of: view, preferredEdge: .maxY)
         shown = popover
     }
 

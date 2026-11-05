@@ -181,6 +181,6 @@ final class ToastView: NSView {
             return undo()
         }
         guard let shareURL else { return }
-        NSSharingServicePicker(items: [shareURL]).show(relativeTo: shareBackground.bounds, of: shareBackground, preferredEdge: .minY)
+        NSSharingServicePicker(items: [shareURL]).show(relativeTo: shareBackground.bounds, of: shareBackground, preferredEdge: .minY) // presenter-exempt: a sharing picker is a menu, from a click or command
     }
 }

@@ -247,13 +247,13 @@ struct SpaceIconPicker: View {
         closeHandler = onClose
         popover.delegate = delegate
         popover.contentViewController = NSHostingController(rootView: SpaceIconPicker(store: store, spaceID: spaceID))
-        popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+        WindowPresenter.show(popover, relativeTo: view.bounds, of: view, preferredEdge: .maxY)
         shown = popover
     }
 
     @MainActor private static weak var shown: NSPopover?
-    /// Whether a picker is on screen now (SidebarTestHookRunner's ready line).
-    @MainActor static var isShown: Bool { shown?.isShown == true }
+    /// The picker on screen now, if any (SidebarTestHookRunner's ready line).
+    @MainActor static var current: NSPopover? { shown?.isShown == true ? shown : nil }
     @MainActor private static var closeHandler: () -> Void = {}
     @MainActor private static let delegate = Delegate()
 

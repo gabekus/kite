@@ -861,7 +861,7 @@ final class FolderRowCell: SidebarRowCell {
                 popover.contentViewController = NSHostingController(rootView: LiveFolderIntro(source: live.source))
                 popover.delegate = self
                 self.popover = popover
-                popover.show(relativeTo: self.pillRect, of: self, preferredEdge: .maxX)
+                WindowPresenter.show(popover, relativeTo: self.pillRect, of: self, preferredEdge: .maxX)
             }
         } else if !f.showsIntro, let popover {
             self.popover = nil
