@@ -835,14 +835,16 @@ the session's writer does (atomically, skipping unchanged bytes), so the UI
 thread touches no file; a download that starts before the read is in waits for
 it, and the list read joins under it. An unreadable file is moved aside, and
 one with items Kite can't read is copied aside first, as on the Mac. Quitting
-waits for the session's and downloads.json's last writes within one 10 s
-deadline, and logoff within one of 3 s. A progress report costs Kite's UI thread
-about 8 μs (the model and the timer; nothing is drawn: the Library comes with
-W20b), measured by `--save-log`, which logs Chromium's reports, those that
-reached Kite, their cost and downloads.json's writes. Closing the window with
-downloads running asks first, the Mac's "Downloads in progress"
-(`shell/QuitDialog.h`, a task dialog where the Mac draws its own alert); Close
-Kite cancels them. It's asked as the window closes, before its pages do, where
+waits for the session's, history's and downloads.json's last writes within one
+10 s deadline (downloads.json's handed over first, so it runs alongside the
+other two on its own worker), and logoff within one of 3 s. A progress report
+costs Kite's UI thread about 8 μs (the model and the timer; nothing is drawn:
+the Library comes with W20b), measured by `--save-log`, which logs Chromium's
+reports, those that reached Kite, their cost and downloads.json's writes.
+Closing the window with downloads running asks first, the Mac's "Downloads in
+progress" (`shell/QuitDialog.h`, a task dialog where the Mac draws its own
+alert); Close Kite cancels them. It's asked as the window closes, before its
+pages do, where
 the Mac asks at terminate: closing the window is quitting here. A quiet run logs
 `KITE_TEST_MODAL: dialog: Downloads in progress | [Close Kite, Keep browsing]`
 and closes, as the Mac's test-safe run answers, and a profile set to Ask has its
@@ -1082,12 +1084,16 @@ Windows that means:
   a 60Hz timer.
 - **DirectComposition animations** run at the compositor's rate.
 - The windowed CEF fallback (child HWND) renders at the monitor's rate on its own.
-- **Chromium's Energy Saver** caps pages at 30fps on battery below 20% by
-  default. As on the Mac (`KCRuntime.mm`), Kite sets
-  `performance_tuning.battery_saver_mode.state` to 0 unless the user turns it
-  on (`Chromium::SetEnergySaverEnabled`). `--smoke-test` reads it back, which
-  proves Kite set it only on a fresh profile: Local State keeps a value an
-  earlier run wrote.
+- **Chromium's Energy Saver** caps pages at 30fps on battery below 20%. As on
+  the Mac (`KCRuntime.mm`, on by default since 9e19088c, as in Chrome), Kite
+  sets `performance_tuning.battery_saver_mode.state` to 1 unless the user turns
+  it off (`Chromium::SetEnergySaverEnabled`); every launch sets it, so Local
+  State's value from an earlier run doesn't stick. Nothing turns it off on
+  Windows yet: the Mac's toggle (Settings › Advanced › Kite, and the Kite menu)
+  and its stored choice (`chromiumEnergySaver` in UserDefaults) come with
+  Settings (W31). `--smoke-test` reads it back and fails unless it's 1. That's
+  Chromium's own default too, so CI's smoke writes a Local State with it off (0)
+  first, and a 1 then shows that Kite set it.
 - **A window no one can see draws nothing** (`shell/Occlusion.h`, P2), as the
   Mac's AppKit occlusion stops a covered window's page and its `ThemeView`
   crossfade. Kite counts as hidden while the session is locked

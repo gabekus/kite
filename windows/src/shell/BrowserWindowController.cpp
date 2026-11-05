@@ -281,10 +281,10 @@ std::wstring BrowserWindowController::Init() {
         if (occlusion_) occlusion_->RegisterNotifications();
     }
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE): what the pages
-    // reported runs first (titles, addresses), then the session and history are saved at once.
-    // Closing doesn't wait for the writes (main.cpp does, once the window is gone); logoff and
-    // shutdown can end the process as soon as WM_ENDSESSION returns, so that waits for both,
-    // kEndSessionFlush at most between them.
+    // reported runs first (titles, addresses), then the session, history and downloads.json are
+    // saved at once. Closing doesn't wait for the writes (main.cpp does, once the window is gone);
+    // logoff and shutdown can end the process as soon as WM_ENDSESSION returns, so that waits for
+    // all three, kEndSessionFlush at most between them.
     window_.onClose = [this](bool endingSession) {
         // First, so an Import from Arc whose dialog is still up does nothing more.
         closing_ = true;
