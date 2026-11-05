@@ -1701,7 +1701,9 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         std::optional<SidebarMenuTarget> control;
         if (wParam & MK_CONTROL) {
             control = MenuTargetAt(p);
-            if (control && (control->button || (activating && control->kind != SidebarMenuTarget::Kind::Space))) control.reset();
+            // Only the bar's cells take the activating click (acceptsFirstMouse): not the header, whose
+            // menu is the space's too but which is an ordinary row.
+            if (control && (control->button || (activating && !BarPoint(p)))) control.reset();
         }
         const bool toMenu = control.has_value();
         if (rename_) {

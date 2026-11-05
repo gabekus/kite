@@ -271,26 +271,32 @@ std::optional<std::string> BrowserState::TurnFolderIntoSpace(const std::string& 
     if (!folder) return std::nullopt;
     std::set<std::string> moved;
     for (const Tab* tab : TabsIn(folder->items)) moved.insert(tab->id);
-    const Space& source = spaces[s];
-    // insertSpace(name:icon:theme:profile:at:): right after the folder's space, selected, with no
-    // icon and the source's own `profile` (not the one it falls back to).
-    Space space{NewUuid(), folder->name, "", source.theme, {}, {}, std::nullopt, {}, {}};
-    if (auto profile = source.extra.find("profile"); profile != source.extra.end() && profile->second.AsString()) {
-        space.extra.emplace("profile", *profile->second.AsString());
-    }
-    std::string spaceID = space.id;
-    // Splits made only of the folder's tabs go along (the source keeps none of them: NormalizeSplits).
-    for (const SplitView& split : source.splits) {
-        if (std::all_of(split.tabIDs.begin(), split.tabIDs.end(), [&](const std::string& tab) { return moved.contains(tab); })) {
-            space.splits.push_back(split);
+    // What the new space takes from the folder's, read before the insert below moves the spaces
+    // (`source` doesn't outlive this block).
+    Space space;
+    bool selectedMoved = false;
+    {
+        const Space& source = spaces[s];
+        // insertSpace(name:icon:theme:profile:at:): right after the folder's space, selected, with no
+        // icon and the source's own `profile` (not the one it falls back to).
+        space = Space{NewUuid(), folder->name, "", source.theme, {}, {}, std::nullopt, {}, {}};
+        if (auto profile = source.extra.find("profile"); profile != source.extra.end() && profile->second.AsString()) {
+            space.extra.emplace("profile", *profile->second.AsString());
         }
+        // Splits made only of the folder's tabs go along (the source keeps none of them: NormalizeSplits).
+        for (const SplitView& split : source.splits) {
+            if (std::all_of(split.tabIDs.begin(), split.tabIDs.end(), [&](const std::string& tab) { return moved.contains(tab); })) {
+                space.splits.push_back(split);
+            }
+        }
+        selectedMoved = source.selectedTabID && moved.contains(*source.selectedTabID);
+        const std::vector<const Tab*> folderTabs = TabsIn(folder->items);
+        space.selectedTabID = selectedMoved ? source.selectedTabID
+                              : folderTabs.empty() ? std::nullopt
+                                                   : std::optional(folderTabs.front()->id);
     }
-    const bool selectedMoved = source.selectedTabID && moved.contains(*source.selectedTabID);
-    const std::vector<const Tab*> folderTabs = TabsIn(folder->items);
-    space.selectedTabID = selectedMoved ? source.selectedTabID
-                          : folderTabs.empty() ? std::nullopt
-                                               : std::optional(folderTabs.front()->id);
     space.pinnedItems = std::move(folder->items);
+    std::string spaceID = space.id;
     const size_t n = s + 1;
     spaces.insert(spaces.begin() + static_cast<std::ptrdiff_t>(n), std::move(space));
     selectedSpaceID = spaceID;
