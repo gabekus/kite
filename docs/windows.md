@@ -52,6 +52,7 @@ windows/
                 (the window and what's in it: views, Chromium, shortcuts), composition, input
   src/cli/      kitecore: the model, headless
   tests/        unit tests (no test framework dependency)
+  tools/perf/   kiteperf: the measurement harness, its session fixture and pages (never shipped)
   helix/        checkpoints.md and states/ (sessions for the UI gate)
   resources/    Kite.manifest (DPI, UTF-8 code page, long paths, Common Controls 6) and its MinGW .rc
   scripts/      fetch-cef.ps1, gen-unicode-tables.py
@@ -641,6 +642,61 @@ behind other windows, without asking for the focus, and never shows a dialog, as
   and without. Nothing that weakens the sandbox, site isolation or web security, opens a
   debugging port, or changes a path or a launched process. Chromium reads nothing else of
   Kite.exe's command line.
+
+`kiteperf` (`windows/tools/perf`, built with the app by MSVC only, never shipped) drives them.
+Each run launches Kite.exe on a fresh `%TEMP%` profile (marked `kite-test-profile`) holding
+`sessions/perf-10tabs-2spaces.json` (ten static tabs, eight and two, in two spaces with
+different themes), suspended into a job object; pages come from its own Winsock server on
+127.0.0.1 to 127.0.0.12, port 18765, each address its own site. Kite inherits only its output
+file. Once a second, and at each phase's start and end, it samples every process of Kite's (the
+job's list, and a parent walk over the system's process list), typed by `--type` (`unknown`
+when the command line can't be read): CPU, private working set and commit (never the shared
+working set), writes, context switches (ended threads included), handles, threads, and PDH's
+GPU memory and GPU engine time. A process that starts or ends mid-phase counts from its start
+and to its end, and the job's own CPU total is kept beside the per-process sum as a check. Any
+figure an API couldn't read is null, never 0. Each sample also says how
+much of Kite's window no other window covers, whether the real pointer is over it and whether
+it's in front, with dwm.exe and the rest of the machine for context. A phase is `noisy` when
+the rest of the machine kept the CPUs over 25% busy; other work shares this PC, so results are
+medians of runs.
+
+For a PR (docs/windows-architecture.md, Performance), build main and the branch, then, back to
+back:
+
+```powershell
+windows\build\Release\kiteperf.exe --kite <main>\Kite.exe --phases idle,hover --runs 3 --label main --out main.json
+windows\build\Release\kiteperf.exe --kite <branch>\Kite.exe --phases idle,hover --runs 3 --label branch --out branch.json
+windows\build\Release\kiteperf.exe --compare main.json branch.json   # the markdown table for the PR
+```
+
+`--compare` warns when the two differ in scenario, phases, run count, frame statistics, GPU
+counters, assets or the primary display's rate. `--chromium-switches` is checked against
+Kite's allow-list before anything starts. The standard scenario's phases: open (every tab, a load each, counting processes
+started and ended); settle 30 s; idle 60 s; switchSpaces (every 0.5 s for 20 s: the crossfade's
+frame intervals from one clock, p50/p99 and missed, and switch-to-present); switchTabs and
+reload (every 0.5 s for 10 s); hover (pointer moves posted at 120 Hz for 10 s over the rows:
+moves sent, committed and move-to-present); titleTick (a page that retitles itself every
+second, 20 s); anim (a CSS and requestAnimationFrame page selected, 10 s), hiddenAnim (the
+same in a background tab, 20 s), covered (under kiteperf's own black window, 20 s) and
+minimized (20 s); then one `WM_CLOSE` and the time until every process is gone. `--phases`
+runs some of them (open and settle always first); `--scenario idle` stops after idle,
+`startup` after the first page, and `smoke` (CI) is a few seconds each of open, idle,
+switchSpaces and hover. A request Kite refuses (when it comes in, or when it comes to run it), a
+page that doesn't load within 3 s, or (in
+smoke) a phase that logged no frames or moves fails the run (exit 3), and failed runs stay
+out of the medians. The idle check fails when Kite presented or committed anything; it says
+how often the real pointer moved over Kite meanwhile (Kite's own count), and exits 4 only when
+it never did (Kite drew by itself).
+
+Nothing in kiteperf takes the focus or sends real input: Kite opens behind other windows, the
+moves are posted to it, the cover never activates and sits just over Kite in the z-order (not
+topmost), and Kite is minimized with `SW_SHOWMINNOACTIVE`. Since Kite opens behind other
+windows, its window is usually covered on a desktop in use, and each phase reports how
+visible it was (`window.kiteVisiblePct`): anim is "selected", not necessarily on screen. Kite
+itself can still come to the front: Chromium activates a top-level `Chrome_WidgetWin_1` of
+Kite's as the first page's browser is made, so when nobody has used the machine for longer
+than Windows' foreground lock timeout, Kite takes the foreground. A result says so
+(`tookFocus`, and `kiteInFront` per phase).
 
 ## Plan
 
