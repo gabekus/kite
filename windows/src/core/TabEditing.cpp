@@ -184,6 +184,13 @@ bool BrowserState::MoveTabToFolder(std::string tabID, const std::string& folderI
     return true;
 }
 
+const Folder* BrowserState::FolderByID(const std::string& id) const {
+    for (const Space& space : spaces) {
+        if (const Folder* folder = pinned_tree::FindFolder(space.pinnedItems, id)) return folder;
+    }
+    return nullptr;
+}
+
 std::vector<const Folder*> BrowserState::Folders(size_t space) const {
     std::vector<const Folder*> out;
     if (space < spaces.size()) pinned_tree::CollectFolders(spaces[space].pinnedItems, out);

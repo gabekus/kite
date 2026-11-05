@@ -51,14 +51,32 @@ std::string PageKey(std::string_view address) {
 }
 
 // adopt(_:): a tab with no pinned URL takes its page, unless that's one of Kite's own or blank.
-void Adopt(Tab& tab) {
-    if (!tab.pinnedURL && tab.url && !InternalPageOf(tab.url) && *tab.url != "about:blank") tab.pinnedURL = tab.url;
+// Whether it did.
+bool Adopt(Tab& tab) {
+    if (tab.pinnedURL || !tab.url || InternalPageOf(tab.url) || *tab.url == "about:blank") return false;
+    tab.pinnedURL = tab.url;
+    return true;
 }
 
-void AdoptAll(std::vector<PinnedItem>& items) {
+bool AdoptAll(std::vector<PinnedItem>& items) {
+    bool changed = false;
     for (PinnedItem& item : items) {
-        if (Tab* tab = std::get_if<Tab>(&item.value)) Adopt(*tab);
-        else AdoptAll(std::get<Folder>(item.value).items);
+        if (Tab* tab = std::get_if<Tab>(&item.value)) changed = Adopt(*tab) || changed;
+        else changed = AdoptAll(std::get<Folder>(item.value).items) || changed;
+    }
+    return changed;
+}
+
+// resetTab for every pinned tab in the tree, in sidebar order.
+void ResetAll(std::vector<PinnedItem>& items, std::vector<std::pair<std::string, std::string>>& reset) {
+    for (PinnedItem& item : items) {
+        if (Tab* tab = std::get_if<Tab>(&item.value)) {
+            if (!tab->HasLeftPinnedURL()) continue;
+            tab->url = tab->pinnedURL;
+            reset.emplace_back(tab->id, *tab->pinnedURL);
+        } else {
+            ResetAll(std::get<Folder>(item.value).items, reset);
+        }
     }
 }
 
@@ -68,14 +86,20 @@ bool Tab::SamePage(std::string_view a, std::string_view b) { return PageKey(a) =
 
 bool Tab::HasLeftPinnedURL() const { return pinnedURL && url && !SamePage(*url, *pinnedURL); }
 
-void BrowserState::SyncPinnedURLs() {
+bool BrowserState::SyncPinnedURLs() {
+    bool changed = false;
     for (auto& [profile, grid] : favoritesByProfile) {
-        for (Tab& tab : grid) Adopt(tab);
+        for (Tab& tab : grid) changed = Adopt(tab) || changed;
     }
     for (Space& space : spaces) {
-        AdoptAll(space.pinnedItems);
-        for (Tab& tab : space.tabs) tab.pinnedURL.reset();
+        changed = AdoptAll(space.pinnedItems) || changed;
+        for (Tab& tab : space.tabs) {
+            if (!tab.pinnedURL) continue;
+            tab.pinnedURL.reset();
+            changed = true;
+        }
     }
+    return changed;
 }
 
 bool BrowserState::CanReset(const std::string& tabID) const {
@@ -112,12 +136,8 @@ bool BrowserState::ReplacePinnedURLWithCurrent(const std::string& tabID) {
 }
 
 std::vector<std::pair<std::string, std::string>> BrowserState::ResetPinnedTabs() {
-    std::vector<std::string> ids;
-    for (const Tab* tab : SelectedSpace().Pinned()) ids.push_back(tab->id);
     std::vector<std::pair<std::string, std::string>> reset;
-    for (const std::string& id : ids) {
-        if (auto home = ResetTab(id)) reset.emplace_back(id, std::move(*home));
-    }
+    ResetAll(spaces[SelectedSpaceIndex()].pinnedItems, reset);
     return reset;
 }
 

@@ -626,7 +626,10 @@ Tab… opens the row's name field (`shell/RenameField`, W9d's header field gener
 title all selected in the row's 14pt, "Keep it short and sweet!" when empty, over the field
 editor's background, with no Done; Return renames (a blank name goes back to the page's title),
 Escape doesn't, and leaving it keeps what was typed, as does its row going (another space shown,
-the tab moved into a closed folder). A folder's field is the same in its 14pt semibold with no
+the tab moved into a closed folder: `SidebarShowsRow`, one walk to the row). A row that only moves
+(Pin Tab mid-rename) keeps its field, still editing, as the Mac's list moves a row by its id
+(SidebarList.apply's moveRow), keeping its cell and field. A double-click on a split pane's row does
+nothing (the Mac's split is one SplitRowCell, with no doubleTapped). A folder's field is the same in its 14pt semibold with no
 placeholder, and a blank name keeps the old one. The fields are visuals in their page, clipped to
 the list, so a keystroke draws only the field (the smoke test checks the page doesn't draw). A
 favorite or a split's pane has no row to rename in: the Mac's Rename Tab… dialog for those, and
@@ -634,11 +637,14 @@ for a hidden sidebar, comes with ArcDialog (W19), a beep until then. A folder's 
 way in yet but `--rename-row`: the Mac's is its menu's Rename… (W17).
 
 `kitecore tab pin|favorite|rename|duplicate|reset|reset-all|separate|reveal|pinned-url|replace-pin`
-and `kitecore folder new|rename|delete|move` do the same headless; `kitecore sidebar` gives each
-tab row's `canReset` and `renamed`, and `click … --double` is a double-click's second press.
+and `kitecore folder new|rename|delete|move` (a folder by id or name) do the same headless;
+`kitecore sidebar` gives each tab row's `canReset` and `renamed`, `kitecore shown KIND ID` whether
+the page lists a row, and `click … --double` is a double-click's second press.
 `--capture FILE --rename-row N` opens row N's field (from 1, as `sidebar` lists the selected
 space's rows), `--hover-row N` rests the pointer on row N, and `--run-command ID` runs a command
-first (`pinTab` on a pinned tab is the "after unpin" state). Not yet: the rows' context menus
+first (`pinTab` on a pinned tab is the "after unpin" state). Until W17's menus, a folder New Folder
+makes can't be renamed, deleted or filled from the window (only by kitecore, or a drag once W18a
+lands). Not yet: the rows' context menus
 (Pin/Unpin, Rename…, Back to Pinned URL, Separate From Pinned Tab, Edit Pinned Page, a folder's
 Rename… and Delete: W17, whose model is here and in kitecore), Undo (W16: `EditState` is where
 it records), the command bar's command rows (the commands are there to bind, not to search),

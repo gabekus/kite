@@ -212,7 +212,7 @@ std::wstring BrowserWindowController::Init() {
     // Tabs and folders (+Tabs.cpp): their row's rename, a double-click on a tab, Back to Pinned URL.
     actions.renameTab = [this](const std::string& tabID, const std::string& name) { RenameTab(tabID, name); };
     actions.renameFolder = [this](const std::string& folderID, const std::string& name) { RenameFolder(folderID, name); };
-    actions.beginRenamingTab = [this](const std::string& tabID) { BeginRenamingTab(tabID); };
+    actions.beginRenamingTab = [this](const std::string& tabID) { BeginRenamingTab(tabID, true); };
     actions.resetTab = [this](const std::string& tabID) { BackToPinnedURL(tabID); };
     // The top row's buttons run the commands of the same names (the Mac's SidebarActions).
     actions.topRow = [this](TopRowButton button) { RunCommand(TopRowCommand(button)); };
@@ -466,7 +466,7 @@ bool BrowserWindowController::CommandEnabled(const std::string& command) const {
         return static_cast<size_t>(command[5] - '0') <= state_.spaces.size();
     }
     // Pin Tab and the other tab commands need a tab, or one off its pinned page.
-    if (bool enabled = true; TabCommandEnabled(command, enabled)) return enabled;
+    if (const std::optional<bool> enabled = TabCommandEnabled(command)) return *enabled;
     return true;
 }
 
@@ -518,6 +518,8 @@ std::wstring BrowserWindowController::SaveFrameLog(const std::filesystem::path& 
 void BrowserWindowController::StateChanged() {
     // A tab pinned by any path remembers its page, and a page reported by a pinned tab with none yet
     // becomes its pinned URL (the Mac's BrowserStore.mutate and mutatePage sync after every change).
+    // W11's merge: a change there saves Soon, whatever this update's own save was
+    // (`if (state_.SyncPinnedURLs()) save = SessionSaveDelay::Soon;` before `if (save) SessionChanged(*save)`).
     state_.SyncPinnedURLs();
     // A rename ends once its header or row isn't shown (another space selected, the space, tab or
     // folder gone or hidden in a closed folder), keeping what was typed, as leaving the field does:
@@ -553,7 +555,7 @@ void BrowserWindowController::SelectionMoved() {
 
 void BrowserWindowController::ShowPage() {
 #ifdef KITE_HAS_CEF
-    if (chromium_ && !holdPages_) ShowSelectedTab();
+    if (chromium_ && !(options_.smokeTest && holdPages_)) ShowSelectedTab();
 #endif
 }
 
@@ -561,8 +563,9 @@ void BrowserWindowController::LoadInTab(const std::string& tabID, const std::str
 #ifdef KITE_HAS_CEF
     // kite:// pages are drawn by the window, never loaded (the Mac's InternalPage).
     if (!chromium_ || url.starts_with("kite:")) return;
-    // A tab whose page closed itself (an unloaded pinned tab) gets a new one.
-    if (!chromium_->Navigate(tabID, url)) ShowSelectedTab();
+    // A tab whose page closed itself (an unloaded pinned tab) gets a new one, as the selected tab's
+    // (ShowPage: none for the smoke test's own tabs).
+    if (!chromium_->Navigate(tabID, url)) ShowPage();
 #else
     (void)tabID;
     (void)url;

@@ -1162,14 +1162,20 @@ void SidebarView::DrawPage(ID2D1DeviceContext* context, const PageModel& page, f
     const float listTop = listTop_;
     const float listBottom = std::max(listTop, bottom);
     context->PushAxisAlignedClip(Rect(0, listTop, width_, listBottom), D2D1_ANTIALIAS_MODE_ALIASED);
+    // A row being renamed out of view still places its field, which its clip hides: rows past the
+    // bottom are walked until it's placed.
+    bool fieldPending = rename_ && renamePage_ == page.spaceID;
     for (const SidebarRow& row : page.rows) {
         const float top = listTop + row.top - scroll;
-        // A row being renamed out of view still places its field, which its clip hides.
         if (top >= listBottom || top + row.height <= listTop) {
-            if (renamePage_ == page.spaceID && Renames(row)) PlaceRenameField(row, top);
-            if (top >= listBottom && !(rename_ && renamePage_ == page.spaceID)) break;
+            if (fieldPending && Renames(row)) {
+                PlaceRenameField(row, top);
+                fieldPending = false;
+            }
+            if (top >= listBottom && !fieldPending) break;
             continue;
         }
+        if (Renames(row)) fieldPending = false;
         const bool hovered = selected && hover_ && hover_->first == row.kind && hover_->second == row.id;
         DrawRow(context, row, top, hovered);
     }

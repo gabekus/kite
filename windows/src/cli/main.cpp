@@ -11,7 +11,8 @@
 //   kitecore [--profile DIR] select TAB_ID
 //   kitecore [--profile DIR] tab pin|favorite|duplicate|reset|separate|reveal|replace-pin TAB_ID
 //   kitecore [--profile DIR] tab rename TAB_ID [NAME...]|pinned-url TAB_ID URL|reset-all
-//   kitecore [--profile DIR] folder new [SPACE_ID]|rename ID NAME...|delete ID|move TAB_ID FOLDER_ID
+//   kitecore [--profile DIR] folder new [SPACE_ID]|rename FOLDER NAME...|delete FOLDER|move TAB_ID FOLDER
+//   kitecore [--profile DIR] shown header|tab|folder|divider|newTab ID [SPACE_ID]
 //   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
 //   kitecore [--profile DIR] space swipe DX [SECONDS]
 //   kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...
@@ -45,9 +46,11 @@
 // none); `separate` is Separate From Pinned Tab and prints the new tab's id; `reveal` is Reveal Tab
 // in Sidebar and prints its row's id; `pinned-url` is Edit Pinned Page › Edit… and `replace-pin` is
 // Replace Pin with Current Page, each printing the pinned URL (exit 6 when refused). `folder new`
-// is New Folder (in the selected space, or SPACE_ID's) and prints its id; `rename` prints its name
-// (a blank one keeps it); `delete` archives what's in it and prints those tabs' ids; `move` puts a
-// tab at the end of a folder (pinning it).
+// is New Folder (in the selected space, or SPACE_ID's) and prints its id; FOLDER is a folder's id or
+// name (any case, the selected space's first); `rename` prints its name (a blank one keeps it);
+// `delete` archives what's in it and prints those tabs' ids; `move` puts a tab at the end of a
+// folder (pinning it; exit 6 for a favorite). `shown` says whether a space's page (the selected
+// one's by default) lists that row now: "yes" or "no".
 // `space swipe` is two fingers sideways over the sidebar: the content dragged DX points (positive
 // towards the previous space) at a steady pace over SECONDS (default 0.25), an event every
 // 1/60 s, then let go. It prints where the pages were at the release (offset, the theme's
@@ -117,7 +120,8 @@ int Usage() {
         "       kitecore [--profile DIR] tab next|prev|NUMBER\n"
         "       kitecore [--profile DIR] tab pin|favorite|duplicate|reset|separate|reveal|replace-pin TAB_ID\n"
         "       kitecore [--profile DIR] tab rename TAB_ID [NAME...]|pinned-url TAB_ID URL|reset-all\n"
-        "       kitecore [--profile DIR] folder new [SPACE_ID]|rename ID NAME...|delete ID|move TAB_ID FOLDER_ID\n"
+        "       kitecore [--profile DIR] folder new [SPACE_ID]|rename FOLDER NAME...|delete FOLDER|move TAB_ID FOLDER\n"
+        "       kitecore [--profile DIR] shown header|tab|folder|divider|newTab ID [SPACE_ID]\n"
         "       kitecore [--profile DIR] shortcuts\n"
         "       kitecore [--profile DIR] close TAB_ID\n"
         "       kitecore [--profile DIR] reopen [TAB_ID]\n"
@@ -417,7 +421,7 @@ int main(int argc, char** argv) {
                 o.emplace("selected", row.selected);
                 // Back to Pinned URL on hover: a pinned tab off its pinned page.
                 o.emplace("canReset", row.canReset);
-                if (const Tab* tab = state.FindTabByID(row.id); tab && tab->customTitle) o.emplace("renamed", true);
+                if (row.renamed) o.emplace("renamed", true);
                 if (row.favicon.url) o.emplace("favicon", *row.favicon.url);
                 break;
             case SidebarRow::Kind::Folder:
@@ -696,21 +700,38 @@ int main(int argc, char** argv) {
             if (!space) return kNotFound;
             std::puts(state.CreateNewFolder(*space).c_str());
         } else if (action == "rename" && args.size() >= 4) {
-            const auto found = state.FolderMatching(Id(args[2]));
-            if (!found || found->folder->id != Id(args[2])) return kNotFound;
+            const auto found = state.FolderMatching(args[2]);
+            if (!found) return kNotFound;
             const std::string id = found->folder->id;
             state.RenameFolder(id, Join(args, 3));
-            std::puts(state.FolderMatching(id)->folder->name.c_str());
+            std::puts(state.FolderByID(id)->name.c_str());
         } else if (action == "delete" && args.size() == 3) {
-            const auto found = state.FolderMatching(Id(args[2]));
-            if (!found || found->folder->id != Id(args[2])) return kNotFound;
-            for (const Tab& tab : state.DeleteFolder(Id(args[2]))) std::puts(tab.id.c_str());
+            const auto found = state.FolderMatching(args[2]);
+            if (!found) return kNotFound;
+            const std::string id = found->folder->id;
+            for (const Tab& tab : state.DeleteFolder(id)) std::puts(tab.id.c_str());
         } else if (action == "move" && args.size() == 4) {
-            if (!state.MoveTabToFolder(Id(args[2]), Id(args[3]))) return kNotFound;
+            const std::string tab = Id(args[2]);
+            const auto location = state.Location(tab);
+            const auto found = state.FolderMatching(args[3]);
+            if (!location || !found) return kNotFound;
+            // Favorites stay where they are (moveTab(_:toFolder:)).
+            if (location->section == TabSection::Favorite) return kRefused;
+            if (!state.MoveTabToFolder(tab, std::string(found->folder->id))) return kNotFound;
         } else {
             return Usage();
         }
         changed = true;
+    } else if (command == "shown" && (args.size() == 3 || args.size() == 4)) {
+        static const std::map<std::string, SidebarRow::Kind> kinds{{"header", SidebarRow::Kind::Header},   {"tab", SidebarRow::Kind::Tab},
+                                                                   {"folder", SidebarRow::Kind::Folder},   {"divider", SidebarRow::Kind::Divider},
+                                                                   {"newTab", SidebarRow::Kind::NewTab}};
+        const auto kind = kinds.find(args[1]);
+        if (kind == kinds.end()) return Usage();
+        const auto space = args.size() == 4 ? state.SpaceIndex(Id(args[3])) : std::optional<size_t>(state.SelectedSpaceIndex());
+        if (!space) return kNotFound;
+        std::puts(SidebarShowsRow(state, *space, kind->second, Id(args[2])) ? "yes" : "no");
+        return kOk;
     } else if (command == "tab" && args.size() == 2) {
         // Ctrl+Alt+Down/Up and Ctrl+1–9 in the selected space: prints the tab now selected.
         if (args[1] == "next" || args[1] == "prev") {

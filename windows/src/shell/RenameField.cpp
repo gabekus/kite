@@ -30,7 +30,7 @@ constexpr D2D1_COLOR_F kLightSelection{179 / 255.0f, 215 / 255.0f, 1, 1};
 // it and 1pt past its end (4pt wider: 160pt in the Mac's capture), 2pt above its line and 4pt
 // below (22pt for the header's 16pt line), as the Mac's capture of the open field draws it.
 constexpr float kTextInset = 2;
-constexpr float kBackgroundBefore = 3, kBackgroundAfter = 1, kBackgroundAbove = 2, kBackgroundBelow = 4;
+constexpr float kBackgroundBefore = 3, kBackgroundAfter = RenameField::kEditorAfter, kBackgroundAbove = 2, kBackgroundBelow = 4;
 constexpr float kDarkTextBackground = 30 / 255.0f;
 
 D2D1_COLOR_F Primary(bool dark, float alpha) {

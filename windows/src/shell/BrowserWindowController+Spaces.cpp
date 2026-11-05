@@ -54,8 +54,7 @@ void BrowserWindowController::BeginRenaming(const std::string& spaceID) {
         state_.SelectSpace(spaceID);
         SelectionMoved();
     }
-    // The keyboard, when Kite is the window in front (a quiet test run never activates).
-    if (GetForegroundWindow() == window_.Handle()) SetFocus(window_.Handle());
+    TakeKeyboardForRename();
     sidebar_->BeginRenaming(spaceID, state_.spaces[*index].name);
 }
 

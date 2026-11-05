@@ -386,6 +386,8 @@ std::wstring BrowserWindowController::SmokeTest() {
     // draw again (a real device removal can't be caused from a test).
     DropCompositor();
     if (std::wstring problem = Draw(); !problem.empty()) return L"Kite couldn't rebuild its renderer: " + problem;
+    // Last, as it runs the pages' reports: Back to Pinned URL on the shown page, loaded for real.
+    if (std::wstring problem = SmokeTestLiveReset(); !problem.empty()) return problem;
     // With Chromium it waits for the first page instead, for at most 30 s.
     UINT smokeMs = 1000;
 #ifdef KITE_HAS_CEF
@@ -498,7 +500,7 @@ std::wstring BrowserWindowController::HoldRowRename(size_t index, const std::opt
         return L"that row isn't a tab or a folder";
     }
     const SidebarView::RenameTarget target{rows[index].kind, rows[index].id};
-    if (target.kind == SidebarRow::Kind::Tab) BeginRenamingTab(target.id);
+    if (target.kind == SidebarRow::Kind::Tab) BeginRenamingTab(target.id, false);
     else BeginRenamingFolder(target.id);
     if (sidebar_->Renaming() != target) return L"the row's rename field didn't open";
     if (text) sidebar_->TypeInRename(*text);
@@ -717,7 +719,7 @@ std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
         return L"the space menu isn't the Mac's";
     }
 
-    // Rename Space…: the field opens with the name, takes what's typed, and Return renames.
+    // Rename Spaceâ€¦: the field opens with the name, takes what's typed, and Return renames.
     const size_t index = state_.SelectedSpaceIndex();
     const std::string name = state_.spaces[index].name;
     if (std::wstring problem = HoldRename(index, "Smoke"); !problem.empty()) return problem;
@@ -911,7 +913,7 @@ std::wstring BrowserWindowController::SmokeTestTabEditing() {
     if (sidebar_->PageDraws() != pageDraws) return done(L"typing in a tab's rename drew its page, not only the field");
     SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
     if (sidebar_->Renaming() || state_.FindTabByID(tab)->DisplayTitle() != "Smoke") return done(L"Return didn't rename the tab");
-    // Rename Current Tab…: Escape keeps the name; a blank name goes back to the page's title.
+    // Rename Current Tabâ€¦: Escape keeps the name; a blank name goes back to the page's title.
     RunCommand("renameCurrentTab");
     typed(L"Not this");
     SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
@@ -981,6 +983,58 @@ std::wstring BrowserWindowController::SmokeTestTabEditing() {
     if (state_.FindTabByID(original)->url != "data:text/html,duplicate") return done(L"Reset all tabs in this Space didn't take the tab home");
     SendMouse(window_.Handle(), WM_MOUSELEAVE, POINT{}, 0);
     return done({});
+}
+
+std::wstring BrowserWindowController::SmokeTestLiveReset() {
+#ifdef KITE_HAS_CEF
+    const Tab* shown = state_.SelectedTab();
+    // The CI smoke's page (windows/helix/pages/smoke.html), whose neighbour audio.html is where it
+    // goes: a page of the same origin (file://, no network), so it stays in its renderer.
+    if (!chromium_ || !firstPageMade_ || !shown || !shown->url || !shown->url->ends_with("/smoke.html")) return {};
+    const std::string id = shown->id, home = *shown->url;
+    const bool wasPinned = state_.Location(id)->section == TabSection::Pinned;
+    // The page's reports (its address, its title) as the message loop would run them, for at most
+    // `seconds`; the window's timers go on meanwhile.
+    const auto wait = [&](const std::function<bool()>& done, double seconds) {
+        const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(seconds * 1000);
+        MSG message;
+        while (!done() && GetTickCount64() < deadline) {
+            chromium_->RunPending();
+            if (PeekMessageW(&message, window_.Handle(), WM_TIMER, WM_TIMER, PM_REMOVE)) DispatchMessageW(&message);
+            else Sleep(5);
+        }
+        return done();
+    };
+    const auto titled = [&](std::string_view prefix) {
+        const Tab* tab = state_.FindTabByID(id);
+        return tab && tab->title.starts_with(prefix);
+    };
+    const ULONGLONG closeAsked = closeAskedAt_;
+    const std::wstring problem = [&]() -> std::wstring {
+        if (!wasPinned) RunCommand("pinTab");
+        if (state_.FindTabByID(id)->pinnedURL != home) return L"pinning the shown tab didn't remember its page";
+        // Its page goes elsewhere, as a link would take it.
+        LoadInTab(id, home.substr(0, home.size() - std::string_view("smoke.html").size()) + "audio.html");
+        if (!wait([&] { return titled("audio:") && state_.CanReset(id); }, 15)) return L"the shown page didn't go elsewhere";
+        if (!CommandEnabled("resetTab")) return L"Reset Tab was disabled for the live page off its pinned page";
+        RunCommand("resetTab");
+        // Home, and done loading there (a navigation still under way would hold up the window's close).
+        const auto loaded = [&] {
+            const auto status = pageStatus_.find(id);
+            return status != pageStatus_.end() && !status->second.isLoading;
+        };
+        if (!wait([&] { return titled("Kite smoke page") && loaded(); }, 15)) return L"Back to Pinned URL didn't take the live page home";
+        if (state_.CanReset(id)) return L"the live page came home but still offers Back to Pinned URL";
+        return {};
+    }();
+    if (!wasPinned && state_.Location(id) && state_.Location(id)->section == TabSection::Pinned) RunCommand("pinTab");
+    // The first page's load may have asked the window to close while this held the loop: its
+    // deadline counts from now, when the loop gets back to it (this runs last in the smoke test).
+    if (closeAskedAt_ && closeAskedAt_ != closeAsked) closeAskedAt_ = GetTickCount64();
+    return problem;
+#else
+    return {};
+#endif
 }
 
 std::wstring BrowserWindowController::HoldFavoriteHover(size_t index) {

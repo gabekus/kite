@@ -21,12 +21,12 @@ auto* FindFolderIn(Items& items, const std::string& id) {
     return FolderPtr{nullptr};
 }
 
+}  // namespace
+
 bool IsEmptyEphemeralFolder(const PinnedItem& item) {
     const Folder* folder = std::get_if<Folder>(&item.value);
     return folder && folder->ephemeral == true && folder->items.empty();
 }
-
-}  // namespace
 
 const Folder* FindFolder(const std::vector<PinnedItem>& items, const std::string& id) { return FindFolderIn(items, id); }
 Folder* FindFolder(std::vector<PinnedItem>& items, const std::string& id) { return FindFolderIn(items, id); }

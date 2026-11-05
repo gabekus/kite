@@ -292,14 +292,17 @@ struct BrowserState {
         const Folder* folder;
     };
     std::optional<FolderMatch> FolderMatching(std::string_view idOrName) const;
+    // A folder by its id alone, in any space; null when there's none.
+    const Folder* FolderByID(const std::string& id) const;
 
     // MARK: Pinned URLs (PinnedURL.cpp, PinnedURL.swift)
 
     // Every pinned tab and favorite gets a pinned URL (its current page, the first time it's seen
     // pinned: not Kite's own pages or about:blank) and unpinned tabs lose theirs, so unpinning and
     // pinning again pins the page you're on. Run after every change, as the Mac's store does, and
-    // as a session loads; it writes only what differs.
-    void SyncPinnedURLs();
+    // as a session loads; it writes only what differs. Whether it changed anything (a change to save
+    // soon, as any sidebar change is).
+    bool SyncPinnedURLs();
     // A pinned tab or favorite that has left its pinned page: Back to Pinned URL is offered.
     bool CanReset(const std::string& tabID) const;
     // Back to Pinned URL: the tab's address becomes its pinned URL. That URL, for the shell to
@@ -314,7 +317,8 @@ struct BrowserState {
     // pages). False when there's nothing to replace.
     bool ReplacePinnedURLWithCurrent(const std::string& tabID);
     // Reset all tabs in this Space: every pinned tab of the current space (folders included)
-    // back to its pinned page. The tabs that changed and their URLs, for the shell to load.
+    // back to its pinned page, in one walk of its pinned items. The tabs that changed and their
+    // URLs, in sidebar order, for the shell to load.
     std::vector<std::pair<std::string, std::string>> ResetPinnedTabs();
     // Separate From Pinned Tab: the page the pinned tab wandered to opens as a new selected tab
     // in Today, and the pinned tab goes back to its pinned page. The new tab's id.

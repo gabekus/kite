@@ -92,6 +92,7 @@ struct SidebarRow {
     // A pinned tab off its pinned page (Tab::HasLeftPinnedURL): Back to Pinned URL shows on hover
     // (SidebarSpaceList's canReset).
     bool canReset = false;
+    bool renamed = false;  // shows its own name (Tab::customTitle) over its page's title
     FaviconSource favicon;
     // Folder.
     bool expanded = true;
@@ -182,8 +183,11 @@ struct TabRowTrailing {
 };
 TabRowTrailing TabRowTrailingOf(const SidebarRow& row, float width, bool hovered);
 
-// Whether space `space`'s page lists the row (by kind and id) as the session is now: what a rename
-// in it needs to stay open.
+// Whether space `space`'s page lists the row (by kind and id) as the session is now, as
+// SidebarRows would, without building them: what a rename in it needs to stay open. A header is
+// its space's; a tab or folder is in that space and not under a closed folder or a collapsed
+// pinned section (but for the selected tab, which shows through both); the divider shows with
+// anything to divide; New Tab always. One walk down to the row.
 bool SidebarShowsRow(const BrowserState& state, size_t space, SidebarRow::Kind kind, const std::string& id);
 
 }  // namespace kite

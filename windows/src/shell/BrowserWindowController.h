@@ -307,21 +307,30 @@ private:
     // keystroke drawing only the field) and from Rename Current Tab…, a folder renamed, New Folder,
     // Duplicate, Back to Pinned URL from its button and Reset all tabs, all undone after.
     std::wstring SmokeTestTabEditing();
+    // Back to Pinned URL on the shown (live) page: the selected tab pinned, its page sent elsewhere,
+    // then reset, waiting for the page to report it's home; unpinned again after.
+    std::wstring SmokeTestLiveReset();
     std::wstring SmokeTestFavorites();
     std::wstring SmokeTestEmptyFavorites();
     std::wstring SmokeTestFavoritesScroll();
     // MARK: Tabs (BrowserWindowController+Tabs.cpp)
     // Every tab edit a command or a click makes: the change, then the window shows it (with
-    // `selectionMoved`, the newly selected tab's page too). W16's undo records the step here, as the
-    // Mac's BrowserStore.mutate registers one for every change.
+    // `selectionMoved`, the newly selected tab's page too). RecordEdit is the change alone, where
+    // W16's undo records the step, as the Mac's BrowserStore.mutate registers one for every change
+    // (a rename that ends inside StateChanged's update goes through it alone).
     void EditState(const std::function<void()>& change, bool selectionMoved = false);
+    void RecordEdit(const std::function<void()>& change);
+    // The keyboard for a rename field opening (a space's, a tab's or a folder's): the one place
+    // W21's GiveKeyboard(KeyboardField::Rename) goes.
+    void TakeKeyboardForRename();
     // The Tabs menu's and the command bar's tab commands, by the Mac's ids.
     void MakeTabCommands();
-    // Their validateMenuItem: false when `command` isn't one of them, else `enabled` says.
-    bool TabCommandEnabled(const std::string& command, bool& enabled) const;
+    // Their validateMenuItem: whether `command` would do anything now; none when it isn't one of them.
+    std::optional<bool> TabCommandEnabled(const std::string& command) const;
     // The Mac's renameTab(_:): in its row, where the tab has one shown (not a favorite or a split's
-    // pane) and the sidebar is; else a beep, until W19's ArcDialog brings Rename Tab….
-    void BeginRenamingTab(const std::string& tabID);
+    // pane) and the sidebar is; else a beep, until W19's ArcDialog brings Rename Tab… (but a
+    // double-click on a split pane's row does nothing, as the Mac's SplitRowCell has no doubleTapped).
+    void BeginRenamingTab(const std::string& tabID, bool fromDoubleClick);
     // The Mac's renameFolder(_:) (the folder menu's Rename…, W17): the sidebar shown, its row's field.
     void BeginRenamingFolder(const std::string& folderID);
     void RenameTab(const std::string& tabID, const std::string& name);
@@ -329,8 +338,6 @@ private:
     // A pinned tab's Back to Pinned URL, and Tabs › Reset all tabs in this Space.
     void BackToPinnedURL(const std::string& tabID);
     void ResetAllTabsInSpace();
-    // A URL just set on a tab, loaded in its page if it has one (the Mac's load(_:in:)).
-    void LoadInLivePage(const std::string& tabID, const std::string& url);
     // Whether an open rename still has its header (its space shown) or row (listed by the
     // selected space's page); and what one ending renames, in the session only.
     bool RenameStillShown(const SidebarView::RenameTarget& target) const;
@@ -434,7 +441,7 @@ private:
     std::map<std::string, std::string> popupOpeners_;
     bool firstPageMade_ = false;
     // The smoke test's tab edits select tabs of their own: the page shown stays, so no page is made
-    // (and loaded) for them, and the first page's load still ends the test.
+    // (and loaded) for them, and the first page's load still ends the test. Only under --smoke-test.
     bool holdPages_ = false;
     bool pageLoading_ = false, pageLoaded_ = false;
     ULONGLONG closeAskedAt_ = 0;  // when the smoke test asked the window to close

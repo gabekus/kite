@@ -12,6 +12,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <fstream>
+#include <iterator>
 #include <set>
 #include <string>
 #include <variant>
@@ -630,4 +632,108 @@ TEST(deletingAFolderInAnotherSpaceArchivesWithThatSpace) {
     CHECK(Ids(archived) == std::vector<std::string>{a});
     CHECK(!state.archived.empty() && state.archived.back().spaceID == other && state.archived.back().reason == ArchiveReason::Manual);
     CHECK(!state.spaces[1].selectedTabID);
+}
+
+TEST(syncPinnedURLsSaysWhetherItChangedAnything) {
+    auto [state, id] = PinnedState();
+    CHECK(!state.SyncPinnedURLs());
+    // An unpinned tab losing a pinned URL, and a pinned tab with none adopting its page, are changes.
+    const std::string loose = state.OpenTab(kAway);
+    Find(state, loose)->pinnedURL = kHome;
+    CHECK(state.SyncPinnedURLs());
+    CHECK(!state.FindTabByID(loose)->pinnedURL);
+    Find(state, id)->pinnedURL.reset();
+    CHECK(state.SyncPinnedURLs());
+    CHECK(state.FindTabByID(id)->pinnedURL == kHome);
+    CHECK(!state.SyncPinnedURLs());
+}
+
+TEST(resetAllTabsGoesInSidebarOrderThroughFolders) {
+    auto [state, id] = PinnedState();
+    const std::string folder = state.CreateFolder("F", 0);
+    const std::string inFolder = state.OpenTab("https://docs.example/");
+    state.TogglePin(inFolder);
+    state.MoveTabToFolder(inFolder, folder);
+    const std::string last = state.OpenTab("https://last.example/");
+    state.TogglePin(last);
+    for (const std::string& tab : {id, inFolder, last}) Find(state, tab)->url = kAway;
+    const auto reset = state.ResetPinnedTabs();
+    CHECK(reset.size() == 3 && reset[0].first == id && reset[1].first == inFolder && reset[2].first == last);
+    CHECK(reset.size() == 3 && reset[1].second == "https://docs.example/");
+    CHECK(state.ResetPinnedTabs().empty());
+}
+
+namespace {
+
+std::optional<BrowserState> LoadState(const char* name) {
+    std::ifstream file(std::string(KITE_STATES_DIR) + "/" + name, std::ios::binary);
+    if (!file) return std::nullopt;
+    const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    auto parsed = json::Parse(text);
+    const json::Value* value = std::get_if<json::Value>(&parsed);
+    const json::Value* inner = value ? value->Find("state") : nullptr;
+    return inner ? DecodeBrowserState(*inner) : std::nullopt;
+}
+
+void CollectFolderIDs(const std::vector<PinnedItem>& items, std::vector<std::string>& out) {
+    for (const PinnedItem& item : items) {
+        if (const Folder* folder = std::get_if<Folder>(&item.value)) {
+            out.push_back(folder->id);
+            CollectFolderIDs(folder->items, out);
+        }
+    }
+}
+
+// Whether SidebarShowsRow says what SidebarRows lists, for every row a space could list (and some
+// it couldn't: another space's).
+bool ShowsAsTheRowsDo(const BrowserState& state) {
+    bool same = true;
+    for (size_t space = 0; space < state.spaces.size(); ++space) {
+        const std::vector<SidebarRow> rows = SidebarRows(state, space);
+        const auto listed = [&](SidebarRow::Kind kind, const std::string& id) {
+            return std::any_of(rows.begin(), rows.end(), [&](const SidebarRow& r) { return r.kind == kind && r.id == id; });
+        };
+        for (const Space& any : state.spaces) {
+            std::vector<std::string> folders;
+            CollectFolderIDs(any.pinnedItems, folders);
+            for (const Tab* tab : any.AllTabs()) same = same && SidebarShowsRow(state, space, SidebarRow::Kind::Tab, tab->id) == listed(SidebarRow::Kind::Tab, tab->id);
+            for (const std::string& id : folders) same = same && SidebarShowsRow(state, space, SidebarRow::Kind::Folder, id) == listed(SidebarRow::Kind::Folder, id);
+            for (SidebarRow::Kind kind : {SidebarRow::Kind::Header, SidebarRow::Kind::Divider, SidebarRow::Kind::NewTab}) {
+                same = same && SidebarShowsRow(state, space, kind, any.id) == listed(kind, any.id);
+            }
+        }
+    }
+    return same;
+}
+
+}  // namespace
+
+TEST(sidebarShowsRowSaysWhatTheRowsList) {
+    // The UI gate's sessions, each with every folder open and closed in turn, the pinned section
+    // collapsed and not, and each tab selected in turn.
+    for (const char* name : {"sidebar.json", "folders.json", "renamed-tab.json", "drifted-pinned.json", "two-spaces.json"}) {
+        auto loaded = LoadState(name);
+        CHECK(loaded.has_value());
+        if (!loaded) continue;
+        BrowserState state = *loaded;
+        CHECK(ShowsAsTheRowsDo(state));
+        std::vector<std::string> folders;
+        for (const Space& space : state.spaces) CollectFolderIDs(space.pinnedItems, folders);
+        for (const std::string& folder : folders) {
+            const bool expanded = state.FolderByID(folder)->isExpanded;
+            state.SetFolderExpanded(folder, !expanded);
+            CHECK(ShowsAsTheRowsDo(state));
+            for (const Tab* tab : state.SelectedSpace().AllTabs()) {
+                BrowserState selected = state;
+                selected.spaces[selected.SelectedSpaceIndex()].selectedTabID = tab->id;
+                CHECK(ShowsAsTheRowsDo(selected));
+                TogglePinnedSection(selected, selected.SelectedSpace().id);
+                CHECK(ShowsAsTheRowsDo(selected));
+            }
+            state.SetFolderExpanded(folder, expanded);
+        }
+        TogglePinnedSection(state, state.SelectedSpace().id);
+        CHECK(ShowsAsTheRowsDo(state));
+    }
+    CHECK(!SidebarShowsRow(OneSpace(), 5, SidebarRow::Kind::Header, "x"));
 }

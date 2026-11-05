@@ -727,6 +727,21 @@ if(NOT fav STREQUAL "favorite" OR NOT unfav STREQUAL "unpinned" OR NOT separated
    OR NOT driftedURL STREQUAL "https://example.com/home")
   message(FATAL_ERROR "favorites and Separate gave ${fav}, ${unfav}, ${separated}: ${state}")
 endif()
+# Folders by name too (any case), and whether the page lists a row: a tab in an open folder does,
+# a favorite isn't a row and can't go into a folder.
+tabs_kitecore(inbox folder new)
+tabs_kitecore(inboxName folder rename ${inbox} Inbox)
+tabs_kitecore(none folder move ${today} inbox)
+tabs_kitecore(inFolder shown tab ${today})
+tabs_kitecore(folderShown shown folder ${inbox})
+tabs_kitecore(fav tab favorite ${today})
+tabs_kitecore(favShown shown tab ${today})
+tabs_exit(6 folder move ${today} INBOX)
+tabs_exit(5 folder move ${today} Nowhere)
+tabs_exit(1 shown row ${today})
+if(NOT inboxName STREQUAL "Inbox" OR NOT inFolder STREQUAL "yes" OR NOT folderShown STREQUAL "yes" OR NOT favShown STREQUAL "no")
+  message(FATAL_ERROR "shown gave ${inFolder}, ${folderShown}, ${favShown}")
+endif()
 file(REMOVE_RECURSE "${TABS}")
 
 if(NOT EXISTS "${WORK}/session.json")
