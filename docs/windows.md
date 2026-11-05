@@ -782,6 +782,89 @@ logs each save and its UI-thread cost. Not yet: the Mac's `syncPinnedURLs` in
 its page-event path (a pinned tab that had no page adopting the first address
 it reports), which comes with pinning.
 
+## Downloads
+
+Chromium's downloads (W20a) follow the Mac's engine (`KCBrowser.mm`'s download
+handler, `DownloadsModel`, `DownloadLocation`): each page's client is CEF's
+`CefDownloadHandler`. A download saves into its profile's folder (Settings ›
+Profiles › Download location, kept in `session.json`'s `profileSettings` by the
+profile's dataStoreID, as on the Mac; a chosen folder that has gone falls back),
+under the name Chromium suggests made safe for Windows (`core/Downloads.h`'s
+`SafeDownloadName`: its last part, no drive or stream, no device names, no
+trailing dots or spaces, 255 UTF-16 units at most), numbered "name 2.ext" when
+the folder has one or another download holds it (names compared as NTFS
+compares them, `CompareStringOrdinal` ignoring case; 1000 tries at most), and
+shortened, as Chrome does, so the whole path stays within `MAX_PATH` (Alloy
+writes the target itself, with no `.crdownload` beside it: checked on the PC); a profile set to Ask gets Chromium's Save As dialog
+there. The folder and the free name are found on CEF's file thread (a chosen
+folder can be a slow network share), where `core/Downloads.h`'s
+`DownloadReservations` finds and holds a name in one step, so a burst of
+same-name downloads gets a path each (ten at once, checked on the PC with
+`KITE_TEST_AUTOMATIC_DOWNLOADS=http://127.0.0.1:PORT`, since without a click
+Chromium allows a page one); no lock is held while the disk is asked. A Chrome Web Store package
+(its MIME type or a .crx name, from Google's extension hosts over https; the
+Mac takes the MIME type from any host) is cancelled and never listed: nothing on
+Windows installs extensions yet (W27a), where the Mac hands it to Chromium's
+installer. Chromium marks each finished file as from the internet itself (its
+quarantine writes the `Zone.Identifier` stream, `ZoneId=3` with `HostUrl`), and
+`--save-log` reads each finished file's mark back. Once a page's browser is
+gone Chromium may stop reporting its downloads (it hands them to another page
+of the profile only if one is there as it goes: a page that starts a download
+and closes itself, run on the PC, went both ways). So a page with a download
+running isn't closed until it's done: the page cap and memory pressure skip it,
+and a page Kite closes (its tab closed, unloaded, or another profile now) or
+that closes itself (its window kept past `DoClose`) is parked: hidden, muted,
+moved to about:blank (its camera, microphone, sound and scripts go with the
+page; the download, the profile's, goes on: checked on the PC with
+`KITE_TEST_CLOSE_TAB_MS`, which gives a `--save-log` run's page a click's user
+activation and then closes its tab), opening no popups or tabs, and showing no
+dialogs (its Leave Page is answered Leave, as the Mac's closed pages answer it;
+checked with a page that asks). Its tab goes as before. It closes once its
+downloads are done, or have made no progress for 10 minutes (then they're
+cancelled), checked once a minute by a window timer that runs only while a page
+is parked; closing the window closes them all. The `KITE_TEST_*` switches act
+only in a `--save-log` run on a test profile. Chromium's reports reach
+Kite's thread folded together, one per download per wake however often Chromium
+reports (about twice a second), and go through `core/DownloadsModel.h`'s rules:
+a finished download is final, an ended incognito session takes no more, and
+downloads.json is written 0.2 s after a download starts or finishes and 5 s
+after a progress tick, which never pushes back a save already waiting.
+downloads.json is the Mac's file (`Tests/Fixtures/downloads-v1.json`, which both
+suites read), read at launch and written by `core/DownloadsWriter.h`'s worker as
+the session's writer does (atomically, skipping unchanged bytes), so the UI
+thread touches no file; a download that starts before the read is in waits for
+it, and the list read joins under it. An unreadable file is moved aside, and
+one with items Kite can't read is copied aside first, as on the Mac. Quitting
+waits for the session's and downloads.json's last writes within one 10 s
+deadline, and logoff within one of 3 s. A progress report costs Kite's UI thread
+about 8 μs (the model and the timer; nothing is drawn: the Library comes with
+W20b), measured by `--save-log`, which logs Chromium's reports, those that
+reached Kite, their cost and downloads.json's writes. Closing the window with
+downloads running asks first, the Mac's "Downloads in progress"
+(`shell/QuitDialog.h`, a task dialog where the Mac draws its own alert); Close
+Kite cancels them. It's asked as the window closes, before its pages do, where
+the Mac asks at terminate: closing the window is quitting here. A quiet run logs
+`KITE_TEST_MODAL: dialog: Downloads in progress | [Close Kite, Keep browsing]`
+and closes, as the Mac's test-safe run answers, and a profile set to Ask has its
+download cancelled with `KITE_TEST_MODAL: save panel: <name>`. Downloads go to
+`KITE_TEST_DOWNLOADS_PATH` (absolute; Kite refuses a relative one) on a test
+profile (any but `%LOCALAPPDATA%\Kite`), as the Mac honours it with
+`KITE_SUPPORT_PATH`, and a quiet run without it uses `<support>\Downloads`,
+never the user's. A finished download flashes the taskbar button while Kite is
+behind, the Mac's Dock bounce. `kitecore downloads` lists the file, `downloads
+apply` replays the engine's reports through the same rules, and `downloads
+location` shows and sets each profile's folder and Ask; kitecore never writes
+over a downloads.json item it can't read. Known differences: parking (the Mac
+removes a closed page's view and keeps no page for its downloads); a name that would make the path longer than
+`MAX_PATH` is shortened even where Windows' long paths are on; logging off or
+shutting down doesn't ask (Windows ends Kite there; its downloads read as
+interrupted next launch, as a download cut off by quitting does on the Mac; a
+follow-up: answer `WM_QUERYENDSESSION` with `ShutdownBlockReasonCreate`'s
+"Downloads in progress" and ask). Not yet: the Library's Downloads page and its actions (W20b;
+its Remove must cancel a running download first, as the Mac's does), the
+progress badge and the download's flight (W20c), Tidy Downloads, incognito
+windows (W29b), and the Settings pane that changes the location (W31a).
+
 ## History
 
 Browsing history (W25a) is the Mac's: one entry per page (`url`, `title`,
