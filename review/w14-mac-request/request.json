@@ -40,6 +40,12 @@
       "skip": "needs a double-click on a TabRowCell (count 2 is refused, and the row isn't in SAFE_TARGETS) or Rename Current Tab… from the command bar (Return can't be sent). Smallest Mac hook: KITE_TEST_RENAME=<tab or folder id>, read once the window is up, calling store.beginRenaming(tab:) or beginRenaming(folder:) for that id (no menu, no key, no pointer), classified flag-like (an id) in HOOKS"
     },
     {
+      "name": "pin-mid-rename",
+      "holds": "renamed-tab.json with Docs being renamed and Pin Tab (⌘D) run mid-rename: Docs's row moves to the end of the pinned tabs and its RenameField goes with it, still editing (SidebarList.apply moves the row by its id, the tab's UUID in either section, with table.moveRow, so the cell and its field stay; the field ends only when its cell stops renaming, SidebarListCells.swift 526-528, or editing ends, 351-353)",
+      "session": {"ref": "origin/helix/W14-pin-rename", "path": "windows/helix/states/renamed-tab.json"},
+      "skip": "needs the rename open (the KITE_TEST_RENAME hook above) and then ⌘D (keys are refused): the smallest Mac hook beyond KITE_TEST_RENAME is a KITE_TEST_COMMAND=<menu item id> run once after it (pinTab here), classified as an allow-listed id; until then Windows keeps the field on the moved row (its smoke test checks it) and this stays unverified"
+    },
+    {
       "name": "folder-rename",
       "holds": "folders.json with Reading being renamed (its menu's Rename…): the RenameField in the folder's 14pt semibold, Reading all selected, no placeholder",
       "skip": "needs the folder's context menu (FolderRowCell isn't in SAFE_TARGETS, even with KITE_TEST_CONTEXT_MENU). The same KITE_TEST_RENAME hook as tab-rename would reach it, with Reading's id A1B2C3D4-0002-4A00-8000-00000000F001"
