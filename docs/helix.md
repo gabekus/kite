@@ -67,6 +67,76 @@ for as long as it needs to. An agent can't override a gate.
 4. **Gabe.** He approves the checkpoint (usually by merging its PR). In
    autonomous mode this gate is skipped and the other three still apply.
 
+### Requesting Mac references
+
+The Mac side of the UI gate runs in CI, so it doesn't wait for Gabe to be at his Mac. Branch
+`review/<id>-mac-request` from main, add `review/<id>-mac-request/request.json` and push it.
+`.github/workflows/mac-reference-captures.yml` then runs on the Mac runner (`MACOS_RUNNER`; a run
+waits while the Mac sleeps), builds `scripts/bundle-app.sh debug` from the request's `base`
+(default origin/main), takes each state with `scripts/mac-reference-captures.sh`, and pushes the
+PNGs, `NAME.tree.txt` frames and a NOTES.md to `review/<id>-mac` (logs go to the run's artifact).
+`gh workflow run "Mac reference captures" -f request_branch=review/<id>-mac-request` reruns one.
+
+```json
+{
+  "id": "w9d", "title": "W9d Mac references: …", "base": "origin/main", "window_size": [1280, 820],
+  "session": {"ref": "origin/helix/W9d-space-editing", "path": "windows/helix/states/three-spaces.json"},
+  "tree_match": "SpaceCellView", "expect_frames": [[68, 778, 36, 34]],
+  "states": [
+    {"name": "rest", "holds": "the three spaces at rest"},
+    {"name": "drag", "steps": [{"ui": "input", "args": {"from": [86, 795], "to": [150, 795], "steps": 10, "hold": 10}}],
+     "hold": 10},
+    {"name": "rename", "env": {"KITE_TEST_CONTEXT_MENU": "Rename Space…"},
+     "steps": [{"ui": "input", "args": {"click": [86, 795], "button": "right"}}], "settle": 1}
+  ]
+}
+```
+
+Each state gets a fresh profile with its `session` (`ref` + `path` from any branch, or `inline`),
+`defaults delete dev.gabek.Kite.dev SidebarWidth`, and `KITE_DIAGNOSTICS=1 KITE_WINDOW_SIZE=W,H`
+plus its `env` (only the hooks the script's `HOOKS` list allows) and `profile_files` (`test-*`, and
+`history.json`, checked like a session). Its
+`steps` are `kite ui` actions (`{"ui": ACTION, "args": {…}}`) and pauses (`{"wait": s}`). The capture comes `settle`
+seconds after the last step (default 1), or straight away when `hold` says the steps hold the state
+that long. It's `kite ui capture '{"source":"in-process"}'` at 2×, with the tree's `tree_match`
+frames read before and after. `expect_frames` are the frames your points assume, and NOTES.md
+flags any the tree didn't show. `"capture": false` runs a state for its hook logs only, and
+`"unverified"` / `"skip"` say what it can't show. The full format is at the top of the script.
+
+Everything is headless: the build opens behind other windows and is never activated, input goes to
+its window only, nothing records the screen. What needs a real screen (a real right-click menu,
+`screencapture`, focus) isn't taken and is listed in NOTES.md as unverified. The script refuses a
+request that could reach past that, before anything runs:
+- a `base` older than its `SAFE_FLOOR` (test-safe mode) or not on one of origin's branches;
+- a hook outside `HOOKS`, or an empty or blank hook value (Kite turns an empty hook off). Gabe's
+  Claude home, Messages, media, imports, a global hotkey and the stand-ins for real services are
+  refused; downloads, web apps, browser data and the pasteboard always point inside the profile;
+- a session or `history.json` URL that isn't public http(s) or `about:` (a host whose last label is
+  numeric, like `127.1` or `0x7f.1`, counts as an address), or a path-like value. `profileSettings`
+  keeps only its `includesSearchSuggestions` booleans (download folders and the save-panel choice
+  go), and every profile gets a fresh WebKit store that's deleted afterwards;
+- keys (except exactly `{"keys":"cmd+t"}`, which opens Kite's own command bar, on a base with
+  `TEXT_FLOOR`) or modifier flags; a click or drag that doesn't start on a visible view in
+  `SAFE_TARGETS` (checked against the tree just before the step); a right- or ⌃-click without a
+  non-empty `KITE_TEST_CONTEXT_MENU`, which logs the menu instead of showing it;
+- text, except 1–40 of `A-Z a-z 0-9 space . _ -` straight after `cmd+t` or a plain click on a
+  command-bar opener (`NewTabRowCell`; a background window drops that click, as the row doesn't take
+  first mouse, so `cmd+t` is the one that works headless), into a visible `CommandBarField`: Kite's own command bar, which acts
+  only on Return, and Return can't be sent. Text also needs a base with the script's `TEXT_FLOOR`
+  (fix/test-safe-text-input), where a test-safe run inserts it into the bar's field editor without
+  key events, so the input method (and a Japanese input source's candidate window) never sees it.
+
+The Mac job only reads the repository (no token left in its checkout); a GitHub-hosted job pushes
+`review/<id>-mac`. Raise `SAFE_FLOOR` whenever new test-safety work lands in Kite.
+
+Known gaps, which need changes in Kite rather than here:
+- A public host name that resolves to a private address, a redirect, or an iframe can still reach
+  the LAN from a test page. Kite needs to block private addresses itself on a test profile.
+- The Default profile's WebKit store is `WKWebsiteDataStore.default()` for `dev.gabek.Kite.dev`,
+  which Gabe's own dev runs share. A test profile needs a store of its own.
+- `GIT_NO_LAZY_FETCH` only works with git 2.45 or newer; on older git the real guard against a
+  fork-network commit is the check that the base is on one of origin's branches.
+
 ## Evidence
 
 Every checkpoint's PR carries its evidence: the test run, both captures and
