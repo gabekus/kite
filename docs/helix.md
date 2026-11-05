@@ -117,12 +117,15 @@ request that could reach past that, before anything runs:
   go), and every profile gets a fresh WebKit store that's deleted afterwards;
 - keys (except exactly `{"keys":"cmd+t"}`, which opens Kite's own command bar, on a base with
   `TEXT_FLOOR`) or modifier flags; a click or drag that doesn't start on a visible view in
-  `SAFE_TARGETS` (checked against the tree just before the step); a right- or ⌃-click without a
-  non-empty `KITE_TEST_CONTEXT_MENU`, which logs the menu instead of showing it. The sidebar's rows
+  `SAFE_TARGETS` (found in the tree just before the step, then confirmed with Kite's own hit test,
+  `ui hit`, which must reach that very view: a tree frame alone isn't proof, since frames are
+  unclipped and a clipped view is never hit; so clicks and drags need a base with `HIT_FLOOR`, and
+  the step goes to the window that was hit-tested); a right- or ⌃-click without a non-empty
+  `KITE_TEST_CONTEXT_MENU`, which logs the menu instead of showing it. The sidebar's rows
   (`RIGHT_CLICK_TARGETS`: `TabRowCell`, `FolderRowCell`, `FavoritePaneView`) take a plain right-click
   and nothing else, as the state's first step, with `KITE_TEST_CONTEXT_MENU` exactly `1` and no
-  `test-context-menu-pick` file, so their menu is logged and no item runs; the row's own tree must
-  show only `RIGHT_CLICK_INSIDE` views under the point;
+  `test-context-menu-pick` file, so their menu is logged and no item runs; the hit test may reach a
+  `RIGHT_CLICK_INSIDE` view inside the row (a button with no menu of its own) instead of the row;
 - text, except 1–40 of `A-Z a-z 0-9 space . _ -` straight after `cmd+t` or a plain click on a
   command-bar opener (`NewTabRowCell`; a background window drops that click, as the row doesn't take
   first mouse, so `cmd+t` is the one that works headless), into a visible `CommandBarField`: Kite's own command bar, which acts
