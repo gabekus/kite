@@ -263,7 +263,7 @@ std::wstring SidebarTopRowView::DrawButton(const TopRowItem& item, ButtonGpu& gp
     HRESULT hr = S_OK;
     bool fresh = false;
     std::wstring error = DrawFadedLayer(
-        *compositor_, gpu.layer, width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawSymbol(context, item.symbol, centre); },
+        *compositor_, perf::View::Sidebar, gpu.layer, width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawSymbol(context, item.symbol, centre); },
         readBack, hr, fresh);
     if (fresh && gpu.layer.visual) {
         // A new visual: into the sidebar, and its opacity set again by Place.

@@ -159,7 +159,7 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         if (IsIconic(window_.Handle())) ShowWindow(window_.Handle(), SW_RESTORE);
         SetForegroundWindow(window_.Handle());
     };
-    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, std::move(events), options_.quiet, chromium_, error);
+    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, std::move(events), options_.quiet, options_.chromiumSwitches, chromium_, error);
         started != Chromium::StartResult::Started) {
         return started;
     }

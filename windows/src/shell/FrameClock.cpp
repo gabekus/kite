@@ -100,9 +100,13 @@ double FrameClock::Now() {
     return static_cast<double>(now.QuadPart) / Frequency();
 }
 
-double FrameClock::NextFrameTime(IDCompositionDevice* device) {
+double FrameClock::NextFrameTime(IDCompositionDevice* device, double* rateHz) {
     DCOMPOSITION_FRAME_STATISTICS statistics{};
+    if (rateHz) *rateHz = 0;
     if (!device || FAILED(device->GetFrameStatistics(&statistics)) || statistics.timeFrequency.QuadPart <= 0) return Now();
+    if (rateHz && statistics.currentCompositionRate.Denominator) {
+        *rateHz = static_cast<double>(statistics.currentCompositionRate.Numerator) / statistics.currentCompositionRate.Denominator;
+    }
     const double next = static_cast<double>(statistics.nextEstimatedFrameTime.QuadPart) /
                         static_cast<double>(statistics.timeFrequency.QuadPart);
     // Its clock is QueryPerformanceCounter's; an estimate behind now (an idle compositor) is now.

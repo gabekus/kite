@@ -569,7 +569,7 @@ ComPtr<ID2D1CommandList> SpaceBarView::RecordIcon(const SpaceCell& cell, HRESULT
 
 std::wstring SpaceBarView::DrawLayer(Layer& layer, UINT width, UINT height, const Compositor::Content& content, bool readBack,
                                      HRESULT& hr, bool& fresh) {
-    return DrawFadedLayer(*compositor_, layer, width, height, dpi_, content, readBack, hr, fresh);
+    return DrawFadedLayer(*compositor_, perf::View::SpaceBar, layer, width, height, dpi_, content, readBack, hr, fresh);
 }
 
 std::wstring SpaceBarView::DrawCell(size_t index, CellGpu& gpu, bool readBack, bool& fresh) {
@@ -777,7 +777,7 @@ std::wstring SpaceBarView::Draw(UINT clientHeight, Pixels* readBack) {
         surfaceHeight_ = height;
         barPixels_ = Pixels{};
         error = compositor_->DrawSurface(
-            surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawBar(context); }, readBack ? &barPixels_ : nullptr, hr);
+            perf::View::SpaceBar, surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawBar(context); }, readBack ? &barPixels_ : nullptr, hr);
         if (!error.empty()) {
             deviceLost_ = IsDeviceLost(hr);
             return L"the space bar: " + error;

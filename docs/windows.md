@@ -804,6 +804,52 @@ Windows that means:
   proves Kite set it only on a fresh profile: Local State keeps a value an
   earlier run wrote.
 
+## Measuring performance
+
+Kite.exe has three hooks for measuring it. They need `KITE_SUPPORT_PATH` to be a test profile,
+one holding a `kite-test-profile` file (kiteperf writes it into each profile it makes), and
+they're refused when it is the default profile (`%LOCALAPPDATA%\Kite`, from the environment or
+the known folder, compared by volume and file id, so any spelling of it counts) or can't be
+resolved. The checked directory stays open, undeletable, for the whole run, and the run uses its
+resolved path. The marker guards against mistakes (a script pointed at the real profile), not
+against another program running as the same user. Off, each costs
+one predictable bool check (`perf::On()`) and allocates nothing. A run with any of them opens
+behind other windows, without asking for the focus, and never shows a dialog, as
+`--smoke-test` does.
+
+- `--perf-log FILE`: JSON lines (`shell/PerfLog.h` lists them) with raw QueryPerformanceCounter
+  values; the header has `qpcFrequency` and the Chromium switches. A writer thread writes them
+  within 50 ms, so the UI thread never waits on the file. Marks: `started`, `window-created`,
+  `first-commit`, `cef-init-begin` and `cef-init-end`, `shown`, `browser-created`, `load-begin`
+  and `load-end` per tab (from CEF's thread), `command-begin` and `command-end` with the
+  command's id, `loop-end`, `exit`, and any the control asks for. Each mark carries the counters
+  so far: presents (the backdrop's and the command bar's), the real pointer's moves over and
+  out of the window (not the control's; Kite's chrome only, since a page is CEF's own child
+  window and its moves never reach Kite), commits (every
+  `IDCompositionDevice::Commit`, which all go through `Compositor::Commit`) and surface draws per
+  view. A dispatched message that takes over 8 ms is logged with how long it took. A control
+  input (a pointer move or a command) is logged with its first commit within 250 ms, or with
+  none, and the first composition frame the compositor made after that commit (a lower bound:
+  it can take a commit up later), from `DCompositionGetFrameId` and `DCompositionGetStatistics`
+  (Windows 11): the vblank the compositor made it for, and when it was presented on the monitor
+  Kite's window is on, where the statistics can say. The frame clock's frames are logged with
+  `--frame-log`'s content, the compositor's rate and the same frame times.
+- `--perf-control`: requests by `WM_COPYDATA` (`dwData` 'KPRF', a UTF-8 JSON object):
+  `{"command":ID}` runs a shortcut's command by its id (`kitecore shortcuts`), `{"mark":NAME}`
+  logs a mark, `{"open":URL}` opens an http or https page in a tab, `{"input":"move","x":X,
+  "y":Y,"qpc":Q}` posts a pointer move at client pixels, and `{"input":"leave"}` takes it away.
+  A request is checked and queued, and the answer is 1, or 0 for one Kite can't run; it then
+  runs from the message loop, so the sender isn't held and its dispatch is timed like any
+  other. While a posted pointer is over the window the system's `WM_MOUSELEAVE` is ignored,
+  since the real pointer is somewhere else.
+- `--chromium-switches "--a --b=c"`: switches for Chromium's browser process
+  (`OnBeforeCommandLineProcessing`), from an allow-list (`shell/PerfProtocol.h`): the GPU
+  backend and rasterization (always in the sandboxed GPU process), throttling and backgrounding,
+  the renderer limit, and four features that can be turned off by name, to measure Kite with one
+  and without. Nothing that weakens the sandbox, site isolation or web security, opens a
+  debugging port, or changes a path or a launched process. Chromium reads nothing else of
+  Kite.exe's command line.
+
 ## Plan
 
 The checkpoint list in windows/helix/checkpoints.md is the detailed plan. In short:
