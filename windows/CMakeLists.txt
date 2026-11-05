@@ -38,6 +38,7 @@ add_library(KiteCoreWin STATIC
   src/core/KeyBindings.cpp
   src/core/Models.cpp
   src/core/OKLab.cpp
+  src/core/OneShotFlags.cpp
   src/core/SessionStore.cpp
   src/core/SpaceBar.cpp
   src/core/SpaceEditing.cpp
@@ -119,6 +120,7 @@ if(WIN32)
     src/shell/FrameClock.cpp
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
+    src/shell/RelayedTooltips.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarTopRowView.cpp
     src/shell/SidebarView.cpp

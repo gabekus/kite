@@ -42,6 +42,8 @@ public:
     bool TakeResults();
     // Nothing queued or being fetched or decoded (a capture waits for this, never the window).
     bool Idle() const;
+    // The icon at `url` was fetched and failed (or wasn't an image): it shows the globe this run.
+    bool Failed(const std::string& url) const;
 
     struct Shared;  // the queue the workers share (Favicons.cpp)
 

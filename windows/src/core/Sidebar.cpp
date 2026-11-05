@@ -231,9 +231,7 @@ float SidebarListBottom(float height, float listTop) { return std::max(listTop, 
 
 float SidebarContentHeight(const std::vector<SidebarRow>& rows) { return rows.empty() ? 0 : rows.back().top + rows.back().height; }
 
-float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height) {
-    return std::max(0.0f, SidebarContentHeight(rows) - (SidebarListBottom(height) - M::kHeaderAreaHeight));
-}
+float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height) { return SidebarMaxScroll(rows, height, 0); }
 
 float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height, float scale, float listTop) {
     const float limit = std::max(0.0f, SidebarContentHeight(rows) - (SidebarListBottom(height, listTop) - listTop));

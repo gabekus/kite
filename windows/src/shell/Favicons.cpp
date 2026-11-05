@@ -347,6 +347,11 @@ bool Favicons::Idle() const {
     return shared_->queue.empty() && shared_->busy == 0;
 }
 
+bool Favicons::Failed(const std::string& url) const {
+    const auto found = entries_.find(url);
+    return found != entries_.end() && found->second.failed;
+}
+
 bool Favicons::TakeResults() {
     std::deque<Result> done;
     {

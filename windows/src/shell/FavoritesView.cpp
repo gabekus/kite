@@ -2,11 +2,8 @@
 
 #include "shell/FavoritesView.h"
 
-#include <commctrl.h>
-
 #include <algorithm>
 #include <cmath>
-#include <set>
 
 #include "shell/Errors.h"
 #include "shell/Text.h"
@@ -18,19 +15,73 @@ namespace kite {
 namespace {
 
 namespace F = favorites_metrics;
+namespace E = favorites_empty;
+
+// NSColor.labelColor: black (light) or white (dark) at 85%.
+constexpr float kLabelAlpha = 0.85f;
+// SF Pro's ascender and descender, as fractions of the size: Segoe's baseline goes where SF's is.
+constexpr float kAscender = 0.952f;
+constexpr float kDescender = 0.241f;
+// The icon fonts' glyphs fill about this much of their em square (the rows' close button's).
+constexpr float kGlyphInk = 0.9f;
+constexpr wchar_t kXmark = 0xE711;  // Segoe's Cancel, for xmark
 
 D2D1_ROUNDED_RECT Rounded(D2D1_RECT_F r, float radius) { return D2D1::RoundedRect(r, radius, radius); }
 
+// A label's line box (as core's LabelHeight) for DirectWrite: each line `pitch` tall with its
+// baseline where SF's is in CenteredLabel's.
+void SetLines(IDWriteTextLayout* layout, float size, int lines) {
+    if (lines > 1) {
+        const float pitch = E::LinePitch(size);
+        layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, pitch, pitch - std::ceil(size * kDescender));
+    } else {
+        layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, E::LineHeight(size), size * kAscender);
+    }
+}
+
 }  // namespace
 
-std::unique_ptr<FavoritesView> FavoritesView::Create(HWND window, Favicons* favicons, bool tooltips) {
-    return std::unique_ptr<FavoritesView>(new FavoritesView(window, favicons, tooltips));
+std::unique_ptr<FavoritesView> FavoritesView::Create(HWND window, IDWriteFactory* dwrite, Favicons* favicons, bool tooltips,
+                                                     std::wstring& error) {
+    std::unique_ptr<FavoritesView> view(new FavoritesView(window, favicons, tooltips));
+    view->dwrite_ = dwrite;
+    ComPtr<IDWriteFontCollection> fonts;
+    dwrite->GetSystemFontCollection(fonts.GetAddressOf());
+    auto installed = [&](const wchar_t* family) {
+        UINT32 index = 0;
+        BOOL exists = FALSE;
+        return fonts && SUCCEEDED(fonts->FindFamilyName(family, &index, &exists)) && exists;
+    };
+    // The system UI font for the Mac's SF Pro, as the rest of the sidebar.
+    const wchar_t* text = installed(L"Segoe UI Variable Text") ? L"Segoe UI Variable Text" : L"Segoe UI";
+    const wchar_t* icons = installed(L"Segoe Fluent Icons") ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets";
+    HRESULT hr = dwrite->CreateTextFormat(text, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                                          E::kTitleSize, L"", view->titleFormat_.GetAddressOf());
+    if (SUCCEEDED(hr)) {
+        hr = dwrite->CreateTextFormat(text, nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                                      E::kSubtitleSize, L"", view->subtitleFormat_.GetAddressOf());
+    }
+    if (SUCCEEDED(hr)) {
+        hr = dwrite->CreateTextFormat(icons, nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                                      E::kCloseSymbolSize / kGlyphInk, L"", view->closeFormat_.GetAddressOf());
+    }
+    if (FAILED(hr)) {
+        error = HResultMessage(L"CreateTextFormat (the favorites)", hr);
+        return nullptr;
+    }
+    // Each line centred, wrapped at word breaks (CenteredLabel with `wraps`); the close button's
+    // symbol in the middle of its box.
+    for (IDWriteTextFormat* f : {view->titleFormat_.Get(), view->subtitleFormat_.Get(), view->closeFormat_.Get()}) {
+        f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        f->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    }
+    view->closeFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    return view;
 }
 
 FavoritesView::~FavoritesView() {
     ReleaseGpu();
     if (container_ && parent_) parent_->RemoveVisual(container_.Get());
-    if (tooltip_) DestroyWindow(tooltip_);
 }
 
 void FavoritesView::UseCompositor(Compositor* compositor, IDCompositionVisual* parent) {
@@ -43,46 +94,51 @@ void FavoritesView::UseCompositor(Compositor* compositor, IDCompositionVisual* p
 }
 
 void FavoritesView::ReleaseGpu() {
+    // The panes keep what they show; everything is drawn again on the new device.
     for (auto& [id, gpu] : gpu_) {
         if (gpu.visual && container_) container_->RemoveVisual(gpu.visual.Get());
+        gpu = PaneGpu{};
     }
-    gpu_.clear();
+    for (FadedLayer* layer : {&emptyBox_, &emptyClose_}) {
+        if (layer->visual && container_) container_->RemoveVisual(layer->visual.Get());
+        *layer = FadedLayer{};
+    }
+    emptyDirty_ = true;
+    closeOpacity_.reset();
     brush_.Reset();
+    dashes_.Reset();
     placed_ = false;
 }
 
-std::vector<FavoritesView::PaneRef> FavoritesView::Panes() const {
-    std::vector<PaneRef> panes;
-    size_t index = 0;
-    for (const FavoriteTile& tile : tray_.tiles) {
-        for (const FavoritePane& pane : tile.panes) panes.push_back(PaneRef{&pane, index++});
-    }
-    return panes;
-}
-
-bool FavoritesView::Update(FavoritesTray tray, bool dark) {
-    if (tray == tray_ && dark == dark_) return false;
+bool FavoritesView::Update(FavoritesTray tray, bool dark, float left) {
+    if (tray == tray_ && dark == dark_ && left == left_) return false;
     const bool appearance = dark != dark_;
+    if (appearance || tray.emptyFrame != tray_.emptyFrame) emptyDirty_ = true;
     dark_ = dark;
-    // What each pane's layers were drawn for, by tab: a new frame draws them all again, a new
-    // favicon its icon (and its colour), a new appearance its icon (the globe is labelColor); a
-    // selection moving draws nothing.
-    std::map<std::string, FavoritePane> before;
-    for (const PaneRef& ref : Panes()) before.emplace(ref.pane->tabID, *ref.pane);
+    left_ = left;
     tray_ = std::move(tray);
-    std::set<std::string> shown, urls;
-    for (const PaneRef& ref : Panes()) {
-        const FavoritePane& pane = *ref.pane;
-        shown.insert(pane.tabID);
-        if (pane.favicon.url) urls.insert(*pane.favicon.url);
-        auto found = gpu_.find(pane.tabID);
-        if (found == gpu_.end()) continue;
-        PaneGpu& gpu = found->second;
-        const auto old = before.find(pane.tabID);
-        if (old == before.end() || old->second.frame != pane.frame) gpu.shapeDirty = gpu.colorDirty = gpu.iconDirty = true;
-        if (old == before.end() || old->second.favicon != pane.favicon || appearance) gpu.iconDirty = true;
+    panes_.clear();
+    urls_.clear();
+    for (const FavoriteTile& tile : tray_.tiles) {
+        for (const FavoritePane& pane : tile.panes) {
+            panes_.push_back(&pane);
+            if (pane.favicon.url) urls_.insert(*pane.favicon.url);
+        }
     }
-    // Panes no longer in the grid go, GPU side and all.
+    // Each pane against what its layers were drawn for: a new frame draws them all, a new favicon
+    // its icon and colour, a new appearance its icon; a selection moving draws nothing.
+    std::set<std::string> shown;
+    paneGpu_.clear();
+    for (const FavoritePane* pane : panes_) {
+        shown.insert(pane->tabID);
+        PaneGpu& gpu = gpu_[pane->tabID];
+        const FavoriteRedraw redraw = FavoriteRedrawFor(gpu.drawn, *pane, appearance);
+        gpu.redraw.wash |= redraw.wash;
+        gpu.redraw.tint |= redraw.tint;
+        gpu.redraw.icon |= redraw.icon;
+        paneGpu_.push_back(&gpu);
+    }
+    // Panes no longer in the grid go, GPU side and all; and the empty state once there's none.
     for (auto it = gpu_.begin(); it != gpu_.end();) {
         if (shown.contains(it->first)) {
             ++it;
@@ -91,27 +147,62 @@ bool FavoritesView::Update(FavoritesTray tray, bool dark) {
         if (it->second.visual && container_) container_->RemoveVisual(it->second.visual.Get());
         it = gpu_.erase(it);
     }
-    std::erase_if(colors_, [&](const auto& entry) { return !urls.contains(entry.first); });
-    if (hover_ && !shown.contains(*hover_)) hover_.reset();
+    if (!tray_.emptyState) {
+        for (FadedLayer* layer : {&emptyBox_, &emptyClose_}) {
+            if (layer->visual && container_) container_->RemoveVisual(layer->visual.Get());
+            *layer = FadedLayer{};
+        }
+        closeOpacity_.reset();
+        emptyHover_ = false;
+    }
+    std::erase_if(colors_, [&](const auto& entry) { return !urls_.contains(entry.first); });
+    if (hover_ && *hover_ >= panes_.size()) hover_.reset();
     UpdateTooltips();
     return Place();
+}
+
+float FavoritesView::EmptyStateHeight(float width) {
+    if (const auto known = emptyHeights_.find(width); known != emptyHeights_.end()) return known->second;
+    // Its lines at the box's width within the 16pt insets.
+    const float inner = std::max(1.0f, width - 2 * sidebar_metrics::kPadding - 2 * E::kInset);
+    const auto lines = [&](const char* text, IDWriteTextFormat* format, int fallback) {
+        const std::wstring wide = Widen(text);
+        ComPtr<IDWriteTextLayout> layout;
+        DWRITE_TEXT_METRICS metrics{};
+        if (FAILED(dwrite_->CreateTextLayout(wide.c_str(), static_cast<UINT32>(wide.size()), format, inner, 1000, layout.GetAddressOf())) ||
+            FAILED(layout->GetMetrics(&metrics))) {
+            return fallback;
+        }
+        return static_cast<int>(std::max<UINT32>(metrics.lineCount, 1));
+    };
+    const float height = E::Height(lines(E::kTitle, titleFormat_.Get(), E::kTitleLines), lines(E::kSubtitle, subtitleFormat_.Get(), E::kSubtitleLines));
+    emptyHeights_.emplace(width, height);
+    return height;
 }
 
 void FavoritesView::Layout(UINT dpi) {
     if (dpi == dpi_) return;
     dpi_ = dpi;
-    for (auto& [id, gpu] : gpu_) gpu.shapeDirty = gpu.colorDirty = gpu.iconDirty = true;
+    for (auto& [id, gpu] : gpu_) gpu.redraw = FavoriteRedraw{true, true, true};
+    emptyDirty_ = true;
     placed_ = false;
     UpdateTooltips();
 }
 
-bool FavoritesView::SetHover(const std::optional<std::string>& tabID) {
-    if (tabID == hover_) return false;
-    hover_ = tabID;
+bool FavoritesView::SetHover(std::optional<size_t> pane, bool overEmptyState) {
+    overEmptyState = overEmptyState && tray_.emptyState;
+    if (pane == hover_ && overEmptyState == emptyHover_) return false;
+    hover_ = pane;
+    emptyHover_ = overEmptyState;
     return Place();
 }
 
 UINT FavoritesView::IconPixels() const { return static_cast<UINT>(std::lround(F::kIconSize * Scale())); }
+
+POINT FavoritesView::CornerOf(const BarRect& frame) const {
+    const float scale = Scale();
+    return POINT{static_cast<LONG>(std::floor(frame.left * scale)), static_cast<LONG>(std::floor(frame.top * scale))};
+}
 
 std::optional<ThemeColor> FavoritesView::ColorOf(const FavoritePane& pane) {
     if (!pane.favicon.url || pane.favicon.symbol || !favicons_) return std::nullopt;
@@ -126,15 +217,14 @@ std::optional<ThemeColor> FavoritesView::ColorOf(const FavoritePane& pane) {
     return color;
 }
 
-FavoriteLook FavoritesView::LookOf(const FavoritePane& pane) const {
-    const auto gpu = gpu_.find(pane.tabID);
-    const bool hasColor = gpu != gpu_.end() && gpu->second.drawnColor.has_value();
-    return FavoriteLookOf(pane.selected, hover_ == pane.tabID, dark_, hasColor);
+FavoriteLook FavoritesView::LookOf(size_t index) const {
+    const bool hasColor = index < paneGpu_.size() && paneGpu_[index]->drawnColor.has_value();
+    return FavoriteLookOf(panes_[index]->selected, hover_ == index, dark_, hasColor);
 }
 
 std::vector<FavoriteLook> FavoritesView::Looks() const {
     std::vector<FavoriteLook> looks;
-    for (const PaneRef& ref : Panes()) looks.push_back(LookOf(*ref.pane));
+    for (size_t i = 0; i < panes_.size(); ++i) looks.push_back(LookOf(i));
     return looks;
 }
 
@@ -142,55 +232,46 @@ bool FavoritesView::IconsArrived() {
     if (!favicons_) return false;
     bool any = false;
     const UINT px = IconPixels();
-    for (const PaneRef& ref : Panes()) {
-        const FavoritePane& pane = *ref.pane;
-        auto found = gpu_.find(pane.tabID);
-        if (found == gpu_.end() || !pane.favicon.url || pane.favicon.symbol) continue;
-        PaneGpu& gpu = found->second;
+    for (size_t i = 0; i < panes_.size(); ++i) {
+        const FavoritePane& pane = *panes_[i];
+        PaneGpu& gpu = *paneGpu_[i];
+        if (!pane.favicon.url || pane.favicon.symbol) continue;
         // Its icon, where the globe was; and its colour, once its 16px icon is there.
         if (!gpu.drewIcon && favicons_->Get(*pane.favicon.url, px)) {
-            gpu.iconDirty = true;
+            gpu.redraw.icon = true;
             any = true;
         }
         if (ColorOf(pane) != gpu.drawnColor) {
-            gpu.colorDirty = true;
+            gpu.redraw.tint = true;
             any = true;
         }
     }
     return any;
 }
 
-bool FavoritesView::ShowsIcon(const std::string& url) const {
-    for (const PaneRef& ref : Panes()) {
-        if (ref.pane->favicon.url == url) return true;
-    }
-    return false;
-}
-
 bool FavoritesView::NeedsDraw() const {
-    for (const PaneRef& ref : Panes()) {
-        const auto found = gpu_.find(ref.pane->tabID);
-        if (found == gpu_.end()) return true;
-        const PaneGpu& gpu = found->second;
-        if (gpu.shapeDirty || gpu.colorDirty || gpu.iconDirty || !gpu.icon.surface) return true;
+    for (const PaneGpu* gpu : paneGpu_) {
+        if (gpu->redraw.wash || gpu->redraw.tint || gpu->redraw.icon) return true;
     }
-    return !placed_ && !gpu_.empty();
+    if (tray_.emptyState && (emptyDirty_ || !emptyBox_.surface || !emptyClose_.surface)) return true;
+    return !placed_ && (!panes_.empty() || tray_.emptyState);
 }
 
 bool FavoritesView::Place() {
     if (!compositor_) return false;
-    const float scale = Scale();
     bool changed = false;
-    for (const PaneRef& ref : Panes()) {
-        const FavoritePane& pane = *ref.pane;
-        auto found = gpu_.find(pane.tabID);
-        if (found == gpu_.end() || !found->second.visual) continue;
-        PaneGpu& gpu = found->second;
-        // On whole pixels, so what's drawn into its layers stays sharp.
-        gpu.at = POINT{static_cast<LONG>(std::floor(pane.frame.left * scale)), static_cast<LONG>(std::floor(pane.frame.top * scale))};
-        gpu.visual->SetOffsetX(static_cast<float>(gpu.at.x));
-        gpu.visual->SetOffsetY(static_cast<float>(gpu.at.y));
-        const FavoriteLook look = LookOf(pane);
+    for (size_t i = 0; i < panes_.size(); ++i) {
+        PaneGpu& gpu = *paneGpu_[i];
+        if (!gpu.visual) continue;
+        // On whole pixels, so what's drawn into its layers stays sharp; moved only when it moves.
+        const POINT at = CornerOf(panes_[i]->frame);
+        if (!gpu.atSet || at.x != gpu.at.x || at.y != gpu.at.y) {
+            gpu.at = at;
+            gpu.atSet = true;
+            gpu.visual->SetOffsetX(static_cast<float>(at.x));
+            gpu.visual->SetOffsetY(static_cast<float>(at.y));
+        }
+        const FavoriteLook look = LookOf(i);
         if (gpu.placed != look) {
             if (gpu.fill.effect) gpu.fill.effect->SetOpacity(look.fill);
             if (gpu.tint.effect) gpu.tint.effect->SetOpacity(look.tint);
@@ -199,11 +280,21 @@ bool FavoritesView::Place() {
             changed = true;
         }
     }
+    if (tray_.emptyState && emptyClose_.effect) {
+        const float opacity = CloseShown() ? E::kCloseOpacity : 0.0f;
+        if (closeOpacity_ != opacity) {
+            emptyClose_.effect->SetOpacity(opacity);
+            closeOpacity_ = opacity;
+            changed = true;
+        }
+    }
     placed_ = true;
     return changed;
 }
 
-std::wstring FavoritesView::DrawPane(const FavoritePane& pane, PaneGpu& gpu, const DrawIcon& drawIcon, bool readBack) {
+std::wstring FavoritesView::DrawPane(size_t index, const DrawIcon& drawIcon, bool readBack) {
+    const FavoritePane& pane = *panes_[index];
+    PaneGpu& gpu = *paneGpu_[index];
     const float scale = Scale();
     HRESULT hr = S_OK;
     auto fail = [&](const std::wstring& what) {
@@ -216,104 +307,188 @@ std::wstring FavoritesView::DrawPane(const FavoritePane& pane, PaneGpu& gpu, con
             gpu.visual.Reset();
             return fail(HResultMessage(L"creating a favorite's visual", hr));
         }
+        gpu.atSet = false;
         gpu.placed.reset();
         placed_ = false;
     }
     // Its frame from its whole-pixel corner, a pixel to spare for the rounding.
-    gpu.at = POINT{static_cast<LONG>(std::floor(pane.frame.left * scale)), static_cast<LONG>(std::floor(pane.frame.top * scale))};
-    const UINT width = static_cast<UINT>(std::ceil(pane.frame.right * scale)) - static_cast<UINT>(gpu.at.x) + 1;
-    const UINT height = static_cast<UINT>(std::ceil(pane.frame.bottom * scale)) - static_cast<UINT>(gpu.at.y) + 1;
+    const POINT at = CornerOf(pane.frame);
+    const UINT width = static_cast<UINT>(std::ceil(pane.frame.right * scale)) - static_cast<UINT>(at.x) + 1;
+    const UINT height = static_cast<UINT>(std::ceil(pane.frame.bottom * scale)) - static_cast<UINT>(at.y) + 1;
     // The pane in the layers' points.
-    const float left = pane.frame.left - static_cast<float>(gpu.at.x) / scale, top = pane.frame.top - static_cast<float>(gpu.at.y) / scale;
+    const float left = pane.frame.left - static_cast<float>(at.x) / scale, top = pane.frame.top - static_cast<float>(at.y) / scale;
     const D2D1_RECT_F box{left, top, left + pane.frame.Width(), top + pane.frame.Height()};
     const std::optional<ThemeColor> color = ColorOf(pane);
     const D2D1_COLOR_F tint = color ? D2D1_COLOR_F{color->r, color->g, color->b, 1} : D2D1_COLOR_F{0, 0, 0, 0};
 
-    // The layers in z order: each one made the first time goes on top of the pane's others.
+    const bool drawWash = gpu.redraw.wash || readBack || !gpu.fill.surface;
+    // The tint and the ring are made once there's a colour; with none (a grey favicon now) they
+    // stay as they were, at no opacity.
+    const bool drawTint = color && (gpu.redraw.tint || readBack || !gpu.tint.surface || !gpu.ring.surface);
+    const bool drawIconLayer = gpu.redraw.icon || readBack || !gpu.icon.surface;
+    bool drewIcon = gpu.drewIcon;
     struct Layer {
         FadedLayer& layer;
         bool draw;
+        // Where a new one goes among the pane's layers: above `reference`, or (none) on top.
+        IDCompositionVisual* reference;
         Compositor::Content content;
     };
-    const bool shape = gpu.shapeDirty || readBack || !gpu.fill.surface;
-    const bool colour = gpu.colorDirty || readBack || !gpu.tint.surface || !gpu.ring.surface;
-    const bool icon = gpu.iconDirty || readBack || !gpu.icon.surface;
-    bool drewIcon = gpu.drewIcon;
     Layer layers[] = {
-        // FillView: white, continuous corners of 12, faded to the look's wash.
-        {gpu.fill, shape,
+        // FillView: white, faded to the look's wash.
+        {gpu.fill, drawWash, nullptr,
          [&](ID2D1DeviceContext* context) {
              brush_->SetColor(D2D1_COLOR_F{1, 1, 1, 1});
              context->FillRoundedRectangle(Rounded(box, F::kCornerRadius), brush_.Get());
          }},
-        // The tint: the colour, faded to the look's tint.
-        {gpu.tint, colour,
-         [&](ID2D1DeviceContext* context) {
-             if (!color) return;
-             brush_->SetColor(tint);
-             context->FillRoundedRectangle(Rounded(box, F::kCornerRadius), brush_.Get());
-         }},
-        // SidebarRingView: a 2pt border on the pane's edge, the band a 2pt stroke on it inset by 1 covers.
-        {gpu.ring, colour,
-         [&](ID2D1DeviceContext* context) {
-             if (!color) return;
-             brush_->SetColor(tint);
-             const float inset = F::kRingInset;
-             const D2D1_RECT_F ring{box.left + inset, box.top + inset, box.right - inset, box.bottom - inset};
-             context->DrawRoundedRectangle(Rounded(ring, F::kCornerRadius - inset), brush_.Get(), F::kRingWidth);
-         }},
-        // The favicon, 18pt in the pane's middle, on whole pixels.
-        {gpu.icon, icon,
+        // The favicon, 18pt in the pane's middle, on whole pixels: made with the wash, so on top.
+        {gpu.icon, drawIconLayer, nullptr,
          [&](ID2D1DeviceContext* context) {
              const float side = std::round(F::kIconSize * scale) / scale;
              const float x = std::round((box.left + (pane.frame.Width() - F::kIconSize) / 2) * scale) / scale;
              const float y = std::round((box.top + (pane.frame.Height() - F::kIconSize) / 2) * scale) / scale;
              drewIcon = drawIcon(context, pane.favicon, D2D1_RECT_F{x, y, x + side, y + side});
          }},
+        // The tint: the colour, faded to the look's tint, just above the wash.
+        {gpu.tint, drawTint, gpu.fill.visual.Get(),
+         [&](ID2D1DeviceContext* context) {
+             brush_->SetColor(tint);
+             context->FillRoundedRectangle(Rounded(box, F::kCornerRadius), brush_.Get());
+         }},
+        // SidebarRingView: a 2pt border on the pane's edge, the band a 2pt stroke on it inset by 1
+        // covers, just above the tint.
+        {gpu.ring, drawTint, nullptr,
+         [&](ID2D1DeviceContext* context) {
+             brush_->SetColor(tint);
+             const float inset = F::kRingInset;
+             const D2D1_RECT_F ring{box.left + inset, box.top + inset, box.right - inset, box.bottom - inset};
+             context->DrawRoundedRectangle(Rounded(ring, F::kCornerRadius - inset), brush_.Get(), F::kRingWidth);
+         }},
     };
     for (Layer& l : layers) {
         if (!l.draw) continue;
+        // The ring goes above the tint, which a draw before it this pass may just have made.
+        IDCompositionVisual* reference = &l.layer == &gpu.ring ? gpu.tint.visual.Get() : l.reference;
         bool fresh = false;
         std::wstring error = DrawFadedLayer(*compositor_, l.layer, width, height, dpi_, l.content, readBack, hr, fresh);
         if (fresh && l.layer.visual) {
-            // A new layer: on top of the pane's others, its opacity set by Place.
+            // A new layer: its opacity set by Place.
             gpu.placed.reset();
             placed_ = false;
-            if (!error.empty()) {
-                l.layer = FadedLayer{};
-            } else if (FAILED(hr = gpu.visual->AddVisual(l.layer.visual.Get(), FALSE, nullptr))) {
-                l.layer = FadedLayer{};
-                error = HResultMessage(L"adding a favorite's layer", hr);
-            }
         }
+        error = AttachFadedLayer(l.layer, fresh, std::move(error), gpu.visual.Get(), reference ? TRUE : FALSE, reference, hr);
         if (!error.empty()) return fail(error);
         ++surfaceDraws_;
     }
-    gpu.frame = pane.frame;
-    if (shape) gpu.shapeDirty = false;
-    if (colour) {
-        gpu.colorDirty = false;
+    gpu.drawn = std::make_pair(pane.frame, pane.favicon);
+    gpu.redraw.wash = false;
+    gpu.redraw.icon = gpu.redraw.icon && !drawIconLayer;
+    if (drawIconLayer) gpu.drewIcon = drewIcon;
+    if (drawTint || !color) {
+        gpu.redraw.tint = false;
         if (gpu.drawnColor != color) {
             gpu.drawnColor = color;
             gpu.placed.reset();  // its tint and ring show now (or go)
             placed_ = false;
         }
     }
-    if (icon) {
-        gpu.iconDirty = false;
-        gpu.drewIcon = drewIcon;
-    }
     return {};
 }
 
-std::wstring FavoritesView::Draw(const DrawIcon& drawIcon, bool readBack) {
+void FavoritesView::DrawEmptyBox(ID2D1DeviceContext* context, D2D1_RECT_F box) {
+    const float c = dark_ ? 1.0f : 0.0f;
+    // strokeBorder of the dashed outline: the 1.5pt line inside the whole box.
+    const float half = E::kOutlineWidth / 2;
+    brush_->SetColor(D2D1_COLOR_F{c, c, c, E::kOutlineOpacity});
+    context->DrawRoundedRectangle(Rounded(D2D1_RECT_F{box.left + half, box.top + half, box.right - half, box.bottom - half}, E::kCornerRadius - half),
+                                  brush_.Get(), E::kOutlineWidth, dashes_.Get());
+    // The title and subtitle 2pt apart, centred in the box between the 6pt insets, lines rounded down.
+    const float innerLeft = box.left + E::kInset, innerWidth = box.right - box.left - 2 * E::kInset;
+    const auto layoutOf = [&](const char* text, IDWriteTextFormat* format, float size, int& lines) {
+        const std::wstring wide = Widen(text);
+        ComPtr<IDWriteTextLayout> layout;
+        DWRITE_TEXT_METRICS metrics{};
+        if (FAILED(dwrite_->CreateTextLayout(wide.c_str(), static_cast<UINT32>(wide.size()), format, std::max(innerWidth, 1.0f), 1000,
+                                             layout.GetAddressOf())) ||
+            FAILED(layout->GetMetrics(&metrics))) {
+            return ComPtr<IDWriteTextLayout>();
+        }
+        lines = static_cast<int>(std::max<UINT32>(metrics.lineCount, 1));
+        SetLines(layout.Get(), size, lines);
+        return layout;
+    };
+    int titleLines = 1, subtitleLines = 1;
+    const ComPtr<IDWriteTextLayout> title = layoutOf(E::kTitle, titleFormat_.Get(), E::kTitleSize, titleLines);
+    const ComPtr<IDWriteTextLayout> subtitle = layoutOf(E::kSubtitle, subtitleFormat_.Get(), E::kSubtitleSize, subtitleLines);
+    const float th = E::LabelHeight(E::kTitleSize, titleLines), sh = E::LabelHeight(E::kSubtitleSize, subtitleLines);
+    const float inner = box.bottom - box.top - 2 * E::kPadding;
+    const float top = box.top + E::kPadding + std::floor((inner - th - E::kTextGap - sh) / 2);
+    if (title) {
+        brush_->SetColor(D2D1_COLOR_F{c, c, c, kLabelAlpha * E::kTitleOpacity});
+        context->DrawTextLayout(D2D1::Point2F(innerLeft, top), title.Get(), brush_.Get());
+    }
+    if (subtitle) {
+        brush_->SetColor(D2D1_COLOR_F{c, c, c, kLabelAlpha * E::kSubtitleOpacity});
+        context->DrawTextLayout(D2D1::Point2F(innerLeft, top + th + E::kTextGap), subtitle.Get(), brush_.Get());
+    }
+}
+
+std::wstring FavoritesView::DrawEmptyState(bool readBack) {
+    HRESULT hr = S_OK;
+    const float scale = Scale();
+    const auto draw = [&](FadedLayer& layer, const BarRect& frame, POINT& at, const std::function<void(ID2D1DeviceContext*, D2D1_RECT_F)>& content) {
+        at = CornerOf(frame);
+        const UINT width = static_cast<UINT>(std::ceil(frame.right * scale)) - static_cast<UINT>(at.x) + 1;
+        const UINT height = static_cast<UINT>(std::ceil(frame.bottom * scale)) - static_cast<UINT>(at.y) + 1;
+        const float left = frame.left - static_cast<float>(at.x) / scale, top = frame.top - static_cast<float>(at.y) / scale;
+        const D2D1_RECT_F box{left, top, left + frame.Width(), top + frame.Height()};
+        bool fresh = false;
+        std::wstring error = DrawFadedLayer(*compositor_, layer, width, height, dpi_, [&](ID2D1DeviceContext* context) { content(context, box); },
+                                            readBack, hr, fresh);
+        if (fresh && layer.visual) closeOpacity_.reset();
+        error = AttachFadedLayer(layer, fresh, std::move(error), container_.Get(), FALSE, nullptr, hr);
+        if (!error.empty()) {
+            deviceLost_ = IsDeviceLost(hr);
+            return L"the favorites' empty state: " + error;
+        }
+        if (layer.visual) {
+            layer.visual->SetOffsetX(static_cast<float>(at.x));
+            layer.visual->SetOffsetY(static_cast<float>(at.y));
+        }
+        ++surfaceDraws_;
+        return std::wstring();
+    };
+    if (std::wstring error = draw(emptyBox_, tray_.emptyFrame, emptyAt_, [&](ID2D1DeviceContext* context, D2D1_RECT_F box) { DrawEmptyBox(context, box); });
+        !error.empty()) {
+        return error;
+    }
+    // The close button's xmark in labelColor, faded to SymbolButton's 0.5 while hovered.
+    if (std::wstring error = draw(emptyClose_, tray_.closeFrame, closeAt_,
+                                  [&](ID2D1DeviceContext* context, D2D1_RECT_F box) {
+                                      const float c = dark_ ? 1.0f : 0.0f;
+                                      brush_->SetColor(D2D1_COLOR_F{c, c, c, kLabelAlpha});
+                                      ComPtr<IDWriteTextLayout> layout;
+                                      if (SUCCEEDED(dwrite_->CreateTextLayout(&kXmark, 1, closeFormat_.Get(), box.right - box.left,
+                                                                              box.bottom - box.top, layout.GetAddressOf()))) {
+                                          context->DrawTextLayout(D2D1::Point2F(box.left, box.top), layout.Get(), brush_.Get());
+                                      }
+                                  });
+        !error.empty()) {
+        return error;
+    }
+    emptyDirty_ = false;
+    return {};
+}
+
+std::wstring FavoritesView::Draw(const DrawIcon& drawIcon, IDCompositionVisual* above, bool readBack) {
     if (!compositor_ || !parent_) return L"no compositor";
     if (deviceLost_) return L"the GPU device was lost";
+    // Nothing to show: no visuals made for it.
+    if (panes_.empty() && !tray_.emptyState) return {};
     HRESULT hr = S_OK;
     if (!container_) {
-        // Over everything in the sidebar's root: it overlaps nothing else there.
         if (FAILED(hr = compositor_->Device()->CreateVisual(container_.GetAddressOf())) ||
-            FAILED(hr = parent_->AddVisual(container_.Get(), FALSE, nullptr))) {
+            FAILED(hr = parent_->AddVisual(container_.Get(), above ? TRUE : FALSE, above))) {
             container_.Reset();
             deviceLost_ = IsDeviceLost(hr);
             return HResultMessage(L"creating the favorites' visual", hr);
@@ -323,107 +498,66 @@ std::wstring FavoritesView::Draw(const DrawIcon& drawIcon, bool readBack) {
         deviceLost_ = IsDeviceLost(hr);
         return HResultMessage(L"creating the favorites' brush", hr);
     }
-    for (const PaneRef& ref : Panes()) {
-        if (std::wstring error = DrawPane(*ref.pane, gpu_[ref.pane->tabID], drawIcon, readBack); !error.empty()) return error;
+    for (size_t i = 0; i < panes_.size(); ++i) {
+        const PaneGpu& gpu = *paneGpu_[i];
+        if (!readBack && !gpu.redraw.wash && !gpu.redraw.tint && !gpu.redraw.icon && gpu.fill.surface && gpu.icon.surface) continue;
+        if (std::wstring error = DrawPane(i, drawIcon, readBack); !error.empty()) return error;
+    }
+    if (tray_.emptyState && (readBack || emptyDirty_ || !emptyBox_.surface || !emptyClose_.surface)) {
+        if (!dashes_) {
+            // CAShapeLayer's 5 on, 4 off, which Direct2D gives in stroke widths.
+            ComPtr<ID2D1Factory> factory;
+            compositor_->D2D()->GetFactory(factory.GetAddressOf());
+            const float dashes[] = {E::kDashOn / E::kOutlineWidth, E::kDashOff / E::kOutlineWidth};
+            const D2D1_STROKE_STYLE_PROPERTIES props{D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_FLAT, D2D1_LINE_JOIN_MITER,
+                                                     10, D2D1_DASH_STYLE_CUSTOM, 0};
+            if (FAILED(hr = factory->CreateStrokeStyle(props, dashes, 2, dashes_.GetAddressOf()))) {
+                return HResultMessage(L"creating the favorites' dashes", hr);
+            }
+        }
+        if (std::wstring error = DrawEmptyState(readBack); !error.empty()) return error;
     }
     Place();
     return {};
 }
 
 void FavoritesView::ComposeInto(Pixels& sidebar) const {
-    for (const PaneRef& ref : Panes()) {
-        const auto found = gpu_.find(ref.pane->tabID);
-        if (found == gpu_.end()) continue;
-        const PaneGpu& gpu = found->second;
-        const FavoriteLook look = LookOf(*ref.pane);
+    for (size_t i = 0; i < panes_.size(); ++i) {
+        const PaneGpu& gpu = *paneGpu_[i];
+        const FavoriteLook look = LookOf(i);
+        const POINT at = CornerOf(panes_[i]->frame);
         const std::pair<const FadedLayer*, float> layers[] = {
             {&gpu.fill, look.fill}, {&gpu.tint, look.tint}, {&gpu.ring, look.ring ? 1.0f : 0.0f}, {&gpu.icon, 1.0f}};
         for (const auto& [layer, opacity] : layers) {
-            if (!layer->pixels.bgra.empty() && opacity > 0) ComposeOver(sidebar, layer->pixels, gpu.at, opacity);
+            if (!layer->pixels.bgra.empty() && opacity > 0) ComposeOver(sidebar, layer->pixels, at, opacity);
         }
+    }
+    if (tray_.emptyState) {
+        if (!emptyBox_.pixels.bgra.empty()) ComposeOver(sidebar, emptyBox_.pixels, emptyAt_);
+        if (!emptyClose_.pixels.bgra.empty() && CloseShown()) ComposeOver(sidebar, emptyClose_.pixels, closeAt_, E::kCloseOpacity);
     }
 }
 
 std::optional<POINT> FavoritesView::PaneCentre(size_t index, float left) const {
-    for (const PaneRef& ref : Panes()) {
-        if (ref.index != index) continue;
-        const BarRect& f = ref.pane->frame;
-        const float scale = Scale();
-        return POINT{std::lround(((f.left + f.right) / 2 + left) * scale), std::lround((f.top + f.bottom) / 2 * scale)};
-    }
-    return std::nullopt;
-}
-
-// Tooltips ------------------------------------------------------------------------------------
-
-void FavoritesView::SetTooltipsActive(bool active) {
-    if (active == tooltipsActive_) return;
-    tooltipsActive_ = active;
-    if (tooltip_ && !active) SendMessageW(tooltip_, TTM_POP, 0, 0);
-    UpdateTooltips();
-}
-
-void FavoritesView::MakeTooltips() {
-    // Windows' own tooltips, as the Mac's toolTip is AppKit's: comctl32 loads with the first.
-    INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_BAR_CLASSES};
-    InitCommonControlsEx(&controls);
-    tooltip_ = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_NOPREFIX, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-                               CW_USEDEFAULT, window_, nullptr, GetModuleHandleW(nullptr), nullptr);
-    // No tooltip isn't a failure (the panes still work), and it isn't tried again.
-    if (!tooltip_) {
-        OutputDebugStringW(L"Kite: the favorites have no tooltips\n");
-        tooltipsAllowed_ = false;
-        return;
-    }
-    UpdateTooltips();
-}
-
-void FavoritesView::RelayMouse(UINT message, WPARAM wParam, LPARAM lParam) {
-    if (!tooltipsActive_ || !tooltipsAllowed_ || tray_.tiles.empty()) return;
-    if (!tooltip_) {
-        // The first move over a pane makes them.
-        if (message != WM_MOUSEMOVE) return;
-        const float scale = Scale();
-        const float x = static_cast<float>(static_cast<short>(LOWORD(lParam))) / scale;
-        const float y = static_cast<float>(static_cast<short>(HIWORD(lParam))) / scale;
-        if (!FavoritePaneAt(tray_, x, y)) return;
-        MakeTooltips();
-        if (!tooltip_) return;
-    }
-    if (message == WM_MOUSELEAVE) {
-        SendMessageW(tooltip_, TTM_POP, 0, 0);
-        return;
-    }
-    MSG msg{window_, message, wParam, lParam, static_cast<DWORD>(GetMessageTime()), {}};
-    const DWORD pos = GetMessagePos();
-    msg.pt = POINT{static_cast<short>(LOWORD(pos)), static_cast<short>(HIWORD(pos))};
-    SendMessageW(tooltip_, TTM_RELAYEVENT, 0, reinterpret_cast<LPARAM>(&msg));
+    if (index >= panes_.size()) return std::nullopt;
+    const BarRect& f = panes_[index]->frame;
+    const float scale = Scale();
+    return POINT{std::lround(((f.left + f.right) / 2 + left) * scale), std::lround((f.top + f.bottom) / 2 * scale)};
 }
 
 void FavoritesView::UpdateTooltips() {
-    if (!tooltip_) return;
-    // The tools again, one a pane (a rare change: the grid, the scale, the sidebar hiding).
-    for (size_t id = 1; id <= tools_; ++id) {
-        TOOLINFOW tool{};
-        tool.cbSize = sizeof(tool);
-        tool.hwnd = window_;
-        tool.uId = id;
-        SendMessageW(tooltip_, TTM_DELTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
-    }
-    tools_ = 0;
-    if (!tooltipsActive_) return;
+    // A tool a pane, and the empty state's close button's; RelayedTooltips makes the control's tools
+    // again only when their places or count change (a title alone updates its text).
     const float scale = Scale();
-    for (const PaneRef& ref : Panes()) {
-        const std::wstring text = Widen(ref.pane->title);
-        const BarRect& f = ref.pane->frame;
-        TOOLINFOW tool{};
-        tool.cbSize = sizeof(tool);
-        tool.hwnd = window_;  // relayed messages (TTM_RELAYEVENT), not a subclass of the window
-        tool.uId = ref.index + 1;
-        tool.rect = RECT{std::lround(f.left * scale), std::lround(f.top * scale), std::lround(f.right * scale), std::lround(f.bottom * scale)};
-        tool.lpszText = const_cast<wchar_t*>(text.c_str());  // copied by the control
-        if (SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool))) tools_ = ref.index + 1;
-    }
+    const auto rect = [&](const BarRect& f) {
+        return RECT{std::lround((f.left + left_) * scale), std::lround(f.top * scale), std::lround((f.right + left_) * scale),
+                    std::lround(f.bottom * scale)};
+    };
+    std::vector<RelayedTooltips::Tool> tools;
+    tools.reserve(panes_.size() + 1);
+    for (const FavoritePane* pane : panes_) tools.push_back({rect(pane->frame), Widen(pane->title)});
+    if (tray_.emptyState) tools.push_back({rect(tray_.closeFrame), L"Dismiss"});
+    tooltips_.SetTools(std::move(tools));
 }
 
 }  // namespace kite

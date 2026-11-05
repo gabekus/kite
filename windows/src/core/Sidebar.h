@@ -111,7 +111,7 @@ float SidebarListBottom(float height, float listTop = sidebar_metrics::kHeaderAr
 float SidebarContentHeight(const std::vector<SidebarRow>& rows);
 float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height);
 // The scroll limit on a display `scale` px a point, floored to whole pixels: scrolling stays
-// on the pixel grid at the bottom too.
+// on the pixel grid at the bottom too (a `scale` of 0 leaves it unfloored, as the two-argument one).
 float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height, float scale,
                        float listTop = sidebar_metrics::kHeaderAreaHeight);
 

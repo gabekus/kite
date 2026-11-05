@@ -10,11 +10,15 @@
 // tests: each case is named for the Mac code it checks, with ArcMetrics.Sidebar's numbers.
 
 #include <cmath>
+#include <filesystem>
+#include <map>
+#include <string_view>
 #include <cstdint>
 #include <vector>
 
 #include "Check.h"
 #include "core/Favorites.h"
+#include "core/OneShotFlags.h"
 #include "core/Sidebar.h"
 #include "core/Uuid.h"
 
@@ -88,7 +92,7 @@ TEST(favoritesTrayLayoutFitsSquareTilesInANarrowSidebar) {
 // MARK: FavoritesTrayView.layout
 
 TEST(favoritesTrayViewLaysOutOneFavoriteAcrossTheSidebar) {
-    const FavoritesTray tray = LayOutFavorites(WithFavorites(1), 0, 240);
+    const FavoritesTray tray = LayOutFavorites(WithFavorites(1), 0, 240, true);
     CHECK(tray.columns == 1 && tray.tiles.size() == 1);
     // Under the address field (82pt), 8pt down; 47pt high, the padding's width.
     CHECK(tray.tiles[0].frame == (BarRect{8, 90, 232, 137}));
@@ -99,7 +103,7 @@ TEST(favoritesTrayViewLaysOutOneFavoriteAcrossTheSidebar) {
 }
 
 TEST(favoritesTrayViewLaysOutFourInARow) {
-    const FavoritesTray tray = LayOutFavorites(WithFavorites(4), 0, 240);
+    const FavoritesTray tray = LayOutFavorites(WithFavorites(4), 0, 240, true);
     CHECK(tray.columns == 4 && tray.height == 63);
     // (224 - 3 × 8) / 4 = 50pt each, 58pt apart.
     for (size_t i = 0; i < 4; ++i) {
@@ -109,7 +113,7 @@ TEST(favoritesTrayViewLaysOutFourInARow) {
 }
 
 TEST(favoritesTrayViewWrapsNineIntoThreeRows) {
-    const FavoritesTray tray = LayOutFavorites(WithFavorites(9), 0, 240);
+    const FavoritesTray tray = LayOutFavorites(WithFavorites(9), 0, 240, true);
     CHECK(tray.columns == 3);
     CHECK(tray.height == F::kTopGap + 3 * F::kHeight + 2 * F::kSpacing + F::kBottomGap);
     const float tile = (224 - 2 * 8) / 3.0f;
@@ -119,9 +123,8 @@ TEST(favoritesTrayViewWrapsNineIntoThreeRows) {
     CHECK(tray.tiles[3].frame.left == 8);
 }
 
-TEST(favoritesTrayViewIsHiddenWithNoFavorites) {
-    // Not yet: Arc's empty state, which shows until it's dismissed.
-    const FavoritesTray tray = LayOutFavorites(WithFavorites(0), 0, 240);
+TEST(favoritesTrayViewIsHiddenWithNoFavoritesOnceTheEmptyStateIsDismissed) {
+    const FavoritesTray tray = LayOutFavorites(WithFavorites(0), 0, 240, true);  // dismissed
     CHECK(tray.tiles.empty() && tray.height == 0 && SidebarListTop(tray) == sidebar_metrics::kHeaderAreaHeight);
     CHECK(!InFavorites(tray, 240, 100, 100));
 }
@@ -131,7 +134,7 @@ TEST(favoriteTileViewShowsASplitAsOneTileWithItsPanes) {
     const auto& grid = state.Favorites();
     state.favoriteSplitsByProfile["Default"] = {SplitView{"S", {grid[1].id, grid[2].id}, {0.5, 0.5}, "horizontal", std::nullopt, {}},
                                                 SplitView{"V", {grid[3].id, grid[4].id}, {0.5, 0.5}, "vertical", std::nullopt, {}}};
-    const FavoritesTray tray = LayOutFavorites(state, 0, 240);
+    const FavoritesTray tray = LayOutFavorites(state, 0, 240, true);
     // Three slots: site0, the split S, the split V, so three a row.
     CHECK(tray.tiles.size() == 3 && tray.columns == 3);
     CHECK(tray.tiles[1].id == "S" && tray.tiles[1].split && !tray.tiles[1].vertical && tray.tiles[1].panes.size() == 2);
@@ -169,7 +172,7 @@ TEST(favoritePaneViewShowsTheTabsTitleFaviconAndSelection) {
     grid[1].customTitle = "Renamed";
     state.SetFavorites(grid);
     state.Select(grid[1].id);
-    const FavoritesTray tray = LayOutFavorites(state, state.SelectedSpaceIndex(), 240);
+    const FavoritesTray tray = LayOutFavorites(state, state.SelectedSpaceIndex(), 240, true);
     const FavoritePane& first = tray.tiles[0].panes[0];
     const FavoritePane& second = tray.tiles[1].panes[0];
     // FaviconSource: the page's reported icon, else the site's /favicon.ico.
@@ -181,7 +184,7 @@ TEST(favoritePaneViewShowsTheTabsTitleFaviconAndSelection) {
     grid[0].url.reset();
     grid[0].faviconURL.reset();
     state.SetFavorites(grid);
-    CHECK(!LayOutFavorites(state, 0, 240).tiles[0].panes[0].favicon.url);
+    CHECK(!LayOutFavorites(state, 0, 240, true).tiles[0].panes[0].favicon.url);
 }
 
 TEST(favoritesBelongToTheCurrentSpacesProfile) {
@@ -190,49 +193,49 @@ TEST(favoritesBelongToTheCurrentSpacesProfile) {
     state.spaces[1].extra["profile"] = json::Value("Profile 1");
     state.favoritesByProfile["Profile 1"] = {Favorite("https://work.example", "Work")};
     // Each space's grid is its profile's, whichever space is selected.
-    CHECK(LayOutFavorites(state, 0, 240).tiles.size() == 2);
-    CHECK(LayOutFavorites(state, 1, 240).tiles.size() == 1 && LayOutFavorites(state, 1, 240).tiles[0].panes[0].title == "Work");
+    CHECK(LayOutFavorites(state, 0, 240, true).tiles.size() == 2);
+    CHECK(LayOutFavorites(state, 1, 240, true).tiles.size() == 1 && LayOutFavorites(state, 1, 240, true).tiles[0].panes[0].title == "Work");
     state.SelectSpaceAt(1);
     CHECK(state.Favorites().size() == 1 && FavoritesOf(state, 1).size() == 1 && FavoritesOf(state, 0).size() == 2);
     // A profile with no grid shows none.
     state.favoritesByProfile.erase("Profile 1");
-    CHECK(LayOutFavorites(state, 1, 240).height == 0);
+    CHECK(LayOutFavorites(state, 1, 240, true).height == 0);
 }
 
 // MARK: FavoritePaneView: presses
 
 TEST(favoritePaneViewSelectsOnReleaseInside) {
     BrowserState state = WithFavorites(4);
-    const FavoritesTray tray = LayOutFavorites(state, 0, 240);
+    const FavoritesTray tray = LayOutFavorites(state, 0, 240, true);
     const std::string id = state.Favorites()[2].id;
     // The third tile, at x 124…174.
     const auto press = FavoritePressAt(tray, 150, 110);
     CHECK(press && press->tabID == id);
-    CHECK(FavoriteRelease(*press, tray, 170, 130) == id);
+    CHECK(FavoriteRelease(*press, tray, 170, 130) == (FavoriteTap{FavoriteTap::Action::SelectTab, id}));
     // Let go outside the pane it pressed (on its neighbour too): nothing.
-    CHECK(!FavoriteRelease(*press, tray, 200, 110));
-    CHECK(!FavoriteRelease(*press, tray, 150, 140));
+    CHECK(FavoriteRelease(*press, tray, 200, 110).action == FavoriteTap::Action::None);
+    CHECK(FavoriteRelease(*press, tray, 150, 140).action == FavoriteTap::Action::None);
 }
 
 TEST(favoriteTileViewTurnsAMoveOfFourPointsIntoADrag) {
-    const FavoritesTray tray = LayOutFavorites(WithFavorites(1), 0, 240);
+    const FavoritesTray tray = LayOutFavorites(WithFavorites(1), 0, 240, true);
     auto press = FavoritePressAt(tray, 100, 110);
     CHECK(press);
     FavoriteMove(*press, 103, 110);
-    CHECK(!press->dragged && FavoriteRelease(*press, tray, 103, 110));
+    CHECK(!press->dragged && FavoriteRelease(*press, tray, 103, 110).action == FavoriteTap::Action::SelectTab);
     FavoriteMove(*press, 104, 110);
     // A drag lets go without selecting (it drops, which W18b brings), even back where it began.
-    CHECK(press->dragged && !FavoriteRelease(*press, tray, 100, 110));
+    CHECK(press->dragged && FavoriteRelease(*press, tray, 100, 110).action == FavoriteTap::Action::None);
 }
 
 TEST(favoritePaneViewDoesntAcceptFirstMouse) {
-    const FavoritesTray tray = LayOutFavorites(WithFavorites(1), 0, 240);
+    const FavoritesTray tray = LayOutFavorites(WithFavorites(1), 0, 240, true);
     CHECK(!FavoritePressAt(tray, 100, 110, true));
     CHECK(FavoritePressAt(tray, 100, 110, false));
 }
 
 TEST(favoritesTrayViewTakesPressesInItsGapsButTapsNothing) {
-    const FavoritesTray tray = LayOutFavorites(WithFavorites(4), 0, 240);
+    const FavoritesTray tray = LayOutFavorites(WithFavorites(4), 0, 240, true);
     // Between tiles, in the 8pt above, at the sidebar's edge: the tray's, no pane.
     for (const auto& [x, y] : {std::pair{61.0f, 110.0f}, {100.0f, 84.0f}, {2.0f, 110.0f}, {100.0f, 140.0f}}) {
         CHECK(InFavorites(tray, 240, x, y));
@@ -247,7 +250,7 @@ TEST(favoriteTileViewsSplitGapTakesNoTap) {
     BrowserState state = WithFavorites(2);
     const auto& grid = state.Favorites();
     state.favoriteSplitsByProfile["Default"] = {SplitView{"S", {grid[0].id, grid[1].id}, {0.5, 0.5}, "horizontal", std::nullopt, {}}};
-    const FavoritesTray tray = LayOutFavorites(state, 0, 240);
+    const FavoritesTray tray = LayOutFavorites(state, 0, 240, true);
     CHECK(tray.tiles.size() == 1);
     // 224pt split in two 111pt panes 2pt apart: the gap is at 119…121.
     CHECK(!FavoritePressAt(tray, 120, 110));
@@ -259,7 +262,7 @@ TEST(favoriteTileViewsSplitGapTakesNoTap) {
 TEST(theSpacesPageStartsUnderTheFavorites) {
     BrowserState state = WithFavorites(4);
     const std::vector<SidebarRow> rows = SidebarRows(state, 0);
-    const float listTop = SidebarListTop(LayOutFavorites(state, 0, 240));
+    const float listTop = SidebarListTop(LayOutFavorites(state, 0, 240, true));
     CHECK(listTop == 145);
     // The space's header is where the page starts, under the grid, not under the address field.
     CHECK(SidebarHitTest(rows, 240, 820, 0, 100, 150, listTop) == (SidebarHit{SidebarHit::Target::Row, 0}));
@@ -279,7 +282,7 @@ TEST(theSpacesPageScrollsTheRoomLeftUnderTheFavorites) {
     BrowserState state = WithFavorites(9);
     for (int i = 0; i < 20; ++i) state.OpenTab("https://tab" + std::to_string(i) + ".example", std::nullopt, false);
     const std::vector<SidebarRow> rows = SidebarRows(state, 0);
-    const float listTop = SidebarListTop(LayOutFavorites(state, 0, 240));
+    const float listTop = SidebarListTop(LayOutFavorites(state, 0, 240, true));
     // Less room, so further to scroll to its end.
     const float plain = SidebarMaxScroll(rows, 820, 1);
     const float under = SidebarMaxScroll(rows, 820, 1, listTop);
@@ -304,8 +307,8 @@ TEST(tabNumbersCountTheFavoritesFirst) {
     // The selected favorite's pane shows it, in whichever space you're in.
     state.SelectSpaceAt(1);
     state.SelectTabNumber(2);
-    CHECK(state.SelectedSpaceIndex() == 1 && LayOutFavorites(state, 1, 240).tiles[1].panes[0].selected);
-    CHECK(!LayOutFavorites(state, 0, 240).tiles[1].panes[0].selected);
+    CHECK(state.SelectedSpaceIndex() == 1 && LayOutFavorites(state, 1, 240, true).tiles[1].panes[0].selected);
+    CHECK(!LayOutFavorites(state, 0, 240, true).tiles[1].panes[0].selected);
     // A space with only favorites: Ctrl+9 is the last favorite.
     state.SelectTabNumber(9);
     CHECK(state.SelectedTab()->id == b);
@@ -321,7 +324,7 @@ TEST(tabNumbersCountAFavoriteSplitOnce) {
     const std::string tab = state.OpenTab("https://tab.example", std::nullopt, true, 60);
     // Stops: [split S], site2, tab, as the grid's tiles.
     CHECK(state.SidebarStops(state.SelectedSpaceIndex()).size() == 3);
-    CHECK(LayOutFavorites(state, state.SelectedSpaceIndex(), 240).tiles.size() == 2);
+    CHECK(LayOutFavorites(state, state.SelectedSpaceIndex(), 240, true).tiles.size() == 2);
     state.SelectTabNumber(2, 70);
     CHECK(state.SelectedTab()->id == grid[2].id);
     state.SelectTabNumber(1, 80);
@@ -401,7 +404,140 @@ TEST(dominantColorBreaksTiesByHueOrder) {
     CHECK(color && color->r == 1 && color->b == 0);
 }
 
-TEST(favoriteHighlightIsTheColourHalfWayToWhite) {
-    const ThemeColor ring = FavoriteHighlight(ThemeColor{1, 0, 0.2f});
-    CHECK(Near(ring.r, 1) && Near(ring.g, 0.5) && Near(ring.b, 0.6));
+TEST(favoriteHighlightMixesInCalibratedRGBAsNSColorBlendedDoes) {
+    // YouTube's red as dominantColor finds it in its 16px icon (with its pink edge pixels): the Mac's
+    // ring is (255, 149, 150) in review/w13-mac's rest.png; a plain sRGB mix gives (255, 129, 129).
+    const ThemeColor ring = FavoriteHighlight(ThemeColor{1, 0.0106f, 0.0106f});
+    CHECK(Near(ring.r * 255, 255, 0.5) && Near(ring.g * 255, 149.2, 0.5) && Near(ring.b * 255, 150, 0.5));
+    // White stays white, and a grey stays grey (lighter).
+    const ThemeColor white = FavoriteHighlight(ThemeColor{1, 1, 1});
+    CHECK(Near(white.r, 1) && Near(white.g, 1) && Near(white.b, 1));
+    const ThemeColor grey = FavoriteHighlight(ThemeColor{0.5f, 0.5f, 0.5f});
+    CHECK(grey.r > 0.5f && Near(grey.r, grey.g, 0.002) && Near(grey.g, grey.b, 0.002));
+}
+
+// MARK: FavoritesEmptyStateView
+
+TEST(favoritesEmptyStateViewShowsUntilDismissed) {
+    // A fresh profile with no favorites: the dashed box, 59pt in a 240pt sidebar (its subtitle on
+    // two lines), with 8pt above and below; the space's header near y 157.
+    const FavoritesTray tray = LayOutFavorites(WithFavorites(0), 0, 240, false);
+    CHECK(tray.emptyState && tray.tiles.empty());
+    CHECK(tray.height == 75 && SidebarListTop(tray) == 157);
+    CHECK(tray.emptyFrame == (BarRect{8, 90, 232, 149}));
+    // The close button 4pt in from its top-right, below the 6pt inset: 18pt.
+    CHECK(tray.closeFrame == (BarRect{210, 100, 228, 118}));
+    CHECK(InFavorites(tray, 240, 100, 84) && OverEmptyState(tray, 100, 120) && !OverEmptyState(tray, 100, 150));
+    // Dismissed, no tray; with favorites, never the empty state.
+    CHECK(LayOutFavorites(WithFavorites(0), 0, 240, true).height == 0);
+    CHECK(!LayOutFavorites(WithFavorites(2), 0, 240, false).emptyState);
+}
+
+TEST(favoritesEmptyStateViewIsAtLeastATileHigh) {
+    // height(forWidth:): max(47, title + 2 + subtitle) + 12, a line being SF's line box (15 for the
+    // 12pt title, 14 for the 11pt subtitle) and a wrapped one's lines its pitch (15, 14).
+    namespace E = favorites_empty;
+    CHECK(E::LineHeight(12) == 15 && E::LineHeight(11) == 14 && E::LinePitch(12) == 15 && E::LinePitch(11) == 14);
+    CHECK(E::Height(1, 1) == 47 + 12);  // 15 + 2 + 14 = 31 < 47
+    CHECK(E::Height(1, 2) == 47 + 12);  // 45 < 47
+    CHECK(E::Height(1, 3) == 15 + 2 + 42 + 12);
+    CHECK(E::Height(2, 3) == 30 + 2 + 42 + 12);
+    // As the shell measures it: a taller box pushes the page down with it.
+    CHECK(SidebarListTop(LayOutFavorites(std::vector<FavoriteTile>{}, 240, false, E::Height(2, 3))) == 82 + 8 + 86 + 8);
+}
+
+TEST(favoritesEmptyStateViewsCloseButtonDismissesIt) {
+    const FavoritesTray tray = LayOutFavorites(WithFavorites(0), 0, 240, false);
+    // A SymbolButton: it takes the click that brings the window forward, and acts on release over it.
+    const auto press = FavoritePressAt(tray, 219, 109, true);
+    CHECK(press && press->target == FavoritePress::Target::CloseEmptyState);
+    CHECK(FavoriteRelease(*press, tray, 220, 110).action == FavoriteTap::Action::DismissEmptyState);
+    CHECK(FavoriteRelease(*press, tray, 200, 110).action == FavoriteTap::Action::None);
+    // Elsewhere on the box, nothing (the drop target, with W18b).
+    CHECK(!FavoritePressAt(tray, 100, 120));
+}
+
+// MARK: What a pane draws again (FavoritePaneView.show)
+
+TEST(favoritePaneViewDrawsAgainOnlyWhatChanged) {
+    BrowserState state = WithFavorites(2);
+    FavoritePane pane = LayOutFavorites(state, 0, 240, true).tiles[0].panes[0];
+    const std::optional<std::pair<BarRect, FaviconSource>> drawn = std::make_pair(pane.frame, pane.favicon);
+    // Never drawn: everything.
+    CHECK(FavoriteRedrawFor(std::nullopt, pane, false) == (FavoriteRedraw{true, true, true}));
+    // Selected, retitled: nothing.
+    pane.selected = true;
+    pane.title = "Renamed";
+    CHECK(FavoriteRedrawFor(drawn, pane, false) == FavoriteRedraw{});
+    // Another appearance: the icon (the globe is labelColor).
+    CHECK(FavoriteRedrawFor(drawn, pane, true) == (FavoriteRedraw{false, false, true}));
+    // Another favicon: the icon and its colour's tint and ring, not a stale one's.
+    FavoritePane moved = pane;
+    moved.favicon.url = "https://other.example/icon.png";
+    CHECK(FavoriteRedrawFor(drawn, moved, false) == (FavoriteRedraw{false, true, true}));
+    // Another frame (another count of favorites): all of it.
+    moved = pane;
+    moved.frame.right -= 10;
+    CHECK(FavoriteRedrawFor(drawn, moved, false) == (FavoriteRedraw{true, true, true}));
+}
+
+// MARK: OneShotFlags (OneShotFlags.swift's file on a test profile)
+
+namespace {
+// What Foundation's PropertyListEncoder writes for these two flags (Python's plistlib writes the
+// same binary property list), as a test profile's One-Shot Flags.plist holds them.
+const uint8_t kMacFlags[] = {
+    0x62, 0x70, 0x6c, 0x69, 0x73, 0x74, 0x30, 0x30, 0xd2, 0x01, 0x02, 0x03, 0x04, 0x5f, 0x10, 0x1c, 0x66, 0x61, 0x76, 0x6f, 0x72, 0x69,
+    0x74, 0x65, 0x73, 0x45, 0x6d, 0x70, 0x74, 0x79, 0x53, 0x74, 0x61, 0x74, 0x65, 0x44, 0x69, 0x73, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64,
+    0x5f, 0x10, 0x19, 0x70, 0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x4d, 0x61, 0x6e, 0x61, 0x67, 0x65, 0x72, 0x4f, 0x66, 0x66, 0x65,
+    0x72, 0x53, 0x68, 0x6f, 0x77, 0x6e, 0x09, 0x08, 0x08, 0x0d, 0x2c, 0x48, 0x49, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x4a};
+}  // namespace
+
+TEST(oneShotFlagsReadTheMacsPropertyList) {
+    const auto flags = OneShotFlags::Parse(std::string_view(reinterpret_cast<const char*>(kMacFlags), sizeof(kMacFlags)));
+    CHECK(flags && flags->size() == 2);
+    CHECK(flags && flags->at("favoritesEmptyStateDismissed") && !flags->at("passwordManagerOfferShown"));
+}
+
+TEST(oneShotFlagsWriteAPropertyListTheyReadBack) {
+    std::map<std::string, bool> flags{{"favoritesEmptyStateDismissed", true}, {"passwordManagerOfferShown", false}};
+    const std::string bytes = OneShotFlags::Write(flags);
+    // The Mac's writer's bytes, for the same flags (keys in order, no shared objects).
+    CHECK(bytes == std::string(reinterpret_cast<const char*>(kMacFlags), sizeof(kMacFlags)));
+    CHECK(OneShotFlags::Parse(bytes) == flags);
+    // A long key (an extended count), a non-ASCII one (UTF-16), and none at all.
+    std::map<std::string, bool> odd{{std::string(300, 'k'), true}, {"caf\xc3\xa9", false}};
+    CHECK(OneShotFlags::Parse(OneShotFlags::Write(odd)) == odd);
+    CHECK(OneShotFlags::Parse(OneShotFlags::Write({})) == (std::map<std::string, bool>{}));
+}
+
+TEST(oneShotFlagsReadNothingFromAnythingElse) {
+    CHECK(!OneShotFlags::Parse(""));
+    CHECK(!OneShotFlags::Parse("bplist00"));
+    CHECK(!OneShotFlags::Parse("<?xml version=\"1.0\"?><plist/>"));
+    // A value that isn't a boolean: [String: Bool] doesn't decode, so no flags.
+    std::string bytes(reinterpret_cast<const char*>(kMacFlags), sizeof(kMacFlags));
+    bytes[72] = 0x10;  // the first value's marker, now an integer
+    CHECK(!OneShotFlags::Parse(bytes));
+    // Truncated: none.
+    CHECK(!OneShotFlags::Parse(std::string_view(reinterpret_cast<const char*>(kMacFlags), sizeof(kMacFlags) - 1)));
+}
+
+TEST(oneShotFlagsLiveInTheProfilesFolder) {
+    namespace fs = std::filesystem;
+    const fs::path folder = fs::temp_directory_path() / ("kite-flags-" + NewUuid());
+    // A missing file: nothing set.
+    OneShotFlags flags = OneShotFlags::Load(folder);
+    CHECK(!flags.Get(OneShotFlags::kFavoritesEmptyStateDismissed));
+    CHECK(flags.Set(OneShotFlags::kFavoritesEmptyStateDismissed, true).empty());
+    CHECK(flags.Get(OneShotFlags::kFavoritesEmptyStateDismissed));
+    CHECK(fs::exists(folder / OneShotFlags::kFileName) && !fs::exists(folder / "One-Shot Flags.plist.tmp"));
+    CHECK(OneShotFlags::Load(folder).Get(OneShotFlags::kFavoritesEmptyStateDismissed));
+    // Another flag set keeps the first.
+    CHECK(OneShotFlags::Load(folder).Set("passwordManagerOfferShown", true).empty());
+    CHECK(OneShotFlags::Load(folder).Get(OneShotFlags::kFavoritesEmptyStateDismissed));
+    std::error_code error;
+    fs::remove_all(folder, error);
 }

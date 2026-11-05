@@ -839,7 +839,7 @@ std::wstring BrowserWindowController::ClickFavorite(size_t index) {
     return {};
 }
 
-std::wstring BrowserWindowController::WaitForFavicons(double seconds) {
+std::wstring BrowserWindowController::WaitForFavicons(double seconds, std::vector<std::string>& failed) {
     if (!favicons_) return L"the capture has no favicons";
     const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(seconds * 1000);
     for (;;) {
@@ -848,12 +848,56 @@ std::wstring BrowserWindowController::WaitForFavicons(double seconds) {
         if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the sidebar couldn't draw: " + problem;
         while (!favicons_->Idle() && GetTickCount64() < deadline) Sleep(5);
         if (!favicons_->Idle()) return L"the favicons didn't arrive in time";
-        if (!favicons_->TakeResults()) return {};
+        if (!favicons_->TakeResults()) break;
         sidebar_->InvalidatePages();
     }
+    for (const FavoriteTile& tile : sidebar_->Favorites().tiles) {
+        for (const FavoritePane& pane : tile.panes) {
+            if (pane.favicon.url && favicons_->Failed(*pane.favicon.url)) failed.push_back(*pane.favicon.url);
+        }
+    }
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestEmptyFavorites() {
+    // A fresh profile with no favorites: the empty state, until its close button dismisses it (the
+    // one-shot flag, written to the test profile), then back as it was.
+    if (!state_.Favorites().empty() || oneShotFlags_.Get(OneShotFlags::kFavoritesEmptyStateDismissed)) return {};
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the favorites couldn't draw: " + problem;
+    const FavoritesTray tray = sidebar_->Favorites();
+    if (!tray.emptyState || sidebar_->ListTop() != SidebarListTop(tray) || sidebar_->ListTop() <= sidebar_metrics::kHeaderAreaHeight) {
+        return L"a profile with no favorites doesn't show the empty state";
+    }
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    const auto client = [&](float x, float y) { return POINT{std::lround(x * scale), std::lround(y * scale)}; };
+    const std::wstring failure = [&]() -> std::wstring {
+        // The pointer over the box shows the close button: an opacity, nothing drawn.
+        const size_t draws = sidebar_->FavoriteSurfaceDraws();
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, client(tray.emptyFrame.left + 20, tray.emptyFrame.top + 20), 0);
+        if (!sidebar_->FavoritesCloseShown() || !sidebar_->CommitPending()) return L"hovering the empty state didn't show its close button";
+        sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0);
+        if (sidebar_->FavoriteSurfaceDraws() != draws) return L"hovering the empty state drew";
+        // Its close button dismisses it: the page moves up under the address field.
+        const POINT close = client((tray.closeFrame.left + tray.closeFrame.right) / 2, (tray.closeFrame.top + tray.closeFrame.bottom) / 2);
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, close, 0);
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, close, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, close, 0);
+        if (!oneShotFlags_.Get(OneShotFlags::kFavoritesEmptyStateDismissed) || sidebar_->Favorites().height != 0 ||
+            sidebar_->ListTop() != sidebar_metrics::kHeaderAreaHeight) {
+            return L"the empty state's close button didn't dismiss it";
+        }
+        if (!OneShotFlags::Load(options_.supportDirectory).Get(OneShotFlags::kFavoritesEmptyStateDismissed)) return L"the dismissal wasn't saved";
+        return {};
+    }();
+    sidebar_->ClearHover();
+    oneShotFlags_.Set(OneShotFlags::kFavoritesEmptyStateDismissed, false);
+    sidebar_->SetFavoritesEmptyStateDismissed(false);
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
+    return failure;
 }
 
 std::wstring BrowserWindowController::SmokeTestFavorites() {
+    if (std::wstring problem = SmokeTestEmptyFavorites(); !problem.empty()) return problem;
     // Two favorites with no favicon (no network), added to the current profile's grid, then the
     // session as it was.
     const std::vector<Tab> before = state_.Favorites();

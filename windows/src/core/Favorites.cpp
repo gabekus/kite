@@ -3,14 +3,76 @@
 #include "core/Favorites.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 
 namespace kite {
 
 namespace {
+
 namespace M = favorites_metrics;
+namespace E = favorites_empty;
+
+// SF Pro's ascender and descender, as fractions of the size (as the sidebar's labels).
+constexpr float kAscender = 0.952f;
+constexpr float kDescender = 0.241f;
+
+// Colour maths for FavoriteHighlight: 3×3 matrices, and RGB to XYZ for a set of primaries.
+using Matrix = std::array<std::array<double, 3>, 3>;
+using Vector = std::array<double, 3>;
+
+Vector Apply(const Matrix& m, const Vector& v) {
+    return {m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2], m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+            m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2]};
+}
+
+Matrix Inverse(const Matrix& m) {
+    const double det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+                       m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    Matrix out{};
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            // The cofactor of (c, r), by cyclic indices.
+            const int r1 = (c + 1) % 3, r2 = (c + 2) % 3, c1 = (r + 1) % 3, c2 = (r + 2) % 3;
+            out[r][c] = (m[r1][c1] * m[r2][c2] - m[r1][c2] * m[r2][c1]) / det;
+        }
+    }
+    return out;
+}
+
+// Linear RGB to XYZ for primaries (x, y) red, green and blue, with a D65 white.
+Matrix ToXYZ(const double (&xy)[3][2]) {
+    Matrix p{};
+    for (int c = 0; c < 3; ++c) {
+        const double x = xy[c][0], y = xy[c][1];
+        p[0][c] = x / y;
+        p[1][c] = 1;
+        p[2][c] = (1 - x - y) / y;
+    }
+    const double wx = 0.3127, wy = 0.3290;
+    const Vector scale = Apply(Inverse(p), Vector{wx / wy, 1, (1 - wx - wy) / wy});
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) p[r][c] *= scale[c];
+    }
+    return p;
+}
+
+double SrgbToLinear(double c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); }
+double LinearToSrgb(double c) { return c <= 0.0031308 ? 12.92 * c : 1.055 * std::pow(c, 1 / 2.4) - 0.055; }
+
 }  // namespace
+
+namespace favorites_empty {
+
+float LineHeight(float size) { return std::ceil(size * (kAscender + kDescender)); }
+float LinePitch(float size) { return std::ceil(size * kAscender) + std::ceil(size * kDescender); }
+float LabelHeight(float size, int lines) { return lines <= 1 ? LineHeight(size) : static_cast<float>(lines) * LinePitch(size); }
+float Height(int titleLines, int subtitleLines) {
+    return std::max(M::kHeight, LabelHeight(kTitleSize, titleLines) + kTextGap + LabelHeight(kSubtitleSize, subtitleLines)) + 2 * kPadding;
+}
+
+}  // namespace favorites_empty
 
 int FavoritesColumns(size_t count, float width) {
     if (count == 0) return 1;
@@ -77,11 +139,22 @@ std::vector<FavoriteTile> FavoriteTilesOf(const BrowserState& state, size_t spac
     return tiles;
 }
 
-FavoritesTray LayOutFavorites(std::vector<FavoriteTile> tiles, float sidebarWidth) {
+FavoritesTray LayOutFavorites(std::vector<FavoriteTile> tiles, float sidebarWidth, bool emptyStateDismissed, float emptyHeight) {
     FavoritesTray tray;
     tray.tiles = std::move(tiles);
-    if (tray.tiles.empty()) return tray;
     const float width = sidebarWidth - 2 * sidebar_metrics::kPadding;
+    const float top = FavoritesTop() + M::kTopGap;
+    if (tray.tiles.empty()) {
+        // rebuild: with no favorites, the empty state until it's dismissed (and, with W18b, while a
+        // drag needs somewhere to drop).
+        if (emptyStateDismissed) return tray;
+        tray.emptyState = true;
+        tray.height = M::kTopGap + emptyHeight + M::kBottomGap;
+        tray.emptyFrame = BarRect{sidebar_metrics::kPadding, top, sidebar_metrics::kPadding + width, top + emptyHeight};
+        const float closeRight = tray.emptyFrame.right - E::kCloseInset, closeTop = top + E::kPadding + E::kCloseInset;
+        tray.closeFrame = BarRect{closeRight - E::kCloseSize, closeTop, closeRight, closeTop + E::kCloseSize};
+        return tray;
+    }
     const size_t count = tray.tiles.size();
     tray.columns = FavoritesColumns(count, width);
     const size_t cols = static_cast<size_t>(tray.columns);
@@ -89,7 +162,6 @@ FavoritesTray LayOutFavorites(std::vector<FavoriteTile> tiles, float sidebarWidt
     const float content = static_cast<float>(rows) * M::kHeight + static_cast<float>(rows - 1) * M::kSpacing;
     tray.height = M::kTopGap + content + M::kBottomGap;
     const float tileWidth = (width - M::kSpacing * static_cast<float>(cols - 1)) / static_cast<float>(cols);
-    const float top = FavoritesTop() + M::kTopGap;
     for (size_t i = 0; i < count; ++i) {
         FavoriteTile& tile = tray.tiles[i];
         const float x = sidebar_metrics::kPadding + static_cast<float>(i % cols) * (tileWidth + M::kSpacing);
@@ -111,20 +183,30 @@ FavoritesTray LayOutFavorites(std::vector<FavoriteTile> tiles, float sidebarWidt
     return tray;
 }
 
-FavoritesTray LayOutFavorites(const BrowserState& state, size_t space, float width) {
-    return LayOutFavorites(FavoriteTilesOf(state, space), width);
+FavoritesTray LayOutFavorites(const BrowserState& state, size_t space, float width, bool emptyStateDismissed) {
+    return LayOutFavorites(FavoriteTilesOf(state, space), width, emptyStateDismissed);
 }
 
 bool InFavorites(const FavoritesTray& tray, float width, float x, float y) {
     return tray.height > 0 && x >= 0 && x < width && y >= FavoritesTop() && y < FavoritesTop() + tray.height;
 }
 
+size_t FavoritePaneCount(const FavoritesTray& tray) {
+    size_t count = 0;
+    for (const FavoriteTile& tile : tray.tiles) count += tile.panes.size();
+    return count;
+}
+
 std::optional<FavoriteHit> FavoritePaneAt(const FavoritesTray& tray, float x, float y) {
+    size_t index = 0;
     for (size_t t = 0; t < tray.tiles.size(); ++t) {
         const FavoriteTile& tile = tray.tiles[t];
-        if (!tile.frame.Contains(x, y)) continue;
+        if (!tile.frame.Contains(x, y)) {
+            index += tile.panes.size();
+            continue;
+        }
         for (size_t p = 0; p < tile.panes.size(); ++p) {
-            if (tile.panes[p].frame.Contains(x, y)) return FavoriteHit{t, p};
+            if (tile.panes[p].frame.Contains(x, y)) return FavoriteHit{t, p, index + p};
         }
         return std::nullopt;  // the gap between a split's panes
     }
@@ -140,22 +222,35 @@ const FavoritePane* FavoritePaneWithTab(const FavoritesTray& tray, const std::st
     return nullptr;
 }
 
+bool OverEmptyState(const FavoritesTray& tray, float x, float y) { return tray.emptyState && tray.emptyFrame.Contains(x, y); }
+
+bool OverEmptyStateClose(const FavoritesTray& tray, float x, float y) { return tray.emptyState && tray.closeFrame.Contains(x, y); }
+
 std::optional<FavoritePress> FavoritePressAt(const FavoritesTray& tray, float x, float y, bool activating) {
-    if (activating) return std::nullopt;  // NSView's acceptsFirstMouse: false
+    // The close button shows while the pointer is over the empty state, so a press on it is its.
+    if (OverEmptyStateClose(tray, x, y)) return FavoritePress{FavoritePress::Target::CloseEmptyState, {}, x, y, false};
+    if (activating) return std::nullopt;  // a pane's acceptsFirstMouse: false
     const std::optional<FavoriteHit> hit = FavoritePaneAt(tray, x, y);
     if (!hit) return std::nullopt;
-    return FavoritePress{tray.tiles[hit->tile].panes[hit->pane].tabID, x, y, false};
+    return FavoritePress{FavoritePress::Target::Pane, tray.tiles[hit->tile].panes[hit->pane].tabID, x, y, false};
 }
 
 void FavoriteMove(FavoritePress& press, float x, float y) {
-    if (!press.dragged && std::hypot(x - press.x, y - press.y) >= M::kDragDistance) press.dragged = true;
+    if (press.target == FavoritePress::Target::Pane && !press.dragged && std::hypot(x - press.x, y - press.y) >= M::kDragDistance) {
+        press.dragged = true;
+    }
 }
 
-std::optional<std::string> FavoriteRelease(const FavoritePress& press, const FavoritesTray& tray, float x, float y) {
-    if (press.dragged) return std::nullopt;
+FavoriteTap FavoriteRelease(const FavoritePress& press, const FavoritesTray& tray, float x, float y) {
+    if (press.target == FavoritePress::Target::CloseEmptyState) {
+        // SymbolButton: let go over itself.
+        if (OverEmptyStateClose(tray, x, y)) return FavoriteTap{FavoriteTap::Action::DismissEmptyState, {}};
+        return {};
+    }
+    if (press.dragged) return {};
     const FavoritePane* pane = FavoritePaneWithTab(tray, press.tabID);
-    if (!pane || !pane->frame.Contains(x, y)) return std::nullopt;
-    return press.tabID;
+    if (!pane || !pane->frame.Contains(x, y)) return {};
+    return FavoriteTap{FavoriteTap::Action::SelectTab, press.tabID};
 }
 
 FavoriteLook FavoriteLookOf(bool selected, bool hovered, bool dark, bool hasColor) {
@@ -215,10 +310,35 @@ std::optional<ThemeColor> DominantColor(const uint8_t* bgra, uint32_t width, uin
     return ThemeColor{static_cast<float>(top->r / n), static_cast<float>(top->g / n), static_cast<float>(top->b / n)};
 }
 
+FavoriteRedraw FavoriteRedrawFor(const std::optional<std::pair<BarRect, FaviconSource>>& drawn, const FavoritePane& now,
+                                 bool appearanceChanged) {
+    if (!drawn || drawn->first != now.frame) return FavoriteRedraw{true, true, true};
+    FavoriteRedraw redraw;
+    if (drawn->second != now.favicon) redraw.icon = redraw.tint = true;
+    if (appearanceChanged) redraw.icon = true;
+    return redraw;
+}
+
 ThemeColor FavoriteHighlight(ThemeColor dominant) {
-    // NSColor.blended(withFraction: 0.5, of: .white).
-    const float f = M::kHighlightWhiten;
-    return ThemeColor{dominant.r + (1 - dominant.r) * f, dominant.g + (1 - dominant.g) * f, dominant.b + (1 - dominant.b) * f};
+    // NSColor.blended(withFraction:of:) converts both colours to calibrated RGB (Apple's Generic RGB
+    // profile: these primaries, gamma 1.8), mixes them there and gives an NSColor in that space,
+    // which sRGB then shows. Fitted against the Mac's ring on YouTube's red (255, 149, 150); a plain
+    // sRGB mix gives (255, 129, 129).
+    static const double kSrgb[3][2] = {{0.64, 0.33}, {0.30, 0.60}, {0.15, 0.06}};
+    static const double kGeneric[3][2] = {{0.630, 0.340}, {0.295, 0.605}, {0.155, 0.077}};
+    static const Matrix srgbToXYZ = ToXYZ(kSrgb), xyzToSrgb = Inverse(srgbToXYZ);
+    static const Matrix genericToXYZ = ToXYZ(kGeneric), xyzToGeneric = Inverse(genericToXYZ);
+    constexpr double kGamma = 1.8;
+    const Vector linear{SrgbToLinear(dominant.r), SrgbToLinear(dominant.g), SrgbToLinear(dominant.b)};
+    Vector generic = Apply(xyzToGeneric, Apply(srgbToXYZ, linear));
+    const double f = M::kHighlightWhiten;
+    for (double& c : generic) {
+        const double encoded = std::pow(std::clamp(c, 0.0, 1.0), 1 / kGamma);
+        c = std::pow(encoded * (1 - f) + f, kGamma);
+    }
+    const Vector srgb = Apply(xyzToSrgb, Apply(genericToXYZ, generic));
+    const auto out = [](double c) { return static_cast<float>(LinearToSrgb(std::clamp(c, 0.0, 1.0))); };
+    return ThemeColor{out(srgb[0]), out(srgb[1]), out(srgb[2])};
 }
 
 }  // namespace kite

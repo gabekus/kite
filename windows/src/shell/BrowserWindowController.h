@@ -22,6 +22,7 @@
 
 #include "core/KeyBindings.h"
 #include "core/Models.h"
+#include "core/OneShotFlags.h"
 #include "core/SidebarTopRow.h"
 #include "core/SpaceEditing.h"
 #include "core/SpaceSwipe.h"
@@ -46,11 +47,13 @@ class BrowserWindowController {
 public:
     struct Options {
         // A --capture run: the solid material under the backdrop (not what's behind the
-        // window), no favicons (no network) and no auto-archive. The caller doesn't start
-        // Chromium for one.
+        // window), no favicons (no network) unless `captureFavicons`, and no auto-archive. The
+        // caller doesn't start Chromium for one.
         bool capture = false;
         // --capture --favicons: the favicons fetched as the window fetches them (WaitForFavicons).
         bool captureFavicons = false;
+        // The profile's folder, where its one-shot flags are (OneShotFlags.h).
+        std::filesystem::path supportDirectory;
         // --smoke-test: every shortcut command must do something, and the first page's load
         // closes the window.
         bool smokeTest = false;
@@ -133,8 +136,9 @@ public:
     std::wstring HoldFavoriteHover(size_t index);
     std::wstring ClickFavorite(size_t index);
     // For a --favicons capture: the sidebar's favicons (and the 16px icons the favorites' colours
-    // come from) fetched and decoded, drawing as they come, for at most `seconds`.
-    std::wstring WaitForFavicons(double seconds);
+    // come from) fetched and decoded, drawing as they come, for at most `seconds`. `failed` gets
+    // the favorites' favicons that didn't load (they show the globe, as the Mac's do).
+    std::wstring WaitForFavicons(double seconds, std::vector<std::string>& failed);
 
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
@@ -285,6 +289,7 @@ private:
     // on a disabled button, and hiding and showing the sidebar from the toggle and Ctrl+S's command.
     std::wstring SmokeTestTopRow();
     std::wstring SmokeTestFavorites();
+    std::wstring SmokeTestEmptyFavorites();
     void MakeCommands();
     void RunCommand(const std::string& command);
     bool PageCommand(const std::string& command);
@@ -344,6 +349,7 @@ private:
     bool swipeMoved_ = false;  // since the clock's last frame drew
     std::unique_ptr<Compositor> compositor_;
     std::unique_ptr<Favicons> favicons_;
+    OneShotFlags oneShotFlags_;  // the profile's (the favorites' empty state)
     std::unique_ptr<SidebarView> sidebar_;
     // View › Hide Sidebar's state (the Mac's BrowserStore.isSidebarVisible, not saved: a launch
     // shows it), and its slide under way.

@@ -156,7 +156,11 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
     if (!view->tip_) return nullptr;
     view->topRow_ = SidebarTopRowView::Create(window, view->dwrite_.Get(), !pictures.synchronous, error);
     if (!view->topRow_) return nullptr;
-    view->favorites_ = FavoritesView::Create(window, favicons, !pictures.synchronous);
+    view->favorites_ = FavoritesView::Create(window, view->dwrite_.Get(), favicons, !pictures.synchronous, error);
+    if (!view->favorites_) return nullptr;
+    view->drawIcon_ = [raw = view.get()](ID2D1DeviceContext* context, const FaviconSource& favicon, D2D1_RECT_F box) {
+        return raw->DrawFavicon(context, favicon, box);
+    };
     // Emoji and symbols sit in the middle of their box.
     for (IDWriteTextFormat* f : {view->emojiFormat_.Get(), view->iconFormat_.Get()}) {
         f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -231,6 +235,7 @@ double SidebarView::SetShown(bool shown, bool animate) {
     // Its tooltips come back once it's on screen again, and go at once as it leaves.
     topRow_->SetTooltipsActive(shown);
     favorites_->SetTooltipsActive(shown);
+    PlaceFavorites();  // its tooltips' places, from where the sidebar rests
     if (animate && root_ && compositor_ && from != to) {
         const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
         // From now: the compositor starts it at the commit's frame, up to a frame later, so Left()
@@ -479,7 +484,9 @@ void SidebarView::PlacePages() {
 void SidebarView::PlaceFavorites() {
     // A pane's hover or selection is its opacities, which the next pass commits; anything else
     // that changed draws (NeedsDraw).
-    if (favorites_->Update(LayOutFavorites(model_.favorites, width_), model_.dark)) commitPending_ = true;
+    const FavoritesTray tray =
+        LayOutFavorites(model_.favorites, width_, emptyStateDismissed_, favorites_->EmptyStateHeight(width_));
+    if (favorites_->Update(tray, model_.dark, SidebarLeft(shown_, width_))) commitPending_ = true;
     const float listTop = SidebarListTop(favorites_->Tray());
     if (listTop != listTop_) {
         // The pages start lower or higher: each draws again from its new top.
@@ -487,6 +494,15 @@ void SidebarView::PlaceFavorites() {
         for (auto& [id, page] : pages_) page.dirty = true;
     }
     if (favorites_->NeedsDraw() || commitPending_) ScheduleDraw();
+}
+
+void SidebarView::SetFavoritesEmptyStateDismissed(bool dismissed) {
+    if (dismissed == emptyStateDismissed_) return;
+    emptyStateDismissed_ = dismissed;
+    PlaceFavorites();
+    // The page moves up under the address field, under a still pointer.
+    SetScroll(scrollExact_);
+    RefreshHover();
 }
 
 void SidebarView::Layout(float width, UINT dpi) {
@@ -516,8 +532,7 @@ void SidebarView::Layout(float width, UINT dpi) {
 void SidebarView::InvalidatePages() {
     for (auto& [id, page] : pages_) page.dirty = true;
     // The favorites draw only the panes whose icon (or its colour) is now there.
-    favorites_->IconsArrived();
-    ScheduleDraw();
+    if (favorites_->IconsArrived() || !pages_.empty()) ScheduleDraw();
 }
 
 void SidebarView::PicturesArrived() {
@@ -760,10 +775,7 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         if (error = DrawPageSurface(page, pages_[page.spaceID], shot); !error.empty()) return error;
     }
     // The favorites between the address field and the pages, each pane's layers that changed.
-    const FavoritesView::DrawIcon drawIcon = [this](ID2D1DeviceContext* context, const FaviconSource& favicon, D2D1_RECT_F box) {
-        return DrawFavicon(context, favicon, box);
-    };
-    if (error = favorites_->Draw(drawIcon, readBack != nullptr); !error.empty()) return error;
+    if (error = favorites_->Draw(drawIcon_, visual_.Get(), readBack != nullptr); !error.empty()) return error;
     // Only the icons the pages and the favorites show stay on the GPU.
     std::erase_if(faviconBitmaps_, [this](const auto& entry) {
         return !favorites_->ShowsIcon(entry.first.first) &&
@@ -906,8 +918,10 @@ bool SidebarView::DrawFavicon(ID2D1DeviceContext* context, const FaviconSource& 
             }
         }
     }
-    // No icon (yet): the globe, stretched to the square.
-    DrawGlyph(context, kGlobe, side / kGlyphInk, box, Primary(kLabelAlpha * kGlobeOpacity));
+    // No icon (yet): the globe, stretched to the square. Unlike the other symbols, Segoe's globe
+    // fills its whole em square (at 20pt it inked 20pt, 40px at 2Ã—), so it's set at the square's
+    // size to ink the Mac's 18pt (36px at 2Ã—, FaviconImageView's side).
+    DrawGlyph(context, kGlobe, side, box, Primary(kLabelAlpha * kGlobeOpacity));
     return false;
 }
 
@@ -1142,15 +1156,18 @@ void SidebarView::RefreshHover() {
     // A press keeps the hover where it began until it's let go, as the Mac's tracking areas
     // (no .enabledDuringMouseDrag) send no enter or exit during a drag.
     if (press_ || barPress_ || favoritePress_) return;
-    // A favorite's pane: its fill and tint brighten, opacities the next pass commits.
-    std::optional<std::string> favorite;
+    // A favorite's pane: its fill and tint brighten; over the empty state, its close button shows.
+    // Opacities, which the next pass commits.
+    std::optional<size_t> favorite;
+    bool overEmpty = false;
     if (pointer_) {
         const D2D1_POINT_2F p = PointOf(*pointer_);
-        if (const auto hit = p.x >= 0 && p.x < width_ ? FavoritePaneAt(favorites_->Tray(), p.x, p.y) : std::nullopt) {
-            favorite = favorites_->Tray().tiles[hit->tile].panes[hit->pane].tabID;
+        if (p.x >= 0 && p.x < width_) {
+            if (const auto hit = FavoritePaneAt(favorites_->Tray(), p.x, p.y)) favorite = hit->index;
+            overEmpty = OverEmptyState(favorites_->Tray(), p.x, p.y);
         }
     }
-    if (favorites_->SetHover(favorite)) {
+    if (favorites_->SetHover(favorite, overEmpty)) {
         commitPending_ = true;
         ScheduleDraw();
     }
@@ -1523,19 +1540,21 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             return true;
         }
         RefreshHover();
-        // The favorites: a press anywhere on the grid is its own (never a row's or the window's),
-        // and on a pane it selects the favorite when let go there. Not the click that brings the
-        // window forward (a pane doesn't accept first mouse).
-        if (InFavorites(favorites_->Tray(), width_, p.x, p.y)) {
-            favoritePress_ = FavoritePressAt(favorites_->Tray(), p.x, p.y, activating);
-            if (favoritePress_) SetCapture(window_);
-            return true;
-        }
         // A space's cell, which takes the click that brings the window forward too (the Mac's
-        // acceptsFirstMouse).
+        // acceptsFirstMouse). The bar is over the favorites (SidebarColumnView's subviews), so it's
+        // asked first.
         if (const auto b = BarPoint(p)) {
             barPress_ = SpaceBarPressAt(bar_->Geometry(), bar_->Cells(), b->x, b->y);
             if (barPress_) SetCapture(window_);
+            return true;
+        }
+        // The favorites: a press anywhere on the tray is its own (never a row's or the window's).
+        // On a pane it selects the favorite when let go there, but not as the click that brings the
+        // window forward (a pane doesn't accept first mouse); on the empty state's close button it
+        // dismisses it.
+        if (InFavorites(favorites_->Tray(), width_, p.x, p.y)) {
+            favoritePress_ = FavoritePressAt(favorites_->Tray(), p.x, p.y, activating);
+            if (favoritePress_) SetCapture(window_);
             return true;
         }
         const D2D1_POINT_2F q = OnPage(p);
@@ -1560,10 +1579,14 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             favoritePress_.reset();
             if (GetCapture() == window_) ReleaseCapture();
             const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
-            // mouseUp: inside the pane it pressed, without a drag: select(tab:).
-            const std::optional<std::string> tab = FavoriteRelease(press, favorites_->Tray(), p.x, p.y);
+            // mouseUp: inside the pane it pressed, without a drag, select(tab:); over the close
+            // button, Dismiss.
+            const FavoriteTap tap = FavoriteRelease(press, favorites_->Tray(), p.x, p.y);
             RefreshHover();
-            if (tab && actions_.selectTab) actions_.selectTab(*tab);
+            if (tap.action == FavoriteTap::Action::SelectTab && actions_.selectTab) actions_.selectTab(tap.tabID);
+            if (tap.action == FavoriteTap::Action::DismissEmptyState && actions_.dismissFavoritesEmptyState) {
+                actions_.dismissFavoritesEmptyState();
+            }
             return true;
         }
         if (renamePressed_) {

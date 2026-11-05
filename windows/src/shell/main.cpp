@@ -398,6 +398,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     options.smokeTest = smokeTest;
     options.frameLog = frameLogOption.present;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
+    options.supportDirectory = supportDirectory;
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE), both save.
     auto save = [&] {
         if (maySave) saveError = session.Save(state);
@@ -478,8 +479,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (heldMenu) controller->HoldSpaceMenu(*heldMenu);
         if (captureError.empty() && heldFavoriteClick) captureError = controller->ClickFavorite(*heldFavoriteClick);
         if (captureError.empty() && heldFavoriteHover) captureError = controller->HoldFavoriteHover(*heldFavoriteHover);
-        // Last, so the favicons of whatever the states above show have come.
-        if (captureError.empty() && captureFavicons) captureError = controller->WaitForFavicons(20);
+        // Last, so the favicons of whatever the states above show have come. Favorites whose icons
+        // didn't load show the globe, as on the Mac; the run says which.
+        if (captureError.empty() && captureFavicons) {
+            std::vector<std::string> failed;
+            captureError = controller->WaitForFavicons(20, failed);
+            for (const std::string& url : failed) WriteUtf8(STD_ERROR_HANDLE, L"Kite: no favicon from " + Widen(url) + L" (the globe shows)\n");
+        }
         if (captureError.empty()) captureError = controller->Capture(pixels, barText, tipIndex);
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);
         PostMessageW(window.Handle(), WM_CLOSE, 0, 0);

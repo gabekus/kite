@@ -33,4 +33,16 @@ std::wstring DrawFadedLayer(Compositor& compositor, FadedLayer& layer, UINT widt
     return compositor.DrawSurface(layer.surface.Get(), width, height, dpi, content, readBack ? &layer.pixels : nullptr, hr);
 }
 
+std::wstring AttachFadedLayer(FadedLayer& layer, bool fresh, std::wstring error, IDCompositionVisual* parent, BOOL insertAbove,
+                              IDCompositionVisual* reference, HRESULT& hr) {
+    if (!fresh || !layer.visual) return error;
+    if (!error.empty()) {
+        layer = FadedLayer{};
+    } else if (FAILED(hr = parent->AddVisual(layer.visual.Get(), insertAbove, reference))) {
+        layer = FadedLayer{};
+        error = HResultMessage(L"adding a layer's visual", hr);
+    }
+    return error;
+}
+
 }  // namespace kite

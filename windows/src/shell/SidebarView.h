@@ -87,6 +87,8 @@ public:
         std::function<void(const std::string& spaceID)> beginRenaming;
         // A click on an enabled top-row button (the toggle, back, forward, reload).
         std::function<void(TopRowButton button)> topRow;
+        // The favorites' empty state's close button (its Dismiss): a one-shot flag.
+        std::function<void()> dismissFavoritesEmptyState;
     };
     void SetActions(Actions actions) { actions_ = std::move(actions); }
 
@@ -161,6 +163,10 @@ public:
     bool FavoritesHaveTooltips() const { return favorites_->HasTooltips(); }
     // Where the space's page starts, in points: under the favorites.
     float ListTop() const { return listTop_; }
+    bool FavoritesCloseShown() const { return favorites_->CloseShown(); }
+    // The favorites' empty state was dismissed (the one-shot flag, OneShotFlags.h): the tray shows
+    // only with favorites in it.
+    void SetFavoritesEmptyStateDismissed(bool dismissed);
     // A compositor property changed (a top-row button turned on or off) that the next pass
     // commits, and how many commits its own passes have made (for the smoke test).
     bool CommitPending() const { return commitPending_; }
@@ -346,6 +352,8 @@ private:
     std::unique_ptr<SpaceBarView> bar_;
     std::unique_ptr<SidebarTopRowView> topRow_;
     std::unique_ptr<FavoritesView> favorites_;
+    FavoritesView::DrawIcon drawIcon_;  // the favorites' icons, drawn as the rows'
+    bool emptyStateDismissed_ = false;
     float listTop_ = sidebar_metrics::kHeaderAreaHeight;  // where the page starts, under the favorites
     PageStatus page_;
     // Hidden or shown, and the slide there: from and to (points, the leading edge), since when.
