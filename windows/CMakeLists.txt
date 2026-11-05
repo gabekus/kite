@@ -43,6 +43,9 @@ add_library(KiteCoreWin STATIC
   src/core/ColorSpaces.cpp
   src/core/CommandBar.cpp
   src/core/CommandLine.cpp
+  src/core/Downloads.cpp
+  src/core/DownloadsModel.cpp
+  src/core/DownloadsWriter.cpp
   src/core/Favorites.cpp
   src/core/Files.cpp
   src/core/History.cpp
@@ -52,6 +55,7 @@ add_library(KiteCoreWin STATIC
   src/core/Models.cpp
   src/core/OKLab.cpp
   src/core/OneShotFlags.cpp
+  src/core/ProfileSettings.cpp
   src/core/SessionBackups.cpp
   src/core/SessionSaveDelay.cpp
   src/core/SessionStore.cpp
@@ -158,6 +162,7 @@ if(WIN32)
     src/shell/MemoryPressure.cpp
     src/shell/PerfLog.cpp
     src/shell/QuietRun.cpp
+    src/shell/QuitDialog.cpp
     src/shell/RelayedTooltips.cpp
     src/shell/RenameField.cpp
     src/shell/Renderer.cpp
@@ -208,8 +213,9 @@ if(WIN32)
     # Every helper maps Kite.dll, renderers under win32k lockdown, where user32 (or anything that
     # loads it) fails the process: everything but kernel32 and libcef.dll is delay-loaded, so only
     # the browser process loads it. Control Flow Guard and CET shadow stacks, as Chromium's own
-    # binaries have. tests/KiteBinariesTest.cmake checks all three. comctl32 is for Delete Space's
-    # task dialog and the top row's tooltips (made on the first hover over a button), gdi32 for
+    # binaries have. tests/KiteBinariesTest.cmake checks all three. comctl32 is for the task
+    # dialogs (Delete Space's question, the quit's "Downloads in progress") and the top row's
+    # tooltips (made on the first hover over a button), gdi32 for
     # --space-menu's read-back: only the window's process calls them (user32 loads gdi32 for
     # itself, so delaying Kite's import of it is safe: no call of Kite's to it comes before the
     # window, or from a loader callback).
@@ -332,6 +338,7 @@ add_executable(KiteCoreTests
   tests/ArcImportFilesTests.cpp
   tests/CommandBarTests.cpp
   tests/CommandLineTests.cpp
+  tests/DownloadsTests.cpp
   tests/FavoritesTests.cpp
   tests/HistoryTests.cpp
   tests/JsonTests.cpp

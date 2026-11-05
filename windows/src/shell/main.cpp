@@ -62,7 +62,14 @@
 //                            it made (when, and its cost on the UI thread) and the writer's
 //                            statistics to FILE as JSON: the live check of saving as it changes.
 //                            KITE_TEST_SLOW_BACKUP_MS=N makes each backup take N ms more
-//                            (the live check of a relaunch while Kite quits).
+//                            (the live check of a relaunch while Kite quits), and
+//                            KITE_TEST_CLOSE_TAB_MS=N gives the shown page a click's user
+//                            activation N ms after the window shows and closes its tab 0.5 s later (the live check of a page kept for its downloads), and
+//                            KITE_TEST_AUTOMATIC_DOWNLOADS=http://127.0.0.1:PORT lets that local
+//                            origin's pages start many downloads with no click (the live check
+//                            of a burst). These switches act only on a test profile. It logs the
+//                            downloads too (Chromium's reports, what each cost the UI thread,
+//                            downloads.json's writes): the live check of the download engine.
 //   Kite.exe --perf-log FILE [--perf-control] [--chromium-switches "--a --b=c"]
 //                            a normal window on a test profile, for windows/tools/perf/kiteperf:
 //                            FILE gets JSON lines of QPC marks, present/commit/surface-draw
@@ -71,6 +78,10 @@
 //                            (BrowserWindowController::QueuePerfRequest); --chromium-switches go
 //                            on Chromium's command line, from an allow-list (shell/PerfProtocol.h).
 //                            Never on the default profile. Opens behind other windows.
+//
+// Downloads go to the profile's chosen folder, else the user's Downloads. KITE_TEST_DOWNLOADS_PATH
+// (with KITE_SUPPORT_PATH, as on the Mac) puts them in a test's own folder; a quiet run without
+// it uses <support>\Downloads, never the user's.
 //   Kite.exe --backdrop-test draws the theme backdrop on the GPU and checks every pixel against
 //                            core's CPU reference of the Mac's shader (shell/BackdropTest.h).
 //                            Prints a report; exits 0 when it matches, 5 when it differs, 3
@@ -78,6 +89,7 @@
 
 #include <windows.h>
 
+#include <knownfolders.h>
 #include <shellapi.h>
 #include <shlobj.h>
 
@@ -99,7 +111,9 @@
 #include <vector>
 
 #include "core/CommandLine.h"
+#include "core/DownloadsWriter.h"
 #include "core/KeyBindings.h"
+#include "core/ProfileSettings.h"
 #include "core/SessionStore.h"
 #include "core/SessionWriter.h"
 #include "core/SupportDirectory.h"
@@ -191,6 +205,19 @@ kite::KeyBindings LoadKeyBindings(const std::filesystem::path& file) {
     if (auto bindings = kite::KeyBindings::FromText(text)) return *bindings;
     OutputDebugStringW(L"Kite: couldn't read keybindings.json, using the default shortcuts\n");
     return {};
+}
+
+// The user's Downloads folder (FOLDERID_Downloads, which they may have moved), else
+// %USERPROFILE%\Downloads.
+std::filesystem::path UserDownloads() {
+    PWSTR path = nullptr;
+    std::filesystem::path folder;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Downloads, KF_FLAG_DEFAULT, nullptr, &path)) && path) folder = path;
+    CoTaskMemFree(path);
+    if (folder.empty()) {
+        if (auto profile = kite::EnvironmentPath("USERPROFILE"); profile && !profile->empty()) folder = *profile / L"Downloads";
+    }
+    return folder;
 }
 
 int Fail(bool quiet, const std::wstring& message, int code) {
@@ -585,8 +612,12 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // The live check of a relaunch while Kite quits: a --save-log run (a test profile) with
     // KITE_TEST_SLOW_BACKUP_MS set takes that long over each backup (the clock the writer dates
     // them by), so the wait at quit lasts long enough for a relaunch to land in it.
+    // The test switches below act only in a --save-log run on a test profile: never on
+    // %LOCALAPPDATA%\Kite, even when KITE_SUPPORT_PATH names it.
+    const bool testProfile = kite::IsTestProfile(supportDirectory, kite::EnvironmentPath("LOCALAPPDATA"));
+    const bool testSwitches = saveLogOption.present && testProfile;
     std::function<double()> clock = kite::SessionBackups::Now;
-    if (const DWORD slowMs = saveLogOption.present ? GetEnvironmentVariableW(L"KITE_TEST_SLOW_BACKUP_MS", nullptr, 0) : 0; slowMs) {
+    if (const DWORD slowMs = testSwitches ? GetEnvironmentVariableW(L"KITE_TEST_SLOW_BACKUP_MS", nullptr, 0) : 0; slowMs) {
         std::wstring value(slowMs, L'\0');
         value.resize(GetEnvironmentVariableW(L"KITE_TEST_SLOW_BACKUP_MS", value.data(), slowMs));
         if (auto ms = ParseInt(value); ms && *ms <= 60'000) {
@@ -614,6 +645,14 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // replayed over it. Like the session's writer, it outlives the window.
     kite::HistoryStores history(supportDirectory);
     history.OnStuck(endStuck);
+    // downloads.json, read on its worker once the window shows (not by a launch that hands over)
+    // and written as the list changes (core/DownloadsWriter.h); none for a capture, which has no
+    // pages.
+    std::optional<kite::DownloadsWriter> downloadsWriter;
+    if (!capture) {
+        downloadsWriter.emplace(supportDirectory / L"downloads.json");
+        downloadsWriter->OnStuck(endStuck);
+    }
     // As the Mac does once per launch, the session as found (read, recovered or a fresh one, as
     // BrowserStore.init) is kept as a launch backup: before the auto-archive, as the Mac's is
     // before its first pass, but handed over only once this launch is Kite's (not a second one
@@ -647,7 +686,36 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     options.chromiumSwitches = std::move(chromiumSwitches);
     options.spaceIcons = supportDirectory / L"SpaceIcons";
     options.supportDirectory = supportDirectory;
-    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, &history, problem);
+    // KITE_TEST_DOWNLOADS_PATH is a test's own folder: a relative one would land wherever Kite
+    // was started from, so it's refused rather than guessed.
+    const auto testDownloads = kite::EnvironmentPath("KITE_TEST_DOWNLOADS_PATH");
+    if (testDownloads && !testDownloads->empty() && !testDownloads->is_absolute()) {
+        return Fail(quiet, L"KITE_TEST_DOWNLOADS_PATH must be an absolute path", kUsage);
+    }
+    options.downloadFolder = kite::DefaultDownloadFolder(testDownloads, testProfile, quiet, supportDirectory, UserDownloads());
+    // The live check of a page kept for its downloads: a --save-log run (a test profile) with
+    // KITE_TEST_CLOSE_TAB_MS set closes its selected tab that long after the window shows.
+    if (const DWORD closeMs = testSwitches ? GetEnvironmentVariableW(L"KITE_TEST_CLOSE_TAB_MS", nullptr, 0) : 0; closeMs) {
+        std::wstring value(closeMs, L'\0');
+        value.resize(GetEnvironmentVariableW(L"KITE_TEST_CLOSE_TAB_MS", value.data(), closeMs));
+        if (auto ms = ParseInt(value); ms && *ms <= 600'000) options.testCloseTabMs = static_cast<unsigned>(*ms);
+    }
+    // And KITE_TEST_AUTOMATIC_DOWNLOADS=http://127.0.0.1:PORT lets that local origin's pages start
+    // many downloads with no click (the live check of a burst of same-name downloads); only a
+    // loopback origin, so the profile's setting can't open up any other site.
+    if (const DWORD length = testSwitches ? GetEnvironmentVariableW(L"KITE_TEST_AUTOMATIC_DOWNLOADS", nullptr, 0) : 0; length) {
+        std::wstring value(length, L'\0');
+        value.resize(GetEnvironmentVariableW(L"KITE_TEST_AUTOMATIC_DOWNLOADS", value.data(), length));
+        // Exactly http://127.0.0.1:PORT, the port 1 to 5 digits: no user info, path or anything else.
+        const std::wstring_view prefix = L"http://127.0.0.1:";
+        const std::wstring_view port = std::wstring_view(value).substr(std::min(value.size(), prefix.size()));
+        if (value.starts_with(prefix) && !port.empty() && port.size() <= 5 &&
+            std::all_of(port.begin(), port.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; })) {
+            options.testAutomaticDownloads = Narrow(value);
+        }
+    }
+    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, &history,
+                                                            downloadsWriter ? &*downloadsWriter : nullptr, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
     kite::perf::Mark("window-created");
     if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar: " + controller->CommandBarError(), kWindowFailed);
@@ -760,17 +828,27 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     controller->RunMessageLoop();
     kite::perf::Mark("loop-end");
     // The window's close handed over the last saves, the session's and history's; wait for them
-    // now that the window is gone (no frozen window), kQuitFlush at most for both (the atomic
+    // now that the window is gone (no frozen window), kQuitFlush at most for all (the atomic
     // writes leave the old file or the new one). Before Chromium shuts down: until then this Kite
     // holds the profile, so a launch in the meantime hands over to it rather than read a file
-    // about to be replaced.
+    // about to be replaced. One deadline for every write still to come: the session's, history's,
+    // then downloads.json's (a read the window never got is joined first, then its last save).
     const kite::Deadline quitDeadline = kite::DeadlineAfter(kQuitFlush);
     const std::string saveError = writer.Flush(quitDeadline);
     const std::string historyError = history.Flush(quitDeadline);
+    std::string downloadsError;
+    if (downloadsWriter) {
+        controller->FinishDownloads(quitDeadline);
+        downloadsError = downloadsWriter->Flush(kite::BrowserWindowController::Left(quitDeadline));
+    }
     // Still writing after that: end here, before Chromium's shutdown or a dialog, while the
     // stuck write may yet rename (no other Kite can have the profile until this one is gone).
-    if (writer.Writing() || history.Writing()) endStuck();
+    if (writer.Writing() || history.Writing() || (downloadsWriter && downloadsWriter->Writing())) endStuck();
     if (!historyError.empty()) OutputDebugStringW((L"Kite: " + Widen(historyError) + L"\n").c_str());
+    if (!downloadsError.empty()) {
+        OutputDebugStringW((L"Kite: " + Widen(downloadsError) + L"\n").c_str());
+        if (quiet) WriteUtf8(STD_ERROR_HANDLE, L"Kite: couldn't save the downloads: " + Widen(downloadsError) + L"\n");
+    }
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
     if (frameLogOption.value) {
         if (problem = controller->SaveFrameLog(*frameLogOption.value); !problem.empty()) {
