@@ -76,8 +76,10 @@ struct FindTestHookSourceTests {
     private static let mac = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().appendingPathComponent("Sources/KiteMac")
 
+    /// With LF line ends: a Windows checkout (Windows CI runs these too) has CRLF.
     private func source(_ path: String) throws -> String {
         try String(contentsOf: Self.mac.appendingPathComponent(path), encoding: .utf8)
+            .replacingOccurrences(of: "\r\n", with: "\n")
     }
 
     /// From `signature` to the first line closing a member at four spaces' indent.
