@@ -30,7 +30,13 @@
 #                                                   "1": a menu is logged, nothing in it runs); the find bar's:
 #            {"KITE_TEST_FIND": "domain"}           the bar open searching for this ([A-Za-z0-9 ._-]{1,40}, as text), or
 #            {"KITE_TEST_FIND_OPEN": "1"}           the bar open and empty; one of the two, on a base with FIND_FLOOR,
-#                                                   and the capture waits for Kite's "KITE_TEST_FIND: ready" line
+#                                                   and the capture waits for Kite's "KITE_TEST_FIND: ready" line;
+#                                                   the sidebar's (SIDEBAR_FLOOR, waits for "KITE_TEST_SIDEBAR: ready"):
+#            {"KITE_TEST_ICON_PICKER": "Work"}      the icon picker open for the space with this name (text rule), or
+#            {"KITE_TEST_NEW_SPACE": "1",           Create a Space, optionally with
+#             "KITE_TEST_NEW_SPACE_NAME": "Notes",  its name field holding this (text rule) and
+#             "KITE_TEST_NEW_SPACE_THEME": "4"}     preset 1-7 picked, the theme editor open; no other hook and no
+#                                                   input steps beside these
 #     "profile_files": {"test-name": "text"},       test-* files in the profile (never test-context-menu-pick),
 #                                                   and history.json (checked like a session, 1 MB at most)
 #     "steps": [{"ui": "input", "args": {"from": [86,795], "to": [150,795], "steps": 10, "hold": 10}},
@@ -75,6 +81,14 @@
 #   (test-safe only, the build opens the bar with ⌘F's own showFind and sets the query through the field's
 #   stringValue and search, without key events). A state fails, uncaptured, if Kite doesn't write
 #   "KITE_TEST_FIND: ready" within FIND_READY_SECONDS.
+# - Sidebar: KITE_TEST_ICON_PICKER (a space's name, under the text rule), or KITE_TEST_NEW_SPACE exactly 1 with
+#   optionally KITE_TEST_NEW_SPACE_NAME (the text rule) and KITE_TEST_NEW_SPACE_THEME (one of 1-7); the picker never
+#   beside the page's hooks, NAME and THEME never without NEW_SPACE, no other KITE_TEST_* hook beside them, no input
+#   steps (no click, drag, key or text) in such a state, and only on a base that has SIDEBAR_FLOOR (test-safe only, the
+#   build opens them through the store paths a click takes and the popovers from their own views, without events). A
+#   state fails, uncaptured, if Kite doesn't write "KITE_TEST_SIDEBAR: ready" within SIDEBAR_READY_SECONDS, if that
+#   line doesn't match SIDEBAR_READY_OK (Kite isn't the active app; the popover, if any, is the main window's child),
+#   or if Kite writes "KITE_TEST_SIDEBAR: changed" (the state went, or Kite became active) by just after the capture.
 # - Every test Kite is quit; the build's bundles are unregistered from Launch Services and deleted (never through a
 #   symlink, never outside the checkout).
 set -euo pipefail
@@ -124,6 +138,27 @@ EXPECT_FLOOR=02014036530de2327bbbb55f7dc345fc6063c4ed
 # latest (FindTestHook.pageLoadTimeout: a find result, or the fallback when the page never loads), and
 # FindTestHookTests checks that this stays at least 5 s above that.
 FIND_READY_SECONDS=30
+
+# The oldest Kite the sidebar's hooks (KITE_TEST_ICON_PICKER, KITE_TEST_NEW_SPACE, KITE_TEST_NEW_SPACE_NAME,
+# KITE_TEST_NEW_SPACE_THEME) may run on: ci/test-hooks-icon-picker-create-space (#412). There, on a test-safe run only,
+# a second after the main window is up, Kite opens Change Space Icon…'s picker for the named space through
+# BrowserStore.requestIconPicker (the space menu's path), or Create a Space through beginNewSpace (+ › New Space's),
+# sets its name field through the field's binding (no key events, no input method), picks the preset for the draft as
+# the theme editor's swatch does and opens the theme editor from Choose a Theme's own row view. Nothing is pressed,
+# activated or fronted. It writes "KITE_TEST_SIDEBAR: ready: …" once the popover shows (or the page is up), and
+# `kite ui capture`'s in-process render draws the open popover over the window. Older Kites ignore the hooks, so the
+# capture would show neither. If that branch lands by squash or rebase, set this to the commit it landed as on main.
+SIDEBAR_FLOOR=7ad37b80584e50f8279dbca429d42e6bcebb460f
+# How long a state waits, after Kite's socket answers, for that ready line (or its "failed" line). Kite writes one by
+# 11 s after its window is up (SidebarTestHook.readyTimeout after a 1 s delay), and SidebarTestHookTests checks that
+# this stays at least 5 s above that.
+SIDEBAR_READY_SECONDS=20
+# What Kite's ready line must start with (an ERE, for bash's =~): Kite isn't the active app, and the hook's popover, if
+# it has one, is a child window of the main window at normal level, 0 (SidebarTestHook.Shown, whose facts come before
+# any name). A higher level could put the popover over Gabe's windows: such a state fails, and needs a test-safe level
+# fix in Kite, not a looser check. A key popover window in an inactive app can't take the keyboard from another app.
+# SidebarTestHookTests matches it against the lines Kite writes.
+SIDEBAR_READY_OK='^KITE_TEST_SIDEBAR: ready: app active no; (no popover|popover key (yes|no), level 0, parent the main window); '
 
 # Views a click, right-click (through showSidebarMenu's KITE_TEST_CONTEXT_MENU hook) or drag may start on. Each was
 # read in the Mac source: no hookless NSMenu, no window drag. Window drag: the browser window is movable by its
@@ -276,9 +311,10 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 # --- Plan: validate the request and lay each state out as files for the loop below. ---
-python3 -I - "$REQUEST" "$WORK/plan" "$ROOT" "$SAFE_TARGETS" "$TEXT_FLOOR" "$FIND_FLOOR" "$HIT_FLOOR" "$EXPECT_FLOOR" <<'PY'
+python3 -I - "$REQUEST" "$WORK/plan" "$ROOT" "$SAFE_TARGETS" "$TEXT_FLOOR" "$FIND_FLOOR" "$HIT_FLOOR" "$EXPECT_FLOOR" \
+    "$SIDEBAR_FLOOR" <<'PY'
 import copy, ipaddress, json, os, re, subprocess, sys, urllib.parse, uuid
-request_path, plan, root, safe_targets, text_floor, find_floor, hit_floor, expect_floor = sys.argv[1:9]
+request_path, plan, root, safe_targets, text_floor, find_floor, hit_floor, expect_floor, sidebar_floor = sys.argv[1:10]
 def fail(message):
     sys.exit(f"request.json refused: {message}")
 try:
@@ -309,9 +345,17 @@ HOOKS = {
     "KITE_TEST_OPEN_URL": "url",               # opens a link as another app would
     "KITE_TEST_FIND": "findtext",              # the find bar open with this query, which only searches the page
     "KITE_TEST_FIND_OPEN": "flag",             # the find bar open and empty
+    "KITE_TEST_ICON_PICKER": "findtext",       # Change Space Icon…'s picker open for the space with this exact name
+    "KITE_TEST_NEW_SPACE": "flag",             # Create a Space open for a new draft space
+    "KITE_TEST_NEW_SPACE_NAME": "findtext",    # its name field's value (set, not typed)
+    "KITE_TEST_NEW_SPACE_THEME": ("1", "2", "3", "4", "5", "6", "7"),   # this preset picked, the theme editor open
 }
 # The find bar's hooks: a base without FIND_FLOOR ignores them (no bar would show), so they're refused there.
 FIND_HOOKS = {"KITE_TEST_FIND", "KITE_TEST_FIND_OPEN"}
+# The sidebar's hooks: a base without SIDEBAR_FLOOR ignores them (no popover or page would show), so they're refused
+# there. NEW_SPACE_VALUES only go with KITE_TEST_NEW_SPACE (Kite turns them all off otherwise).
+SIDEBAR_HOOKS = {"KITE_TEST_ICON_PICKER", "KITE_TEST_NEW_SPACE", "KITE_TEST_NEW_SPACE_NAME", "KITE_TEST_NEW_SPACE_THEME"}
+NEW_SPACE_VALUES = {"KITE_TEST_NEW_SPACE_NAME", "KITE_TEST_NEW_SPACE_THEME"}
 # Set by this script for every launch, never by a request.
 OWNED = {"KITE_TEST_BLOCK_VIEWS_WINDOWS", "KITE_TEST_DOWNLOADS_PATH", "KITE_TEST_APPS_DIR", "KITE_TEST_DEFAULTS_PROBE",
          "KITE_TEST_PASTEBOARD"}   # PASTEBOARD: a pasteboard of the profile's own, never the clipboard
@@ -547,6 +591,12 @@ def has_find_fix():
     if not _find_fix:
         _find_fix.append(git("merge-base", "--is-ancestor", find_floor, "HEAD", lazy=False).returncode == 0)
     return _find_fix[0]
+_sidebar_fix = []
+def has_sidebar_fix():
+    # Checked once, on the checkout's HEAD; a SIDEBAR_FLOOR missing from the clone counts as not there.
+    if not _sidebar_fix:
+        _sidebar_fix.append(git("merge-base", "--is-ancestor", sidebar_floor, "HEAD", lazy=False).returncode == 0)
+    return _sidebar_fix[0]
 def check_step(action, args, menu_refused, where, previous, row_menu):
     """Returns what must be true when the step runs: points on SAFE_TARGETS views, or (text) the command bar open.
     menu_refused is None when the state's env and profile make a context menu only log itself, else what's missing.
@@ -686,10 +736,22 @@ for i, state in enumerate(request["states"]):
         if key in FIND_HOOKS and not has_find_fix():
             fail(f"{where}: {key} needs a base with fix/test-find-hooks ({find_floor[:7]}), which this base doesn't "
                  "contain: without it Kite ignores the hook")
+        if key in SIDEBAR_HOOKS and not has_sidebar_fix():
+            fail(f"{where}: {key} needs a base with ci/test-hooks-icon-picker-create-space ({sidebar_floor[:7]}), "
+                 "which this base doesn't contain: without it Kite ignores the hook")
         env_lines.append(f"{key}={value}")
     if FIND_HOOKS <= set(env):
         fail(f"{where}: KITE_TEST_FIND and KITE_TEST_FIND_OPEN are one or the other, not both")
     find_hook = bool(FIND_HOOKS & set(env))
+    sidebar_hook = bool(SIDEBAR_HOOKS & set(env))
+    if "KITE_TEST_ICON_PICKER" in env and (SIDEBAR_HOOKS - {"KITE_TEST_ICON_PICKER"}) & set(env):
+        fail(f"{where}: KITE_TEST_ICON_PICKER and the KITE_TEST_NEW_SPACE hooks are one or the other, not both")
+    if NEW_SPACE_VALUES & set(env) and "KITE_TEST_NEW_SPACE" not in env:
+        fail(f"{where}: KITE_TEST_NEW_SPACE_NAME and _THEME only go with KITE_TEST_NEW_SPACE set to 1")
+    if sidebar_hook and set(env) - SIDEBAR_HOOKS:
+        fail(f"{where}: a sidebar hook goes alone: no {', '.join(sorted(set(env) - SIDEBAR_HOOKS))} beside it")
+    if sidebar_hook and find_hook:
+        fail(f"{where}: a sidebar hook and a find-bar hook are one or the other, not both")
     files = dict(state.get("profile_files") or {}) if isinstance(state.get("profile_files") or {}, dict) else None
     if files is None:
         fail(f"{where}: profile_files is an object")
@@ -742,6 +804,8 @@ for i, state in enumerate(request["states"]):
             previous = ("wait", {})
             continue
         action, args = step.get("ui"), step.get("args") or {}
+        if sidebar_hook and action == "input":
+            fail(f"{where}: a state with a sidebar hook takes no input steps (the hook's state is what's captured)")
         if action not in ("input", "tree", "pointer", "windows", "menu", "key_log", "trace"):
             fail(f"{where}: steps[{j}] is {{\"ui\": ACTION, \"args\": {{…}}}} (not capture) or {{\"wait\": s}}")
         if not isinstance(args, dict) or "action" in args or "save" in args:
@@ -791,7 +855,7 @@ for i, state in enumerate(request["states"]):
     }, ensure_ascii=False))
     write("vars", f"NAME={name}\nWIDTH={width}\nHEIGHT={height}\nSETTLE={settle}\nHOLD={hold or 0}\n"
                   f"CAPTURE={1 if bool(state.get('capture', True)) else 0}\nSKIP={1 if state.get('skip') else 0}\n"
-                  f"FIND={1 if find_hook else 0}\n")
+                  f"FIND={1 if find_hook else 0}\nSIDEBAR={1 if sidebar_hook else 0}\n")
     index.append(folder)
 with open(os.path.join(plan, "index"), "w") as f:
     f.write("".join(folder + "\n" for folder in index))
@@ -1019,6 +1083,30 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
             stop_kite; unset KITE_SUPPORT_PATH; failed=1; continue
         fi
     fi
+    # A sidebar hook opens the icon picker or Create a Space a second after the window is up and writes
+    # "KITE_TEST_SIDEBAR: ready: …" once it shows, or "failed: …" when it didn't: no steps and no capture until then.
+    if [[ "$SIDEBAR" == 1 ]]; then
+        ready=0
+        for _ in $(seq $((SIDEBAR_READY_SECONDS * 5))); do
+            if grep -q '^KITE_TEST_SIDEBAR: ready' "$PROFILE/kite.log" 2>/dev/null; then ready=1; break; fi
+            grep -qE '^KITE_TEST_SIDEBAR: (failed|refused)' "$PROFILE/kite.log" 2>/dev/null && break
+            kill -0 "$KITE_PID" 2>/dev/null || break
+            sleep 0.2
+        done
+        ready_line="$(grep -a -m1 '^KITE_TEST_SIDEBAR: ready' "$PROFILE/kite.log" 2>/dev/null || true)"
+        if [[ "$ready" != 1 ]]; then
+            echo "failed: no 'KITE_TEST_SIDEBAR: ready' line from Kite in $SIDEBAR_READY_SECONDS s (see test-lines)" >"$folder/status"
+        elif [[ ! "$ready_line" =~ $SIDEBAR_READY_OK ]]; then
+            # Kite was the active app, or the popover isn't the main window's child: nothing is captured.
+            echo "failed: Kite's ready line isn't a background run's: ${ready_line:0:300}" >"$folder/status"
+            ready=0
+        fi
+        if [[ "$ready" != 1 ]]; then
+            grep -E '^KITE_TEST_[A-Z_]+:' "$PROFILE/kite.log" >"$folder/test-lines" 2>/dev/null || true
+            cp "$PROFILE/kite.log" "$LOGS/$NAME.kite.log" 2>/dev/null || true
+            stop_kite; unset KITE_SUPPORT_PATH; failed=1; continue
+        fi
+    fi
 
     step_status=0
     refused=""
@@ -1129,6 +1217,16 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
             rm -f "$OUT/$NAME.png"; failed=1
         fi
         perl -MTime::HiRes=time -e 'printf "%.1f", time - shift' "$held_from" >"$folder/elapsed"
+        # Kite looks every 0.2 s, after its ready line, for the state going (a transient popover closing, the page
+        # ending) or Kite becoming active, and writes "changed": then the capture may not show the state, so it's dropped.
+        if [[ "$SIDEBAR" == 1 && -f "$OUT/$NAME.png" ]]; then
+            sleep 0.5
+            changed="$(grep -a -m1 '^KITE_TEST_SIDEBAR: changed' "$PROFILE/kite.log" 2>/dev/null || true)"
+            if [[ -n "$changed" ]]; then
+                echo "failed: the hook's state didn't hold through the capture: ${changed:0:300}" >"$folder/status"
+                rm -f "$OUT/$NAME.png"; failed=1
+            fi
+        fi
         tmo 60 "$CLI" ui tree "$tree_args" >"$folder/tree-after.txt" 2>&1 || true
         if [[ -f "$OUT/$NAME.png" ]]; then
             sips -g pixelWidth -g pixelHeight "$OUT/$NAME.png" 2>/dev/null \

@@ -34,6 +34,20 @@ enum WindowPresenter {
         apply(decide(for: window, key: false, anchor: anchor), to: window, anchor: anchor)
     }
 
+    /// NSPopover's show. AppKit puts the popover in a window of its own, a child of `view`'s window (so on a
+    /// test-safe run it's behind the user's windows with its parent), and showing it doesn't activate Kite or take the
+    /// keyboard from another app. The one route for popovers, so WindowPresenterGuard can keep count.
+    static func show(_ popover: NSPopover, relativeTo rect: NSRect, of view: NSView, preferredEdge edge: NSRectEdge) {
+        popover.show(relativeTo: rect, of: view, preferredEdge: edge)
+    }
+
+    /// The Share menu (NSSharingServicePicker): a menu of other apps' services, each of which can open its own
+    /// window. A test-safe run logs it and shows nothing, as it does a modal.
+    static func showSharingPicker(items: [Any], relativeTo rect: NSRect, of view: NSView, preferredEdge edge: NSRectEdge) {
+        guard !testSafe else { return logSkipped("sharing picker: \(items.count) item\(items.count == 1 ? "" : "s")") }
+        NSSharingServicePicker(items: items).show(relativeTo: rect, of: view, preferredEdge: edge)
+    }
+
     /// makeKey on a child panel that's already ordered with its parent (Little Kite's Open In menu): a test-safe run
     /// only makes it key, which can't take the keyboard from another app while Kite isn't active.
     static func makeKey(childPanel panel: NSWindow) {

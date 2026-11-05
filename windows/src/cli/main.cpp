@@ -23,8 +23,12 @@
 //   kitecore [--profile DIR] menu tab|favorite TAB_ID|folder FOLDER [--pick TITLE...]
 //   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
 //   kitecore [--profile DIR] space swipe DX [SECONDS]
-//   kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...
+//   kitecore [--profile DIR] space menu ID [--creating DRAFT]|rename ID NAME...|icon ID ICON|delete ID|folder ID
+//   kitecore [--profile DIR] space new [--about TEXT] [--theme N] NAME...
+//   kitecore [--profile DIR] space create [--about TEXT] [--theme N] [--away] [--cancel|--delete-draft] [NAME...]
+//   kitecore [--profile DIR] space plus-menu|create-page [HEIGHT] [--hit X,Y] [--swatch X,Y]
 //   kitecore [--profile DIR] space move ID PLACE|drag ID X [Y]
+//   kitecore [--profile DIR] space icon-picker ID [--tab emoji|icon] [--category N] [--query TEXT] [--scroll PT] [--hit X,Y] [--place L,T,R,B,SL,ST,SR,SB] [--pick N]
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
 //   kitecore [--profile DIR] backups
 //   kitecore [--profile DIR] downloads [list]
@@ -57,6 +61,22 @@
 // `click` in the bar's 50pt along the bottom selects the space whose cell it hits; on a favorite's
 // pane, it selects that favorite (in the space you're in); on the empty state's close button, it
 // dismisses it (the one-shot flag, written to the profile).
+// On the bar's + button, `click` prints its menu (and runs nothing: the window shows it).
+// `--creating DRAFT` (sidebar, click, space menu) says Create a Space is open making space DRAFT,
+// as the window would have it (kitecore keeps no page between runs): the + button is hidden and
+// the draft's menu can't change its icon (SpaceMenu with the creation).
+// `space new` is + › New Space with Create a Space's fields filled in and Create Space pressed:
+// the space right after the selected one, selected, with its theme (or preset N, from 1, its
+// intensity kept) and profile, and what it's for. `space create` runs the page step by step and
+// prints each: the draft space it opens and whether its page shows, the theme picked, with
+// --away the space it came from selected again (the page hidden, the creation kept), then Create
+// Space (or Cancel, or --delete-draft, the draft deleted by another path and the creation over, or
+// a blank name, which leaves the draft as the window would while the page is open; the next load
+// drops it, as the Mac's does). `space plus-menu` prints the + menu as the profile's shortcuts
+// show it, `space create-page` the page's layout and words for a 240pt sidebar HEIGHT tall
+// (default 820), the bar while it's open and Choose a Theme's swatches; --hit X,Y says what a
+// press there lands on (sidebar points; the pill and Cancel at their measured sizes estimated) and
+// --swatch X,Y which swatch a press in the popover's body takes.
 // `collapse` is View → Collapse / Expand Pinned Tabs for a space. `click … --double` is the
 // second press of a double-click there (a tab's row renames, in the window). `click … --button middle`
 // is a middle click (pressed and let go at the point): on a tab's row it closes the tab as its close
@@ -100,6 +120,15 @@
 // presses its cell in the 240pt bar, drags to X (and Y, default the bar's middle) in bar points
 // and prints the strip there (the open slot, each cell's left, the ghost's), then lets go,
 // prints the slot it lands in and moves it there.
+// `space icon-picker` is Change Space Icon…'s popover for space ID as it opens (on its icon's
+// tab), then with a tab chosen, a category's button pressed (N from 0), TEXT searched and the
+// emoji grid scrolled PT points, in that order: it prints the tabs, the categories, the grid
+// (columns, rows, the rows the scroll view shows, every cell's icon, and the frames of the cells
+// in view), the bin's glyph and the popover's height. --hit says what the content's point X,Y
+// is over (later cells win where frames overlap); --place puts the popover under an anchor
+// L,T,R,B on a screen SL,ST,SR,SB (points) and prints its frame and arrow.
+// --pick N clicks cell N (from 0): the space gets that icon (saved), and the picture its old
+// icon showed, if nothing shows it now, is named as the file the window deletes.
 // `backups` lists the profile's session backups (Backups/session.<stamp>[.kind].json), newest
 // first as Restore Data orders them, with what each holds; it works when session.json doesn't
 // read. `save-schedule` replays changes (soon@0 pageEvent@0.5 ...: a sidebar change or a page's
@@ -162,6 +191,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -191,7 +221,9 @@
 #include "core/SidebarContextMenu.h"
 #include "core/SidebarTopRow.h"
 #include "core/SpaceBar.h"
+#include "core/SpaceCreation.h"
 #include "core/SpaceEditing.h"
+#include "core/SpaceIconPicker.h"
 #include "core/SpaceSwipeGesture.h"
 #include "core/StoreFile.h"
 #include "core/SupportDirectory.h"
@@ -237,8 +269,13 @@ int Usage() {
         "       kitecore [--profile DIR] evict MAX [--shown TAB_ID] [--popup POPUP_ID=OPENER_ID]... TAB_ID=LAST_SHOWN...\n"
         "       kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]\n"
         "       kitecore [--profile DIR] space swipe DX [SECONDS]\n"
-        "       kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...\n"
+        "       kitecore [--profile DIR] space menu ID [--creating DRAFT]|rename ID NAME...|icon ID ICON|delete ID|folder ID\n"
+        "       kitecore [--profile DIR] space new [--about TEXT] [--theme N] NAME...\n"
+        "       kitecore [--profile DIR] space create [--about TEXT] [--theme N] [--away] [--cancel|--delete-draft] [NAME...]\n"
+        "       kitecore [--profile DIR] space plus-menu|create-page [HEIGHT] [--hit X,Y] [--swatch X,Y]\n"
         "       kitecore [--profile DIR] space move ID PLACE|drag ID X [Y]\n"
+        "       kitecore [--profile DIR] space icon-picker ID [--tab emoji|icon] [--category N] [--query TEXT] [--scroll PT] [--hit X,Y]\n"
+        "                [--place L,T,R,B,SL,ST,SR,SB] [--pick N]\n"
         "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n"
         "       kitecore [--profile DIR] backups\n"
         "       kitecore [--profile DIR] downloads [list]\n"
@@ -255,6 +292,34 @@ int Usage() {
         "       kitecore chromium-switches [--existing-enable LIST] [--existing-disable LIST] [--NAME[=VALUE]...]\n",
         stderr);
     return kUsage;
+}
+
+// The profile's keybindings.json as Kite reads it at launch (none in the profile: the defaults);
+// none for a file that doesn't read.
+std::optional<KeyBindings> ReadKeyBindings(const std::filesystem::path& profile) {
+    std::ifstream in(profile / "keybindings.json", std::ios::binary);
+    if (!in) return KeyBindings{};
+    const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    return KeyBindings::FromText(text);
+}
+
+json::Value NewItemMenuJson(const std::vector<NewItemMenuItem>& menu) {
+    json::Array items;
+    for (const NewItemMenuItem& item : menu) {
+        if (item.command == NewItemMenuItem::Command::Separator) {
+            items.emplace_back(json::Object{{"separator", true}});
+            continue;
+        }
+        json::Object o{{"title", item.title}, {"enabled", item.enabled}};
+        if (!item.shortcut.empty()) o.emplace("shortcut", item.shortcut);
+        items.emplace_back(std::move(o));
+    }
+    return json::Object{{"items", json::Value(std::move(items))}, {"line", NewItemMenuLine(menu)}};
+}
+
+json::Value Frame(const BarRect& r) {
+    return json::Object{{"left", static_cast<double>(r.left)}, {"top", static_cast<double>(r.top)},
+                        {"width", static_cast<double>(r.Width())}, {"height", static_cast<double>(r.Height())}};
 }
 
 std::string Join(const std::vector<std::string>& words, size_t from) {
@@ -948,6 +1013,9 @@ int main(int argc, char** argv) {
     // The profile's one-shot flags (the favorites' empty state, dismissed or not).
     OneShotFlags flags = OneShotFlags::Load(std::get<std::filesystem::path>(resolved));
     state = existed ? std::move(std::get<BrowserState>(loaded)) : BrowserState::MakeDefault();
+    // As Kite.exe loads it: a Create a Space page left open (a nameless, empty space) goes
+    // (dropUnnamedEmptySpaces), saved with the command's change when it makes one.
+    DropUnnamedEmptySpaces(state);
 
     // The page the selected tab shows, as Chromium would report it (kitecore has no pages): what the
     // top row shows (sidebar, click). And the sidebar hidden (View › Hide Sidebar, which the session
@@ -983,6 +1051,20 @@ int main(int argc, char** argv) {
             }
             args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
             --i;
+        }
+    }
+
+    // Create a Space open, as the window would have it (--creating DRAFT): what the sidebar's and
+    // the space's menus show for it.
+    std::optional<SpaceCreation> creating;
+    if (args[0] == "sidebar" || args[0] == "click" || args[0] == "space") {
+        for (size_t i = 1; i + 1 < args.size(); ++i) {
+            if (args[i] != "--creating") continue;
+            const std::string draft = Id(args[i + 1]);
+            if (!state.SpaceIndex(draft)) return kNotFound;
+            creating = SpaceCreation{draft, state.selectedSpaceID, false};
+            args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i + 2));
+            break;
         }
     }
 
@@ -1364,7 +1446,7 @@ int main(int argc, char** argv) {
                 const std::vector<SpaceCell> cells = SpaceCells(state);
                 const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
                 if (const auto press = SpaceBarPressAt(layout, cells, x, y - SpaceBarTop(values[2]))) {
-                    put("space", press->spaceID, SpaceMenuLine(SpaceMenu(state, press->spaceID)));
+                    put("space", press->spaceID, SpaceMenuLine(SpaceMenu(state, press->spaceID, creating)));
                 }
             } else if (x >= 0 && x < 240 && InFavorites(tray, 240, x, y)) {
                 if (const auto pane = FavoritePressAt(tray, x, y); pane && pane->target == FavoritePress::Target::Pane) {
@@ -1373,7 +1455,7 @@ int main(int argc, char** argv) {
             } else if (x >= 0 && x < 240 && !TopRowItemAt(topRow, x, y)) {
                 if (const auto target = SidebarMenuTargetAt(rows, 240, values[2], values[3], x, y, listTop)) {
                     switch (target->kind) {
-                    case SidebarMenuTarget::Kind::Space: put("space", target->id, SpaceMenuLine(SpaceMenu(state, target->id))); break;
+                    case SidebarMenuTarget::Kind::Space: put("space", target->id, SpaceMenuLine(SpaceMenu(state, target->id, creating))); break;
                     case SidebarMenuTarget::Kind::Tab: put("tab", target->id, SidebarMenuLine(TabMenu(state, target->id))); break;
                     case SidebarMenuTarget::Kind::Folder: put("folder", target->id, SidebarMenuLine(FolderMenu(state, target->id))); break;
                     case SidebarMenuTarget::Kind::Favorite:
@@ -1414,6 +1496,22 @@ int main(int argc, char** argv) {
             const std::vector<SpaceCell> cells = SpaceCells(state);
             const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
             const float x = values[0], y = values[1] - SpaceBarTop(values[2]);
+            // Create a Space hides the + button: a click there takes nothing.
+            if (creating && layout.plus.Contains(x, y)) {
+                std::puts(json::Write(json::Object{{"target", std::string("none")}}).c_str());
+                return kOk;
+            }
+            if (layout.plus.Contains(x, y)) {
+                // The + button: its menu, which the window shows (nothing runs here).
+                const auto bindings = ReadKeyBindings(std::get<std::filesystem::path>(resolved));
+                if (!bindings) {
+                    std::fputs("kitecore: unreadable keybindings.json\n", stderr);
+                    return kLoadFailed;
+                }
+                json::Object out{{"target", std::string("plus")}, {"menu", NewItemMenuJson(NewItemMenu(ShortcutTable(*bindings)))}};
+                std::puts(json::Write(json::Value(std::move(out))).c_str());
+                return kOk;
+            }
             const auto press = SpaceBarPressAt(layout, cells, x, y);
             json::Object out{{"target", std::string(press ? "spaceCell" : "none")}};
             if (press) {
@@ -1451,9 +1549,12 @@ int main(int argc, char** argv) {
             std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else {
             const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], clicks, false, listTop);
-            static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron", "closeButton", "resetButton"};
+            // In the enums' order, one name each (the last enumerator's index plus one).
+            static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron", "closeButton", "resetButton", "headerIcon"};
             static constexpr const char* kActions[] = {"none",   "editAddress", "togglePinnedSection", "selectTab", "setFolderExpanded",
-                                                       "newTab", "closeTab",    "resetTab"};
+                                                       "newTab", "closeTab",    "resetTab",            "changeIcon"};
+            static_assert(std::size(kTargets) == static_cast<size_t>(SidebarHit::Target::HeaderIcon) + 1);
+            static_assert(std::size(kActions) == static_cast<size_t>(SidebarTap::Action::ChangeIcon) + 1);
             json::Object out{{"target", std::string(kTargets[static_cast<int>(press ? press->target : SidebarHit::Target::None)])}};
             if (press) {
                 if (!press->id.empty()) out.emplace("id", press->id);
@@ -1736,7 +1837,7 @@ int main(int argc, char** argv) {
             if (!state.SpaceIndex(id)) return kNotFound;
             state.SelectSpace(id);
         } else if (action == "menu" && args.size() == 3) {
-            const std::vector<SpaceMenuItem> menu = SpaceMenu(state, Id(args[2]));
+            const std::vector<SpaceMenuItem> menu = SpaceMenu(state, Id(args[2]), creating);
             if (menu.empty()) return kNotFound;
             json::Array items;
             for (const SpaceMenuItem& item : menu) {
@@ -1753,6 +1854,138 @@ int main(int argc, char** argv) {
             if (!state.SpaceIndex(id)) return kNotFound;
             state.RenameSpace(id, Join(args, 3));
             std::puts(state.spaces[*state.SpaceIndex(id)].name.c_str());
+        } else if (action == "icon-picker" && args.size() >= 3) {
+            auto picker = OpenIconPicker(state, Id(args[2]));
+            if (!picker) return kNotFound;
+            std::optional<size_t> pickIndex;
+            auto number = [](const std::string& text, auto& out) {
+                auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), out);
+                return error == std::errc() && end == text.data() + text.size();
+            };
+            std::optional<IconPickerTab> tab;
+            std::optional<size_t> category;
+            std::optional<std::string> query;
+            std::optional<float> scroll;
+            std::vector<float> hitAt, placeAt;
+            // Comma-separated numbers, exactly `count` of them.
+            auto numbers = [&](const std::string& text, size_t count, std::vector<float>& out) {
+                out.clear();
+                size_t start = 0;
+                while (true) {
+                    const size_t comma = text.find(',', start);
+                    float v = 0;
+                    if (!number(text.substr(start, comma == std::string::npos ? std::string::npos : comma - start), v) || !std::isfinite(v)) return false;
+                    out.push_back(v);
+                    if (comma == std::string::npos) break;
+                    start = comma + 1;
+                }
+                return out.size() == count;
+            };
+            for (size_t i = 3; i < args.size(); ++i) {
+                if (i + 1 >= args.size()) return Usage();
+                const std::string& flag = args[i];
+                const std::string& value = args[++i];
+                if (flag == "--tab" && (value == "emoji" || value == "icon")) {
+                    tab = value == "emoji" ? IconPickerTab::Emoji : IconPickerTab::Icon;
+                } else if (flag == "--category") {
+                    size_t n = 0;
+                    if (!number(value, n) || n >= EmojiCategories().size()) return Usage();
+                    category = n;
+                } else if (flag == "--query") {
+                    query = value;
+                } else if (flag == "--scroll") {
+                    float pt = 0;
+                    if (!number(value, pt) || !std::isfinite(pt)) return Usage();
+                    scroll = pt;
+                } else if (flag == "--hit") {
+                    if (!numbers(value, 2, hitAt)) return Usage();
+                } else if (flag == "--place") {
+                    if (!numbers(value, 8, placeAt)) return Usage();
+                } else if (flag == "--pick") {
+                    size_t n = 0;
+                    if (!number(value, n)) return Usage();
+                    pickIndex = n;
+                } else {
+                    return Usage();
+                }
+            }
+            if (tab) SelectIconPickerTab(*picker, *tab);
+            if (category) SelectIconPickerCategory(*picker, *category);
+            if (query) SetIconPickerQuery(*picker, *query);
+            const std::vector<std::string> cells = IconPickerCells(*picker);
+            if (scroll) ScrollIconPicker(*picker, *scroll - picker->scroll, cells.size());
+            const Space& space = state.spaces[*state.SpaceIndex(picker->spaceID)];
+            const IconPickerLayout layout = LayOutIconPicker(picker->tab, !space.icon.empty());
+            json::Array tabs, categories, icons;
+            for (const IconPickerTab t : kIconPickerTabs) {
+                tabs.emplace_back(json::Object{{"title", std::string(IconPickerTabTitle(t))},
+                                               {"enabled", IconPickerTabAvailable(t)},
+                                               {"selected", t == picker->tab}});
+            }
+            if (picker->tab == IconPickerTab::Emoji) {
+                for (size_t i = 0; i < EmojiCategories().size(); ++i) {
+                    const EmojiCategory& c = EmojiCategories()[i];
+                    char glyph[8];
+                    std::snprintf(glyph, sizeof glyph, "%04X", static_cast<unsigned>(c.glyph.fluent));
+                    categories.emplace_back(json::Object{{"name", c.name}, {"symbol", c.symbol}, {"glyph", std::string(glyph)},
+                                                         {"selected", i == picker->category}});
+                }
+            }
+            for (const std::string& icon : cells) icons.emplace_back(icon);
+            const auto [first, end] = IconPickerVisibleRows(layout, cells.size(), picker->scroll);
+            json::Object out{{"space", picker->spaceID},
+                             {"tab", std::string(IconPickerTabTitle(picker->tab))},
+                             {"tabs", json::Value(std::move(tabs))},
+                             {"remove", layout.remove.has_value()},
+                             {"height", static_cast<double>(layout.height)},
+                             {"columns", static_cast<double>(layout.columns)},
+                             {"rows", static_cast<double>(IconPickerRows(cells.size(), layout.columns))},
+                             {"cells", json::Value(std::move(icons))}};
+            if (picker->tab == IconPickerTab::Emoji) {
+                out.emplace("query", picker->query);
+                out.emplace("category", static_cast<double>(picker->category));
+                out.emplace("categories", json::Value(std::move(categories)));
+                out.emplace("scroll", static_cast<double>(picker->scroll));
+                out.emplace("visibleRows", json::Array{json::Value(static_cast<double>(first)), json::Value(static_cast<double>(end))});
+            }
+            {
+                // The frames of the cells in view, in the content's points.
+                json::Array frames;
+                const float shownScroll = picker->tab == IconPickerTab::Emoji ? picker->scroll : 0;
+                const size_t from = first * layout.columns, to = std::min(cells.size(), end * layout.columns);
+                const size_t visibleTo = picker->tab == IconPickerTab::Emoji ? to : cells.size();
+                for (size_t i = picker->tab == IconPickerTab::Emoji ? from : 0; i < visibleTo; ++i) {
+                    const PickerRect f = IconPickerCellFrame(layout, i, shownScroll);
+                    frames.emplace_back(json::Array{json::Value(static_cast<double>(f.left)), json::Value(static_cast<double>(f.top)),
+                                                    json::Value(static_cast<double>(f.right)), json::Value(static_cast<double>(f.bottom))});
+                }
+                out.emplace("frames", json::Value(std::move(frames)));
+                char glyph[8];
+                std::snprintf(glyph, sizeof glyph, "%04X", static_cast<unsigned>(RemoveIconGlyph().fluent));
+                out.emplace("removeGlyph", std::string(glyph));
+            }
+            if (hitAt.size() == 2) {
+                static constexpr const char* kHitTargets[] = {"none", "tab", "remove", "search", "cell", "category"};
+                static_assert(std::size(kHitTargets) == static_cast<size_t>(IconPickerHit::Target::Category) + 1);
+                const IconPickerHit hit = IconPickerHitTest(layout, *picker, cells.size(), hitAt[0], hitAt[1]);
+                out.emplace("hit", json::Object{{"target", std::string(kHitTargets[static_cast<int>(hit.target)])},
+                                                {"index", static_cast<double>(hit.index)}});
+            }
+            if (placeAt.size() == 8) {
+                const IconPickerPlacement p = PlaceIconPicker(PickerRect{placeAt[0], placeAt[1], placeAt[2], placeAt[3]}, layout.width, layout.height,
+                                                              PickerRect{placeAt[4], placeAt[5], placeAt[6], placeAt[7]});
+                out.emplace("placement", json::Object{{"left", static_cast<double>(p.left)}, {"top", static_cast<double>(p.top)},
+                                                      {"width", static_cast<double>(p.width)}, {"height", static_cast<double>(p.height)},
+                                                      {"arrowX", static_cast<double>(p.arrowX)}});
+            }
+            if (!pickIndex) {
+                std::puts(json::Write(json::Value(std::move(out))).c_str());
+                return kOk;
+            }
+            if (*pickIndex >= cells.size()) return kNotFound;
+            const std::optional<IconPick> pick = PickSpaceIcon(state, picker->spaceID, cells[*pickIndex]);
+            out.emplace("picked", json::Object{{"icon", pick->icon}, {"discard", pick->discard ? json::Value(*pick->discard) : json::Value()}});
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else if (action == "icon" && args.size() == 4) {
             const std::string id = Id(args[2]);
             if (!state.SpaceIndex(id)) return kNotFound;
@@ -1775,10 +2008,148 @@ int main(int argc, char** argv) {
             state.DeleteSpace(id);
             out.emplace("selected", state.selectedSpaceID);
             std::puts(json::Write(json::Value(std::move(out))).c_str());
-        } else if (action == "new" && args.size() >= 3) {
-            const auto id = NewSpace(state, Join(args, 2));
-            if (!id) return Usage();
-            std::puts(id->c_str());
+        } else if ((action == "new" || action == "create") && args.size() >= 2) {
+            // Create a Space's fields, then the name: --about TEXT and --theme N (a preset, from 1).
+            std::string about;
+            std::optional<size_t> preset;
+            bool cancel = false, away = false, deleteDraft = false;
+            size_t i = 2;
+            for (; i < args.size(); ++i) {
+                if (args[i] == "--about" && i + 1 < args.size()) {
+                    about = args[++i];
+                } else if (args[i] == "--theme" && i + 1 < args.size()) {
+                    size_t n = 0;
+                    const std::string& text = args[++i];
+                    auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), n);
+                    if (error != std::errc() || end != text.data() + text.size() || n == 0 || n > Theme::Presets().size()) return Usage();
+                    preset = n - 1;
+                } else if (args[i] == "--cancel" && action == "create") {
+                    cancel = true;
+                } else if (args[i] == "--away" && action == "create") {
+                    away = true;
+                } else if (args[i] == "--delete-draft" && action == "create") {
+                    deleteDraft = true;
+                } else {
+                    break;
+                }
+            }
+            const std::string name = Join(args, i);
+            if (action == "new") {
+                if (i >= args.size()) return Usage();
+                const auto id = NewSpace(state, name, about, preset);
+                if (!id) return Usage();
+                std::puts(id->c_str());
+            } else {
+                // The page, step by step, as the window runs it.
+                std::optional<SpaceCreation> creation;
+                const std::string id = BeginNewSpace(state, creation);
+                json::Object out{{"space", id}, {"returnTo", creation->returnTo}, {"after", state.spaces[*state.SpaceIndex(id) - 1].id}};
+                out.emplace("shown", ShowsCreation(state, creation));
+                if (preset) ChooseSpaceTheme(state, creation, id, *preset);
+                out.emplace("themeChosen", creation->themeChosen);
+                out.emplace("canCreate", CanCreateSpace(name));
+                if (away) {
+                    state.SelectSpace(creation->returnTo);
+                    CreationFollowsState(state, creation);
+                    out.emplace("shownAway", ShowsCreation(state, creation));
+                }
+                std::string outcome = "open";  // a blank name: Create Space is disabled
+                if (deleteDraft) {
+                    state.DeleteSpace(id);
+                    CreationFollowsState(state, creation);
+                    outcome = creation ? "open" : "gone";
+                } else if (cancel) {
+                    outcome = CancelNewSpace(state, creation) ? "cancelled" : "refused";
+                } else if (FinishNewSpace(state, creation, name, about)) {
+                    outcome = "created";
+                }
+                out.emplace("outcome", outcome);
+                out.emplace("selected", state.selectedSpaceID);
+                if (const auto index = state.SpaceIndex(id)) {
+                    const Space& space = state.spaces[*index];
+                    out.emplace("name", space.name);
+                    if (const auto said = SpaceAbout(space)) out.emplace("about", *said);
+                    if (const auto matched = PresetOf(space.theme)) out.emplace("preset", static_cast<double>(*matched + 1));
+                    out.emplace("tint", static_cast<double>(space.theme.tint));
+                    out.emplace("profile", state.ProfileName(state.ProfileDirectory(*index)));
+                }
+                std::puts(json::Write(json::Value(std::move(out))).c_str());
+            }
+        } else if (action == "plus-menu" && args.size() == 2) {
+            const auto bindings = ReadKeyBindings(std::get<std::filesystem::path>(resolved));
+            if (!bindings) {
+                std::fputs("kitecore: unreadable keybindings.json\n", stderr);
+                return kLoadFailed;
+            }
+            std::puts(json::Write(NewItemMenuJson(NewItemMenu(ShortcutTable(*bindings)))).c_str());
+            return kOk;
+        } else if (action == "create-page" && args.size() >= 2) {
+            float height = 820;
+            std::optional<std::pair<float, float>> hit, swatchAt;
+            const auto point = [](const std::string& text) -> std::optional<std::pair<float, float>> {
+                const size_t comma = text.find(',');
+                if (comma == std::string::npos) return std::nullopt;
+                float x = 0, y = 0;
+                auto [xEnd, xError] = std::from_chars(text.data(), text.data() + comma, x);
+                auto [yEnd, yError] = std::from_chars(text.data() + comma + 1, text.data() + text.size(), y);
+                if (xError != std::errc() || yError != std::errc() || xEnd != text.data() + comma || yEnd != text.data() + text.size()) {
+                    return std::nullopt;
+                }
+                return std::pair{x, y};
+            };
+            for (size_t i = 2; i < args.size(); ++i) {
+                if ((args[i] == "--hit" || args[i] == "--swatch") && i + 1 < args.size()) {
+                    const auto at = point(args[i + 1]);
+                    if (!at) return Usage();
+                    (args[i] == "--hit" ? hit : swatchAt) = at;
+                    ++i;
+                } else {
+                    auto [end, error] = std::from_chars(args[i].data(), args[i].data() + args[i].size(), height);
+                    if (error != std::errc() || end != args[i].data() + args[i].size() || !(height > 0 && height <= 16384)) return Usage();
+                }
+            }
+            namespace M = space_creation_metrics;
+            const SpaceCreationLayout l = LayOutSpaceCreation(240, height);
+            const auto row = [&](const BarRect& frame, std::string_view title, std::string_view placeholder) {
+                json::Object o{{"frame", Frame(frame)}};
+                if (!title.empty()) o.emplace("title", std::string(title));
+                if (!placeholder.empty()) o.emplace("placeholder", std::string(placeholder));
+                return json::Value(std::move(o));
+            };
+            json::Object fields{{"name", row(l.nameField, "", M::kNamePlaceholder)}, {"about", row(l.aboutField, "", M::kAboutPlaceholder)}};
+            json::Array swatches;
+            const ThemeSwatchesLayout s = LayOutThemeSwatches(Theme::Presets().size());
+            for (size_t i = 0; i < s.swatches.size(); ++i) {
+                swatches.emplace_back(json::Object{{"accent", Hex(Accent(Theme::Presets()[i]))}, {"frame", Frame(s.swatches[i])}});
+            }
+            const SwatchesPlacement placed = PlaceThemeSwatches(l.theme, s);
+            json::Object out{
+                {"page", Frame(l.page)},
+                {"illustration", Frame(l.illustration)},
+                {"title", row(l.title, M::kTitle, "")},
+                {"subtitle", row(l.subtitle, M::kSubtitle, "")},
+                {"fields", json::Value(std::move(fields))},
+                {"rows", json::Array{row(l.name, "", ""), row(l.about, "", ""), row(l.profile, M::kProfileTitle, ""), row(l.theme, M::kThemeTitle, "")}},
+                {"profile", state.ProfileName(state.SelectedProfileDirectory())},
+                {"create", row(l.create, M::kCreateTitle, "")},
+                {"cancel", row(l.cancel, M::kCancelTitle, "")},
+                // While it's open the bar keeps only the spaces.
+                {"bar", json::Object{{"library", false}, {"plus", false}}},
+                {"swatches", json::Object{{"left", static_cast<double>(placed.left)},
+                                          {"top", static_cast<double>(placed.top)},
+                                          {"width", static_cast<double>(s.width)},
+                                          {"height", static_cast<double>(s.height)},
+                                          {"presets", json::Value(std::move(swatches))}}}};
+            if (hit) {
+                const BarRect pill = EstimatedPill(l);
+                out.emplace("hit", std::string(SpaceCreationPartName(SpaceCreationPartAt(l, hit->first, hit->second, kEstimatedCancelWidth, pill))));
+            }
+            if (swatchAt) {
+                const std::optional<size_t> index = ThemeSwatchAt(s, swatchAt->first, swatchAt->second);
+                out.emplace("swatch", index ? json::Value(static_cast<double>(*index + 1)) : json::Value());
+            }
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+            return kOk;
         } else if (action == "move" && args.size() == 4) {
             const std::string id = Id(args[2]);
             size_t place = 0;

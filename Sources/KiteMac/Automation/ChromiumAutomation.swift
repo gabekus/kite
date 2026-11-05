@@ -9,6 +9,8 @@ import KiteCore
 @MainActor
 struct ChromiumAutomation: PageActions {
     let browser: KCBrowser
+    /// The tab's cross-site iframes, for handoff's ring.
+    var frameSessions: FrameSessions?
 
     /// Calls a DevTools method. A tab that was just created has no browser for a
     /// moment, so "not-ready" is retried for a few seconds.
@@ -51,9 +53,14 @@ struct ChromiumAutomation: PageActions {
     }
 
     private func setEventHandler(_ handler: @escaping (String, JSONValue) -> Void) {
-        browser.devToolsEventHandler = { method, params in
+        let deliver = { (method: String, params: [AnyHashable: Any]) in
             let json = (try? JSONSerialization.data(withJSONObject: params)).flatMap { try? JSONValue.decode($0) } ?? .object([:])
             handler(method, json)
+        }
+        browser.devToolsEventHandler = { method, params in deliver(method, params) }
+        // Kite's world in a cross-site frame reports through its binding there (handoff's ring).
+        frameSessions?.onEvent = { _, method, params in
+            if method == "Runtime.bindingCalled" { deliver(method, params) }
         }
     }
 
@@ -63,7 +70,7 @@ struct ChromiumAutomation: PageActions {
     }
 
     func stopEvents(domains: [String]) async {
-        if domains.contains("Network") { browser.devToolsEventHandler = nil }
+        if domains.contains("Network") { browser.devToolsEventHandler = nil; frameSessions?.onEvent = nil }
         for domain in domains { _ = try? await call("\(domain).disable", timeout: 3) }
     }
 
@@ -397,15 +404,28 @@ struct ChromiumAutomation: PageActions {
     /// would hold a second copy of whatever the first one drew).
     private static var makingWorlds: [String: Task<Int, Error>] = [:]
 
-    /// Runs code in an isolated world of the top frame: it shares the page's DOM but none of its scripts, so the
-    /// page can't read or change what runs there. `binding` is callable from that world only (its calls arrive as
-    /// Runtime.bindingCalled events).
-    func runIsolated(_ code: String, world: String, binding: String) async throws -> String {
-        let tree = try await call("Page.getFrameTree")
-        guard let frame = ((tree["frameTree"] as? [String: Any])?["frame"] as? [String: Any])?["id"] as? String else {
-            throw AutomationError(.failed, "The page has no frame yet.")
+    /// Runs code in an isolated world of the top frame (or of `child`): it shares the frame's DOM but none of its
+    /// scripts, so the page can't read or change what runs there. `binding` is callable from that world only (its
+    /// calls arrive as Runtime.bindingCalled events, a cross-site frame's through `frameSessions`).
+    func runIsolated(_ code: String, world: String, binding: String, in child: PageFrame?) async throws -> String {
+        let session = child?.session
+        // A cross-site frame's own session, or the tab's.
+        func call(_ method: String, _ params: [String: Any], timeout: TimeInterval = 15) async throws -> [String: Any] {
+            guard let session else { return try await self.call(method, params, timeout: timeout) }
+            guard let frameSessions else { throw AutomationError(.failed, "That frame is gone.") }
+            return try await frameSessions.call(session, method, params, timeout: min(timeout, 5))
         }
-        let key = "\(frame):\(world)"
+        let frame: String
+        if let child {
+            frame = child.id
+        } else {
+            let tree = try await call("Page.getFrameTree", [:])
+            guard let top = ((tree["frameTree"] as? [String: Any])?["frame"] as? [String: Any])?["id"] as? String else {
+                throw AutomationError(.failed, "The page has no frame yet.")
+            }
+            frame = top
+        }
+        let key = "\(session ?? "tab"):\(frame):\(world)"
         var stale: Int?
         for attempt in 0..<2 {
             let context: Int
@@ -415,8 +435,11 @@ struct ChromiumAutomation: PageActions {
                 context = try await making.value
             } else {
                 let making = Task { () async throws -> Int in
-                    try await self.call("Runtime.addBinding", ["name": binding, "executionContextName": world])
-                    let made = try await self.call("Page.createIsolatedWorld", ["frameId": frame, "worldName": world])
+                    // A cross-site frame's session reports binding calls only with its Runtime domain on (the tab's
+                    // own has it on for the tools' events).
+                    if session != nil { _ = try await call("Runtime.enable", [:]) }
+                    _ = try await call("Runtime.addBinding", ["name": binding, "executionContextName": world])
+                    let made = try await call("Page.createIsolatedWorld", ["frameId": frame, "worldName": world])
                     guard let id = made["executionContextId"] as? Int else { throw AutomationError(.failed, "Chromium made no world.") }
                     return id
                 }
@@ -441,6 +464,30 @@ struct ChromiumAutomation: PageActions {
             return value as? String ?? ""
         }
         throw AutomationError(.failed, "Kite couldn't reach the page.")
+    }
+
+    /// Frames of another origin than the top frame's, which its look can't reach: those in the tab's own process
+    /// (another origin of the same site), and the cross-site ones Kite is attached to. Same-origin frames are left
+    /// out: the top frame's look walks into them itself.
+    func childFrames() async throws -> [PageFrame] {
+        let all = try await frames()
+        let top = all.first(where: \.isMain).flatMap { URL(string: $0.url) }
+        var out: [PageFrame] = []
+        var attached = Set<String>()
+        for frame in (frameSessions?.attached.values).map(Array.init) ?? [] {
+            attached.insert(frame.frame)
+            out.append(PageFrame(session: frame.session, id: frame.frame, url: frame.url?.absoluteString ?? ""))
+        }
+        for frame in all where !frame.isMain && !attached.contains(frame.id) {
+            guard let url = URL(string: frame.url), ["http", "https"].contains(url.scheme ?? ""), !Self.sameOrigin(url, top) else { continue }
+            out.append(PageFrame(session: nil, id: frame.id, url: frame.url))
+        }
+        return out
+    }
+
+    private static func sameOrigin(_ a: URL, _ b: URL?) -> Bool {
+        guard let b else { return false }
+        return a.scheme == b.scheme && a.host?.lowercased() == b.host?.lowercased() && a.port == b.port
     }
 
     /// Puts `attribute="value"` on the element a ref names and returns its visible label and its place in the

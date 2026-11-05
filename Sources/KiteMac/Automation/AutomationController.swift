@@ -65,19 +65,8 @@ final class AutomationController {
     /// Tabs handed to the user to sign in (sign_in), for the banner's Done and Cancel.
     var signIns: [UUID: SignInRequest] = [:]
     /// Steps Claude handed to the user (handoff), newest last, kept a while after they end so Claude can read how
-    /// they went. The sidebar marks their tabs and the card over the page shows them.
+    /// they went. The ring on each step's page shows it, and the sidebar marks their tabs.
     var handoffs: [Handoff] = []
-    /// A step the user brought up with Next or the pill that isn't on the tab in front (a terminal command, or a
-    /// step on a tab that's gone): the card shows it until it ends or another tab comes forward.
-    var focusedHandoffStep: String?
-    /// The tab that was in front when Next brought `focusedHandoffStep` up.
-    var focusedHandoffFront: UUID?
-    /// The card is folded down to its pill.
-    var handoffCardCollapsed = false
-    /// The card's word that the user handed back to Claude (the last step ended, or a step's click opened a tab).
-    var handback: HandoffHandback?
-    /// handoff and handoff_status calls waiting on each handoff, so the card can say whether Claude hears the handback.
-    @ObservationIgnored var handoffWaiters: [String: Int] = [:]
     /// The last step each tab's click ended, and the last tab each tab's page opened, so a click that opens a tab
     /// is told apart from one that doesn't (whichever of the two Kite hears first).
     @ObservationIgnored var handoffClicks: [UUID: (step: String, at: Date)] = [:]
@@ -85,6 +74,8 @@ final class AutomationController {
     @ObservationIgnored var handoffPoller: Task<Void, Never>?
     /// Which step's ring each tab's page shows, so Kite takes it off when the step ends.
     @ObservationIgnored var ringShown: [UUID: String] = [:]
+    /// The frame of another origin that holds each tab's ring, when the step's control is in one (`ringLook`).
+    @ObservationIgnored var ringFrames: [UUID: PageFrame] = [:]
     @ObservationIgnored var handoffCount = 0
     /// Steps a handoff report has told Claude are blocked, so a wait ends early for each only once.
     @ObservationIgnored var reportedBlockedSteps: Set<String> = []
@@ -93,7 +84,7 @@ final class AutomationController {
     @ObservationIgnored var handoffPolling = false
     /// Window and app notifications that call for a look (`watchHandoffEvents`), and the last tabs it saw.
     @ObservationIgnored var handoffObservers: [NSObjectProtocol] = []
-    /// The handoff card's watch on the tools' store, re-armed when they move to another window (`attach`).
+    /// The handoff ring's watch on the tools' store (the front tab, the steps' tabs), re-armed when they move to another window (`attach`).
     @ObservationIgnored var handoffTabsWatch = StoreWatch<[String]>()
     /// The one look after `UserHandoff.offPageDelay` (`scheduleHandoffFollowUp`).
     @ObservationIgnored var handoffFollowUp: Task<Void, Never>?
@@ -209,6 +200,7 @@ final class AutomationController {
         settings = AutomationSettings.load(from: AutomationSettings.fileURL(supportDirectory: supportDirectory))
         handoffs = Handoff.load(from: Handoff.fileURL(supportDirectory: supportDirectory))
         handoffCount = Handoff.lastNumber(in: handoffs)
+        skipUnshowableHandoffSteps()
     }
 
     /// Points the tools at `host`'s window and store.
@@ -217,7 +209,7 @@ final class AutomationController {
         attachedHost = host
         attachedStore = host.store
         guard moved else { return }
-        // The handoff card watched the old store's front tab: watch this one's.
+        // The handoff ring watched the old store's front tab: watch this one's.
         let generation = handoffTabsWatch.rebind()
         if !handoffObservers.isEmpty { watchHandoffTabs(generation: generation) }
         // Pages already live in this window's pool (and its linked ones) get recorded too.

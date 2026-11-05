@@ -13,8 +13,9 @@
 // scrolling move visuals and draw nothing. What a cell shows and what a press does are core's
 // (core/SpaceBar.h). A cell dragged to a new place (BeginDrag) leaves a ghost following the
 // pointer, a visual sharing that cell's surfaces, while the others' visuals slide aside on
-// DirectComposition animations, so a drag draws nothing either. Not yet: the Library and the +
-// menu (the buttons draw, and take no clicks). SidebarView shows the tip and the space's menu.
+// DirectComposition animations, so a drag draws nothing either. The + button's press is
+// SidebarView's, which opens its menu (W9f); not yet the Library (its button draws and takes no
+// clicks). On Create a Space the end buttons go. SidebarView shows the tip and the menus.
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -51,8 +52,10 @@ public:
     void UseCompositor(Compositor* compositor, IDCompositionVisual* parent);
     bool DeviceLost() const { return deviceLost_; }
 
-    // What it shows: the spaces' cells at rest, in the selected space's appearance.
-    void Update(std::vector<SpaceCell> cells, bool dark);
+    // What it shows: the spaces' cells at rest, in the selected space's appearance; `creating`
+    // while Create a Space is open (the end buttons hidden, as Arc leaves only the spaces).
+    void Update(std::vector<SpaceCell> cells, bool dark, bool creating = false);
+    bool Creating() const { return creating_; }
     // The sidebar's width (points) and the window's scale.
     void Layout(float width, UINT dpi);
     // The cells' light follows the pages as they settle from offset `from` to `to` (points), on
@@ -172,6 +175,7 @@ private:
     // State.
     std::vector<SpaceCell> cells_;
     bool dark_ = true;
+    bool creating_ = false;  // Create a Space is open: no Library or + button
     float width_ = 240;
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
     SpaceBarLayout layout_;

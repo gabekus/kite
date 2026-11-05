@@ -53,7 +53,7 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
         guard !presented, let anchor, anchor.view.window != nil, Self.shown === self else { return }
         presented = true
         page.view.alphaValue = 0
-        popover.show(relativeTo: anchor.rect, of: anchor.view, preferredEdge: Self.belowEdge(of: anchor.view))
+        WindowPresenter.show(popover, relativeTo: anchor.rect, of: anchor.view, preferredEdge: Self.belowEdge(of: anchor.view))
         let painted = "new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))"
         page.evaluateJavaScript(painted) { [weak self] _ in self?.page.view.alphaValue = 1 }
         // In case the page never answers.

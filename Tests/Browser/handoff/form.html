@@ -1,0 +1,8 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Sign-in form</title>
+<!-- The frame's form: a fixed layout, so the test can click inside it from the top page's coordinates. -->
+<style>body{font:14px system-ui;margin:0} button{position:absolute;left:20px;top:20px;width:120px;height:30px}</style>
+<button id="signin" onclick="document.title = 'clicked'">Sign in</button>
+<!-- Leaves the page at once: only the binding can tell Kite about this click, before the frame's world is gone. -->
+<button id="next" style="top:70px" onclick="location.href = 'form.html?after=1'">Continue</button>

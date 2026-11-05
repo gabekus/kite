@@ -5,7 +5,9 @@
 # ringed control. The cases are Tests/Browser/handoff/ring.html, run with the ring in the page's main world so
 # the test can read where it settled (in Kite it runs in an isolated world; the code is the same). The last
 # cases go through Kite's own handoff tool, in its isolated world, on Tests/Browser/handoff/settle.html, a page
-# that redraws its controls on timers.
+# that redraws its controls on timers, and on Tests/Browser/handoff/tag.html: the tag's Skip and Done, steps Kite
+# refuses or can't show, and no card in Kite's interface; and on Tests/Browser/handoff/frames.html, a control in a
+# frame of another origin (the same site's, as Apple's sign-in form is, and another site's).
 # Usage: scripts/test-handoff-ring.sh [APP]   (default build/Kite.app; never /Applications/Kite.app)
 # RING_SOURCE=path/to/UserHandoff.swift tests another version of the ring (an older one should fail).
 set -euo pipefail
@@ -20,9 +22,13 @@ P=$(mktemp -d /tmp/k.XXXX)
 export KITE_SUPPORT_PATH=$P KITE_TEST_BLOCK_VIEWS_WINDOWS=1 TYPESAFE_API_KEY=x KITE_DIAGNOSTICS=1
 python3 "$ROOT/Tests/Browser/handoff/server.py" "$PORT" 2>/dev/null &
 SERVER=$!
+# A second origin, for frames of another origin than the page's.
+PORT2=$((PORT + 1))
+python3 "$ROOT/Tests/Browser/handoff/server.py" "$PORT2" 2>/dev/null &
+SERVER2=$!
 "$APP/Contents/MacOS/Kite" --disable-backgrounding-occluded-windows >"$P/kite.log" 2>&1 &
 PID=$!
-cleanup() { kill $PID $SERVER 2>/dev/null; wait $PID 2>/dev/null; [[ -n "${KEEP:-}" ]] || rm -rf "$P"; }
+cleanup() { kill $PID $SERVER $SERVER2 2>/dev/null; wait $PID 2>/dev/null; [[ -n "${KEEP:-}" ]] || rm -rf "$P"; }
 trap cleanup EXIT
 for _ in $(seq 60); do "$CLI" ui windows >/dev/null 2>&1 && break; sleep 0.5; done
 grep -q "CefInitialize failed" "$P/kite.log" && echo "note: Chromium didn't start; this run is WebKit"
@@ -137,6 +143,76 @@ if [[ -z "${RING_SOURCE:-}" ]]; then
     "$CLI" click --selector "#invite3" --tab "$TAB" >/dev/null
     if step_has '\[done\].*clicked'; then echo "ok   handoff: a click on the settled control ends the step"; passes=$((passes + 1));
     else echo "FAIL handoff: the button's click wasn't heard: $LINE"; failures=$((failures + 1)); fi
+
+    # The tag beside the ring is the only place a step shows (no card over the page): its Skip and Done end the step,
+    # a step Kite can't show is reported to Claude at once, and steps with nowhere to show are refused.
+    pass() { echo "ok   $1"; passes=$((passes + 1)); }
+    fail() { echo "FAIL $1"; failures=$((failures + 1)); }
+    TAGPAGE="http://127.0.0.1:$PORT/tag.html"
+    "$CLI" open "$TAGPAGE" --tab "$TAB" >/dev/null
+    for _ in $(seq 25); do [[ $(js "String(!!window.tagBox)") == true ]] && break; sleep 0.2; done
+    OUT=$("$CLI" call handoff "{\"reason\":\"Test\",\"tab\":\"$TAB\",\"steps\":[{\"instruction\":\"Run it\",\"command\":\"ls\"}]}" 2>&1 || true)
+    grep -q "can't show a command" <<<"$OUT" && pass "handoff: a command step is refused" || fail "handoff: a command step: $OUT"
+    OUT=$("$CLI" call handoff "{\"reason\":\"Test\",\"tab\":\"$TAB\",\"steps\":[{\"instruction\":\"Read this\"}]}" 2>&1 || true)
+    grep -q "needs its control" <<<"$OUT" && pass "handoff: a step without a control is refused" || fail "handoff: a note step: $OUT"
+    START=$(date +%s)
+    OUT=$("$CLI" call handoff "{\"reason\":\"Test\",\"tab\":\"$TAB\",\"wait\":60,\"steps\":[{\"instruction\":\"Click it\",\"text\":\"Nowhere on this page\"}]}" 2>&1 || true)
+    if grep -q "NOT SHOWN: Kite can't find its control" <<<"$OUT" && (( $(date +%s) - START < 15 )); then
+        pass "handoff: a control that isn't on the page is reported at once, not waited on"
+    else fail "handoff: a missing control ($(( $(date +%s) - START ))s): $OUT"; fi
+    "$CLI" call handoff_status '{"cancel":true}' >/dev/null
+    # No card over the page: nothing in Kite's own interface says "Claude needs you".
+    "$CLI" call handoff "{\"reason\":\"Only you can approve\",\"tab\":\"$TAB\",\"steps\":[{\"instruction\":\"Approve it\",\"text\":\"Approve\"},{\"instruction\":\"Save it\",\"text\":\"Save\"}]}" >/dev/null
+    sleep 1
+    OUT=$("$CLI" ui tree '{"match":"Claude needs you"}' 2>&1 || true)
+    grep -q 'Nothing matches "Claude needs you"' <<<"$OUT" && pass "no card in Kite's interface, only the ring on the page" \
+        || fail "a card shows in Kite's interface: $OUT"
+    # press WHICH: presses the tag's Done (its right end) or Skip (left of Done) beside control ID.
+    press() {
+        local box x y
+        box=$(js "window.tagBox('$2')")
+        x=$(python3 -c "import json,sys; b=json.loads(sys.argv[1]); off=24 if sys.argv[2]=='done' else 68; print(round((b['right']-off)*b['scale']))" "$box" "$1")
+        y=$(python3 -c "import json,sys; b=json.loads(sys.argv[1]); print(round(b['y']*b['scale']))" "$box")
+        "$CLI" call computer "{\"action\":\"left_click\",\"coordinate\":[$x,$y],\"tab\":\"$TAB\"}" >/dev/null
+    }
+    # The step's line in handoff_status: N PATTERN, polled.
+    nth_has() {
+        for _ in $(seq 50); do
+            LINE=$("$CLI" call handoff_status '{}' | grep -E "^$1\. \[") || true
+            grep -qE "$2" <<<"$LINE" && return 0
+            sleep 0.2
+        done
+        return 1
+    }
+    press done approve
+    nth_has 1 '\[done\].*pressed Done' && pass "the tag's Done ends the step" || fail "the tag's Done: $LINE"
+    [[ $(js "String(window.menuOpen)") == true ]] && pass "a press on the tag isn't a press on the page (its menu stays open)" \
+        || fail "the page heard the tag's press: presses $(js "JSON.stringify(window.presses)")"
+    sleep 1
+    press skip save
+    nth_has 2 '\[skipped\].*skipped it' && pass "the tag's Skip skips the step (the ring moved on to it)" || fail "the tag's Skip: $LINE"
+
+    # A control in a frame of another origin, which the top page's look can't reach: Kite looks in the frame. Another
+    # port of 127.0.0.1 is the same site (the tab's own process, like idmsa.apple.com on appleid.apple.com);
+    # localhost is another site (a renderer of its own, reached through its own session).
+    for case in "127.0.0.1|the same site's" "localhost|another site's"; do
+        host=${case%%|*} kind=${case#*|}
+        "$CLI" open "http://127.0.0.1:$PORT/frames.html?src=http://$host:$PORT2/form.html" --tab "$TAB" >/dev/null
+        sleep 2
+        OUT=$("$CLI" call handoff "{\"reason\":\"Only you can sign in\",\"tab\":\"$TAB\",\"steps\":[{\"instruction\":\"Sign in\",\"text\":\"Sign in\"}]}" 2>&1 || true)
+        if grep -q "^1\. \[waiting\] Sign in ·" <<<"$OUT"; then pass "a control in $kind frame of another origin is found and ringed"
+        else fail "a control in $kind frame: $OUT"; fi
+        # The frame sits at (41, 61) in the page and its button at (20, 20), 120×30.
+        scale=$(js "String(innerWidth > 1280 ? 1280 / innerWidth : 1)")
+        x=$(python3 -c "print(round((41 + 80) * $scale))") y=$(python3 -c "print(round((61 + 35) * $scale))")
+        "$CLI" call computer "{\"action\":\"left_click\",\"coordinate\":[$x,$y],\"tab\":\"$TAB\"}" >/dev/null
+        nth_has 1 '\[done\].*clicked' && pass "a click on the ringed control in $kind frame ends the step" || fail "the click in $kind frame: $LINE"
+        # A click that takes the frame to another page at once: only the binding hears it in time.
+        "$CLI" call handoff "{\"reason\":\"Only you can go on\",\"tab\":\"$TAB\",\"steps\":[{\"instruction\":\"Continue\",\"text\":\"Continue\"}]}" >/dev/null
+        y=$(python3 -c "print(round((61 + 85) * $scale))")
+        "$CLI" call computer "{\"action\":\"left_click\",\"coordinate\":[$x,$y],\"tab\":\"$TAB\"}" >/dev/null
+        nth_has 1 '\[done\].*clicked' && pass "a click that navigates $kind frame away still ends the step" || fail "the navigating click in $kind frame: $LINE"
+    done
 fi
 
 echo "$passes of $((passes + failures)) checks passed"

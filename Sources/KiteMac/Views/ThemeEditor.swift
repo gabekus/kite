@@ -337,7 +337,7 @@ extension ThemeEditor {
         popover.contentViewController = NSHostingController(rootView: ThemeEditor(store: store, spaceID: spaceID))
         popover.contentSize = M.contentSize
         if pointing {
-            popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxX)
+            WindowPresenter.show(popover, relativeTo: view.bounds, of: view, preferredEdge: .maxX)
         } else {
             // Arc's popover hangs off the sidebar's edge with its bottom on the window's: a popover centres
             // on its anchor, so the anchor goes half the popover's height up from the bottom.
@@ -346,12 +346,14 @@ extension ThemeEditor {
                                 width: 1, height: 1)
             // Arc's has no arrow.
             if popover.responds(to: Selector(("setShouldHideAnchor:"))) { popover.setValue(true, forKey: "shouldHideAnchor") }
-            popover.show(relativeTo: anchor, of: view, preferredEdge: .maxX)
+            WindowPresenter.show(popover, relativeTo: anchor, of: view, preferredEdge: .maxX)
         }
         shown = popover
     }
 
     @MainActor private static weak var shown: NSPopover?
+    /// The editor on screen now, if any (SidebarTestHookRunner's ready line).
+    @MainActor static var current: NSPopover? { shown?.isShown == true ? shown : nil }
 }
 
 /// sRGB ⇄ HSL, the space Arc's colour grid is laid out in.

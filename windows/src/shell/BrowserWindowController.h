@@ -4,7 +4,7 @@
 // and Kite's shortcuts, wired to the session (core/Models.h). main.cpp parses the command line, loads the
 // session, and runs one of these. Like the Mac's BrowserWindowController+*.swift, its parts have
 // files of their own: +Spaces.cpp (editing spaces: the space menu, renaming, deleting,
-// reordering), +Tabs.cpp (pinning, renaming tabs and folders, New Folder, Duplicate, Back to Pinned
+// reordering), +NewSpace.cpp (the + menu, Create a Space and Choose a Theme's swatches), +Tabs.cpp (pinning, renaming tabs and folders, New Folder, Duplicate, Back to Pinned
 // URL, Reset), +SidebarMenus.cpp (the rows' and favorites' menus), +Chromium.cpp (the pages)
 // and +Tests.cpp (--smoke-test and --capture).
 //
@@ -59,6 +59,7 @@
 #include "core/SessionWriter.h"
 #include "core/SidebarContextMenu.h"
 #include "core/SidebarTopRow.h"
+#include "core/SpaceCreation.h"
 #include "core/SpaceEditing.h"
 #include "core/SpaceSwipe.h"
 #include "core/SpaceSwipeGesture.h"
@@ -70,6 +71,7 @@
 #endif
 #include "shell/CommandBarView.h"
 #include "shell/Compositor.h"
+#include "shell/ContextMenu.h"
 #include "shell/Favicons.h"
 #include "shell/FindBarView.h"
 #include "shell/FrameClock.h"
@@ -78,6 +80,8 @@
 #include "shell/Occlusion.h"
 #include "shell/Renderer.h"
 #include "shell/SidebarView.h"
+#include "shell/SpaceIconPickerView.h"
+#include "shell/ThemeSwatchesView.h"
 #include "shell/TouchpadInput.h"
 
 namespace kite {
@@ -210,9 +214,21 @@ public:
     // `text` typed over it when given; `focused` draws it as the window with the keyboard does
     // (a quiet capture's window never has it).
     std::wstring HoldRename(size_t index, const std::optional<std::string>& text, bool focused = false);
+    // For a capture: Change Space Icon…'s picker open for space `index` (from 0, selected first)
+    // on `tab`, chosen with a click on its segment, and on the Emoji tab `category` chosen in the
+    // bar; with `cell`, that cell clicked (its icon set) and the picker closed with Escape.
+    std::wstring HoldIconPicker(size_t index, IconPickerTab tab, std::optional<size_t> cell = std::nullopt,
+                                std::optional<size_t> category = std::nullopt);
     // For a capture: what Capture composes over the frame next, space `index`'s menu opened
     // over its cell in the bar (Windows' own menu, read back as it shows).
     void HoldSpaceMenu(size_t index) { heldMenu_ = index; }
+    // For a capture: the bar's + menu opened over its button, as a click on it opens it (Windows'
+    // own menu, read back as it shows); its line goes to stderr.
+    void HoldNewItemMenu() { heldNewItemMenu_ = true; }
+    // For a capture: + › New Space's Create a Space page, with `name` and `about` typed in its
+    // fields, and with `preset`, Choose a Theme's swatches opened and that one clicked (they stay
+    // open, as the Mac's popover does), the theme's crossfade run to its end.
+    std::wstring HoldCreateSpace(const std::string& name, const std::string& about, std::optional<size_t> preset);
     // For a capture: row `index`'s menu (from 0, as kitecore's `sidebar` lists the selected space's
     // rows; a tab's or a folder's: the header's is the space's, which HoldSpaceMenu holds), or
     // favorite pane `index`'s (in the grid's order), opened as a right-click on its middle opens it.
@@ -277,9 +293,9 @@ private:
     // the checkpoints so two never collide (the ones not in this branch yet are reserved):
     //   1 smoke, 2 archive, 3 settle, 4 session save (W11), 5 history (W25a), 6 Arc merge (W33a),
     //   7 sidebar toggle (W12), 8 downloads save (W20a), 9 test tab close, 10 find (W21),
-    //   11 Chromium::kStallTimer (the parked pages' stall check).
+    //   11 Chromium::kStallTimer (the parked pages' stall check), 12 Change Space Icon…'s 0.15 s (W9e).
     // 0x4B42 and up are the views' (the command bar's caret, Chromium's close deadline, the
-    // sidebar's tip and drop, the rename field's caret, the find field's caret at 0x4B47). The WM_APP messages, each its own: +1
+    // sidebar's tip and drop, the rename field's caret, the find field's caret at 0x4B47, the icon picker's at 0x4B49 (W9e), Create a Space's name and about fields' carets at 0x4B4A and 0x4B4B (W9f)). The WM_APP messages, each its own: +1
     // MainWindow::kWakeMessage, +2 the command bar's redraw, +3 the sidebar's redraw, +4 favicons,
     // +5 the frame clock, +6 space icons, +7 memory pressure (W11), +8 history, +9 Import from
     // Arc's read (kArcReadMessage), +10 arcSaved, +11 downloads, +20 perf. Filter checks that
@@ -314,6 +330,10 @@ private:
     static constexpr UINT kSpaceIconsMessage = WM_APP + 6;
     // Posted by the memory watch (MemoryPressure.h), wParam the MemoryPressure level.
     static constexpr UINT kMemoryPressureMessage = WM_APP + 7;
+    // Change Space Icon… from the space's menu: the picker opens 0.15 s after it closes, on the
+    // space it selected (the Mac's openPicker(after: 0.15)). The next id after the others' (the
+    // list above; Filter checks none overlap).
+    static constexpr UINT_PTR kIconPickerTimer = 12;
     // Posted by history's worker when a profile's file has been read (HistoryStores::SetWake).
     static constexpr UINT kHistoryMessage = WM_APP + 8;
     // Posted by shell/Occlusion when its verdict changes (the shared WM_APP allocation gives P2 +12).
@@ -478,14 +498,22 @@ private:
     bool FindBarDark() const;
     // Which of Kite's fields has the keyboard (Windows has one system caret a thread, and the
     // Mac one first responder a window): the command bar's while it's open, else a rename's, else
-    // the find bar's, else none (the page's). GiveKeyboard takes it from the others before `to`
-    // takes it, so their carets go first: opening the command bar takes it from both, a rename
-    // from the find field, and Ctrl+F or a press in the find field ends a rename.
-    enum class KeyboardField { None, CommandBar, Rename, Find };
+    // the find bar's, else the icon picker's Search, else Create a Space's fields', else none (the
+    // page's). GiveKeyboard takes it from the others before `to` takes it, so their carets go
+    // first: opening the command bar takes it from all of them, a rename from the find field and
+    // the page's fields, and Ctrl+F or a press in the find field ends a rename. The icon picker's
+    // Search has it from Change Space Icon…'s request (the menu's 0.15 s included) until the picker
+    // closes; anything else taking it closes the picker. Choose a Theme's swatches have it while
+    // they're open (the Mac's popover is the key window), handing it back to the page's field that
+    // had it when Escape closes them; anything else taking it closes them. Create a Space's name
+    // field takes it as its page appears (and a press in either field), closing the command bar and
+    // the popovers, as Ctrl+F does.
+    enum class KeyboardField { None, CommandBar, Rename, Find, IconPicker, ThemeSwatches, Creation };
     KeyboardField KeyboardOwner() const;
-    // With `focusFindField` false (a press in it), the find field takes it itself, the caret
-    // where the press is rather than its text all selected.
-    void GiveKeyboard(KeyboardField to, bool focusFindField = true);
+    // With `focusField` false (a press in it), the find field or Create a Space's takes it itself,
+    // the caret where the press is (and the caller updates the page's keyboard after); else the
+    // find field's text is all selected, or Create a Space's name field focused (onAppear).
+    void GiveKeyboard(KeyboardField to, bool focusField = true);
     // The content card in client px (the page's bounds).
     RECT ContentBounds() const;
     CommandBarView::Look BarLook() const;
@@ -504,10 +532,62 @@ private:
     void BeginRenaming(const std::string& spaceID);
     void RenameSpace(const std::string& spaceID, const std::string& name);
     // Delete Space (the Mac's deleteSpace(_:)): a beep for the last space, at once for one with
-    // no tabs, else after asking; its pages close with it.
+    // no tabs, else after asking; its pages close with it. Create a Space's own space cancels it.
     void DeleteSpace(std::string spaceID);
+    // MARK: New Space (BrowserWindowController+NewSpace.cpp)
+    // The bar's + button: its menu (the Mac's NewItemMenu) over it, its bottom's middle at
+    // `screen` (px), then what it chose.
+    void ShowNewItemMenu(POINT screen);
+    void RunNewItem(NewItemMenuItem::Command command);
+    // Its items as Windows' menu shows them (shell/ContextMenu), one entry an item.
+    static std::vector<ContextMenuEntry> NewItemEntries(const std::vector<NewItemMenuItem>& items);
+    // + › New Space and the newSpace command (the Mac's BrowserStore.beginNewSpace): the sidebar
+    // shown, a nameless space right after this one, selected, and Arc's Create a Space page in
+    // its sidebar with the name field's keyboard; with one open already, its space again.
+    void BeginNewSpace();
+    // Create Space or Return (finishNewSpace) with a name; Cancel or Escape (cancelNewSpace).
+    void FinishNewSpace(const std::string& name, const std::string& about);
+    void CancelNewSpace();
+    // Choose a Theme: the theme editor's swatches off `row` (window points); a swatch picked; and
+    // the popover closing (Escape, a press elsewhere, the window losing the keyboard or moving).
+    void ShowThemeSwatches(const BarRect& row);
+    void PickSpaceTheme(size_t preset);
+    // `handBack`: Escape's close, which gives the keyboard back to the page's field that had it
+    // (else to the page, from the window in front); a press, a deactivation or a move hands nothing.
+    void CloseThemeSwatches(bool handBack = false);
+    // The swatches no longer hold the keyboard (their closed callback, every way they close).
+    void ReleaseSwatchesKeyboard(bool handBack);
+    // Create a Space's `field` takes the keyboard, as a rename does (TakeKeyboardForRename): from the
+    // others first, then the field, then the window's focus when it's in front.
+    void TakeKeyboardForCreation(SpaceCreationView::Field field, bool selectAll = false);
+    // The page's profile pill: the profiles, at `screen` (px), the one picked set for its space.
+    void ShowCreationProfileMenu(POINT screen);
+    // After any change, once the sidebar shows it (StateChanged): the page appearing gives the name
+    // field the keyboard (onAppear), and it going gives the keyboard back to the page and closes
+    // the swatches.
+    void FollowCreation();
+    // The smoke test's: the + menu read and New Space from it, the page's typing drawing only its
+    // field, a theme picked, Create (Return and the button) and Cancel (Escape and the button), the
+    // ways the keyboard moves, and New Space from its command.
+    std::wstring SmokeTestNewSpace();
     // A space dropped in the bar at `index` among the others (the Mac's moveSpace).
     void MoveSpace(const std::string& spaceID, size_t index);
+    // Change Space Icon… (the Mac's requestIconPicker): the space selected, then its header's
+    // picker, at once from the header's icon or 0.15 s on from the menu.
+    void RequestIconPicker(const std::string& spaceID, bool fromMenu);
+    // The picker for the selected space `spaceID`, hanging from its header's icon.
+    void ShowIconPicker(const std::string& spaceID);
+    // A cell or the bin (the picker's pick): the icon set, the picture it replaced deleted.
+    void PickIcon(const std::string& spaceID, const std::string& icon);
+    // `focusPage` false: a close caused by a press, a deactivation, a move or a minimize, after
+    // which the keyboard isn't handed to the page (onFocus does that when the window comes back).
+    void CloseIconPicker(bool focusPage = true);
+    // The picker no longer holds the keyboard. With `focusPage`, when nothing of Kite's has it and
+    // Kite's window is the one in front (unless another field is taking it now), the page gets it.
+    void ReleaseIconPickerKeyboard(bool focusPage = true);
+    // The smoke test's icon picker: opened from the menu and the header's icon, an emoji, a
+    // search, a category, a symbol and the bin picked, and the ways it closes.
+    std::wstring SmokeTestIconPicker();
     void ArchiveTab();
     void ReopenClosedTab();
     // View › Hide Sidebar and Show Sidebar (the Mac's toggleSidebar and updateSidebar): the sidebar
@@ -554,8 +634,18 @@ private:
     void EditState(const std::function<void()>& change, bool selectionMoved = false);
     void RecordEdit(const std::function<void()>& change);
     // The keyboard for a rename field opening (a space's, a tab's or a folder's): the one place
-    // W21's GiveKeyboard(KeyboardField::Rename) goes.
-    void TakeKeyboardForRename();
+    // W21's GiveKeyboard(KeyboardField::Rename) goes. `open` opens the field before the window
+    // takes the focus, so the window's onFocus sees the rename as the keyboard's owner and doesn't
+    // hand the keyboard on to the page (which would end the rename as it took it, a moment later
+    // on CEF's thread).
+    void TakeKeyboardForRename(const std::function<void()>& open);
+    // Kite's window takes the focus when it's the one in front (a quiet run never is). For the
+    // smoke test's check of that order, `testFocus_` delivers the WM_SETFOCUS SetFocus would,
+    // without the activation (a quiet run never comes to the front), and onFocus only counts it.
+    void TakeFocusIfInFront();
+    bool testFocus_ = false;
+    // How often onFocus has handed the keyboard on to the page.
+    size_t pageFocusHandoffs_ = 0;
     // The Tabs menu's and the command bar's tab commands, by the Mac's ids.
     void MakeTabCommands();
     // Their validateMenuItem: whether `command` would do anything now; none when it isn't one of them.
@@ -762,6 +852,24 @@ private:
     std::map<std::string, PageStatus> pageStatus_;
     std::unique_ptr<CaptionButtonsView> caption_;
     std::unique_ptr<CommandBarView> commandBar_;
+    // Change Space Icon…'s popover (after the sidebar, whose painter it borrows, so it goes first),
+    // and the space the menu asked it for, waiting on kIconPickerTimer.
+    std::unique_ptr<SpaceIconPickerView> iconPicker_;
+    std::optional<std::string> pendingIconPicker_;
+    // The picker holds the keyboard (KeyboardField::IconPicker): set as it's asked for, before the
+    // window takes the focus, so onFocus never hands it to the page meanwhile.
+    bool iconPickerKeyboard_ = false;
+    // GiveKeyboard is moving the keyboard to another field: the picker it closes doesn't hand
+    // the keyboard to the page.
+    bool givingKeyboard_ = false;
+    // The picker is being opened or replaced (Open closes the one before it): its keyboard is
+    // kept throughout, with no release in between.
+    bool openingIconPicker_ = false;
+    // Whether the next release may hand the keyboard to the page: not for a close caused by a
+    // press (what was pressed decides), a deactivation, a move or a minimize.
+    bool releaseFocusesPage_ = true;
+    // The smoke test's counts: the picker's keyboard released, and handed on to the page.
+    size_t pickerKeyboardReleases_ = 0;
     std::wstring barError_;
     std::unique_ptr<FindBarView> findBar_;
     std::string findTabID_;  // the tab the find bar is open on
@@ -794,8 +902,28 @@ private:
     std::vector<PerfRequest> perfRequests_;
     size_t frameCount_ = 0;  // frames delivered, logged or not (the smoke test checks them)
 
-    // A capture's space menu, composed over the frame (HoldSpaceMenu).
+    // A capture's space menu, composed over the frame (HoldSpaceMenu), and its + menu
+    // (HoldNewItemMenu).
     std::optional<size_t> heldMenu_;
+    bool heldNewItemMenu_ = false;
+    // A capture's swatches popover, open off this row (HoldCreateSpace with a preset).
+    std::optional<BarRect> heldSwatches_;
+    // Create a Space (the Mac's BrowserStore.spaceCreation): open while it's set. The sidebar reads
+    // it (SidebarView::SetCreation) and says when its page appears or goes.
+    std::optional<SpaceCreation> creation_;
+    // Choose a Theme's popover (declared after the sidebar, so it goes first: it borrows the
+    // sidebar's text factory). Its window is made the first time it opens. It holds the keyboard
+    // while it's open (KeyboardField::ThemeSwatches), remembering the page's field that had it; a
+    // reopen keeps it (openingSwatches_), and a close by Escape hands it back (swatchesHandBack_).
+    std::unique_ptr<ThemeSwatchesView> swatches_;
+    bool swatchesKeyboard_ = false;
+    std::optional<SpaceCreationView::Field> swatchesReturn_;
+    bool openingSwatches_ = false;
+    bool swatchesHandBack_ = false;
+    // How the + menu and the profile pill's menu are shown and answered: Windows' (a menu loop), or
+    // the smoke test's, which reads them and picks, as KITE_TEST_CONTEXT_MENU does.
+    std::function<std::optional<NewItemMenuItem::Command>(const std::vector<NewItemMenuItem>&, POINT)> showNewItemMenu_;
+    std::function<std::optional<size_t>(const std::vector<ContextMenuEntry>&, POINT)> showProfileMenu_;
     // A capture's row or favorite menu (HoldRowMenu, HoldFavoriteMenu): what it's for, where the
     // right-click was (client px).
     struct HeldRowMenu {

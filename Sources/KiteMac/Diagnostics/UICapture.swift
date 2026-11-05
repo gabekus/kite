@@ -230,6 +230,19 @@ enum UICapture {
             let device = CGRect(x: rect.minX * scale, y: rect.minY * scale, width: rect.width * scale, height: rect.height * scale)
             return roundedMask(device, radius: layer.cornerRadius * scale, curve: layer.cornerCurve, width: width, height: height)
         }
+        // A popover open over the window (the icon picker, the theme editor) is a child window of its own: drawn over
+        // the rest from its views where it shows, as on screen (its material unblurred, as the window's are).
+        for child in window.childWindows ?? [] where child.isVisible && NSStringFromClass(type(of: child)).contains("Popover") {
+            guard let view = child.contentView?.superview ?? child.contentView,
+                  let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            guard let image = bitmap.cgImage else { continue }
+            // Both frames are the screen's, bottom-left, as the context is.
+            let frame = CGRect(x: child.frame.minX - window.frame.minX, y: child.frame.minY - window.frame.minY,
+                               width: child.frame.width, height: child.frame.height)
+            context.draw(image, in: frame)
+            notes.append("A popover is drawn over the window from its views (\(Int(child.frame.width))×\(Int(child.frame.height)) pt).")
+        }
         return context.makeImage().map { ($0, notes) }
     }
 
