@@ -1,15 +1,21 @@
 #pragma once
 // The browser window and what's in it, as the Mac's BrowserWindowController: the backdrop,
 // the sidebar, the caption buttons, the command bar, the pages (Chromium) and Kite's
-// shortcuts, wired to the session (core/Models.h). main.cpp parses the command line, loads and
-// saves the session, and runs one of these.
+// shortcuts, wired to the session (core/Models.h). main.cpp parses the command line, loads the
+// session, and runs one of these.
 //
 // Everything here is on Kite's UI thread. The session is the caller's, borrowed for the
-// window's life; the window changes it and the caller saves it as the window closes
-// (MainWindow::onClose).
+// window's life. The window changes it and saves it as it changes, as the Mac's BrowserStore
+// does: each change arms a one-shot timer (core/SessionSaveDelay.h's SaveSchedule: a second,
+// ten for a page's title or favicon), and when it fires a copy of the session goes to the
+// caller's SessionWriter, which writes it on its own thread. Closing the window saves at once
+// (main.cpp waits for that write once the window is gone); logoff and shutdown save at once and
+// wait here, for kEndSessionFlush at most.
 
 #include <windows.h>
 
+#include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -19,7 +25,10 @@
 #include <vector>
 
 #include "core/KeyBindings.h"
+#include "core/LiveTabPolicy.h"
 #include "core/Models.h"
+#include "core/SessionSaveDelay.h"
+#include "core/SessionWriter.h"
 #include "core/SpaceSwipe.h"
 #include "core/ThemeBackdrop.h"
 #include "shell/CaptionButtonsView.h"
@@ -31,6 +40,7 @@
 #include "shell/Favicons.h"
 #include "shell/FrameClock.h"
 #include "shell/MainWindow.h"
+#include "shell/MemoryPressure.h"
 #include "shell/Renderer.h"
 #include "shell/SidebarView.h"
 
@@ -49,6 +59,9 @@ public:
         // --frame-log: each frame the clock delivered (when it was handled, the time it was
         // drawn for, the pages' offset and the theme's crossfade) is kept for SaveFrameLog.
         bool frameLog = false;
+        // --save-log: each save handed to the writer (when, and what it cost the UI thread) is
+        // kept for SaveSaveLog.
+        bool saveLog = false;
         // The profile's SpaceIcons folder: the pictures chosen as space icons (a capture
         // decodes them in place, the rest on a worker).
         std::filesystem::path spaceIcons;
@@ -56,10 +69,11 @@ public:
 
     // The window and everything in it, laid out and wired, not yet shown or drawn. Null with
     // `error` when the GPU, the window or a view couldn't be made. No command bar isn't a
-    // failure (CommandBar() is null then). `save` runs as the window closes, and at logoff or
-    // shutdown, after the pages' last reports.
+    // failure (CommandBar() is null then). `writer` (the caller's, outliving the window) gets
+    // the session as it changes, and once more as the window closes, and at logoff or shutdown,
+    // after the pages' last reports; null saves nothing.
     static std::unique_ptr<BrowserWindowController> Create(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts,
-                                                           Options options, std::function<void()> save, std::wstring& error);
+                                                           Options options, SessionWriter* writer, std::wstring& error);
     ~BrowserWindowController();
     BrowserWindowController(const BrowserWindowController&) = delete;
     BrowserWindowController& operator=(const BrowserWindowController&) = delete;
@@ -89,6 +103,11 @@ public:
     // was handled, s from the first), `target` (the composition frame it was drawn for, s from
     // the first), `offset` (the pages', pt) and `theme` (the crossfade, 0...1). Empty on success.
     std::wstring SaveFrameLog(const std::filesystem::path& file) const;
+    // The run's saves (Options::saveLog) as one JSON object: `saves` (`t`, s from the window's
+    // creation; `uiMicros`, the copy handed to the writer; `closing`), `frames` (frames the
+    // clock delivered) and `writer` (the writer's statistics after its last write). Empty on
+    // success.
+    std::wstring SaveSaveLog(const std::filesystem::path& file) const;
     // The smoke test's checks of the window: the command bar opens and draws, the sidebar and
     // the caption buttons draw something, and the lost-GPU path rebuilds and draws. Empty on
     // success. Then the window closes once the first page has loaded (30 s at most), or after
@@ -101,6 +120,15 @@ public:
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
 
+    // The session changed outside the window's own handlers (main.cpp's auto-archive at
+    // launch): it's saved after `delay`, as the window's own changes are.
+    void SessionChanged(SessionSaveDelay delay = SessionSaveDelay::Soon);
+
+    // How long the window waits for the session's last write when Windows ends the session
+    // (WM_ENDSESSION: the process may end as soon as it returns). Giving up is safe: the
+    // atomic write leaves the old file or the new one.
+    static constexpr std::chrono::milliseconds kEndSessionFlush{3000};
+
 private:
     // The content card, in points: right of the sidebar, inset on the other three sides
     // (BrowserWindowController's Layout.defaultSidebarWidth and ArcMetrics.Content.inset).
@@ -108,7 +136,7 @@ private:
     static constexpr int kContentInset = 10;
 
     BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
-                            std::function<void()> save, std::unique_ptr<Renderer> renderer);
+                            SessionWriter* writer, std::unique_ptr<Renderer> renderer);
     std::wstring Init();
     // What follows from the selected space's theme at once: the title bar's dark mode, the
     // material under the backdrop, the caption buttons' glyphs (the Mac's NSAppearance).
@@ -135,8 +163,11 @@ private:
     // with no WM_CLOSE first).
     void RunPending();
 
-    // The session changed under the window: the sidebar and an open bar show it.
-    void StateChanged();
+    // The session changed under the window: the sidebar and an open bar show it, and it's
+    // saved after `save` (none: nothing that's saved changed, a page repeating its title).
+    void StateChanged(std::optional<SessionSaveDelay> save = SessionSaveDelay::Soon);
+    // The save timer fired, or the window is closing: a copy of the session to the writer.
+    void SaveNow();
     // The selected tab's page shows, and the sidebar with it, after the selection moved.
     void SelectionMoved();
     void ShowPage();
@@ -171,7 +202,23 @@ private:
     BrowserState& state_;
     const ShortcutMap shortcuts_;
     const Options options_;
-    const std::function<void()> save_;
+    SessionWriter* const writer_;
+    SaveSchedule saveSchedule_;
+    // What saving cost Kite's UI thread (the copy handed to the writer), for the save log.
+    struct SaveCost {
+        uint64_t saves = 0;
+        double maxMicros = 0;
+        double totalMicros = 0;
+    };
+    SaveCost saveCost_;
+    struct LoggedSave {
+        double at, micros;
+        bool closing;
+    };
+    std::vector<LoggedSave> saves_;
+    uint64_t saveArms_ = 0;  // times a change (re)armed the save timer (the smoke test checks it)
+    double createdAt_ = 0;  // FrameClock::Now() when the window was made, for the save log
+    bool closing_ = false;
     // Destroyed in reverse: the views and the compositor before the window, the window before
     // Chromium (closing it destroys the browsers' windows, which Chromium's shutdown waits
     // for), and the GPU last.
@@ -206,6 +253,16 @@ private:
     std::wstring barError_;
     // Frames while something animates (before the window in destruction: it posts to it).
     std::unique_ptr<FrameClock> clock_;
+    // Low memory closes the background pages (before the window in destruction: it posts to it).
+    std::unique_ptr<MemoryPressureWatch> memoryWatch_;
+    bool watchingMemory_ = false;
+    // The memory watch's reports, for the save log: when, and the level.
+    struct PressureReport {
+        double at;
+        MemoryPressure level;
+        bool discarded;  // the background pages were asked to close
+    };
+    std::vector<PressureReport> pressureReports_;
     struct LoggedFrame {
         double handled, target, offset, theme;
     };

@@ -11,6 +11,9 @@
 //   kitecore [--profile DIR] select TAB_ID
 //   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
+//   kitecore [--profile DIR] backups
+//   kitecore save-schedule KIND@SECONDS... [--at SECONDS]
+//   kitecore save-bench [TABS]
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
 // an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
@@ -24,9 +27,18 @@
 // its pixels, under 1px from these at a fractional scale). `click` in the bar's 50pt along the
 // bottom selects the space whose cell it hits.
 // `collapse` is View → Collapse / Expand Pinned Tabs for a space.
+// `backups` lists the profile's session backups (Backups/session.<stamp>[.kind].json), newest
+// first as Restore Data orders them, with what each holds; it works when session.json doesn't
+// read. `save-schedule` replays changes (soon@0 pageEvent@0.5 ...: a sidebar change or a page's
+// title or favicon, at a time in seconds) through Kite's save timer and prints the saves it
+// makes, and with --at what's still waiting then (the pending save's kind and when it's due).
+// `save-bench` writes a session of TABS tabs (default 200) the way the app does, in a temp
+// folder of its own (never a profile), and prints what it cost: the copy on the UI thread (μs),
+// the encoding and the atomic write on the writer's thread, medians of 25 runs.
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -41,7 +53,9 @@
 #include "core/KeyBindings.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
+#include "core/SessionSaveDelay.h"
 #include "core/SessionStore.h"
+#include "core/SessionWriter.h"
 #include "core/Sidebar.h"
 #include "core/SpaceBar.h"
 #include "core/SupportDirectory.h"
@@ -78,7 +92,10 @@ int Usage() {
         "       kitecore [--profile DIR] archive-stale [NOW]\n"
         "       kitecore [--profile DIR] evict MAX [--shown TAB_ID] [--popup POPUP_ID=OPENER_ID]... TAB_ID=LAST_SHOWN...\n"
         "       kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]\n"
-        "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n",
+        "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n"
+        "       kitecore [--profile DIR] backups\n"
+        "       kitecore save-schedule KIND@SECONDS... [--at SECONDS]\n"
+        "       kitecore save-bench [TABS]\n",
         stderr);
     return kUsage;
 }
@@ -205,6 +222,121 @@ void AddLook(json::Object& o, const SpaceIconLook& look, LookIn in = LookIn::Bar
 // Ids typed in either case, like UUID(uuidString:).
 std::string Id(const std::string& text) { return NormalizeUuid(text).value_or(text); }
 
+std::optional<double> ParseSeconds(const std::string& text) {
+    double value = 0;
+    auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (error != std::errc() || end != text.data() + text.size() || !std::isfinite(value)) return std::nullopt;
+    return value;
+}
+
+std::string PathUtf8(const std::filesystem::path& path) {
+    auto u8 = path.u8string();
+    return std::string(u8.begin(), u8.end());
+}
+
+json::Value BackupsSummary(const SessionBackups& backups) {
+    json::Array rows;
+    for (const auto& backup : backups.Ordered(SessionBackups::Now())) {
+        const auto summary = SessionBackups::SummaryOf(backup);
+        json::Object o{{"file", PathUtf8(backup.file.filename())},
+                       {"kind", std::string(SessionBackups::RawValue(backup.kind))},
+                       {"stamp", SessionBackups::Stamp(backup.date)},
+                       {"date", backup.date},
+                       {"restorable", summary.IsRestorable()}};
+        if (summary.spaceCount) o.emplace("spaces", static_cast<double>(*summary.spaceCount));
+        if (summary.tabCount) o.emplace("tabs", static_cast<double>(*summary.tabCount));
+        rows.push_back(json::Value(std::move(o)));
+    }
+    return json::Value(json::Object{{"directory", PathUtf8(backups.Directory())}, {"backups", json::Value(std::move(rows))}});
+}
+
+// The changes `save-schedule` replays: KIND@SECONDS, in time order.
+int SaveScheduleCommand(const std::vector<std::string>& args) {
+    std::vector<SaveChange> changes;
+    std::optional<double> until;
+    for (size_t i = 1; i < args.size(); ++i) {
+        if (args[i] == "--at" && i + 1 < args.size()) {
+            if (!(until = ParseSeconds(args[++i]))) return Usage();
+            continue;
+        }
+        const size_t at = args[i].find('@');
+        if (at == std::string::npos) return Usage();
+        auto delay = SessionSaveDelayFromRaw(args[i].substr(0, at));
+        auto seconds = ParseSeconds(args[i].substr(at + 1));
+        if (!delay || !seconds || (!changes.empty() && *seconds < changes.back().at)) return Usage();
+        changes.push_back({*seconds, *delay});
+    }
+    const SaveReplay replay = ReplaySaves(changes, until);
+    json::Array saves;
+    for (const ReplayedSave& save : replay.saves) {
+        saves.push_back(json::Object{{"at", save.at}, {"kind", std::string(RawValue(save.kind))}});
+    }
+    json::Object out{{"saves", json::Value(std::move(saves))}};
+    if (until) {
+        out.emplace("pending", replay.pending ? json::Value(std::string(RawValue(*replay.pending))) : json::Value(nullptr));
+        out.emplace("dueAt", replay.dueAt ? json::Value(*replay.dueAt) : json::Value(nullptr));
+    }
+    std::puts(json::Write(json::Value(std::move(out))).c_str());
+    return kOk;
+}
+
+// What saving a session of `tabs` tabs costs, measured on the app's own path, in a temp folder.
+int SaveBenchCommand(int tabs) {
+    std::error_code ignored;
+    const std::filesystem::path folder = std::filesystem::temp_directory_path(ignored) / ("kite-save-bench-" + NewUuid());
+    struct Cleanup {
+        std::filesystem::path folder;
+        ~Cleanup() {
+            std::error_code ignored;
+            std::filesystem::remove_all(folder, ignored);
+        }
+    } cleanup{folder};
+    const SessionStore store(folder / "session.json");
+    BrowserState state = BrowserState::MakeDefault(std::nullopt);
+    for (int i = 0; i < tabs; ++i) {
+        const std::string n = std::to_string(i);
+        const std::string id = state.OpenTab("https://example.com/articles/" + n + "?ref=kite-bench", std::nullopt, true, Now());
+        if (auto at = state.Location(id)) {
+            Tab* tab = state.TabAt(*at);
+            tab->title = "A page with a usual title, number " + n + " — Example";
+            tab->faviconURL = "https://example.com/favicon.ico";
+        }
+    }
+    constexpr int kRuns = 25;
+    auto median = [](std::vector<double> values) {
+        std::sort(values.begin(), values.end());
+        return values[values.size() / 2];
+    };
+    std::vector<double> copies, encodes, writes;
+    size_t bytes = 0;
+    // Backups dated in 1970, so each run's hourly check is one in-memory comparison, as in the app.
+    SessionWriter writer(store, true, [] { return 0.0; });
+    for (int run = 0; run < kRuns; ++run) {
+        // A change between runs, so each one is written (an unchanged one is skipped).
+        state.spaces[0].tabs[0].title = "run " + std::to_string(run);
+        const auto start = std::chrono::steady_clock::now();
+        writer.Save(state);  // the UI thread's whole part: the copy handed over
+        copies.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count());
+        if (std::string error = writer.Flush(); !error.empty()) {
+            std::fprintf(stderr, "kitecore: %s\n", error.c_str());
+            return kSaveFailed;
+        }
+        const auto stats = writer.Stats();
+        encodes.push_back(stats.lastEncodeMicros);
+        writes.push_back(stats.lastWriteMicros);
+        bytes = stats.lastBytes;
+    }
+    std::puts(json::Write(json::Value(json::Object{{"tabs", static_cast<double>(tabs)},
+                                                   {"bytes", static_cast<double>(bytes)},
+                                                   {"runs", static_cast<double>(kRuns)},
+                                                   {"uiThreadCopyMicros", median(copies)},
+                                                   {"uiThreadCopyMaxMicros", *std::max_element(copies.begin(), copies.end())},
+                                                   {"encodeMicros", median(encodes)},
+                                                   {"writeMicros", median(writes)}}))
+                  .c_str());
+    return kOk;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -230,6 +362,17 @@ int main(int argc, char** argv) {
         --i;
     }
     if (args.empty()) return Usage();
+    // The save timer's rules alone: no profile involved.
+    if (args[0] == "save-schedule") return SaveScheduleCommand(args);
+    if (args[0] == "save-bench" && args.size() <= 2) {
+        if (profile) return Usage();  // it never touches a profile
+        int tabs = 200;
+        if (args.size() == 2) {
+            auto [end, error] = std::from_chars(args[1].data(), args[1].data() + args[1].size(), tabs);
+            if (error != std::errc() || end != args[1].data() + args[1].size() || tabs < 0 || tabs > 100000) return Usage();
+        }
+        return SaveBenchCommand(tabs);
+    }
 
     auto resolved = ResolveSupportDirectory(profile ? profile : EnvironmentPath("KITE_SUPPORT_PATH"), EnvironmentPath("LOCALAPPDATA"));
     if (auto* error = std::get_if<SupportDirectoryError>(&resolved)) {
@@ -237,6 +380,12 @@ int main(int argc, char** argv) {
         return kBadProfile;
     }
     SessionStore store(std::get<std::filesystem::path>(resolved) / "session.json");
+
+    // These don't read the session: backups are there for when it can't be read.
+    if (args[0] == "backups" && args.size() == 1) {
+        std::puts(json::Write(BackupsSummary(store.Backups())).c_str());
+        return kOk;
+    }
 
     BrowserState state;
     // kitecore never moves the user's session aside: an unreadable one is reported and left.
