@@ -1,0 +1,57 @@
+{
+  "id": "w21",
+  "title": "W21 Mac references: the find bar (Ctrl+F / ⌘F)",
+  "about": "BLOCKED on a Mac hook, not yet added (it needs a safety review): ⌘F can't be sent (cmd+t is the only key allowed) and the find bar has no clickable opener, so these states use the proposed KITE_TEST_FIND (\"text\": once the window's first page has finished loading, in test-safe mode only, showFind(nil) then FindBar.setQuery(value), which only searches the page) and KITE_TEST_FIND_OPEN (\"flag\": the same with no query). Until both are in HOOKS and the base has them, this request is refused and runs nothing. Session: windows/helix/states/find-bar.json from helix/W21-find (sidebar.json with pageAppearance light, so both apps' bars are light whatever the runner's appearance), the selected tab https://example.com/, which has two matches for \"domain\" (its heading and first sentence). The Windows captures are Kite.exe --capture --window-size 1280,820 --capture-scale 2 --find \"\" | --find domain --find-result 1/2 | --find zqxj --find-result 0/0 on the same session.",
+  "base": "origin/main",
+  "window_size": [
+    1280,
+    820
+  ],
+  "session": {
+    "ref": "origin/helix/W21-find",
+    "path": "windows/helix/states/find-bar.json"
+  },
+  "tree_match": "FindBar",
+  "expect_frames": [],
+  "states": [
+    {
+      "name": "find-empty",
+      "holds": "the find bar open and empty over example.com, 10pt in from the content card's top-right corner: the magnifier, \"Find in page…\", the arrows, the divider and close; no counter",
+      "env": {
+        "KITE_TEST_FIND_OPEN": "1"
+      },
+      "steps": [
+        {
+          "wait": 5
+        }
+      ],
+      "settle": 1
+    },
+    {
+      "name": "find-matches",
+      "holds": "the find bar with \"domain\" typed and the counter reading 1/2, the first match highlighted on the page",
+      "env": {
+        "KITE_TEST_FIND": "domain"
+      },
+      "steps": [
+        {
+          "wait": 5
+        }
+      ],
+      "settle": 1
+    },
+    {
+      "name": "find-none",
+      "holds": "the find bar with \"zqxj\" typed and \"Not Found\" in red where the counter goes",
+      "env": {
+        "KITE_TEST_FIND": "zqxj"
+      },
+      "steps": [
+        {
+          "wait": 5
+        }
+      ],
+      "settle": 1
+    }
+  ]
+}
