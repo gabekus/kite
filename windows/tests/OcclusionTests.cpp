@@ -45,11 +45,10 @@ WindowFacts Layered(WindowFacts w, uint32_t flags, uint8_t alpha) {
     return w;
 }
 
-Tracker::Pass CoveredBy(std::vector<uintptr_t> windows, std::vector<uint32_t> processes) {
+Tracker::Pass CoveredBy(std::vector<uintptr_t> windows) {
     Tracker::Pass pass;
     pass.covered = true;
     pass.occluders = std::move(windows);
-    pass.occluderProcesses = std::move(processes);
     return pass;
 }
 
@@ -286,9 +285,8 @@ TEST(theEventFilterKeepsOnlyWholeWindows) {
     CHECK(FilterEvent(kForeground, true, kObjectWindow, kChildSelf, false, topLevel) == Event::Foreground);
     CHECK(FilterEvent(kMinimizeStart, true, kObjectWindow, kChildSelf, false, topLevel) == Event::MinimizeStart);
     CHECK(FilterEvent(kMoveSizeEnd, true, kObjectWindow, kChildSelf, false, topLevel) == Event::MoveSizeEnd);
-    CHECK(FilterEvent(kDestroy, true, kObjectWindow, kChildSelf, false, topLevel) == Event::Destroy);
     CHECK(FilterEvent(kCloaked, true, kObjectWindow, kChildSelf, false, topLevel) == Event::Cloaked);
-    CHECK(asked == 5);
+    CHECK(asked == 4);
     asked = 0;
     // Carets (OBJID_CARET) and the cursor (OBJID_CURSOR) move on every key and every mouse
     // move: dropped before anything is asked.
@@ -298,6 +296,8 @@ TEST(theEventFilterKeepsOnlyWholeWindows) {
     // a caret's every key, a moving window's tens a second, z-order for the container, and no
     // STATECHANGE for a maximize).
     CHECK(!FilterEvent(kLocationChange, true, kObjectWindow, kChildSelf, false, topLevel));
+    // Nor destroys: every Win32 menu is a window made and destroyed each time it opens.
+    CHECK(!FilterEvent(kDestroy, true, kObjectWindow, kChildSelf, true, topLevel));
     CHECK(!FilterEvent(kReorder, true, kObjectWindow, kChildSelf, false, topLevel));
     CHECK(!FilterEvent(kReorder, true, -4, kChildSelf, false, topLevel));
     CHECK(!FilterEvent(kStateChange, true, kObjectWindow, kChildSelf, false, topLevel));
@@ -341,7 +341,7 @@ TEST(lockDisplayAndCloakHideAndComeBack) {
 
 TEST(coveredHoldsOnlyWhileNothingSaysKiteShows) {
     Tracker tracker;
-    const Tracker::Pass pass = CoveredBy({0x10}, {7});
+    const Tracker::Pass pass = CoveredBy({0x10});
     tracker.SetPass(Tracker::Pass(pass));
     CHECK(tracker.Verdict() == Hidden::Covered);
     CHECK(tracker.IsOccluder(0x10) && !tracker.IsOccluder(0x11));
@@ -390,15 +390,15 @@ TEST(coveredHoldsOnlyWhileNothingSaysKiteShows) {
 
 TEST(aPassHandsBackItsBuffersEmptied) {
     Tracker tracker;
-    Tracker::Pass pass = CoveredBy({0x12, 0x10, 0x10}, {9, 7, 9});
+    Tracker::Pass pass = CoveredBy({0x12, 0x10, 0x10});
     tracker.SetPass(pass);
     CHECK(tracker.Occluders() == (std::vector<uintptr_t>{0x10, 0x12}));  // sorted, unique
-    CHECK(pass.occluders.empty() && pass.occluderProcesses.empty() && !pass.covered && pass.kiteShown);
+    CHECK(pass.occluders.empty() && !pass.covered && pass.kiteShown);
 }
 
 TEST(aDragNearKiteHoldsOffCoveredUntilThePassAfterIt) {
     Tracker tracker;
-    tracker.SetPass(CoveredBy({0x10}, {7}));
+    tracker.SetPass(CoveredBy({0x10}));
     // Dragging the window over Kite shows Kite at once.
     EventFacts start = Facts(Event::MoveSizeStart, true);
     start.window = 0x10;
@@ -413,7 +413,7 @@ TEST(aDragNearKiteHoldsOffCoveredUntilThePassAfterIt) {
     CHECK(end.recompute && end.followUp);
     CHECK(tracker.Dragging());
     CHECK(tracker.Verdict() == Hidden::No);
-    tracker.SetPass(CoveredBy({0x10}, {7}));  // dropped back over Kite
+    tracker.SetPass(CoveredBy({0x10}));  // dropped back over Kite
     CHECK(!tracker.Dragging());
     CHECK(tracker.Verdict() == Hidden::Covered);
 
@@ -430,10 +430,10 @@ TEST(aDragNearKiteHoldsOffCoveredUntilThePassAfterIt) {
     Tracker visible;
     CHECK(visible.NeedsOverKite(Event::MoveSizeStart));
     CHECK(visible.OnEvent(Facts(Event::MoveSizeStart, false, true)).reevaluate);
-    visible.SetPass(CoveredBy({0x20}, {8}));
+    visible.SetPass(CoveredBy({0x20}));
     CHECK(visible.Verdict() == Hidden::No);
     visible.OnEvent(Facts(Event::MoveSizeEnd));
-    visible.SetPass(CoveredBy({0x20}, {8}));
+    visible.SetPass(CoveredBy({0x20}));
     CHECK(visible.Verdict() == Hidden::Covered);
 
     // A drag far from Kite, or of Kite itself, holds nothing.
@@ -442,16 +442,13 @@ TEST(aDragNearKiteHoldsOffCoveredUntilThePassAfterIt) {
     CHECK(!far.OnEvent(Kite(Event::MoveSizeStart)).reevaluate);
     CHECK(!far.Dragging());
 
-    // The hold goes without the drag's end when the window does, or the hook (DragLost).
+    // The hold goes without the drag's end when the window does (the pass finds it gone), or
+    // the hook (DragLost).
     Tracker lost;
     EventFacts drag = Facts(Event::MoveSizeStart, false, true);
     drag.window = 0x30;
     lost.OnEvent(drag);
-    EventFacts gone = Facts(Event::Destroy);
-    gone.window = 0x30;
-    lost.OnEvent(gone);
-    CHECK(!lost.Dragging());
-    lost.OnEvent(drag);
+    CHECK(lost.Dragging() && lost.DraggingWindow() == 0x30);
     lost.DragLost();
     CHECK(!lost.Dragging());
 }
@@ -471,7 +468,6 @@ TEST(onlyEventsThatCanChangeTheVerdictAskForAPass) {
     CHECK(!tracker.OnEvent(own).recompute);  // Kite's own windows never cover it
     // Uncovering can't happen while nothing covers.
     CHECK(!tracker.OnEvent(Facts(Event::Hide, true)).recompute);
-    CHECK(!tracker.OnEvent(Facts(Event::Destroy, true)).recompute);
     CHECK(!tracker.OnEvent(Facts(Event::MinimizeStart, true)).recompute);
     CHECK(tracker.KiteChanged().recompute);
     // A monitor, work-area or scale change: a pass now and one once maximized windows refit.
@@ -479,9 +475,9 @@ TEST(onlyEventsThatCanChangeTheVerdictAskForAPass) {
     CHECK(display.recompute && display.followUp);
 
     // Covered: only what could uncover it, from the windows that cover it.
-    tracker.SetPass(CoveredBy({0x10}, {7}));
+    tracker.SetPass(CoveredBy({0x10}));
     CHECK(!tracker.NeedsOverKite(Event::Show));
-    for (Event event : {Event::Hide, Event::Destroy, Event::MinimizeStart, Event::Cloaked}) {
+    for (Event event : {Event::Hide, Event::MinimizeStart, Event::Cloaked}) {
         CHECK(tracker.OnEvent(Facts(event, true)).recompute);
         CHECK(!tracker.OnEvent(Facts(event, false)).recompute);
     }
@@ -497,7 +493,7 @@ TEST(onlyEventsThatCanChangeTheVerdictAskForAPass) {
 }
 
 TEST(theHooksFollowWhatCanChangeTheVerdict) {
-    constexpr uint32_t kite = 1, foreground = 2, shell = 3;
+    constexpr uint32_t kite = 1, shell = 3;
     const GlobalHooks none;
     Tracker tracker;
     // In the background and visible: the four system-wide (no EVENT_OBJECT_SHOW: a caret's on
@@ -512,21 +508,19 @@ TEST(theHooksFollowWhatCanChangeTheVerdict) {
     ProcessHooks ownCloak;
     ownCloak.kiteCloak = true;
     CHECK(tracker.Hooks(kite, shell) == ownCloak);
-    // Covered: the occluders' destroys (never Kite's own; their hides, a caret's on every key in
-    // the app being typed in, are the heartbeat's), and the shell's thumbnails coming up (on its
-    // preview threads only).
-    tracker.SetPass(CoveredBy({0x10, 0x11, 0x12}, {5, foreground, kite}));
+    // Covered: the shell's thumbnails coming up (on its preview threads only). Nothing of the
+    // occluders': their hides and destroys come for every caret and menu in the app being used,
+    // so the heartbeat re-reads them instead.
+    tracker.SetPass(CoveredBy({0x10, 0x11, 0x12}));
     CHECK(tracker.Globals() == Globals(true, true, true, true));
     ProcessHooks covered;
-    covered.destroy = {foreground, 5};
     covered.shellShow = true;
     CHECK(tracker.Hooks(kite, shell) == covered);
     // A thumbnail or Alt+Tab up: the shell's hides too, so its going doesn't hold Kite drawing.
-    Tracker::Pass previewing = CoveredBy({0x10}, {5});
+    Tracker::Pass previewing = CoveredBy({0x10});
     previewing.previewing = true;
     tracker.SetPass(previewing);
     ProcessHooks whilePreviewing;
-    whilePreviewing.destroy = {5};
     whilePreviewing.shellShow = true;
     whilePreviewing.shellHide = true;
     CHECK(tracker.Hooks(kite, shell) == whilePreviewing);
@@ -545,7 +539,7 @@ TEST(theHooksFollowWhatCanChangeTheVerdict) {
 
 TEST(lockedOrDisplayOffHooksNothingAndIgnoresEvents) {
     Tracker tracker;
-    tracker.SetPass(CoveredBy({0x10}, {7}));
+    tracker.SetPass(CoveredBy({0x10}));
     tracker.SetDisplayOff(true);
     CHECK(tracker.Suspended());
     CHECK(tracker.Globals() == GlobalHooks{});
@@ -589,7 +583,7 @@ TEST(staleDwmAnswersAreAskedAgainWhenTheyCouldHaveChanged) {
     // covered by a stale answer.
     for (const DwmAnswers& changed : {acrylic, cloaked}) {
         Tracker tracker;
-        tracker.SetPass(CoveredBy({0x10}, {7}));
+        tracker.SetPass(CoveredBy({0x10}));
         tracker.SetDisplayOff(true);
         const Tracker::Reaction resumed = tracker.SetDisplayOff(false);
         CHECK(resumed.recompute && resumed.refreshWindows);
@@ -611,7 +605,7 @@ TEST(staleDwmAnswersAreAskedAgainWhenTheyCouldHaveChanged) {
     CHECK(tracker.KiteActivated().refreshWindows);
     CHECK(tracker.OnEvent(Facts(Event::Cloaked)).refreshWindows);
     CHECK(tracker.OnEvent(Facts(Event::Uncloaked)).refreshWindows);
-    CHECK(!tracker.OnEvent(Facts(Event::Destroy)).refreshWindows);
+    CHECK(!tracker.OnEvent(Facts(Event::Hide)).refreshWindows);
     // Windows no pass saw go.
     cache.Get(0x20, outer, 4, answer(opaque));
     cache.Prune(4);

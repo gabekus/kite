@@ -1269,22 +1269,25 @@ Windows that means:
     front comes too soon after the foreground change for a hook made then).
     System-wide hooks are kept only for events a person causes at a person's
     rate: an app coming forward, a drag, a minimize, a desktop switch. Per
-    process, only the occluders' destroys while Kite is covered. Per thread,
-    the shell's shows on its preview threads (the taskbars' and the hosts of
-    Alt+Tab and Task View) while Kite is covered, and their hides while one of
-    those is up: never Explorer's whole process, whose File Explorer windows
-    and Win+R box raise a caret's show per key on threads of their own. Moves,
-    z-order, state changes, shows and hides aren't hooked otherwise. Kite's own
-    move or resize pokes the thread once, when it ends (`WM_EXITSIZEMOVE`). Measured: a caret raises a show, a hide and a move on every key
-    (in the app being typed in, usually the one over Kite), a tooltip or menu
-    a show and a hide, and a moving window tens of moves a second, at 5 to 8
-    context switches each, past the watcher's 20 a second. And a maximize or
-    restore raises only `LOCATIONCHANGE`, never a `STATECHANGE`. So a window
-    newly over a visible Kite without coming forward is found at the next pass
-    (it costs rendering, never a blank).
+    thread, the shell's shows on its preview threads (the taskbars' and the
+    hosts of Alt+Tab and Task View) while Kite is covered, and their hides
+    while one of those is up: never Explorer's whole process, whose File
+    Explorer windows and Win+R box raise a caret's show per key on threads of
+    their own. Moves, z-order, state changes, shows, hides and destroys aren't
+    hooked otherwise, not even for the windows over Kite. Measured: a caret
+    raises a show, a hide and a move on every key (in the app being typed in,
+    usually the one over Kite), a tooltip a show and a hide, every Win32 menu
+    a create and a destroy (it's a window made each time it opens: 23.5
+    context switches a second covered, for menus twice a second), and a moving
+    window tens of moves a second, at 5 to 8 context switches each, past the
+    watcher's 20 a second. And a maximize or restore raises only
+    `LOCATIONCHANGE`, never a `STATECHANGE`. So a window newly over a visible
+    Kite without coming forward is found at the next pass (it costs rendering,
+    never a blank), and a closed occluder by the heartbeat. Kite's own move or
+    resize pokes the thread once, when it ends (`WM_EXITSIZEMOVE`).
   - **Heartbeat.** What uncovers a covered Kite without an event (a
     restore-down, Win+Arrow, a FancyZones snap, leaving full screen, a monitor
-    change, a window hidden or turning translucent) is found by a heartbeat
+    change, a window closed, hidden or turning translucent) is found by a heartbeat
     that runs only while Kite is covered. Twice a second it re-reads the
     windows that covered it with user32 alone (`IsWindow`, visible, minimized,
     maximized, its owner, `GetWindowRect`, the style, the extended style and

@@ -147,10 +147,14 @@ std::string_view Name(Hidden hidden);
 //   Alt+Tab, while covered) and HIDE only from those while one of them is up. Threads, not
 //   Explorer's process: File Explorer's windows and Win+R's box are Explorer's too, each on a
 //   thread of its own, and renaming a file raises a caret's SHOW per key.
+// - EVENT_OBJECT_DESTROY comes for every menu a Win32 app opens (#32768 is made and destroyed
+//   each time), in the app over Kite: measured at 23.5 context switches a second covered, for
+//   real menus twice a second. A closed occluder is found by the heartbeat's IsWindow (and
+//   closing the window in front brings another forward, which the foreground hook hears).
 // So what uncovers a covered Kite without an event (a restore-down, Win+Arrow, a FancyZones
-// snap, leaving full screen, a monitor change, an occluder turning translucent or hidden) is
-// found by the Heartbeat instead, and the pointer reaching Kite (PointerRecovery).
-enum class Event { Foreground, MoveSizeStart, MoveSizeEnd, MinimizeStart, MinimizeEnd, Show, Hide, Destroy, Cloaked, Uncloaked };
+// snap, leaving full screen, a monitor change, an occluder closed, turning translucent or
+// hidden) is found by the Heartbeat instead, and the pointer reaching Kite (PointerRecovery).
+enum class Event { Foreground, MoveSizeStart, MoveSizeEnd, MinimizeStart, MinimizeEnd, Show, Hide, Cloaked, Uncloaked };
 
 // The WinEvent codes, by value.
 namespace win_event {
@@ -165,7 +169,7 @@ inline constexpr int32_t kChildSelf = 0;     // CHILDID_SELF
 // is, or none for what never matters (carets, cursors, scroll bars, a window's parts, events
 // with no window, events not hooked). `topLevel` is asked only when the answer depends on it
 // (it costs a GetAncestor), so it's a function; `occluder` says the window covered Kite in the
-// last pass (a destroyed one can't be asked whether it's top-level).
+// last pass (one gone can't be asked whether it's top-level).
 template <typename TopLevel>
 std::optional<Event> FilterEvent(uint32_t code, bool hasWindow, int32_t object, int32_t child, bool occluder, TopLevel topLevel);
 
@@ -194,12 +198,12 @@ struct GlobalHooks {
     bool operator==(const GlobalHooks&) const = default;
 };
 
-// The per-process hooks, sorted process ids. Never Kite's own but for `kiteCloak` (its window
-// cloaked on another desktop while nothing system-wide is hooked). The shell's are only on the
-// threads that show its previews (the taskbars' and the hosts of Alt+Tab and Task View), which
-// the shell finds, never on Explorer's whole process.
+// The hooks on one process: Kite's own cloak (on another desktop while nothing system-wide is
+// hooked), and the shell's, only on the threads that show its previews (the taskbars' and the
+// hosts of Alt+Tab and Task View), which the shell finds, never on Explorer's whole process.
+// None on the windows over Kite: their hides and destroys come for every caret and menu in the
+// app being used (the heartbeat re-reads them instead).
 struct ProcessHooks {
-    std::vector<uint32_t> destroy;  // EVENT_OBJECT_DESTROY: the windows over a covered Kite closing
     bool shellShow = false;         // EVENT_OBJECT_SHOW on the shell's preview threads: a thumbnail or Alt+Tab coming up
     bool shellHide = false;         // EVENT_OBJECT_HIDE on them: one going, while one is up
     bool kiteCloak = false;         // EVENT_OBJECT_CLOAKED...UNCLOAKED for Kite's process
@@ -248,7 +252,6 @@ public:
         bool previewing = false;
         bool recording = false;
         std::vector<uintptr_t> occluders;          // windows that cover part of Kite, sorted
-        std::vector<uint32_t> occluderProcesses;   // their processes, sorted and unique
     };
     // Takes the pass, and hands back the previous one's buffers, emptied, for the next.
     void SetPass(Pass& pass);
@@ -402,7 +405,6 @@ std::optional<Event> FilterEvent(uint32_t code, bool hasWindow, int32_t object, 
     case kMoveSizeEnd: event = Event::MoveSizeEnd; break;
     case kMinimizeStart: event = Event::MinimizeStart; break;
     case kMinimizeEnd: event = Event::MinimizeEnd; break;
-    case kDestroy: event = Event::Destroy; break;
     case kShow: event = Event::Show; break;
     case kHide: event = Event::Hide; break;
     case kCloaked: event = Event::Cloaked; break;

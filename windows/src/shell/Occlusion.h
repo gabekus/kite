@@ -14,11 +14,10 @@
 // - Each hook is on only in the states where its events can change the verdict (core's
 //   Tracker::Globals and Hooks): none while locked, display-off, minimized or on another
 //   desktop; only an app coming forward and drags while Kite is in front.
-// - What's hooked is quiet: the system-wide events are a person's actions; per process, only
-//   the occluders' destroys while Kite is covered; and per thread, the shell's shows on its
-//   preview threads (the taskbars' and Alt+Tab's, never File Explorer's) while covered, and
-//   their hides while a preview is up. Never moves, z-order, state changes, or anyone else's
-//   shows and hides (core's Event says why).
+// - What's hooked is quiet: the system-wide events are a person's actions; and per thread,
+//   the shell's shows on its preview threads (the taskbars' and Alt+Tab's, never File
+//   Explorer's) while covered, and their hides while a preview is up. Never moves, z-order,
+//   state changes, or anyone else's shows, hides and destroys (core's Event says why).
 // - Kite's own move or resize pokes the watcher once, at its end (WindowChanged isn't called
 //   between WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE).
 // - What uncovers Kite without an event (a restore-down, a keyboard snap, leaving full screen,

@@ -59,7 +59,7 @@ static_assert(WTSSessionInfoEx == kWtsSessionInfoEx && WTS_SESSIONSTATE_LOCK == 
 #endif
 
 static_assert(EVENT_SYSTEM_FOREGROUND == occlusion::win_event::kForeground && EVENT_OBJECT_HIDE == occlusion::win_event::kHide &&
-              EVENT_OBJECT_DESTROY == occlusion::win_event::kDestroy && OBJID_WINDOW == occlusion::win_event::kObjectWindow);
+              EVENT_OBJECT_SHOW == occlusion::win_event::kShow && OBJID_WINDOW == occlusion::win_event::kObjectWindow);
 static_assert(WS_POPUP == occlusion::win32::kPopup && WS_EX_LAYERED == occlusion::win32::kExLayered &&
               WS_EX_TOOLWINDOW == occlusion::win32::kExToolWindow && COMPLEXREGION == occlusion::win32::kComplexRegion &&
               NULLREGION == occlusion::win32::kNullRegion && LWA_ALPHA == occlusion::win32::kLayeredAlpha);
@@ -140,8 +140,8 @@ struct Occlusion::Worker {
         HWINEVENTHOOK foreground = nullptr, moveSize = nullptr, minimize = nullptr, cloak = nullptr;
     } global;
     HWINEVENTHOOK kiteCloak = nullptr;
-    // Per process (the occluders'), and per thread of the shell's (its preview threads).
-    std::map<DWORD, HWINEVENTHOOK> destroyHooks, hideHooks, showHooks;
+    // Per thread of the shell's (its preview threads).
+    std::map<DWORD, HWINEVENTHOOK> hideHooks, showHooks;
     DWORD hookedShell = 0;            // the shell process the thread hooks are on
     std::vector<uint32_t> shellThreads;
     // WTS: registered from here (Run); early in a login the service isn't up, so it's tried
@@ -221,7 +221,7 @@ struct Occlusion::Worker {
             if (*hook) UnhookWinEvent(*hook);
             *hook = nullptr;
         }
-        for (auto* hooks : {&destroyHooks, &hideHooks, &showHooks}) {
+        for (auto* hooks : {&hideHooks, &showHooks}) {
             for (auto& [pid, hook] : *hooks) UnhookWinEvent(hook);
             hooks->clear();
         }
@@ -357,7 +357,7 @@ struct Occlusion::Worker {
         GetWindowThreadProcessId(hwnd, &process);
         facts.kiteProcess = process == kiteProcess;
         facts.kiteWindow = hwnd == kite;
-        const bool showOrHide = *event == Event::Show || *event == Event::Hide || *event == Event::Destroy || *event == Event::Cloaked ||
+        const bool showOrHide = *event == Event::Show || *event == Event::Hide || *event == Event::Cloaked ||
                                 *event == Event::Uncloaked;
         if (showOrHide && process && process == ShellProcess()) facts.previewWindow = IsPreview(hwnd);
         if (tracker.NeedsOverKite(*event)) {
@@ -477,7 +477,6 @@ struct Occlusion::Worker {
         if (!covers.Intersects(e.target)) return true;
         occluderRects.push_back(covers);
         pass.occluders.push_back(reinterpret_cast<uintptr_t>(hwnd));
-        pass.occluderProcesses.push_back(process);
         return true;
     }
 
@@ -611,18 +610,17 @@ struct Occlusion::Worker {
         const DWORD shell = ShellProcess();
         const occlusion::ProcessHooks wanted = tracker.Hooks(kiteProcess, shell);
         Set(kiteCloak, wanted.kiteCloak, kCloaked, kUncloaked, kiteProcess);
-        Sync(destroyHooks, wanted.destroy, kDestroy, kDestroy, 0);
         // The shell's preview threads, found again each time they're wanted (Explorer may have
         // restarted, or made its Alt+Tab host since).
         static const std::vector<uint32_t> none;
         if (shell != hookedShell) {
-            Sync(hideHooks, none, kHide, kHide, hookedShell);
-            Sync(showHooks, none, kShow, kShow, hookedShell);
+            Sync(hideHooks, none, kHide, hookedShell);
+            Sync(showHooks, none, kShow, hookedShell);
             hookedShell = shell;
         }
         if (wanted.shellShow || wanted.shellHide) ShellPreviewThreads(shell, shellThreads);
-        Sync(hideHooks, wanted.shellHide ? shellThreads : none, kHide, kHide, shell);
-        Sync(showHooks, wanted.shellShow ? shellThreads : none, kShow, kShow, shell);
+        Sync(hideHooks, wanted.shellHide ? shellThreads : none, kHide, shell);
+        Sync(showHooks, wanted.shellShow ? shellThreads : none, kShow, shell);
     }
 
     static void Set(HWINEVENTHOOK& hook, bool wanted, DWORD first, DWORD last, DWORD process) {
@@ -635,8 +633,8 @@ struct Occlusion::Worker {
         }
     }
 
-    // `wanted`: process ids, or with `threadsOf`, that process's thread ids.
-    static void Sync(std::map<DWORD, HWINEVENTHOOK>& hooks, const std::vector<uint32_t>& wanted, DWORD first, DWORD last, DWORD threadsOf) {
+    // One hook for `event` on each of `wanted`, sorted thread ids of `process`.
+    static void Sync(std::map<DWORD, HWINEVENTHOOK>& hooks, const std::vector<uint32_t>& wanted, DWORD event, DWORD process) {
         for (auto it = hooks.begin(); it != hooks.end();) {
             if (std::binary_search(wanted.begin(), wanted.end(), it->first)) {
                 ++it;
@@ -645,15 +643,14 @@ struct Occlusion::Worker {
             UnhookWinEvent(it->second);
             it = hooks.erase(it);
         }
-        for (uint32_t id : wanted) {
-            if (hooks.contains(id)) continue;
-            HWINEVENTHOOK hook = threadsOf ? Hook(first, last, threadsOf, id) : Hook(first, last, id);
-            if (hook) hooks.emplace(id, hook);
+        for (uint32_t thread : wanted) {
+            if (hooks.contains(thread)) continue;
+            if (HWINEVENTHOOK hook = Hook(event, event, process, thread)) hooks.emplace(thread, hook);
         }
     }
 
     size_t HookCount() const {
-        size_t count = destroyHooks.size() + hideHooks.size() + showHooks.size();
+        size_t count = hideHooks.size() + showHooks.size();
         for (HWINEVENTHOOK hook : {global.foreground, global.moveSize, global.minimize, global.cloak, kiteCloak}) count += hook != nullptr;
         return count;
     }

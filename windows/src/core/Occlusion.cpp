@@ -187,7 +187,6 @@ Tracker::Reaction Tracker::KiteActivated() {
     pass_.kiteForeground = true;
     pass_.covered = false;
     pass_.occluders.clear();
-    pass_.occluderProcesses.clear();
     // The pass in front skips the windows; it reads Kite's cloak, afresh.
     return {!Suspended(), changed, false, true};
 }
@@ -249,13 +248,10 @@ Tracker::Reaction Tracker::OnEvent(const EventFacts& e) {
         reaction.recompute = !covered && e.overKite && !e.kiteProcess;
         break;
     case Event::Hide:
-    case Event::Destroy:
     case Event::Cloaked:
         if (e.kiteWindow && e.event == Event::Cloaked) return SetCloaked(true);
         // A cloak changes DWM's answer for that window.
         reaction.refreshWindows = e.event == Event::Cloaked;
-        // The dragged window gone mid-drag: its end won't come.
-        if (dragging_ && e.window == draggingWindow_ && e.event == Event::Destroy) DragLost();
         // Windows 11's Alt+Tab is cloaked rather than hidden when it goes: the pass looks again.
         reaction.recompute = e.previewWindow || (covered && e.occluder);
         break;
@@ -272,15 +268,12 @@ void Tracker::DragLost() {
 void Tracker::SetPass(Pass& pass) {
     std::swap(pass_, pass);
     pass.occluders.clear();
-    pass.occluderProcesses.clear();
     pass.covered = pass.previewing = pass.recording = pass.kiteForeground = false;
     pass.kiteShown = true;
     SortUnique(pass_.occluders);
-    SortUnique(pass_.occluderProcesses);
     if (pass_.kiteForeground || !pass_.kiteShown) {
         pass_.covered = false;
         pass_.occluders.clear();
-        pass_.occluderProcesses.clear();
     }
     // The pass after a drag's end: the drag's hold on Covered goes.
     if (dragEnded_) DragLost();
@@ -324,14 +317,9 @@ ProcessHooks Tracker::Hooks(uint32_t kiteProcess, uint32_t shellProcess) const {
     // A thumbnail, Alt+Tab or Task View up: its going (Windows 10 hides it; Windows 11 cloaks
     // it, which the system-wide hook sees), so it doesn't hold Kite drawing.
     if (pass_.previewing && other(shellProcess)) hooks.shellHide = true;
-    if (!pass_.covered) return hooks;
-    // Covered: the occluders closing (hides, a caret's on every key, are the heartbeat's), and
-    // the shell's previews coming up.
-    for (uint32_t process : pass_.occluderProcesses) {
-        if (other(process)) hooks.destroy.push_back(process);
-    }
-    if (other(shellProcess)) hooks.shellShow = true;
-    SortUnique(hooks.destroy);
+    // Covered: the shell's previews coming up. The occluders closing, hiding or turning
+    // translucent are the heartbeat's (their destroys and hides come for every menu and caret).
+    if (pass_.covered && other(shellProcess)) hooks.shellShow = true;
     return hooks;
 }
 
