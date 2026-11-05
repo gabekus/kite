@@ -74,7 +74,7 @@ constexpr char kVisibilityMessage[] = "kite.pageVisibility";
 constexpr ULONGLONG kRehideSettleMs = 250;
 // After each main-frame load end of a page Kite has hidden, it's hidden again at these times,
 // whatever the page says: Chromium showed such pages 0.4 to 1.3 s after a load end (measured).
-constexpr int64_t kRehideAfterLoadMs[] = {500, 1500, 3000, 6000};
+constexpr int64_t kRehideAfterLoadMs[] = {500, 1000, 1500, 3000, 6000};
 // At most this many re-hides of a page in any 10 s, whatever its renderer says.
 constexpr size_t kMaxRehidesPer10s = 8;
 constexpr ULONGLONG kRehideWindowMs = 10'000;

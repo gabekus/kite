@@ -1444,7 +1444,7 @@ Windows that means:
       `visibilityState` changes nothing it reads. But `document.open()` drops every listener
       on the document and the window, Kite's too, and a compromised renderer can say anything.
     - **So Kite also re-hides on its own.** After each main-frame load end of a page Kite has
-      hidden, it re-hides it at 0.5, 1.5, 3 and 6 s, asking nothing of the page: Chromium
+      hidden, it re-hides it at 0.5, 1, 1.5, 3 and 6 s, asking nothing of the page: Chromium
       showed such pages 0.4 to 1.3 s after a load end (measured, `document.open()` pages
       too).
     - **The re-hide.** For a page Kite has hidden, Kite shows its host and widget windows
