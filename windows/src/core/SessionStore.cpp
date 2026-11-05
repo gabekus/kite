@@ -5,13 +5,12 @@
 #include <chrono>
 #include <fstream>
 
+#include "core/Files.h"
 #include "core/StoreFile.h"
 
 namespace kite {
 
 namespace fs = std::filesystem;
-
-using store_file::PathText;
 
 bool SessionStore::MaySave(const LoadResult& result) {
     if (auto* error = std::get_if<Error>(&result)) return error->quarantinedTo.has_value();

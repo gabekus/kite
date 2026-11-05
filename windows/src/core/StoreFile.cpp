@@ -20,11 +20,6 @@ namespace kite::store_file {
 
 namespace fs = std::filesystem;
 
-std::string PathText(const fs::path& path) {
-    auto u8 = path.u8string();
-    return std::string(u8.begin(), u8.end());
-}
-
 namespace {
 
 // Drawn once per process: two processes' temps never share a name. Plain chars (trivially
