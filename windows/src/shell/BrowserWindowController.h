@@ -65,6 +65,15 @@ public:
         // --frame-log: each frame the clock delivered (when it was handled, the time it was
         // drawn for, the pages' offset and the theme's crossfade) is kept for SaveFrameLog.
         bool frameLog = false;
+        // --perf-control: WM_COPYDATA tagged perf::kControlTag runs a shortcut's command, logs a
+        // mark, opens a tab or posts a pointer move (QueuePerfRequest). Test profiles only.
+        bool perfControl = false;
+        // --chromium-switches: added to Chromium's command line (test profiles only).
+        std::vector<std::string> chromiumSwitches;
+        // A quiet run (main.cpp's `quiet`, which alone decides it): the window opens behind
+        // the others and never activates, the pages never take the focus or show a dialog
+        // (Chromium::Start's `quiet`), and every shortcut command must do something.
+        bool quiet = false;
         // --save-log: each save handed to the writer (when, and what it cost the UI thread) is
         // kept for SaveSaveLog.
         bool saveLog = false;
@@ -93,16 +102,20 @@ public:
     UINT MaxTextureSize() const { return renderer_ ? renderer_->MaxTextureSize() : 0; }
 
 #ifdef KITE_HAS_CEF
-    // Starts Chromium for the window's pages, its profiles under `root`. AlreadyRunning: another
-    // Kite has the profile and was told to come forward.
-    Chromium::StartResult StartChromium(const std::filesystem::path& root, std::wstring& error);
+    // Starts Chromium for the window's pages, its profiles under `root`, with the sandbox the
+    // bootstrap handed Kite.dll (RunWinMain). AlreadyRunning: another Kite has the profile and
+    // was told to come forward.
+    Chromium::StartResult StartChromium(const std::filesystem::path& root, void* sandboxInfo, std::wstring& error);
     // After the message loop: Chromium's shutdown, then what a smoke test checks of it. Empty
     // when it all went well (or there was no Chromium).
     std::wstring ShutDownChromium();
+    // What a smoke test read of the sandbox (shell/Sandbox.h): the first page's renderer and
+    // every helper, a line each; empty before the renderer reported.
+    const std::wstring& SandboxReport() const { return sandboxReport_; }
 #endif
     // Shows the window (behind other windows for a quiet run) and, with Chromium, the first page,
     // and starts the auto-archive's timer.
-    void Show(int showCommand, bool behindOtherWindows);
+    void Show(int showCommand);
 
     // Draws the backdrop, the sidebar and the caption buttons and commits them; with
     // `readBack`, the backdrop's frame as presented. Rebuilds a lost GPU first.
@@ -175,6 +188,8 @@ private:
     static constexpr UINT kMemoryPressureMessage = WM_APP + 7;
     // Posted by shell/Occlusion when its verdict changes (the shared WM_APP allocation gives P2 +12).
     static constexpr UINT kOcclusionMessage = WM_APP + 12;
+    // --perf-control's queued requests (QueuePerfRequest).
+    static constexpr UINT kPerfRequestMessage = WM_APP + 20;
 
     BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
                             SessionWriter* writer, std::unique_ptr<Renderer> renderer);
@@ -217,7 +232,7 @@ private:
     // One frame of the clock's: the touchpad's movement, then the theme's crossfade or a
     // swipe's step drawn for the composition frame at `time` (the pages' slide runs on the
     // compositor).
-    void Frame(double time);
+    void Frame(double time, double rateHz);
     // Whether anyone can see the window: shown, not minimized, and not hidden by shell/
     // Occlusion (covered, locked, display off, another desktop). What animates on screen
     // (the crossfade, the pages' slide) runs only while it is.
@@ -302,6 +317,20 @@ private:
     std::wstring Rebuild();
     void OnSize();
     bool Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result);
+    // One --perf-control request, a UTF-8 JSON object: {"command":ID[,"qpc":Q]} runs a shortcut's
+    // command (the input→present clock starting at Q, the harness's send), {"mark":NAME} logs a
+    // mark, {"open":URL} opens an http or https URL in a tab and shows it (the command bar's
+    // Open), {"input":"move","x":X,"y":Y,"qpc":Q} posts a pointer move to the window at client
+    // px (X, Y), and {"input":"leave"} the pointer's leaving. Checked here and queued, then run
+    // from the message loop (RunPerfRequests), so the sender isn't held while it runs and its
+    // dispatch is timed like any other. False when it isn't one, or the command does nothing now.
+    struct PerfRequest {
+        enum class Kind { Command, Mark, Open, Move, Leave } kind;
+        std::string text;
+        int64_t x = 0, y = 0, qpc = 0;
+    };
+    bool QueuePerfRequest(const COPYDATASTRUCT* data);
+    void RunPerfRequests();
 #ifdef KITE_HAS_CEF
     RECT ContentBounds() const;
     void ShowSelectedTab();
@@ -398,6 +427,11 @@ private:
         double handled, target, offset, theme;
     };
     std::vector<LoggedFrame> frames_;
+    // --perf-control's pointer is over the window: the system's WM_MOUSELEAVE (the real pointer
+    // is elsewhere) doesn't take its hover away.
+    bool perfPointer_ = false;
+    size_t perfMovesPosted_ = 0, perfLeavesPosted_ = 0;  // posted and not yet received
+    std::vector<PerfRequest> perfRequests_;
     std::vector<std::string> touchpadLog_;  // TouchpadInput::log's records, after the frames
     size_t touchpadLogDropped_ = 0;          // and how many didn't fit (kMaxTouchpadLog)
     std::wstring touchpadError_;            // why there's no touchpad_, when there isn't one
@@ -418,6 +452,12 @@ private:
     std::map<std::string, std::string> popupOpeners_;
     bool firstPageMade_ = false;
     bool pageLoading_ = false, pageLoaded_ = false;
+    // A smoke test's check of the first page's renderer (shell/Sandbox.h): whether one reported
+    // in, what was wrong with its sandbox and the helpers' (empty when nothing was), and what
+    // they were.
+    bool rendererChecked_ = false;
+    std::wstring rendererProblem_, helperProblem_, sandboxReport_;
+    void CloseWhenSmokeTestIsDone();
     ULONGLONG closeAskedAt_ = 0;  // when the smoke test asked the window to close
     // The smoke test's read of Chromium's Energy Saver preference (Chromium::ReadEnergySaver).
     bool energySaverRead_ = false;

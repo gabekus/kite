@@ -12,6 +12,7 @@
 #include "core/LiveTabPolicy.h"
 #include "core/TitleBar.h"
 #include "shell/Chromium.h"
+#include "shell/Sandbox.h"
 #include "shell/Text.h"
 
 namespace kite {
@@ -55,7 +56,7 @@ Tab* BrowserWindowController::TabNamed(const std::string& id) {
     return location ? state_.TabAt(*location) : nullptr;
 }
 
-Chromium::StartResult BrowserWindowController::StartChromium(const std::filesystem::path& root, std::wstring& error) {
+Chromium::StartResult BrowserWindowController::StartChromium(const std::filesystem::path& root, void* sandboxInfo, std::wstring& error) {
     PageEvents events;
     // The Mac's mutatePage: a navigation saves as soon as a sidebar change, a title or favicon
     // later (SessionSaveDelay::PageEvent); a report that changes nothing saves nothing.
@@ -85,17 +86,22 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
             pageLoading_ = true;
         } else if (pageLoading_ && !pageLoaded_) {
             pageLoaded_ = true;
-            if (options_.smokeTest) {
-                // Asked before the close, so the answer comes ahead of the browsers' DoClose
-                // and so before the window can go.
-                chromium_->ReadEnergySaver([this](std::optional<int> state) {
-                    energySaverRead_ = true;
-                    energySaverState_ = state;
-                });
-                closeAskedAt_ = GetTickCount64();
-                PostMessageW(window_.Handle(), WM_CLOSE, 0, 0);
-            }
+            CloseWhenSmokeTestIsDone();
         }
+    };
+    events.rendererStarted = [this](const std::string&, DWORD pid) {
+        // The smoke test checks the first page's renderer is in Chromium's sandbox (W6b): the
+        // pages Kite shows run sign-ins and password managers.
+        if (!options_.smokeTest || rendererChecked_) return;
+        rendererChecked_ = true;
+        std::wstring error;
+        if (const auto sandbox = InspectSandbox(pid, error)) {
+            rendererProblem_ = RendererSandboxProblem(*sandbox);
+            sandboxReport_ = L"Kite: the first page's renderer: " + Describe(*sandbox) + L"\n";
+        } else {
+            rendererProblem_ = L"couldn't read the renderer's token: " + error;
+        }
+        CloseWhenSmokeTestIsDone();
     };
     events.popupOpened = [this](const std::string& openerID, const std::string& id, const std::string& url) {
         // In the current space, as the Mac's openTab(id:url:). window.open('') has no address
@@ -137,11 +143,14 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         else commandBar_->ForwardKey(code, ctrl, shift);
     };
     events.relaunched = [this] {
-        // Kite was launched again: this one comes forward instead.
+        // Kite was launched again: this one comes forward instead (a quiet run stays behind;
+        // the other launch, a test on the same profile, fails).
+        if (options_.quiet) return;
         if (IsIconic(window_.Handle())) ShowWindow(window_.Handle(), SW_RESTORE);
         SetForegroundWindow(window_.Handle());
     };
-    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, std::move(events), chromium_, error);
+    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, sandboxInfo, std::move(events), options_.quiet,
+                                             options_.chromiumSwitches, chromium_, error);
         started != Chromium::StartResult::Started) {
         return started;
     }
@@ -164,6 +173,29 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     return Chromium::StartResult::Started;
 }
 
+// A smoke test closes once the first page has loaded (or shown its error page) and its
+// renderer has been checked, whichever comes last (the renderer reports from its first script
+// context, which a page loading has but may report after the load).
+void BrowserWindowController::CloseWhenSmokeTestIsDone() {
+    if (!options_.smokeTest || !pageLoaded_ || !rendererChecked_ || closeAskedAt_) return;
+    // Every helper by now (GPU, network, storage, renderers): none but the network service
+    // may run at medium integrity.
+    std::wstring error;
+    const std::vector<Helper> helpers = Helpers(error);
+    helperProblem_ = !error.empty()    ? L"couldn't read Kite's helpers: " + error
+                     : helpers.empty() ? L"Kite found none of its helper processes"
+                                       : HelperSandboxProblem(helpers);
+    for (const Helper& helper : helpers) sandboxReport_ += L"Kite: helper " + helper.type + L": " + Describe(helper.sandbox) + L"\n";
+    // Asked before the close, so the answer comes ahead of the browsers' DoClose and so before
+    // the window can go.
+    chromium_->ReadEnergySaver([this](std::optional<int> state) {
+        energySaverRead_ = true;
+        energySaverState_ = state;
+    });
+    closeAskedAt_ = GetTickCount64();
+    PostMessageW(window_.Handle(), WM_CLOSE, 0, 0);
+}
+
 std::wstring BrowserWindowController::ShutDownChromium() {
     if (!chromium_) return {};
     // Every browser closed within the window's 5 s deadline and Chromium's shutdown wait,
@@ -172,6 +204,9 @@ std::wstring BrowserWindowController::ShutDownChromium() {
     if (!options_.smokeTest) return {};
     if (!closedCleanly) return L"a browser didn't close in time; Chromium shut down under it";
     if (!pageLoaded_) return L"the first page didn't finish loading within 30 s";
+    if (!rendererChecked_) return L"the first page's renderer never reported its process";
+    if (!rendererProblem_.empty()) return L"the first page's renderer isn't sandboxed: " + rendererProblem_;
+    if (!helperProblem_.empty()) return L"a helper isn't sandboxed: " + helperProblem_;
     if (!chromium_->PagesCanBeHidden()) return L"a page had no Chromium widget window to hide: background tabs would keep drawing";
     // Chromium's default would cap pages at 30 fps on a low battery (Chromium::SetEnergySaverEnabled).
     if (!energySaverRead_) return L"Chromium's Energy Saver preference was never read back";

@@ -6,10 +6,26 @@
 #include <shellapi.h>
 #include <windowsx.h>
 
+// The module this code is linked into (the linker's symbol for its image base): Kite.dll with
+// Chromium (Kite.exe is CEF's bootstrap, W6b), Kite.exe without. Icons load from it rather than
+// from GetModuleHandle(nullptr), which is the bootstrap's.
+extern "C" IMAGE_DOS_HEADER __ImageBase;
+
 namespace kite {
 namespace {
 
 constexpr wchar_t kClassName[] = L"KiteBrowserWindow";
+
+// Kite.rc's `1 ICON "Kite.ico"` (windows/scripts/make-icon.py), the exe's icon in Explorer.
+constexpr WORD kAppIcon = 1;
+
+// The app icon at `size` px: the .ico's image of that size, or the nearest one scaled. The .ico
+// has the small and large icon sizes at 100% to 300% (16 to 48, 64, 96), so most scales get an
+// exact image, and LoadImageW needs nothing beyond user32. Null if the resource is missing.
+HICON LoadAppIcon(int size) {
+    return static_cast<HICON>(LoadImageW(reinterpret_cast<HINSTANCE>(&__ImageBase), MAKEINTRESOURCEW(kAppIcon), IMAGE_ICON,
+                                         size, size, LR_DEFAULTCOLOR));
+}
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 constexpr DWORD DWMWA_USE_IMMERSIVE_DARK_MODE = 20;  // Windows 10 20H1+
@@ -52,6 +68,11 @@ bool MainWindow::RegisterWindowClass(HINSTANCE instance) {
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.hbrBackground = nullptr;  // DirectComposition draws everything
     wc.lpszClassName = kClassName;
+    // The class's icons at the system DPI, for whatever asks the class; each window sets its
+    // own at its monitor's DPI (SetIcons). They live as long as the process.
+    const UINT dpi = GetDpiForSystem();
+    wc.hIcon = LoadAppIcon(GetSystemMetricsForDpi(SM_CXICON, dpi));
+    wc.hIconSm = LoadAppIcon(GetSystemMetricsForDpi(SM_CXSMICON, dpi));
     return RegisterClassExW(&wc) != 0;
 }
 
@@ -63,6 +84,7 @@ MainWindow::MainWindow(HINSTANCE instance) {
     rect.top = 0;  // no caption (WM_NCCALCSIZE)
     CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP, kClassName, L"Kite", kStyle, CW_USEDEFAULT, CW_USEDEFAULT,
                     rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr, instance, this);
+    if (hwnd_) SetIcons(GetDpiForWindow(hwnd_));
     // Windows sends no WM_DPICHANGED at creation, so a window that lands on a monitor with
     // another scale than the system's is resized for that monitor here.
     if (hwnd_ && dpi_ != systemDpi) ResizeClient(kDefaultWidth, kDefaultHeight);
@@ -70,11 +92,40 @@ MainWindow::MainWindow(HINSTANCE instance) {
 
 MainWindow::~MainWindow() {
     if (hwnd_) DestroyWindow(hwnd_);
+    for (HICON icon : {bigIcon_, smallIcon_}) {
+        if (icon) DestroyIcon(icon);
+    }
+}
+
+void MainWindow::SetIcons(UINT dpi) {
+    // The title bar has none to show (WM_NCCALCSIZE takes the caption off), but the taskbar,
+    // Alt+Tab and the window menu use these.
+    HICON bigIcon = LoadAppIcon(GetSystemMetricsForDpi(SM_CXICON, dpi));
+    HICON smallIcon = LoadAppIcon(GetSystemMetricsForDpi(SM_CXSMICON, dpi));
+    if (!bigIcon || !smallIcon) {
+        for (HICON icon : {bigIcon, smallIcon}) {
+            if (icon) DestroyIcon(icon);
+        }
+        return;  // the class's icons stay
+    }
+    SendMessageW(hwnd_, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(bigIcon));
+    SendMessageW(hwnd_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(smallIcon));
+    for (HICON icon : {bigIcon_, smallIcon_}) {
+        if (icon) DestroyIcon(icon);
+    }
+    bigIcon_ = bigIcon;
+    smallIcon_ = smallIcon;
 }
 
 void MainWindow::Show(int showCommand) {
     ShowWindow(hwnd_, showCommand);
     UpdateWindow(hwnd_);
+}
+
+void MainWindow::NeverActivate() {
+    neverActivates_ = true;
+    SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, GetWindowLongPtrW(hwnd_, GWL_EXSTYLE) | WS_EX_NOACTIVATE | WS_EX_APPWINDOW);
+    SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
 
 void MainWindow::ShowBehindOtherWindows() {
@@ -245,6 +296,8 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return TRUE;
     }
     case WM_DPICHANGED: {
+        // The icons follow the monitor, even when the layout keeps a fixed scale.
+        SetIcons(HIWORD(wParam));
         if (fixedScale_) return 0;
         // Take the rect Windows suggests so the window keeps its physical size on the new monitor.
         dpi_ = HIWORD(wParam);
@@ -293,6 +346,11 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_SETFOCUS:
         if (onFocus) onFocus();
         return 0;
+    case WM_MOUSEACTIVATE:
+        // A quiet run's window takes clicks without coming to the front; so do its pages,
+        // whose windows ask this one.
+        if (neverActivates_) return MA_NOACTIVATE;
+        break;
     case WM_ENDSESSION:
         if (wParam && onClose) onClose(true);
         return 0;

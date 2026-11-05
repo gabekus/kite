@@ -546,7 +546,7 @@ std::wstring SidebarView::DrawPageSurface(const PageModel& page, Page& gpu, Pixe
     std::set<FaviconKey> icons;
     drawnIcons_ = &icons;
     std::wstring error = compositor_->DrawSurface(
-        gpu.surface.Get(), width, height, dpi_,
+        perf::View::Sidebar, gpu.surface.Get(), width, height, dpi_,
         [&](ID2D1DeviceContext* context) {
             DrawPage(context, page, scroll, static_cast<float>(height) / scale, page.spaceID == model_.spaceID);
         },
@@ -610,7 +610,7 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         surfaceWidth_ = width;
         surfaceHeight_ = height;
         error = compositor_->DrawSurface(
-            surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawHeader(context); }, readBack ? &header : nullptr,
+            perf::View::Sidebar, surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawHeader(context); }, readBack ? &header : nullptr,
             hr);
         if (!error.empty()) {
             deviceLost_ = IsDeviceLost(hr);
