@@ -608,6 +608,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             return Fail(quiet, L"the window isn't per-monitor DPI aware (v2): Kite.manifest wasn't embedded", kWindowFailed);
         }
         if (GetACP() != CP_UTF8) return Fail(quiet, L"the process code page isn't UTF-8: Kite.manifest wasn't embedded", kWindowFailed);
+        // Kite.rc's icon is in the exe, and the window has it for the taskbar and Alt+Tab.
+        const HWND hwnd = window.Handle();
+        if (!GetClassLongPtrW(hwnd, GCLP_HICON) || !GetClassLongPtrW(hwnd, GCLP_HICONSM)) {
+            return Fail(quiet, L"the window's class has no icon: Kite.rc's icon wasn't embedded", kWindowFailed);
+        }
+        if (!SendMessageW(hwnd, WM_GETICON, ICON_BIG, 0) || !SendMessageW(hwnd, WM_GETICON, ICON_SMALL, 0)) {
+            return Fail(quiet, L"the window has no icon of its own (WM_SETICON)", kWindowFailed);
+        }
     }
 
 #ifdef KITE_HAS_CEF

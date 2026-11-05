@@ -157,6 +157,15 @@ jobs:
           $code = Run-Kite @('--smoke-test')
           if ($code -ne 1) { throw "--smoke-test without KITE_SUPPORT_PATH: expected exit 1, got $code" }
           $global:LASTEXITCODE = 0
+      - name: kiteperf smoke (the measurement harness builds and runs)
+        timeout-minutes: 5
+        run: |
+          # windows/tools/perf, briefly: launch, two tabs, a 5 s idle that must present and commit
+          # nothing (exit 4 if it does), a few space switches and a hover, then WM_CLOSE. WARP has
+          # no PDH GPU counters, so the GPU fields are null.
+          $out = Join-Path $env:RUNNER_TEMP 'kiteperf-smoke.json'
+          & windows/build/Release/kiteperf.exe --kite (Resolve-Path windows/build/Release/Kite.exe) --scenario smoke --runs 1 --out $out
+          if ($LASTEXITCODE -ne 0) { throw "kiteperf --scenario smoke exited with $LASTEXITCODE" }
       - name: Backdrop matches the Mac's shader (GPU vs CPU reference)
         timeout-minutes: 5
         run: |
@@ -229,6 +238,7 @@ jobs:
             !windows/build/Release/**/*.pdb
             !windows/build/Release/**/*.exp
             !windows/build/Release/KiteCoreTests.exe
+            !windows/build/Release/kiteperf.exe
           if-no-files-found: error
       - name: Upload the capture
         if: always()
@@ -236,4 +246,11 @@ jobs:
         with:
           name: kite-windows-capture
           path: ${{ runner.temp }}/kite-capture-*.png
+          if-no-files-found: ignore
+      - name: Upload the kiteperf smoke result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiteperf-smoke
+          path: ${{ runner.temp }}/kiteperf-smoke.json
           if-no-files-found: ignore
