@@ -5,6 +5,13 @@
 //   kitecore [--profile DIR] state
 //   kitecore [--profile DIR] resolve TEXT...
 //   kitecore [--profile DIR] suggest TEXT... [--current]
+//   kitecore [--profile DIR] find TEXT... [--result ACTIVE/TOTAL] [--width W] [--ask [--conversation]]
+//                                       the find bar with TEXT typed: what it asks the page, its
+//                                       counter for that report, Ask on Page's mode, and its
+//                                       frame (core/FindBar.h)
+//   kitecore [--profile DIR] undo STEP...
+//                                       a field's undo grouping (core/TextUndo.h): type:TEXT,
+//                                       back, paste:TEXT, move, undo, redo
 //   kitecore [--profile DIR] sidebar [SPACE_ID]
 //   kitecore [--profile DIR] collapse SPACE_ID
 //   kitecore [--profile DIR] open TEXT... [--space ID] [--background]
@@ -143,6 +150,8 @@
 #include "core/Favorites.h"
 #include "core/History.h"
 #include "core/HistoryStore.h"
+#include "core/FindBar.h"
+#include "core/TextUndo.h"
 #include "core/KeyBindings.h"
 #include "core/ProfileSettings.h"
 #include "core/StoreFile.h"
@@ -161,6 +170,7 @@
 #include "core/StoreFile.h"
 #include "core/SupportDirectory.h"
 #include "core/ThemeBackdrop.h"
+#include "core/TitleBar.h"
 #include "core/URLInput.h"
 #include "core/Unicode.h"
 #include "core/Uuid.h"
@@ -181,6 +191,8 @@ int Usage() {
         "usage: kitecore [--profile DIR] state\n"
         "       kitecore [--profile DIR] resolve TEXT...\n"
         "       kitecore [--profile DIR] suggest TEXT... [--current]\n"
+        "       kitecore [--profile DIR] find TEXT... [--result ACTIVE/TOTAL] [--width W] [--ask [--conversation]]\n"
+        "       kitecore [--profile DIR] undo type:TEXT|back|paste:TEXT|move|undo|redo...\n"
         "       kitecore [--profile DIR] sidebar [SPACE_ID] [--page back,forward,loading] [--hidden]\n"
         "       kitecore [--profile DIR] collapse SPACE_ID\n"
         "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]] [--page back,forward,loading] [--double] [--button left|middle]\n"
@@ -879,6 +891,85 @@ int main(int argc, char** argv) {
         auto url = url_input::Resolve(Join(args, 1), engine);
         if (!url) return kNotFound;
         std::puts(url->c_str());
+        return kOk;
+    } else if (command == "find") {
+        // The find bar (Ctrl+F) with TEXT typed: its placeholder, the search it asks the page for,
+        // the counter for a page report ACTIVE/TOTAL (0/0 for none, as Kite.exe's --find-result),
+        // whether Return would ask instead (Ask on Page, --ask, in a conversation with
+        // --conversation; Windows has no Ask on Page yet), and its frame in a window WIDTH points wide.
+        std::vector<std::string> words;
+        std::optional<FindResult> result;
+        double width = 1280;
+        bool ask = false, conversation = false;
+        const auto whole = [](std::string_view text, auto& value) {
+            const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+            return !text.empty() && error == std::errc() && end == text.data() + text.size();
+        };
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--result" && i + 1 < args.size()) {
+                const std::string_view report = args[++i];
+                const size_t slash = report.find('/');
+                int active = -1, total = -1;
+                if (slash == std::string_view::npos || !whole(report.substr(0, slash), active) || !whole(report.substr(slash + 1), total) ||
+                    active < 0 || total < active || (total > 0 && active < 1)) {
+                    return Usage();
+                }
+                result = FindResult{total > 0, total, active};
+            } else if (args[i] == "--width" && i + 1 < args.size()) {
+                if (!whole(args[++i], width) || !(width >= 1 && width <= 8192)) return Usage();
+            } else if (args[i] == "--ask") {
+                ask = true;
+            } else if (args[i] == "--conversation") {
+                conversation = true;
+            } else {
+                words.push_back(args[i]);
+            }
+        }
+        FindQuery query;
+        query.askEnabled = ask;
+        const FindQuery::Search search = query.TextChanged(Join(words, 0));
+        if (result) query.Show(*result);
+        const FindBarFrame frame = FindBarFrameIn(title_bar::kSidebarWidth, title_bar::kContentTop, width - sidebar_toggle::kContentInset,
+                                                  find_bar_style::ForAskEnabled(ask));
+        json::Object o{{"placeholder", ask_on_page::Placeholder(ask, conversation)},
+                       {"search", json::Object{{"text", search.text}, {"forward", search.forward}, {"findNext", search.findNext}}},
+                       {"label", query.Label()},
+                       {"notFound", query.LabelIsNotFound()},
+                       {"askMode", ask_on_page::IsAskMode(ask, query.Query(), query.Matches(), conversation)},
+                       {"frame", json::Object{{"left", frame.left}, {"top", frame.top}, {"width", frame.width}, {"height", frame.height}}}};
+        std::puts(json::Write(json::Value(std::move(o))).c_str());
+        return kOk;
+    } else if (command == "undo") {
+        // A text field's undo (core/TextUndo, as Kite's fields group it): STEP is type:TEXT (a
+        // keystroke a character), back (Backspace), paste:TEXT, move (the caret moved), undo or
+        // redo; prints the text after each step.
+        TextUndo<std::string> history;
+        std::string text;
+        json::Array texts;
+        for (size_t i = 1; i < args.size(); ++i) {
+            const std::string_view step = args[i];
+            if (step.starts_with("type:")) {
+                for (const std::u32string& character : unicode::Characters(step.substr(5))) {
+                    history.Record(text, TextUndo<std::string>::Kind::Typing);
+                    text += unicode::Encode(character);
+                }
+            } else if (step == "back") {
+                if (text.empty()) continue;
+                history.Record(text, TextUndo<std::string>::Kind::Typing);
+                text.resize(text.size() - unicode::Encode(unicode::Characters(text).back()).size());
+            } else if (step.starts_with("paste:")) {
+                history.Record(text, TextUndo<std::string>::Kind::Other);
+                text += step.substr(6);
+            } else if (step == "move") {
+                history.BreakTyping();
+            } else if (step == "undo" || step == "redo") {
+                if (auto to = step == "undo" ? history.Undo(text) : history.Redo(text)) text = *to;
+            } else {
+                return Usage();
+            }
+            texts.emplace_back(text);
+        }
+        std::puts(json::Write(json::Value(std::move(texts))).c_str());
         return kOk;
     } else if (command == "suggest") {
         CommandBarMode mode = CommandBarMode::NewTab;

@@ -443,7 +443,7 @@ would take typing keys is ignored and the command keeps its default, as the
 Mac ignores an unsafe one. An override with no shortcut removes the command's
 shortcut (a priority-only change keeps it in the file, as the Mac writes it). A
 few commands also take the keys Windows users expect, without showing them:
-Ctrl+F4, F5, Ctrl+F5, Shift+F5, F12, Ctrl+Shift+I, Ctrl+U, Alt+Left and
+Ctrl+F4, F3, Shift+F3, F5, Ctrl+F5, Shift+F5, F12, Ctrl+Shift+I, Ctrl+U, Alt+Left and
 Alt+Right; like the Mac's hidden alternates (⌘← for Back), they stay when the
 command is rebound or its shortcut removed, unless another command's shortcut
 takes them.
@@ -474,6 +474,67 @@ Ctrl+D again" prompt for Use Both, the toast after Copy URL, Ctrl+W closing a
 focused Developer Tools window, and Print (Ctrl+P): with CEF 156 on Windows 11,
 once the print dialog is cancelled CEF never prints again and Chromium's
 shutdown hangs, so Print waits until that's fixed.
+
+## Find in page
+
+Ctrl+F opens the Mac's find bar (W21, `shell/FindBarView`, ported from `FindBar.swift` with Ask
+on Page off, which is Arc's `FindInPageView`): 300 × 32pt, 10pt in from the content card's
+top-right corner and narrower in a narrow card, with the magnifier, the query field ("Find in
+page…"), the n/N counter ("Not Found" in red), the previous and next arrows, a divider and close,
+in Arc's popover colours and shadow, light or dark as the app's appearance (the session's
+`pageAppearance`, else Windows' apps' mode). It appears and goes without animation. Every
+keystroke searches at once (no debounce, as on the Mac): `CefBrowserHost::Find`, and a new search
+steps once more so its first match is active, as the Mac's `ChromiumEngine.find`; each
+`OnFindResult` fills the counter. Return and Shift+Return, the arrows, Ctrl+G and Ctrl+Shift+G
+(and Windows' F3 and Shift+F3) step through the matches, or open the bar when it's closed or
+empty; Esc or close ends the search (`StopFinding`, the active match left selected) and gives the
+page the keyboard. Like every Edit › Find item on the Mac these are Prefer Websites, so a page that
+uses Ctrl+F keeps it. The bar closes when the shown tab changes (another tab, a closed tab, a
+space switch) and stays through a navigation, as the Mac's. With no page, Ctrl+F beeps; a page
+still being made (Ctrl+F straight after a new tab) opens the bar, and its search runs once the
+page exists.
+
+The bar is a small surface in the overlay target, in a page layer under the command bar's
+(`Compositor::PageOverlay`), so it draws over the page's child window and typing redraws only the
+bar. The page keeps taking input everywhere else: its window gets a region with a hole the bar's
+shape, its 5pt corners rounded (`Chromium::SetOverlayHole`, `SetWindowRgn` on CEF's thread, in the
+same task as the page's placement and without its own repaint when a move follows), so the bar's
+clicks fall through to Kite's window. `--smoke-test` checks with `ChildWindowFromPointEx` that a
+click on the bar misses the page, one beside it or on its corner doesn't, and that the hole goes
+with the bar. Whatever moves the content card has to put the bar back in its corner and the hole
+under it (`FindBarView::SetCard`, then `UpdateFindHole`): the window's resize and the sidebar's
+toggle (`MovePage`) do, and split view will have to.
+
+One of Kite's fields has the keyboard at a time (`KeyboardOwner`, `GiveKeyboard`), as one field
+editor does on the Mac and as Windows has one system caret a thread: the command bar while it's
+open, else a space's rename, else the find field. Opening the command bar takes it from both, a
+rename takes it from the find field, and Ctrl+F or a press in the find field ends a rename
+(keeping what was typed). The field is the first responder from Ctrl+F or a press in it until
+another field or the page takes the keyboard; a press on the arrows or close leaves it where it
+was, as a borderless NSButton never becomes first responder. Losing it collapses the selection
+and drops the undo history, as the Mac's field editor leaves a field. While the find field has
+the keyboard, a navigation doesn't move it to the page, and activating Kite doesn't either; nor
+does Ctrl+F over the open command bar as it closes (Kite sets that it keeps the keyboard before the
+bar closes, CEF's thread asks again before focusing the page, and Chromium's own focus as the page
+windows are enabled again is declined). A press in the field that already has the keyboard only
+moves the caret (Shift extends the selection). Not yet: closing the command bar gives the keyboard
+to the page even when the find field had it before, where the Mac's first responder would return
+to the field; it waits for knowing what the Mac does after a row is committed.
+
+The field is `shell/TextField`, the one-line field the command bar's field and the rename field
+are to share (W21b): `shell/TextEditing` and `shell/TextLine` (from W9d), undo and redo as the
+Mac's field editor groups them (`core/TextUndo`: a run of typing is one undo; Ctrl+Z, Ctrl+Y and
+Ctrl+Shift+Z), the caret and drag selection, the hidden system caret, Windows' IME composition
+window at the caret, and the caret's blink on a visual of its own (view timer 0x4B47), which runs
+only while the field has the keyboard and stops after Windows' caret timeout. `--smoke-test` finds
+in `windows/helix/pages/smoke.html` after it loads (1/1, then Not Found). `--capture … --find TEXT
+[--find-result ACTIVE/TOTAL]` captures the bar; a capture runs without Chromium, so the page's
+report is given. `kitecore find` prints the query's search, counter, Ask on Page's mode
+(`--ask`, kept from the Mac's tests though Windows has no ask card yet) and frame, and `kitecore
+undo` replays a field's edits through `core/TextUndo`. Not yet: the
+buttons' tooltips and accessibility names, Use Selection to Find (Ctrl+E) and Jump to Selection,
+Ask on Page's card, and an inline IME composition (Windows' composition window draws it, as in
+the command bar).
 
 ## Spaces
 

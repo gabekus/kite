@@ -191,10 +191,11 @@ std::wstring BrowserWindowController::Init() {
     };
     bar.commit = [this](const CommandSuggestion& row, CommandBarMode mode) { Commit(row, mode); };
     bar.opened = [this] {
+        // The keyboard: the find field lets it go and a rename ends, keeping what was typed, as
+        // its field editor would, before the bar makes its system caret.
+        GiveKeyboard(KeyboardField::CommandBar);
         BlockPages(true);
         sidebar_->ClearHover();  // the bar takes the pointer while it's open
-        // And the keyboard: a rename ends, keeping what was typed, as its field editor would.
-        sidebar_->EndRenaming(true);
     };
     bar.closed = [this] { BlockPages(false); };
     bar.dpi = [this] { return window_.Dpi(); };
@@ -204,6 +205,16 @@ std::wstring BrowserWindowController::Init() {
         barError_ = error;
         OutputDebugStringW((L"Kite: no command bar: " + error + L"\n").c_str());
     }
+
+    // The find bar (Ctrl+F), over the page and under the command bar.
+    FindBarView::Callbacks find;
+    find.search = [this](const FindQuery::Search& search) { FindInPage(search); };
+    find.close = [this] { HideFindBar(true); };
+    find.takeKeyboard = [this] { GiveKeyboard(KeyboardField::Find, false); };
+    find.dpi = [this] { return window_.Dpi(); };
+    findBar_ = FindBarView::Create(window_.Handle(), std::move(find), error);
+    if (findBar_) findBar_->UseCompositor(compositor_.get());
+    else OutputDebugStringW((L"Kite: no find bar: " + error + L"\n").c_str());
 
     window_.onSize = [this] { OnSize(); };
     // The space tip is a window of its own: it goes when the window moves or is minimized,
@@ -929,6 +940,7 @@ bool BrowserWindowController::MayQuit() {
 }
 
 void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save) {
+    FindBarFollowsSelection();
     // A tab pinned by any path remembers its page, and a page reported by a pinned tab with none yet
     // becomes its pinned URL (the Mac's BrowserStore.mutate and mutatePage sync after every change):
     // a change there is a sidebar change, saved soon, whatever this update's own save was.
@@ -1053,6 +1065,129 @@ void BrowserWindowController::Commit(const CommandSuggestion& row, CommandBarMod
     StateChanged();
 }
 
+// MARK: Find in page
+
+bool BrowserWindowController::FindBarDark() const {
+    const json::Value* appearance = nullptr;
+    if (auto it = state_.extra.find("pageAppearance"); it != state_.extra.end()) appearance = &it->second;
+    const std::string* name = appearance ? appearance->AsString() : nullptr;
+    // Windows' apps' mode, as Automatic follows macOS's.
+    DWORD light = 1, size = sizeof(light);
+    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"AppsUseLightTheme",
+                 RRF_RT_REG_DWORD, nullptr, &light, &size);
+    return FindBarIsDark(name ? std::string_view(*name) : std::string_view(), light == 0);
+}
+
+void BrowserWindowController::ShowFind() {
+    if (!findBar_) return;
+    // As the Mac's showFind: no page, nothing to find in.
+    // A page still being made counts (Ctrl+F straight after a new tab): its search waits for it.
+    bool page = false;
+#ifdef KITE_HAS_CEF
+    page = chromium_ && chromium_->CanFind();
+#endif
+    const Tab* tab = state_.SelectedTab();
+    if (!page || !tab) {
+        MessageBeep(MB_OK);
+        return;
+    }
+    findTabID_ = tab->id;
+    findBar_->SetCard(ContentBounds());
+    findBar_->Show(FindBarDark());
+    // Ctrl+F over the command bar: the bar goes and the field takes the keyboard (GiveKeyboard
+    // keeps the page from taking it as the bar closes).
+    GiveKeyboard(KeyboardField::Find);
+}
+
+BrowserWindowController::KeyboardField BrowserWindowController::KeyboardOwner() const {
+    if (commandBar_ && commandBar_->IsOpen()) return KeyboardField::CommandBar;
+    if (sidebar_->Renaming()) return KeyboardField::Rename;
+    if (findBar_ && findBar_->HasKeyboard()) return KeyboardField::Find;
+    return KeyboardField::None;
+}
+
+void BrowserWindowController::GiveKeyboard(KeyboardField to, bool focusFindField) {
+    if (to == KeyboardField::Find && findBar_) {
+        // First, so nothing on the way hands the keyboard to the page: not the command bar
+        // closing (BlockPages' Focus), not a navigation landing meanwhile.
+#ifdef KITE_HAS_CEF
+        if (chromium_) chromium_->KeepKeyboard(true);
+#endif
+        if (commandBar_ && commandBar_->IsOpen()) commandBar_->Hide();
+    }
+    // The others, so their system carets go before `to` makes its own.
+    if (to != KeyboardField::Find && findBar_) findBar_->LoseKeyboard();
+    if (to != KeyboardField::Rename) sidebar_->EndRenaming(true);
+    if (to == KeyboardField::Find && findBar_ && focusFindField) findBar_->Focus();
+    // A press in the field takes it itself, after this (focusFindField false): Kite keeps it.
+    if (to == KeyboardField::Find && !focusFindField) return;
+    UpdateFindHole();
+}
+
+void BrowserWindowController::StepFind(bool forward) {
+    // stepFind: a closed or empty bar opens instead.
+    if (!findBar_ || !findBar_->IsOpen() || findBar_->Query().Query().empty()) return ShowFind();
+    findBar_->Step(forward);
+}
+
+void BrowserWindowController::FindInPage(const FindQuery::Search& search) {
+#ifdef KITE_HAS_CEF
+    if (!chromium_) return;
+    if (search.text.empty()) chromium_->StopFinding();
+    else chromium_->Find(search.text, search.forward, search.findNext);
+#else
+    (void)search;
+#endif
+}
+
+void BrowserWindowController::HideFindBar(bool focusPage) {
+    if (!findBar_ || !findBar_->IsOpen()) return;
+    // The search ends in the page it ran in, which is still the shown one here.
+#ifdef KITE_HAS_CEF
+    if (chromium_) chromium_->StopFinding();
+#endif
+    findBar_->Query().Stopped();
+    findBar_->Hide();
+    findTabID_.clear();
+    UpdateFindHole();
+#ifdef KITE_HAS_CEF
+    if (focusPage && chromium_ && GetForegroundWindow() == window_.Handle()) chromium_->Focus();
+#else
+    (void)focusPage;
+#endif
+}
+
+void BrowserWindowController::FindBarFollowsSelection() {
+    if (!findBar_ || !findBar_->IsOpen()) return;
+    const Tab* tab = state_.SelectedTab();
+    if (!tab || tab->id != findTabID_) HideFindBar(false);
+}
+
+void BrowserWindowController::UpdateFindHole() {
+#ifdef KITE_HAS_CEF
+    if (!chromium_) return;
+    const bool open = findBar_ && findBar_->IsOpen();
+    chromium_->SetOverlayHole(open ? findBar_->Frame() : RECT{}, open ? static_cast<int>(std::lround(findBar_->CornerRadiusPx())) : 0);
+    chromium_->KeepKeyboard(open && findBar_->HasKeyboard());
+#endif
+}
+
+RECT BrowserWindowController::ContentBounds() const {
+    RECT client{};
+    GetClientRect(window_.Handle(), &client);
+    const int dpi = static_cast<int>(window_.Dpi());
+    auto px = [dpi](int points) { return MulDiv(points, dpi, USER_DEFAULT_SCREEN_DPI); };
+    // Its top under the caption buttons; its leading edge the sidebar's, or the inset once the
+    // sidebar is hidden (not while it's still sliding off: a tab switch or a resize then would put
+    // the page over it).
+    const int left = static_cast<int>(CardLeft(sidebarShown_ || toggling_, static_cast<float>(kSidebarWidth)));
+    const int inset = static_cast<int>(sidebar_toggle::kContentInset);
+    RECT card{px(left), px(static_cast<int>(title_bar::kContentTop)), client.right - px(inset), client.bottom - px(inset)};
+    card.right = std::max(card.right, card.left + 1);
+    card.bottom = std::max(card.bottom, card.top + 1);
+    return card;
+}
+
 // MARK: Commands
 
 void BrowserWindowController::CloseTab(std::string id) {
@@ -1136,6 +1271,10 @@ void BrowserWindowController::MovePage() {
 #ifdef KITE_HAS_CEF
     if (chromium_) chromium_->SetBounds(ContentBounds());
 #endif
+    // The find bar keeps the card's top-right corner (narrower in a narrow card), the page's hole
+    // under it.
+    if (findBar_) findBar_->SetCard(ContentBounds());
+    UpdateFindHole();
 }
 
 void BrowserWindowController::MakeCommands() {
@@ -1204,6 +1343,9 @@ void BrowserWindowController::MakeCommands() {
          [this] {
              if (!PageCommand("developerTools")) MessageBeep(MB_OK);
          }},
+        {"find", [this] { ShowFind(); }},
+        {"findNext", [this] { StepFind(true); }},
+        {"findPrevious", [this] { StepFind(false); }},
     };
     MakeTabCommands();
     for (int n = 1; n <= 9; ++n) {
@@ -1330,6 +1472,7 @@ void BrowserWindowController::DropCompositor() {
     sidebar_->UseCompositor(nullptr);
     caption_->UseCompositor(nullptr);
     if (commandBar_) commandBar_->UseCompositor(nullptr);
+    if (findBar_) findBar_->UseCompositor(nullptr);
     compositor_.reset();
 }
 
@@ -1343,6 +1486,7 @@ std::wstring BrowserWindowController::Rebuild() {
         sidebar_->UseCompositor(compositor_.get());
         caption_->UseCompositor(compositor_.get());
         if (commandBar_) commandBar_->UseCompositor(compositor_.get());
+        if (findBar_) findBar_->UseCompositor(compositor_.get());
     }
     return problem;
 }
@@ -1361,7 +1505,11 @@ std::wstring BrowserWindowController::DrawAt(double time, Pixels* readBack) {
     const UINT width = static_cast<UINT>(client.right), height = static_cast<UINT>(client.bottom);
     std::wstring problem;
     for (int attempt = 0; attempt < 2; ++attempt) {
-        if (!compositor_ || compositor_->DeviceLost() || sidebar_->DeviceLost() || caption_->DeviceLost()) {
+        const auto lost = [this] {
+            return !compositor_ || compositor_->DeviceLost() || sidebar_->DeviceLost() || caption_->DeviceLost() ||
+                   (findBar_ && findBar_->DeviceLost());
+        };
+        if (lost()) {
             if (problem = Rebuild(); !problem.empty()) break;
         }
         problem = compositor_->Draw(
@@ -1371,7 +1519,7 @@ std::wstring BrowserWindowController::DrawAt(double time, Pixels* readBack) {
         if (problem.empty()) problem = sidebar_->Draw();
         if (problem.empty()) problem = caption_->Draw();
         if (problem.empty()) compositor_->Commit();
-        if (!compositor_->DeviceLost() && !sidebar_->DeviceLost() && !caption_->DeviceLost()) break;
+        if (!lost()) break;
     }
     if (!problem.empty()) OutputDebugStringW((L"Kite: drawing failed: " + problem + L"\n").c_str());
     return problem;
@@ -1389,6 +1537,10 @@ void BrowserWindowController::OnSize() {
     if (touchpad_) touchpad_->SetScale(static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI);
     Draw();
     if (commandBar_) commandBar_->Layout();
+    // Whatever moves the content card (this resize, the sidebar's toggle in MovePage; later
+    // splits) puts the find bar in its corner again and the page's hole under it.
+    if (findBar_) findBar_->SetCard(ContentBounds());
+    UpdateFindHole();
 #ifdef KITE_HAS_CEF
     if (chromium_) {
         chromium_->WindowMoved();
@@ -1473,7 +1625,7 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         const auto pressed =
             ShortcutOfKey(static_cast<UINT>(wParam), GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_MENU) < 0, GetKeyState(VK_SHIFT) < 0);
         const ShortcutTarget* target = pressed ? FindShortcut(shortcuts_, *pressed) : nullptr;
-        const bool editing = (commandBar_ && commandBar_->IsOpen()) || sidebar_->Renaming();
+        const bool editing = KeyboardOwner() != KeyboardField::None;
         if (target && !(editing && EditsText(*pressed)) && CommandEnabled(target->command->id)) {
             // The character TranslateMessage made of it goes too (Alt+K's WM_SYSCHAR would beep).
             dropCharacter_ = true;
@@ -1490,6 +1642,16 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     if (sidebar_->HandleKey(message, wParam, lParam)) {
         result = message == WM_SETCURSOR ? TRUE : 0;
         return true;
+    }
+    if (findBar_) {
+        const bool handled = findBar_->HandleMessage(message, wParam, lParam, result);
+        // Who has the keyboard decides whether a navigation may take it.
+        if (message == WM_SETFOCUS || message == WM_KILLFOCUS || message == WM_LBUTTONDOWN) UpdateFindHole();
+        if (handled) return true;
+        // The system's light or dark mode changed: the bar follows (pageAppearance automatic).
+        if (message == WM_SETTINGCHANGE && lParam && std::wstring_view(reinterpret_cast<const wchar_t*>(lParam)) == L"ImmersiveColorSet") {
+            findBar_->SetDark(FindBarDark());
+        }
     }
     if (sidebar_->HandleMouse(message, wParam, lParam)) return true;
     // The caption buttons' appearance changes with the sidebar's, at its commit.

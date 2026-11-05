@@ -506,7 +506,8 @@ std::wstring BrowserWindowController::SmokeTestWindow() {
     return {};
 }
 
-std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip) {
+std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip,
+                                              const std::optional<CaptureFind>& find) {
     // The window's own frame, read back as it's presented: at the window's scale.
     std::wstring problem = Draw(&pixels);
     if (problem.empty()) {
@@ -529,6 +530,21 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
         POINT origin{};
         problem = sidebar_->RenderTip(*tip, tipPixels, origin);
         if (problem.empty()) ComposeOver(pixels, tipPixels, origin);
+    }
+    if (problem.empty() && find) {
+        // The find bar as Ctrl+F opens it over the selected tab, the query typed in and the page's
+        // report shown (no Chromium in a capture, so no page to ask).
+        if (!findBar_) return L"Kite couldn't make the find bar";
+        if (const Tab* tab = state_.SelectedTab()) findTabID_ = tab->id;
+        else return L"--find needs a selected tab";
+        findBar_->SetCard(ContentBounds());
+        findBar_->Show(FindBarDark());
+        findBar_->Type(find->query);
+        if (find->result) findBar_->ShowResult(*find->result);
+        Pixels bar;
+        POINT origin{};
+        problem = findBar_->Draw(&bar, &origin);
+        if (problem.empty()) ComposeOver(pixels, bar, origin);
     }
     if (problem.empty() && heldMenu_) {
         // The space's menu as a right-click on its cell opens it, read back from Windows' menu
@@ -771,6 +787,173 @@ std::wstring BrowserWindowController::SmokeTestTopRow() {
     if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the top row couldn't draw: " + problem;
     return failure;
 }
+#ifdef KITE_HAS_CEF
+
+void BrowserWindowController::FailSmokeFind(std::wstring problem) {
+    smokeFindProblem_ = std::move(problem);
+    smokeFind_ = SmokeFind::Done;
+    HideFindBar(false);
+    CloseWhenSmokeTestIsDone();
+}
+
+void BrowserWindowController::StartSmokeFind() {
+    if (!findBar_ || !chromium_->CanFind()) {
+        smokeFind_ = SmokeFind::Done;
+        return;
+    }
+    smokeFind_ = SmokeFind::Matching;
+    ShowFind();
+    findBar_->Type("kite SMOKE");  // case-insensitive, as the Mac's find
+}
+
+std::wstring BrowserWindowController::SmokeTestKeyboard() {
+    // One field at a time has the keyboard (and the thread's one system caret). Run once the page
+    // has loaded and been searched, so its own focus as it was made (Chromium::Show) has landed:
+    // a page taking the keyboard rightly takes it from the field.
+    ShowFind();
+    if (KeyboardOwner() != KeyboardField::Find) return L"Ctrl+F didn't give the find field the keyboard";
+    const std::string query = findBar_->Query().Query();
+    const size_t index = state_.SelectedSpaceIndex();
+    const std::string id = state_.spaces[index].id, name = state_.spaces[index].name;
+    const auto restore = [&] {
+        state_.RenameSpace(id, name);
+        StateChanged();
+    };
+    // A rename started while the find field has it takes it, and the keys go to the rename.
+    BeginRenaming(id);
+    if (KeyboardOwner() != KeyboardField::Rename || findBar_->HasKeyboard()) return L"a rename didn't take the keyboard from the find field";
+    SendMessageW(window_.Handle(), WM_CHAR, L'Q', 0);
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
+    if (sidebar_->Renaming() || state_.spaces[index].name != "Q" || findBar_->Query().Query() != query) {
+        return L"keys typed in a rename begun over the find field didn't go to the rename";
+    }
+    restore();
+    // A row's rename (W14's tab and folder renames share the space's way in) takes it too: what's
+    // typed goes to the row's field, not the query.
+    ShowFind();
+    if (const Tab* tab = state_.SelectedTab()) {
+        BeginRenamingTab(tab->id, false);
+        if (KeyboardOwner() != KeyboardField::Rename || findBar_->HasKeyboard()) return L"a tab's rename didn't take the keyboard from the find field";
+        SendMessageW(window_.Handle(), WM_CHAR, L'T', 0);
+        const auto taken = sidebar_->TakeRename();
+        if (!taken || taken->first.kind != SidebarRow::Kind::Tab || taken->second != "T" || findBar_->Query().Query() != query) {
+            return L"keys typed in a tab's rename begun over the find field didn't go to the rename";
+        }
+    }
+    // Ctrl+F ends a rename, keeping what was typed, and takes the keyboard back.
+    BeginRenaming(id);
+    sidebar_->TypeInRename("R");
+    ShowFind();
+    if (sidebar_->Renaming() || state_.spaces[index].name != "R" || KeyboardOwner() != KeyboardField::Find) {
+        return L"Ctrl+F didn't end the rename and take the keyboard";
+    }
+    restore();
+    // A press on the bar's down arrow leaves the keyboard where it was (borderless NSButtons
+    // don't become first responder); a press in its field takes it, ending the rename.
+    BeginRenaming(id);
+    for (UINT message : {WM_LBUTTONDOWN, WM_LBUTTONUP}) {
+        SendMouse(window_.Handle(), message, findBar_->ClientPointOf(FindBarView::Part::Next), message == WM_LBUTTONDOWN ? MK_LBUTTON : 0);
+    }
+    if (sidebar_->RenamingSpace() != id || findBar_->HasKeyboard()) return L"a press on the find bar's arrow took the keyboard";
+    for (UINT message : {WM_LBUTTONDOWN, WM_LBUTTONUP}) {
+        SendMouse(window_.Handle(), message, findBar_->ClientPointOf(FindBarView::Part::Field), message == WM_LBUTTONDOWN ? MK_LBUTTON : 0);
+    }
+    if (sidebar_->Renaming() || KeyboardOwner() != KeyboardField::Find) return L"a press in the find field didn't take the keyboard from the rename";
+    restore();
+    // The command bar takes it from the find field, and hands it to the page as it closes.
+    OpenCommandBar(CommandBarMode::NewTab);
+    if (KeyboardOwner() != KeyboardField::CommandBar || findBar_->HasKeyboard()) return L"the command bar didn't take the keyboard from the find field";
+    commandBar_->Hide();
+    if (KeyboardOwner() != KeyboardField::None || !findBar_->IsOpen()) return L"the command bar closing didn't leave the find bar open without the keyboard";
+    // Ctrl+F over the open command bar: its close mustn't hand the keyboard to the page, not by
+    // BlockPages' Focus (CEF's thread asks again as it runs it) and not by Chromium's own focus as
+    // the page windows are enabled again. First the page takes it from the close above, which it
+    // does on CEF's thread a moment later.
+    RunUntil([] { return false; }, 0.5);
+    // The field takes the window's focus from the page (a press in it) when the window is in front;
+    // a quiet run, which never is, checks the owner only (its pages never take the focus).
+    for (UINT message : {WM_LBUTTONDOWN, WM_LBUTTONUP}) {
+        SendMouse(window_.Handle(), message, findBar_->ClientPointOf(FindBarView::Part::FieldEnd), message == WM_LBUTTONDOWN ? MK_LBUTTON : 0);
+    }
+    const bool focused = GetFocus() == window_.Handle();
+    OpenCommandBar(CommandBarMode::NewTab);
+    ShowFind();
+    RunUntil([] { return false; }, 0.5);
+    if (KeyboardOwner() != KeyboardField::Find) return L"Ctrl+F over the command bar left the keyboard elsewhere";
+    if (focused && (GetFocus() != window_.Handle() || !findBar_->FieldFocused())) {
+        return L"Ctrl+F over the command bar: the page took the focus as the bar closed";
+    }
+    // A Shift-press in a field that has the keyboard extends from where the selection was: here
+    // from the query's end (a plain press past the text), not from its start.
+    ShowFind();
+    const size_t length = Widen(findBar_->Query().Query()).size();
+    const auto press = [&](FindBarView::Part part, WPARAM keys) {
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, findBar_->ClientPointOf(part), MK_LBUTTON | keys);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, findBar_->ClientPointOf(part), keys);
+    };
+    press(FindBarView::Part::FieldEnd, 0);
+    if (findBar_->FieldSelection() != std::pair<size_t, size_t>{length, length}) return L"a press past the query didn't put the caret at its end";
+    press(FindBarView::Part::FieldStart, MK_SHIFT);
+    if (const auto [start, end] = findBar_->FieldSelection(); end != length || start >= length) {
+        return L"a Shift-press in the find field didn't extend from the caret";
+    }
+    ShowFind();
+    return {};
+}
+
+void BrowserWindowController::SmokeTestFind(int count, int activeMatch, bool final) {
+    // A search's last report, once its first match is active (a new search reports twice: its
+    // highlights, then the step that makes the first match active).
+    if (!final || !findBar_) return;
+    const std::string label = findBar_->Query().Label();
+    switch (smokeFind_) {
+    case SmokeFind::Matching: {
+        if (activeMatch < 1) return;
+        // windows/helix/pages/smoke.html says "Kite smoke page" once in its body.
+        if (count != 1 || activeMatch != 1) return FailSmokeFind(L"\"kite SMOKE\" found " + std::to_wstring(count) + L" matches, the page has 1");
+        if (label != "1/1") return FailSmokeFind(L"the counter read \"" + Widen(label) + L"\" for 1 of 1");
+        // The page's window has its hole under the bar, and only there.
+        smokeFindFrame_ = findBar_->Frame();
+        const RECT& frame = smokeFindFrame_;
+        const POINT inside{(frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2};
+        const POINT outside{frame.left - 20, frame.bottom + 20};
+        // Its rounded corner is the page's, and the bar's opaque inside isn't.
+        const POINT corner{frame.left, frame.top};
+        if (chromium_->PageTakesClickAt(inside)) return FailSmokeFind(L"a click on the bar would reach the page");
+        if (!chromium_->PageTakesClickAt(outside)) return FailSmokeFind(L"a click on the page beside the bar wouldn't reach it");
+        if (!chromium_->PageTakesClickAt(corner)) return FailSmokeFind(L"the hole isn't rounded at the bar's corner");
+        if (std::wstring problem = SmokeTestKeyboard(); !problem.empty()) return FailSmokeFind(std::move(problem));
+        // Ctrl+F selected the query: this replaces it with one the page doesn't have.
+        smokeFind_ = SmokeFind::Missing;
+        findBar_->Type("kite zqxj");
+        return;
+    }
+    case SmokeFind::Missing: {
+        // A stale search's last report can still come; only no match counts.
+        if (count != 0) return;
+        if (label != "Not Found") return FailSmokeFind(L"the counter read \"" + Widen(label) + L"\" for no match");
+        smokeFind_ = SmokeFind::Done;
+        HideFindBar(false);
+        if (!findBar_->Query().Query().empty() || findBar_->IsOpen()) return FailSmokeFind(L"the bar didn't close");
+        // The hole goes with it, on CEF's thread.
+        const POINT inside{(smokeFindFrame_.left + smokeFindFrame_.right) / 2, (smokeFindFrame_.top + smokeFindFrame_.bottom) / 2};
+        if (!RunUntil([&] { return chromium_->PageTakesClickAt(inside); }, 2)) return FailSmokeFind(L"the page's hole stayed after the bar closed");
+        if (HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE); out && out != INVALID_HANDLE_VALUE) {
+            static constexpr char kReport[] =
+                "Kite smoke test: find in page read 1/1, then Not Found; the page's window had its rounded hole under the bar, "
+                "and lost it as the bar closed; the keyboard went to one field at a time\n";
+            DWORD written = 0;
+            WriteFile(out, kReport, static_cast<DWORD>(sizeof kReport - 1), &written, nullptr);
+        }
+        CloseWhenSmokeTestIsDone();
+        return;
+    }
+    case SmokeFind::Idle:
+    case SmokeFind::Done: return;
+    }
+}
+
+#endif  // KITE_HAS_CEF
 
 std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
     const auto ids = [&] {

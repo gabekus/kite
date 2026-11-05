@@ -17,6 +17,10 @@ constexpr float kGlyphSize = 10;  // Segoe Fluent Icons' Chrome glyphs
 // The content card's top edge, under the buttons (the Mac's card is 10 in from the top; on
 // Windows the buttons take that band).
 constexpr float kContentTop = kButtonHeight;
+// The content card's leading edge while the sidebar shows (BrowserWindowController's
+// Layout.defaultSidebarWidth); its inset is sidebar_toggle::kContentInset (core/SidebarTopRow.h).
+// The shell and kitecore lay the card out from these.
+constexpr int kSidebarWidth = 240;
 }  // namespace title_bar
 
 enum class CaptionButton { Minimize, Maximize, Close };

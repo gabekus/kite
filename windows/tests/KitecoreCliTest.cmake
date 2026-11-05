@@ -56,6 +56,57 @@ if(NOT count EQUAL 2)
   message(FATAL_ERROR "suggest --current gave ${rows}")
 endif()
 
+# Find in page (W21): typing searches at once from the first match; the page's report fills the
+# counter, "Not Found" for none; the bar sits 10pt in from the card's top-right corner, and a
+# 500pt window's card (240 to 490) narrows it to 230.
+kitecore(find find domain --result 1/2)
+string(JSON text GET "${find}" search text)
+string(JSON next GET "${find}" search findNext)
+string(JSON label GET "${find}" label)
+string(JSON left GET "${find}" frame left)
+string(JSON top GET "${find}" frame top)
+string(JSON placeholder GET "${find}" placeholder)
+if(NOT text STREQUAL "domain" OR next OR NOT label STREQUAL "1/2" OR NOT left EQUAL 960 OR NOT top EQUAL 42
+   OR NOT placeholder STREQUAL "Find in page…")
+  message(FATAL_ERROR "find gave ${find}")
+endif()
+kitecore(find find zqxj --result 0/0 --width 500)
+string(JSON label GET "${find}" label)
+string(JSON notFound GET "${find}" notFound)
+string(JSON width GET "${find}" frame width)
+if(NOT label STREQUAL "Not Found" OR NOT notFound OR NOT width EQUAL 230)
+  message(FATAL_ERROR "find with no match gave ${find}")
+endif()
+# Ask on Page (the Mac's; Windows has no card yet): "No matches", and Return asks once the page
+# has none; the card is 400pt, 20pt in.
+kitecore(find find why is the sky blue --result 0/0 --ask)
+string(JSON label GET "${find}" label)
+string(JSON askMode GET "${find}" askMode)
+string(JSON placeholder GET "${find}" placeholder)
+string(JSON width GET "${find}" frame width)
+if(NOT label STREQUAL "No matches" OR NOT askMode OR NOT placeholder STREQUAL "Find or ask…" OR NOT width EQUAL 400)
+  message(FATAL_ERROR "find --ask gave ${find}")
+endif()
+kitecore(find find sky --result 2/3)
+string(JSON askMode GET "${find}" askMode)
+if(askMode)
+  message(FATAL_ERROR "find without Ask on Page would ask: ${find}")
+endif()
+# A report with matches has an active one, as Kite.exe's --find-result; widths are numbers.
+expect_exit_early(1 find sky --result 0/5)
+expect_exit_early(1 find sky --result 2/1)
+expect_exit_early(1 find sky --width wide)
+expect_exit_early(1 find sky --width 0)
+
+# A field's undo: a run of typing is one undo, a caret move starts another, a paste is its own.
+kitecore(texts undo type:sky back move type:z paste:ab undo undo undo redo)
+string(JSON last GET "${texts}" 8)
+string(JSON afterUndos GET "${texts}" 7)
+string(JSON afterPasteUndo GET "${texts}" 5)
+if(NOT afterPasteUndo STREQUAL "skz" OR NOT afterUndos STREQUAL "" OR NOT last STREQUAL "sk")
+  message(FATAL_ERROR "undo gave ${texts}")
+endif()
+
 # The sidebar: the address shows the selected tab's host, and the space page lists the header,
 # the divider, New Tab and today's tabs, 41pt apart under the 39pt header and 25pt divider.
 kitecore(bar sidebar)
