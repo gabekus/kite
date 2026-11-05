@@ -1168,6 +1168,17 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         }
         return true;
     }(), "two of the window's WM_APP messages share an id");
+    // And the timers set on this window (Chromium.cpp's close deadline, 0x4B43, is its own).
+    static_assert([] {
+        constexpr UINT_PTR ids[] = {kSmokeTimer, kArchiveTimer, kSettleTimer, kSaveTimer, kHistoryTimer, kArcMergeTimer, kToggleTimer,
+                                    CommandBarView::kCaretTimer, SidebarView::kTipTimer, SidebarView::kDropTimer, SpaceRenameField::kCaretTimer};
+        for (size_t i = 0; i < std::size(ids); ++i) {
+            for (size_t j = i + 1; j < std::size(ids); ++j) {
+                if (ids[i] == ids[j]) return false;
+            }
+        }
+        return true;
+    }(), "two of the window's timers share an id");
     if (options_.perfControl) {
         if (message == WM_COPYDATA) {
             result = QueuePerfRequest(reinterpret_cast<const COPYDATASTRUCT*>(lParam)) ? 1 : 0;
