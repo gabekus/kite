@@ -59,8 +59,8 @@ constexpr float kLabelAlpha = 0.85f;
 // The Mac's SidebarLabel line box: SF Pro's ascender plus descender (0.952 + 0.241 of the
 // size), rounded up to whole points; its text sits in the middle of the row, rounded down,
 // with SF's baseline at the ascender. Kite puts Segoe UI's baseline where SF's is.
-constexpr float kAscender = 0.952f;
-constexpr float kDescender = 0.241f;
+constexpr float kAscender = favorites_empty::kAscender;
+constexpr float kDescender = favorites_empty::kDescender;
 float LineHeight(float size) { return std::ceil(size * (kAscender + kDescender)); }
 // The text's top in a box `height` tall: SidebarLabel's centring, half a point when odd.
 float TextTop(float height, float line) {
@@ -158,6 +158,11 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
     if (!view->tip_) return nullptr;
     view->topRow_ = SidebarTopRowView::Create(window, view->dwrite_.Get(), !pictures.synchronous, error);
     if (!view->topRow_) return nullptr;
+    view->favorites_ = FavoritesView::Create(window, view->dwrite_.Get(), favicons, !pictures.synchronous, error);
+    if (!view->favorites_) return nullptr;
+    view->drawIcon_ = [raw = view.get()](ID2D1DeviceContext* context, const FaviconSource& favicon, D2D1_RECT_F box) {
+        return raw->DrawFavicon(context, favicon, box);
+    };
     // Emoji and symbols sit in the middle of their box.
     for (IDWriteTextFormat* f : {view->emojiFormat_.Get(), view->iconFormat_.Get()}) {
         f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -168,9 +173,10 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
 
 SidebarView::~SidebarView() {
     ReleaseGpu();
-    // The bar's and the top row's visuals leave the root before it goes.
+    // The bar's, the top row's and the favorites' visuals leave the root before it goes.
     if (bar_) bar_->UseCompositor(nullptr, nullptr);
     if (topRow_) topRow_->UseCompositor(nullptr, nullptr);
+    if (favorites_) favorites_->UseCompositor(nullptr, nullptr);
     ReleaseRoot();
 }
 
@@ -178,6 +184,7 @@ void SidebarView::UseCompositor(Compositor* compositor) {
     ReleaseGpu();
     bar_->UseCompositor(nullptr, nullptr);
     topRow_->UseCompositor(nullptr, nullptr);
+    favorites_->UseCompositor(nullptr, nullptr);
     ReleaseRoot();
     compositor_ = compositor;
     deviceLost_ = false;
@@ -194,6 +201,7 @@ void SidebarView::UseCompositor(Compositor* compositor) {
     }
     bar_->UseCompositor(compositor, root_.Get());
     topRow_->UseCompositor(compositor, root_.Get());
+    favorites_->UseCompositor(compositor, root_.Get());
     tip_->UseCompositor(compositor);
 }
 
@@ -228,6 +236,8 @@ double SidebarView::SetShown(bool shown, bool animate) {
     }
     // Its tooltips come back once it's on screen again, and go at once as it leaves.
     topRow_->SetTooltipsActive(shown);
+    PlaceFavorites();  // its tooltips' places, from where the sidebar rests, before they're back
+    favorites_->SetTooltipsActive(shown);
     if (animate && root_ && compositor_ && from != to) {
         const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
         // From now: the compositor starts it at the commit's frame, up to a frame later, so Left()
@@ -360,6 +370,8 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
     next.address = AddressFieldText(state);
     next.spaceID = state.SelectedSpace().id;
     next.index = selected;
+    // The grid over the pages is the selected space's profile's, and stays put as they slide.
+    next.favorites = FavoriteTilesOf(state, selected);
     const std::optional<size_t> anchorIndex = anchor ? state.SpaceIndex(*anchor) : std::nullopt;
     for (size_t index : SpaceSwipe::BuiltPages(selected, anchorIndex, state.spaces.size())) {
         PageModel page{state.spaces[index].id, index, SidebarRows(state, index)};
@@ -403,6 +415,7 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
     model_ = std::move(next);
     built_.clear();
     for (const PageModel& page : model_.pages) built_.push_back(page.index);
+    PlaceFavorites();
     PlacePages();
     ScheduleDraw();
     // Rows moved under a still pointer: it now hovers whatever is there.
@@ -470,6 +483,31 @@ void SidebarView::PlacePages() {
     }
 }
 
+void SidebarView::PlaceFavorites() {
+    // A pane's hover or selection is its opacities, which the next pass commits; anything else
+    // that changed draws (NeedsDraw).
+    if (favorites_->Update(LayOutFavorites(model_.favorites, width_, emptyStateDismissed_, favorites_->EmptyStateHeight(width_)), model_.dark,
+                           SidebarLeft(shown_, width_))) {
+        commitPending_ = true;
+    }
+    const float listTop = SidebarListTop(favorites_->Tray());
+    if (listTop != listTop_) {
+        // The pages start lower or higher: each draws again from its new top.
+        listTop_ = listTop;
+        for (auto& [id, page] : pages_) page.dirty = true;
+    }
+    if (favorites_->NeedsDraw() || commitPending_) ScheduleDraw();
+}
+
+void SidebarView::SetFavoritesEmptyStateDismissed(bool dismissed) {
+    if (dismissed == emptyStateDismissed_) return;
+    emptyStateDismissed_ = dismissed;
+    PlaceFavorites();
+    // The page moves up under the address field, under a still pointer.
+    SetScroll(scrollExact_);
+    RefreshHover();
+}
+
 void SidebarView::Layout(float width, UINT dpi) {
     // The height comes with the window's: Draw draws again only when it changes what's shown.
     if (width != width_ || dpi != dpi_) {
@@ -479,6 +517,8 @@ void SidebarView::Layout(float width, UINT dpi) {
         for (auto& [id, page] : pages_) page.dirty = true;
         bar_->Layout(width, dpi);
         topRow_->Layout(width, dpi);
+        favorites_->Layout(dpi);
+        PlaceFavorites();
         HideTip();
         // Hidden, it sits a sidebar's width off the edge; mid-toggle it lands.
         toggle_.reset();
@@ -494,7 +534,8 @@ void SidebarView::Layout(float width, UINT dpi) {
 
 void SidebarView::InvalidatePages() {
     for (auto& [id, page] : pages_) page.dirty = true;
-    ScheduleDraw();
+    // The favorites draw only the panes whose icon (or its colour) is now there.
+    if (favorites_->IconsArrived() || !pages_.empty()) ScheduleDraw();
 }
 
 void SidebarView::PicturesArrived() {
@@ -525,7 +566,7 @@ void SidebarView::SetIconPickerSpace(const std::optional<std::string>& spaceID) 
 std::optional<D2D1_RECT_F> SidebarView::HeaderIconRect(const std::string& spaceID) {
     if (spaceID != model_.spaceID || model_.rows.empty() || model_.rows.front().kind != SidebarRow::Kind::Header) return std::nullopt;
     const SidebarRow& header = model_.rows.front();
-    const float top = std::max(M::kHeaderAreaHeight + header.top - scroll_ + M::kHeaderIconTop, M::kHeaderAreaHeight - M::kHeaderIconSize);
+    const float top = std::max(listTop_ + header.top - scroll_ + M::kHeaderIconTop, listTop_ - M::kHeaderIconSize);
     return Rect(M::kHeaderIconX, top, M::kHeaderIconX + M::kHeaderIconSize, top + M::kHeaderIconSize);
 }
 
@@ -546,7 +587,8 @@ void SidebarView::ScheduleDraw() {
 }
 
 bool SidebarView::NeedsDraw() const {
-    return dirty_ || bar_->NeedsDraw() || topRow_->NeedsDraw() || (rename_ && rename_->NeedsDraw()) || std::any_of(pages_.begin(), pages_.end(), [](const auto& entry) { return entry.second.dirty; });
+    return dirty_ || bar_->NeedsDraw() || topRow_->NeedsDraw() || favorites_->NeedsDraw() || (rename_ && rename_->NeedsDraw()) ||
+           std::any_of(pages_.begin(), pages_.end(), [](const auto& entry) { return entry.second.dirty; });
 }
 
 void SidebarView::TipHoverChanged(const std::optional<std::string>& spaceID) {
@@ -630,7 +672,7 @@ float SidebarView::PageScroll(const PageModel& page) const {
     if (kept == scrolls_.end()) return 0;
     // Where it was left, as SetScroll draws it: whole pixels, within its list.
     const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
-    const float limit = SidebarMaxScroll(page.rows, Height(), scale);
+    const float limit = SidebarMaxScroll(page.rows, Height(), scale, listTop_);
     return std::min(std::round(std::clamp(kept->second, 0.0f, limit) * scale) / scale, limit);
 }
 
@@ -640,8 +682,8 @@ std::wstring SidebarView::DrawPageSurface(const PageModel& page, Page& gpu, Pixe
     // The page's surface runs from the sidebar's top (so it draws in the sidebar's points, as
     // the address field's does) down to its last row, or to where the list is cut off above the
     // space bar, whichever is higher: a window resize that moves neither draws nothing.
-    const float contentBottom = M::kHeaderAreaHeight + SidebarContentHeight(page.rows) - scroll;
-    const float bottom = std::max(M::kHeaderAreaHeight, std::min(contentBottom, SidebarListBottom(Height())));
+    const float contentBottom = listTop_ + SidebarContentHeight(page.rows) - scroll;
+    const float bottom = std::max(listTop_, std::min(contentBottom, SidebarListBottom(Height(), listTop_)));
     const UINT largest = compositor_->GetRenderer().MaxTextureSize();
     const UINT width = std::clamp(static_cast<UINT>(std::ceil(width_ * scale)), 1u, largest);
     const UINT height = std::clamp(static_cast<UINT>(std::ceil(bottom * scale)), 1u, largest);
@@ -760,9 +802,12 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         if (readBack) shot = &pageShots.emplace_back(page.index, Pixels{}).second;
         if (error = DrawPageSurface(page, pages_[page.spaceID], shot); !error.empty()) return error;
     }
-    // Only the icons the pages show stay on the GPU.
+    // The favorites between the address field and the pages, each pane's layers that changed.
+    if (error = favorites_->Draw(drawIcon_, visual_.Get(), readBack != nullptr); !error.empty()) return error;
+    // Only the icons the pages and the favorites show stay on the GPU.
     std::erase_if(faviconBitmaps_, [this](const auto& entry) {
-        return std::none_of(pages_.begin(), pages_.end(), [&](const auto& page) { return page.second.icons.contains(entry.first); });
+        return !favorites_->ShowsIcon(entry.first.first) &&
+               std::none_of(pages_.begin(), pages_.end(), [&](const auto& page) { return page.second.icons.contains(entry.first); });
     });
 
     // The space bar under them, and the top row over the address field.
@@ -793,6 +838,7 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         readBack->bgra.assign(static_cast<size_t>(readBack->width) * readBack->height * 4, 0);
         ComposeOver(*readBack, header, POINT{0, 0});
         topRow_->ComposeInto(*readBack);
+        favorites_->ComposeInto(*readBack);
         const RECT clip{0, 0, static_cast<LONG>(width), static_cast<LONG>(readBack->height)};
         const float strip = PageOffset() * scale;
         for (const auto& [index, shot] : pageShots) {
@@ -852,12 +898,12 @@ void SidebarView::DrawGlyph(ID2D1DeviceContext* context, wchar_t glyph, float si
     context->DrawTextLayout(D2D1::Point2F(box.left, box.top), layout.Get(), brush_.Get());
 }
 
-void SidebarView::DrawFavicon(ID2D1DeviceContext* context, const SidebarRow& row, D2D1_RECT_F box) {
+bool SidebarView::DrawFavicon(ID2D1DeviceContext* context, const FaviconSource& favicon, D2D1_RECT_F box) {
     const float side = box.right - box.left;
-    if (row.favicon.symbol) {
+    if (favicon.symbol) {
         // Kite's own pages: their symbol, fitted to the square.
         wchar_t glyph = kSettings;
-        switch (*row.favicon.symbol) {
+        switch (*favicon.symbol) {
         case InternalPage::History: glyph = kHistory; break;
         case InternalPage::Archive: glyph = kArchive; break;
         case InternalPage::SiteSettings:
@@ -865,13 +911,13 @@ void SidebarView::DrawFavicon(ID2D1DeviceContext* context, const SidebarRow& row
         case InternalPage::SearchEngines: glyph = kSearch; break;
         }
         DrawGlyph(context, glyph, side / kGlyphInk, box, Primary(kLabelAlpha * kSymbolOpacity));
-        return;
+        return false;
     }
-    if (row.favicon.url && favicons_) {
+    if (favicon.url && favicons_) {
         const UINT px = static_cast<UINT>(std::lround(side * static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI));
-        const auto key = std::make_pair(*row.favicon.url, px);
+        const auto key = std::make_pair(*favicon.url, px);
         // Asked every draw, so an icon on screen stays recently used in the cache.
-        const Pixels* pixels = favicons_->Get(*row.favicon.url, px);
+        const Pixels* pixels = favicons_->Get(*favicon.url, px);
         auto found = faviconBitmaps_.find(key);
         if (found == faviconBitmaps_.end()) {
             if (pixels) {
@@ -896,12 +942,15 @@ void SidebarView::DrawFavicon(ID2D1DeviceContext* context, const SidebarRow& row
                                     D2D1::Matrix3x2F::Translation(box.left, box.top));
                 const float corner = side * kFaviconCorner;
                 context->FillRoundedRectangle(D2D1::RoundedRect(box, corner, corner), brush.Get());
-                return;
+                return true;
             }
         }
     }
-    // No icon (yet): the globe, stretched to the square.
-    DrawGlyph(context, kGlobe, side / kGlyphInk, box, Primary(kLabelAlpha * kGlobeOpacity));
+    // No icon (yet): the globe, stretched to the square. Unlike the other symbols, Segoe's globe
+    // fills its whole em square (at 20pt it inked 20pt, 40px at 2×), so it's set at the square's
+    // size to ink the Mac's 18pt (36px at 2×, FaviconImageView's side).
+    DrawGlyph(context, kGlobe, side, box, Primary(kLabelAlpha * kGlobeOpacity));
+    return false;
 }
 
 D2D1_RECT_F SidebarView::HeaderNameRect(const SidebarRow& row, float top) {
@@ -1038,7 +1087,7 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
             washPill(model_.dark ? D2D1_COLOR_F{1, 1, 1, M::kHoverFill} : M::kHoverWashLight);
         }
         const float x = left + M::kIconInset + static_cast<float>(row.depth) * M::kNestingIndent;
-        DrawFavicon(context, row, faviconBox(x));
+        DrawFavicon(context, row.favicon, faviconBox(x));
         const float textX = x + M::kIconSize + M::kIconTextGap;
         // Trailing, from the pill's end (6pt in): the close button while hovered, and the title
         // up to a gap before it; with nothing there, to a gap before the 6pt.
@@ -1108,7 +1157,7 @@ void SidebarView::DrawHeader(ID2D1DeviceContext* context) {
 void SidebarView::DrawPage(ID2D1DeviceContext* context, const PageModel& page, float scroll, float bottom, bool selected) {
     // The space's page, under the header and above the space bar (where its surface ends);
     // rows past it are cut off (the Mac's list scrolls there). Only the selected page hovers.
-    const float listTop = M::kHeaderAreaHeight;
+    const float listTop = listTop_;
     const float listBottom = std::max(listTop, bottom);
     context->PushAxisAlignedClip(Rect(0, listTop, width_, listBottom), D2D1_ANTIALIAS_MODE_ALIASED);
     for (const SidebarRow& row : page.rows) {
@@ -1135,21 +1184,36 @@ float SidebarView::Height() const {
 }
 
 D2D1_POINT_2F SidebarView::OnPage(D2D1_POINT_2F p) const {
-    // Under the address field the selected page is where the strip has it.
-    if (p.y >= M::kHeaderAreaHeight) p.x -= PageOffset();
+    // Under the favorites the selected page is where the strip has it (the grid stays put).
+    if (p.y >= listTop_) p.x -= PageOffset();
     return p;
 }
 
 SidebarHit SidebarView::HitAt(D2D1_POINT_2F p) const {
     if (p.x < 0 || p.x >= width_) return {};
     const D2D1_POINT_2F q = OnPage(p);
-    return SidebarHitTest(model_.rows, width_, Height(), scroll_, q.x, q.y);
+    return SidebarHitTest(model_.rows, width_, Height(), scroll_, q.x, q.y, listTop_);
 }
 
 void SidebarView::RefreshHover() {
     // A press keeps the hover where it began until it's let go, as the Mac's tracking areas
     // (no .enabledDuringMouseDrag) send no enter or exit during a drag.
-    if (press_ || barPress_) return;
+    if (press_ || barPress_ || favoritePress_) return;
+    // A favorite's pane: its fill and tint brighten; over the empty state, its close button shows.
+    // Opacities, which the next pass commits.
+    std::optional<size_t> favorite;
+    bool overEmpty = false;
+    if (pointer_) {
+        const D2D1_POINT_2F p = PointOf(*pointer_);
+        if (p.x >= 0 && p.x < width_) {
+            if (const auto hit = FavoritePaneAt(favorites_->Tray(), p.x, p.y)) favorite = hit->index;
+            overEmpty = OverEmptyState(favorites_->Tray(), p.x, p.y);
+        }
+    }
+    if (favorites_->SetHover(favorite, overEmpty)) {
+        commitPending_ = true;
+        ScheduleDraw();
+    }
     const SidebarHit hit = pointer_ ? HitAt(PointOf(*pointer_)) : SidebarHit{};
     // What draws hovered is a row (the header's chevron and a tab's close button are part of
     // theirs); the address field has no hover of its own yet (its buttons come with the
@@ -1266,7 +1330,7 @@ std::optional<POINT> SidebarView::RenameDoneCentre() const {
 std::optional<POINT> SidebarView::HeaderNameCentre() {
     if (model_.rows.empty() || model_.rows.front().kind != SidebarRow::Kind::Header) return std::nullopt;
     const SidebarRow& header = model_.rows.front();
-    const D2D1_RECT_F name = HeaderNameRect(header, M::kHeaderAreaHeight + header.top - scroll_);
+    const D2D1_RECT_F name = HeaderNameRect(header, listTop_ + header.top - scroll_);
     if (name.right <= name.left) return std::nullopt;
     const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
     return POINT{std::lround(((name.left + name.right) / 2 + PageOffset()) * scale), std::lround((name.top + name.bottom) / 2 * scale)};
@@ -1349,22 +1413,24 @@ void SidebarView::ClearHover() {
     if (barDragging_) DropSpace(D2D1_POINT_2F{-1, -1});
     renamePressed_ = false;
     // A press it drops lets go of the mouse too.
-    if ((press_ || barPress_ || topPress_) && GetCapture() == window_) {
+    if ((press_ || barPress_ || topPress_ || favoritePress_) && GetCapture() == window_) {
         press_.reset();
         barPress_.reset();
         topPress_.reset();
+        favoritePress_.reset();
         ReleaseCapture();
     }
     press_.reset();
     barPress_.reset();
     topPress_.reset();
+    favoritePress_.reset();
     activating_ = false;
     RefreshHover();
 }
 
 bool SidebarView::OverList(D2D1_POINT_2F p) const {
     // The list's scroll view: inside its padding, between the header and the space bar.
-    return p.x >= M::kPadding && p.x < width_ - M::kPadding && p.y >= M::kHeaderAreaHeight && p.y < SidebarListBottom(Height());
+    return p.x >= M::kPadding && p.x < width_ - M::kPadding && p.y >= listTop_ && p.y < SidebarListBottom(Height(), listTop_);
 }
 
 bool SidebarView::ScrollList(POINT at, float distance) {
@@ -1384,7 +1450,7 @@ void SidebarView::SetScroll(float scroll) {
     // The wheel's position is kept as it comes (a touchpad's small steps add up); the list
     // draws and takes the pointer at it rounded to whole pixels, so rows keep crisp edges.
     const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
-    const float limit = SidebarMaxScroll(model_.rows, Height(), scale);
+    const float limit = SidebarMaxScroll(model_.rows, Height(), scale, listTop_);
     scrollExact_ = std::clamp(scroll, 0.0f, limit);
     const float snapped = std::min(std::round(scrollExact_ * scale) / scale, limit);
     if (snapped == scroll_) return;
@@ -1433,6 +1499,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
     if (message == WM_MOUSEMOVE || message == WM_MOUSELEAVE || message == WM_LBUTTONDOWN || message == WM_LBUTTONUP ||
         message == WM_RBUTTONDOWN || message == WM_RBUTTONUP) {
         topRow_->RelayMouse(message, wParam, lParam);
+        favorites_->RelayMouse(message, wParam, lParam);
     }
     switch (message) {
     case WM_MOUSEACTIVATE: {
@@ -1457,6 +1524,11 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             const D2D1_POINT_2F q = OnPage(PointOf(*pointer_));
             if (rename_->Move(q.x, q.y) != SpaceRenameField::Outcome::None) ScheduleDraw();
             return true;
+        }
+        if (favoritePress_) {
+            // Past 4pt it's a drag (which lets go doing nothing until W18b brings the drop).
+            const D2D1_POINT_2F p = PointOf(*pointer_);
+            FavoriteMove(*favoritePress_, p.x, p.y);
         }
         if (barPress_) {
             // In the bar's points, wherever the pointer has gone.
@@ -1519,14 +1591,24 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         }
         RefreshHover();
         // A space's cell, which takes the click that brings the window forward too (the Mac's
-        // acceptsFirstMouse).
+        // acceptsFirstMouse). The bar is over the favorites (SidebarColumnView's subviews), so it's
+        // asked first.
         if (const auto b = BarPoint(p)) {
             barPress_ = SpaceBarPressAt(bar_->Geometry(), bar_->Cells(), b->x, b->y);
             if (barPress_) SetCapture(window_);
             return true;
         }
+        // The favorites: a press anywhere on the tray is its own (never a row's or the window's).
+        // On a pane it selects the favorite when let go there, but not as the click that brings the
+        // window forward (a pane doesn't accept first mouse); on the empty state's close button it
+        // dismisses it.
+        if (InFavorites(favorites_->Tray(), width_, p.x, p.y)) {
+            favoritePress_ = FavoritePressAt(favorites_->Tray(), p.x, p.y, activating);
+            if (favoritePress_) SetCapture(window_);
+            return true;
+        }
         const D2D1_POINT_2F q = OnPage(p);
-        press_ = SidebarPressAt(model_.rows, width_, Height(), scroll_, q.x, q.y, clicks_, activating);
+        press_ = SidebarPressAt(model_.rows, width_, Height(), scroll_, q.x, q.y, clicks_, activating, listTop_);
         if (press_) SetCapture(window_);
         return true;
     }
@@ -1540,6 +1622,21 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             const std::vector<TopRowItem>& items = topRow_->Items();
             const std::optional<size_t> at = TopRowItemAt(items, p.x, p.y);
             if (at && items[*at].button == pressed && items[*at].enabled && actions_.topRow) actions_.topRow(pressed);
+            return true;
+        }
+        if (favoritePress_) {
+            const FavoritePress press = *favoritePress_;
+            favoritePress_.reset();
+            if (GetCapture() == window_) ReleaseCapture();
+            const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+            // mouseUp: inside the pane it pressed, without a drag, select(tab:); over the close
+            // button, Dismiss.
+            const FavoriteTap tap = FavoriteRelease(press, favorites_->Tray(), p.x, p.y);
+            RefreshHover();
+            if (tap.action == FavoriteTap::Action::SelectTab && actions_.selectTab) actions_.selectTab(tap.tabID);
+            if (tap.action == FavoriteTap::Action::DismissEmptyState && actions_.dismissFavoritesEmptyState) {
+                actions_.dismissFavoritesEmptyState();
+            }
             return true;
         }
         if (renamePressed_) {
@@ -1579,13 +1676,13 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         // As the Mac's mouseUp: on release, over what was pressed, wherever its row is now.
         const D2D1_POINT_2F q = OnPage(p);
         const SidebarTap tap =
-            p.x < 0 || p.x >= width_ ? SidebarTap{} : SidebarRelease(press, model_.rows, width_, Height(), scroll_, q.x, q.y);
+            p.x < 0 || p.x >= width_ ? SidebarTap{} : SidebarRelease(press, model_.rows, width_, Height(), scroll_, q.x, q.y, listTop_);
         RefreshHover();
         // A click on the current space's name renames it in place (SpaceHeaderRowCell.tapped(at:)).
         if (tap.action == SidebarTap::Action::None && press.target == SidebarHit::Target::Row && press.kind == SidebarRow::Kind::Header &&
             press.clicks == 1 && press.id == model_.spaceID && !rename_ && actions_.beginRenaming && !model_.rows.empty()) {
             const SidebarRow& header = model_.rows.front();
-            if (const D2D1_RECT_F name = HeaderNameRect(header, M::kHeaderAreaHeight + header.top - scroll_);
+            if (const D2D1_RECT_F name = HeaderNameRect(header, listTop_ + header.top - scroll_);
                 q.x >= name.left && q.x < name.right && q.y >= name.top && q.y < name.bottom) {
                 actions_.beginRenaming(header.id);
                 return true;
@@ -1599,9 +1696,10 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         if (barDragging_) DropSpace(D2D1_POINT_2F{-1, -1});
         renamePressed_ = false;
         topPress_.reset();
-        if (press_ || barPress_) {
+        if (press_ || barPress_ || favoritePress_) {
             press_.reset();
             barPress_.reset();
+            favoritePress_.reset();
             RefreshHover();
         }
         return false;
@@ -1611,8 +1709,9 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
     }
     case WM_RBUTTONUP: {
         // The space's menu, from its cell in the bar or its header (menu(for:) and the header's
-        // contextMenu(at:)), on release as Windows' context menus open.
-        if (press_ || barPress_) return true;
+        // contextMenu(at:)), on release as Windows' context menus open. A favorite's menu comes
+        // with W17.
+        if (press_ || barPress_ || favoritePress_) return true;
         const POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         const D2D1_POINT_2F p = PointOf(at);
         if (p.x < 0 || p.x >= width_) return false;
@@ -1665,7 +1764,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         UINT lines = 3;
         if (!SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0)) lines = 3;
         const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
-        const float distance = lines == WHEEL_PAGESCROLL ? notches * (SidebarListBottom(height) - M::kHeaderAreaHeight)
+        const float distance = lines == WHEEL_PAGESCROLL ? notches * (SidebarListBottom(height, listTop_) - listTop_)
                                                          : notches * static_cast<float>(lines) * kWheelLine;
         pointer_ = at;
         SetScroll(scrollExact_ - distance);

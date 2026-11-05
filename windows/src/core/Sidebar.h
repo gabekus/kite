@@ -105,16 +105,19 @@ struct SidebarRow {
 std::vector<SidebarRow> SidebarRows(const BrowserState& state, size_t space);
 
 // Where the space's page sits, in points from the sidebar's top, for a sidebar `height` tall:
-// under the header and above the space bar (the Mac's list scroll view). It scrolls up to
+// from `listTop` (under the header, and the favorites when there are any: core/Favorites.h's
+// SidebarListTop) down to the space bar (the Mac's list scroll view). It scrolls up to
 // SidebarMaxScroll, so its last row can reach the bottom.
-float SidebarListBottom(float height);
+float SidebarListBottom(float height, float listTop = sidebar_metrics::kHeaderAreaHeight);
 float SidebarContentHeight(const std::vector<SidebarRow>& rows);
 float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height);
 // The scroll limit on a display `scale` px a point, floored to whole pixels: scrolling stays
-// on the pixel grid at the bottom too.
-float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height, float scale);
+// on the pixel grid at the bottom too (a `scale` of 0 leaves it unfloored, as the two-argument one).
+float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height, float scale,
+                       float listTop = sidebar_metrics::kHeaderAreaHeight);
 
-// What's under a point of a sidebar `width`×`height` points scrolled `scroll` down (the Mac's
+// What's under a point of a sidebar `width`×`height` points scrolled `scroll` down, its page
+// starting at `listTop` (the Mac's
 // hitTest and acceptsPress): the address field's text button, a row's pill (tabs, folders, New
 // Tab), the space header (all of its cell), its icon (Change Space Icon, while the space has one)
 // or its chevron (Collapse Pinned Tabs, while the space has pinned items), or a tab's close
@@ -126,10 +129,12 @@ struct SidebarHit {
     size_t row = 0;  // Row, PinnedChevron and CloseButton: which row
     bool operator==(const SidebarHit&) const = default;
 };
-SidebarHit SidebarHitTest(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y);
+SidebarHit SidebarHitTest(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y,
+                          float listTop = sidebar_metrics::kHeaderAreaHeight);
 // The row whose bounds hold a point (its whole height across the list, as the Mac's cell), for
 // a release that ends a press on it: a click is a tap only when it lets go inside its row.
-std::optional<size_t> SidebarRowAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y);
+std::optional<size_t> SidebarRowAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y,
+                                   float listTop = sidebar_metrics::kHeaderAreaHeight);
 
 // A press in the sidebar, held by what it pressed (not where: rows can move under it, as a
 // Mac row cell stays its item's), and what letting go does (the Mac's mouseUp, tapped(at:)
@@ -145,7 +150,8 @@ struct SidebarPress {
 // background) presses only what accepts first mouse on the Mac: the address field, the
 // chevron, the header's icon and a close button, not the rows.
 std::optional<SidebarPress> SidebarPressAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x,
-                                           float y, int clicks, bool activating = false);
+                                           float y, int clicks, bool activating = false,
+                                           float listTop = sidebar_metrics::kHeaderAreaHeight);
 struct SidebarTap {
     // New actions go last, as Target's.
     enum class Action { None, EditAddress, TogglePinnedSection, SelectTab, SetFolderExpanded, NewTab, CloseTab, ChangeIcon };
@@ -165,6 +171,6 @@ std::optional<std::string> HeaderMenuSpace(const std::vector<SidebarRow>& rows, 
 // second click of a double-click renames instead, which comes later). The space's header
 // takes no tap yet (a click on its name renames).
 SidebarTap SidebarRelease(const SidebarPress& press, const std::vector<SidebarRow>& rows, float width, float height, float scroll,
-                          float x, float y);
+                          float x, float y, float listTop = sidebar_metrics::kHeaderAreaHeight);
 
 }  // namespace kite

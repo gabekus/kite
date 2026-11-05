@@ -29,5 +29,11 @@ struct FadedLayer {
 // Empty on success, else what failed (`hr`: whether the GPU went, IsDeviceLost).
 std::wstring DrawFadedLayer(Compositor& compositor, perf::View view, FadedLayer& layer, UINT width, UINT height, UINT dpi, const Compositor::Content& content,
                             bool readBack, HRESULT& hr, bool& fresh);
+// After DrawFadedLayer: a fresh layer's visual goes into `parent`, placed as AddVisual places it
+// (`insertAbove` the `reference`, or with none, on top for FALSE and at the bottom for TRUE). A
+// layer whose draw (`error`) or attach failed is dropped, to be made again by the next draw.
+// `error`, or what the attach's failure was.
+std::wstring AttachFadedLayer(FadedLayer& layer, bool fresh, std::wstring error, IDCompositionVisual* parent, BOOL insertAbove,
+                              IDCompositionVisual* reference, HRESULT& hr);
 
 }  // namespace kite

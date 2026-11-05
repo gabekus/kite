@@ -7,12 +7,16 @@
 #include <algorithm>
 #include <cmath>
 
+#include "core/Favorites.h"
+#include "core/OKLab.h"
 #include "core/SidebarTopRow.h"
 #include "core/SpaceBar.h"
 #include "core/SpaceEditing.h"
 #include "core/TitleBar.h"
+#include "core/Uuid.h"
 #include "shell/Capture.h"
 #include "shell/SpaceMenu.h"
+#include "shell/Text.h"
 
 namespace kite {
 
@@ -465,6 +469,8 @@ std::wstring BrowserWindowController::SmokeTestWindow() {
     }
     // The top row: its buttons, the page's states, hiding and showing the sidebar.
     if (std::wstring problem = SmokeTestTopRow(); !problem.empty()) return problem;
+    // The favorites: a grid over the page, whose hover and selection draw nothing.
+    if (std::wstring problem = SmokeTestFavorites(); !problem.empty()) return problem;
     // And the caption buttons their glyphs.
     Pixels buttons;
     if (std::wstring problem = caption_->Draw(&buttons); !problem.empty()) return L"the caption buttons couldn't draw: " + problem;
@@ -1095,6 +1101,234 @@ std::wstring BrowserWindowController::SmokeTestIconPicker() {
     StateChanged();
     frames_.clear();
     return {};
+}
+
+std::wstring BrowserWindowController::HoldFavoriteHover(size_t index) {
+    const std::optional<POINT> at = sidebar_->FavoriteCentre(index);
+    if (!at) return L"there's no such favorite";
+    SendMouse(window_.Handle(), WM_MOUSEMOVE, *at, 0);
+    return {};
+}
+
+std::wstring BrowserWindowController::HoldEmptyFavoritesHover() {
+    const FavoritesTray& tray = sidebar_->Favorites();
+    if (!tray.emptyState) return L"the favorites' empty state isn't showing";
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    // The pointer resting on the box, clear of its close button (the button's tooltip waits).
+    SendMouse(window_.Handle(), WM_MOUSEMOVE,
+              POINT{std::lround((tray.emptyFrame.left + 24) * scale), std::lround((tray.emptyFrame.top + 30) * scale)}, 0);
+    return sidebar_->FavoritesCloseShown() ? L"" : L"the empty state's close button didn't show";
+}
+
+std::wstring BrowserWindowController::ClickFavorite(size_t index) {
+    const std::optional<POINT> at = sidebar_->FavoriteCentre(index);
+    if (!at) return L"there's no such favorite";
+    std::string tabID;
+    size_t n = 0;
+    for (const FavoriteTile& tile : sidebar_->Favorites().tiles) {
+        for (const FavoritePane& pane : tile.panes) {
+            if (n++ == index) tabID = pane.tabID;
+        }
+    }
+    SendMouse(window_.Handle(), WM_MOUSEMOVE, *at, 0);
+    SendMouse(window_.Handle(), WM_LBUTTONDOWN, *at, MK_LBUTTON);
+    SendMouse(window_.Handle(), WM_LBUTTONUP, *at, 0);
+    if (!state_.SelectedTab() || state_.SelectedTab()->id != tabID) return L"the click didn't select the favorite";
+    // The pointer leaves the window, so the capture shows the selection at rest, as a session
+    // with it selected does.
+    SendMouse(window_.Handle(), WM_MOUSELEAVE, POINT{}, 0);
+    return {};
+}
+
+std::wstring BrowserWindowController::WaitForFavicons(double seconds, std::vector<std::string>& failed) {
+    if (!favicons_) return L"the capture has no favicons";
+    const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(seconds * 1000);
+    for (;;) {
+        // A draw asks for what it shows; what arrives draws again, and may ask for more (an icon at
+        // another size, a favorite's 16px icon for its colour), until a draw asks for nothing new.
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the sidebar couldn't draw: " + problem;
+        while (!favicons_->Idle() && GetTickCount64() < deadline) Sleep(5);
+        if (!favicons_->Idle()) return L"the favicons didn't arrive in time";
+        if (!favicons_->TakeResults()) break;
+        sidebar_->InvalidatePages();
+    }
+    for (const FavoriteTile& tile : sidebar_->Favorites().tiles) {
+        for (const FavoritePane& pane : tile.panes) {
+            if (pane.favicon.url && favicons_->Failed(*pane.favicon.url)) failed.push_back(*pane.favicon.url);
+        }
+    }
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestEmptyFavorites() {
+    // A fresh profile with no favorites: the empty state, until its close button dismisses it (the
+    // one-shot flag, written to the test profile), then back as it was.
+    if (!state_.Favorites().empty() || oneShotFlags_.Get(OneShotFlags::kFavoritesEmptyStateDismissed)) return {};
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the favorites couldn't draw: " + problem;
+    const FavoritesTray tray = sidebar_->Favorites();
+    if (!tray.emptyState || sidebar_->ListTop() != SidebarListTop(tray) || sidebar_->ListTop() <= sidebar_metrics::kHeaderAreaHeight) {
+        return L"a profile with no favorites doesn't show the empty state";
+    }
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    const auto client = [&](float x, float y) { return POINT{std::lround(x * scale), std::lround(y * scale)}; };
+    const std::wstring failure = [&]() -> std::wstring {
+        // The pointer over the box shows the close button: an opacity, nothing drawn.
+        const size_t draws = sidebar_->FavoriteSurfaceDraws();
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, client(tray.emptyFrame.left + 20, tray.emptyFrame.top + 20), 0);
+        if (!sidebar_->FavoritesCloseShown() || !sidebar_->CommitPending()) return L"hovering the empty state didn't show its close button";
+        sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0);
+        if (sidebar_->FavoriteSurfaceDraws() != draws) return L"hovering the empty state drew";
+        // Its close button acts only when let go over it: pressed and let go on the box, nothing.
+        const POINT close = client((tray.closeFrame.left + tray.closeFrame.right) / 2, (tray.closeFrame.top + tray.closeFrame.bottom) / 2);
+        const POINT box = client(tray.emptyFrame.left + 20, tray.emptyFrame.top + 20);
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, close, 0);
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, close, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, box, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, box, 0);
+        if (oneShotFlags_.Get(OneShotFlags::kFavoritesEmptyStateDismissed) || !sidebar_->Favorites().emptyState || GetCapture() == window_.Handle()) {
+            return L"letting go of the close button off it dismissed the empty state";
+        }
+        // Let go over it, it dismisses it: the page moves up under the address field.
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, close, 0);
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, close, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, close, 0);
+        if (!oneShotFlags_.Get(OneShotFlags::kFavoritesEmptyStateDismissed) || sidebar_->Favorites().height != 0 ||
+            sidebar_->ListTop() != sidebar_metrics::kHeaderAreaHeight) {
+            return L"the empty state's close button didn't dismiss it";
+        }
+        if (!OneShotFlags::Load(options_.supportDirectory).Get(OneShotFlags::kFavoritesEmptyStateDismissed)) return L"the dismissal wasn't saved";
+        return {};
+    }();
+    sidebar_->ClearHover();
+    const std::string restored = oneShotFlags_.Set(OneShotFlags::kFavoritesEmptyStateDismissed, false);
+    sidebar_->SetFavoritesEmptyStateDismissed(false);
+    if (!restored.empty() && failure.empty()) return L"the empty state's flag couldn't be set back: " + Widen(restored);
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
+    return failure;
+}
+
+std::wstring BrowserWindowController::SmokeTestFavorites() {
+    if (std::wstring problem = SmokeTestEmptyFavorites(); !problem.empty()) return problem;
+    // Two favorites with no favicon (no network), added to the current profile's grid, then the
+    // session as it was.
+    const std::vector<Tab> before = state_.Favorites();
+    const size_t space = state_.SelectedSpaceIndex();
+    const std::optional<std::string> selected = state_.spaces[space].selectedTabID;
+    std::vector<Tab> grid = before;
+    for (const char* title : {"Kite smoke favorite", "Kite smoke favorite 2"}) {
+        Tab tab;
+        tab.id = NewUuid();
+        tab.url = "about:blank";
+        tab.title = title;
+        grid.push_back(std::move(tab));
+    }
+    const std::string first = grid[grid.size() - 2].id;
+    const size_t index = grid.size() - 2;
+    state_.SetFavorites(grid);
+    sidebar_->Update(state_, pagesAnchor_);
+    const std::wstring failure = [&]() -> std::wstring {
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the favorites couldn't draw: " + problem;
+        const FavoritesTray& tray = sidebar_->Favorites();
+        if (tray.tiles.size() != grid.size()) return L"the favorites didn't show";
+        if (sidebar_->ListTop() != SidebarListTop(tray) || sidebar_->ListTop() <= sidebar_metrics::kHeaderAreaHeight) {
+            return L"the space's page didn't start under the favorites";
+        }
+        const auto redraw = [&] { sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0); };
+        redraw();
+        // A hover is opacities, which the sidebar's next pass commits, drawing nothing.
+        const size_t draws = sidebar_->FavoriteSurfaceDraws();
+        size_t commits = sidebar_->Commits();
+        const std::vector<FavoriteLook> rest = sidebar_->FavoriteLooks();
+        const std::optional<POINT> at = sidebar_->FavoriteCentre(index);
+        if (!at) return L"the favorite has no pane";
+        if (std::wstring problem = HoldFavoriteHover(index); !problem.empty()) return problem;
+        if (!sidebar_->CommitPending()) return L"hovering a favorite wasn't to be committed";
+        redraw();
+        if (sidebar_->Commits() != commits + 1 || sidebar_->CommitPending()) return L"hovering a favorite wasn't committed";
+        if (sidebar_->FavoriteSurfaceDraws() != draws) return L"hovering a favorite drew";
+        if (!(sidebar_->FavoriteLooks()[index].fill > rest[index].fill) || sidebar_->FavoriteLooks()[index + 1] != rest[index + 1]) {
+            return L"hovering a favorite didn't brighten just its pane";
+        }
+        // The first hover over a pane makes the tooltips (comctl32 loads then, not at launch).
+        if (!sidebar_->FavoritesHaveTooltips()) return L"hovering a favorite made no tooltip";
+        // Selecting it is opacities too.
+        commits = sidebar_->Commits();
+        state_.Select(first);
+        sidebar_->Update(state_, pagesAnchor_);
+        redraw();
+        if (sidebar_->Commits() != commits + 1) return L"selecting a favorite wasn't committed";
+        if (sidebar_->FavoriteSurfaceDraws() != draws) return L"selecting a favorite drew";
+        const bool dark = !PrefersDarkForeground(state_.SelectedSpace().theme);
+        if (sidebar_->FavoriteLooks()[index] != FavoriteLookOf(true, true, dark, false)) return L"the selected favorite isn't filled white";
+        // A press between the panes is the grid's: no window drag, no row, nothing selected.
+        const FavoriteTile& tile = sidebar_->Favorites().tiles[index];
+        const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+        const POINT gap{std::lround((tile.frame.right + 2) * scale), std::lround((tile.frame.top + tile.frame.bottom) / 2 * scale)};
+        if (!sidebar_->HandleMouse(WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(gap.x, gap.y))) return L"the favorites' gap didn't take its press";
+        sidebar_->HandleMouse(WM_LBUTTONUP, 0, MAKELPARAM(gap.x, gap.y));
+        if (!state_.SelectedTab() || state_.SelectedTab()->id != first || GetCapture() == window_.Handle()) return L"a press between favorites did something";
+        return {};
+    }();
+    sidebar_->ClearHover();
+    state_.SetFavorites(before);
+    state_.spaces[space].selectedTabID = selected;
+    sidebar_->Update(state_, pagesAnchor_);
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
+    // From some favorites to none: the page back where the tray as it is now ends it, and (not
+    // dismissed) the empty state's layers made.
+    if (failure.empty() && before.empty()) {
+        const FavoritesTray& now = sidebar_->Favorites();
+        if (sidebar_->ListTop() != SidebarListTop(now) || !now.tiles.empty()) return L"the page didn't come back up when the favorites went";
+        if (now.emptyState && !sidebar_->FavoritesEmptyStateDrawn()) return L"the empty state didn't draw when the favorites went";
+    }
+    if (!failure.empty()) return failure;
+    return SmokeTestFavoritesScroll();
+}
+
+std::wstring BrowserWindowController::SmokeTestFavoritesScroll() {
+    // The list scrolled to its end under a tall grid (nine favorites, three rows), then the grid
+    // gone: the page starts higher, so it has less to scroll, and the scroll comes within it. Then
+    // the session as it was.
+    const std::vector<Tab> before = state_.Favorites();
+    const size_t space = state_.SelectedSpaceIndex();
+    const size_t tabsBefore = state_.spaces[space].tabs.size();
+    std::vector<Tab> grid = before;
+    for (int i = 0; i < 9; ++i) {
+        Tab tab;
+        tab.id = NewUuid();
+        tab.url = "about:blank";
+        tab.title = "Kite smoke favorite " + std::to_string(i + 1);
+        grid.push_back(std::move(tab));
+    }
+    // Enough of today's tabs that the list scrolls (never selected: no pages for them).
+    std::vector<std::string> added;
+    for (int i = 0; i < 30; ++i) added.push_back(state_.OpenTab("about:blank", state_.spaces[space].id, false));
+    state_.SetFavorites(grid);
+    sidebar_->Update(state_, pagesAnchor_);
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    RECT client{};
+    GetClientRect(window_.Handle(), &client);
+    const float height = static_cast<float>(client.bottom) / scale;
+    const auto maxScroll = [&] { return SidebarMaxScroll(SidebarRows(state_, space), height, scale, sidebar_->ListTop()); };
+    const std::wstring failure = [&]() -> std::wstring {
+        const POINT overList{std::lround(100 * scale), std::lround((sidebar_->ListTop() + 40) * scale)};
+        if (!sidebar_->ScrollList(overList, 100000)) return L"the list under the favorites took no scroll";
+        const float tall = sidebar_->ListScroll();
+        if (tall <= 0 || tall != maxScroll()) return L"the list under the favorites didn't scroll to its end";
+        // The grid goes (to the empty state or none): less to scroll, and the scroll within it.
+        state_.SetFavorites(before);
+        sidebar_->Update(state_, pagesAnchor_);
+        if (!(maxScroll() < tall)) return L"the page had no less to scroll without the grid";
+        if (sidebar_->ListScroll() > maxScroll()) return L"the list's scroll stayed past its end when the favorites went";
+        return {};
+    }();
+    state_.SetFavorites(before);
+    auto& tabs = state_.spaces[space].tabs;
+    std::erase_if(tabs, [&](const Tab& tab) { return std::find(added.begin(), added.end(), tab.id) != added.end(); });
+    sidebar_->Update(state_, pagesAnchor_);
+    if (tabs.size() != tabsBefore && failure.empty()) return L"the smoke test's tabs didn't go";
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
+    return failure;
 }
 
 }  // namespace kite

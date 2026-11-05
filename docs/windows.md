@@ -364,6 +364,72 @@ card's edge; `kitecore click X Y --page …` says what a click on a button runs.
 Captures: `--page-status` and `--toggle-sidebar N` (main.cpp); a hover draws
 nothing, which the smoke test checks.
 
+## The favorites grid
+
+W13 ports the Mac's favorites tray (`FavoritesTrayView`, `FavoriteTileView`,
+`FavoritePaneView` and `FavoritesEmptyStateView` in SidebarFavorites.swift,
+`FavoritesTrayLayout`; core's `core/Favorites.h`, `shell/FavoritesView`): the
+current space's profile's favorites (`favoritesByProfile`), between the address
+field and the space's page, which starts under them. Tiles are 47pt high and 8pt
+apart, at most four a row, as many as square tiles fit and then the rows balanced
+(5 are 3 + 2, 9 are 3 × 3), with 8pt above and below; a favorite split is one
+tile, its panes 2pt apart. The grid stays put while the pages slide, under the
+space bar and the pages (the Mac's subview order), which also get the pointer
+first. An unselected pane is the address field's white wash (0.10, 0.20 hovered;
+3.5 times on a light theme); the selected one is white at 0.45 (0.8 light) with
+its favicon's colour over it at 0.2 (0.3 hovered; none, 0.1 hovered on a light
+theme) and a 2pt ring of that colour. The colour is NSImage.dominantColor's (the
+fullest of twelve hue bins in the icon drawn 16px a side) half way to white as
+`NSColor.blended(withFraction:of:)` mixes it: in calibrated RGB (Apple's Generic
+RGB, gamma 1.8), not sRGB, which is what makes YouTube's ring (255, 149, 150) and
+not (255, 129, 129). That mix is `core/ColorSpaces.h`'s `BlendCalibrated` (alpha
+too), with sRGB's transfer function, shared with the OKLab maths and the backdrop.
+A grey or missing favicon has no colour: the pane is just white, the globe in its
+middle (Segoe's globe fills its em square, so it's set at
+the favicon's 18pt, the Mac's 36px at 2×; the rows' globes with it). A click
+selects the favorite (released inside the pane, not after a 4pt drag, not the
+click that brings the window forward), the window's whole band is the tray's (no
+window drag, no row), and a pane's tooltip is the tab's title (comctl32's, as the
+top row's: `shell/RelayedTooltips`, their tools placed from where the sidebar
+rests). Ctrl+1–9 count the favorites first, a split once (`SidebarStops`,
+unchanged from W8).
+
+- **The empty state.** With no favorites, Arc's dashed box ("Drag to add
+  Favorites" over "Favorites keep your most used sites and apps close", 59pt in
+  a 240pt sidebar, so the space's header sits near y 157), until its close button
+  (shown while the pointer is over the box) dismisses it. That's a one-shot flag
+  (`core/OneShotFlags.h`): the Mac keeps it in UserDefaults on a real profile and
+  in the profile's `One-Shot Flags.plist` on a test one; Windows has no
+  UserDefaults, so every profile keeps it in that file, a binary property list in
+  the Mac's format (`Tests/Fixtures/one-shot-flags.plist`, which both test suites
+  read). The box's lines are as DirectWrite wraps them (the Mac's two at 240pt).
+  The close button's X is Kite's own two strokes (`favorites_empty::CloseShape`),
+  6.2pt across with 1pt strokes for the Mac's 8pt bold xmark, centred in its 18pt
+  box at 0.5: an estimate, since a Mac reference can't hover
+  (`--empty-favorites-hover` shows it on Windows).
+- **Each pane is up to four `FadedLayer`s** (the wash, the tint, the ring and the
+  favicon; the tint and ring only once there's a colour) in a visual of its own,
+  each drawn once at full strength and faded by its effect group, so a hover or a
+  selection is opacities the sidebar's next pass commits, with nothing drawn (the
+  smoke test counts the layers drawn and the commit). A favicon arriving draws
+  only its pane's icon layer, and, once its 16px icon gives the colour, its tint
+  and ring; a pane whose favicon changes draws its icon and tint again
+  (`FavoriteRedrawFor`). The empty state's box is one layer and its close button
+  another, whose opacity the hover sets.
+- **Captures.** `--favicons` fetches the favicons as the window does (a capture
+  otherwise has none, so no network), waits for them, and names any favorite's
+  that didn't load (the globe shows, as on the Mac); `--favorite-hover N` and
+  `--favorite-click N` hold a pane hovered or clicked. `kitecore sidebar` gives
+  `favorites` (columns, height, `listTop`, each tile and pane with its frame, the
+  empty state and its close button), and `kitecore click` on a pane selects it,
+  on the close button dismisses the empty state.
+- **Not yet:** dragging tiles and the drop gap (W18b, which also shows the tray
+  while a drag is on with no favorites), the tile's menu and its Ctrl+click
+  (W17), Add to / Remove from Favorites (W14, W17), the preview cards over a
+  hovered favorite (FavoritePreviewCard, W38), accessibility for the panes (W35c),
+  and hiding the tray while Create a Space shows (the Mac's `creating`, W9f).
+  Corners are circular rather than continuous, as in the rest of the sidebar.
+
 ## Shortcuts
 
 Kite's shortcuts (W8) are the Mac's menu commands, by the same ids, with Ctrl in
