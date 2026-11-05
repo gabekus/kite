@@ -140,7 +140,10 @@ struct Occlusion::Worker {
         HWINEVENTHOOK foreground = nullptr, moveSize = nullptr, minimize = nullptr, cloak = nullptr;
     } global;
     HWINEVENTHOOK kiteCloak = nullptr;
+    // Per process (the occluders'), and per thread of the shell's (its preview threads).
     std::map<DWORD, HWINEVENTHOOK> destroyHooks, hideHooks, showHooks;
+    DWORD hookedShell = 0;            // the shell process the thread hooks are on
+    std::vector<uint32_t> shellThreads;
     // WTS: registered from here (Run); early in a login the service isn't up, so it's tried
     // again once Global\TermSrvReadyEvent is set, or at the next poke if that can't be opened.
     bool sessionRegistered = false;
@@ -187,8 +190,29 @@ struct Occlusion::Worker {
         if (current) current->Handle(event, hwnd, object, child);
     }
 
-    static HWINEVENTHOOK Hook(DWORD first, DWORD last, DWORD process) {
-        return SetWinEventHook(first, last, nullptr, &OnEvent, process, 0, WINEVENT_OUTOFCONTEXT);
+    static HWINEVENTHOOK Hook(DWORD first, DWORD last, DWORD process, DWORD thread = 0) {
+        return SetWinEventHook(first, last, nullptr, &OnEvent, process, thread, WINEVENT_OUTOFCONTEXT);
+    }
+
+    // The shell's threads that show a picture of Kite's window: the taskbars' (its thumbnails)
+    // and the hosts of Alt+Tab and Task View (core's IsPreviewWindowClass). Not the rest of
+    // Explorer: File Explorer's windows and Win+R's box each have a thread of their own, and a
+    // caret raises a SHOW per key. FindWindowEx walks the window list in win32k, with no round
+    // trip to Explorer. A host Explorer makes later (its first Alt+Tab) is hooked from the pass
+    // after it appears (the heartbeat's whole pass at the latest).
+    static void ShellPreviewThreads(DWORD shell, std::vector<uint32_t>& threads) {
+        threads.clear();
+        static constexpr const wchar_t* kClasses[] = {L"Shell_TrayWnd", L"Shell_SecondaryTrayWnd", L"TaskListThumbnailWnd",
+                                                      L"MultitaskingViewFrame", L"XamlExplorerHostIslandWindow"};
+        for (const wchar_t* name : kClasses) {
+            for (HWND w = FindWindowExW(nullptr, nullptr, name, nullptr); w; w = FindWindowExW(nullptr, w, name, nullptr)) {
+                DWORD process = 0;
+                const DWORD thread = GetWindowThreadProcessId(w, &process);
+                if (process == shell && thread) threads.push_back(thread);
+            }
+        }
+        std::sort(threads.begin(), threads.end());
+        threads.erase(std::unique(threads.begin(), threads.end()), threads.end());
     }
 
     // On the worker thread: a hook goes from the thread that set it.
@@ -526,11 +550,10 @@ struct Occlusion::Worker {
         pass.kiteShown = IsWindowVisible(kite) && !IsIconic(kite);
         kiteInFront = pass.kiteForeground;
         kiteShown = pass.kiteShown;
-        // The cloak as of now (DWM's, asked again after a cloak event or Kite's activation);
-        // published with the rest below, once.
-        RECT kiteOuter{};
-        GetWindowRect(kite, &kiteOuter);
-        tracker.SetCloaked(Dwm(kite, kiteOuter).cloaked);
+        // The cloak as of now, asked of DWM every pass, never cached: a cached answer from
+        // before a cloak event would undo it, and Kite would draw on another desktop. Published
+        // with the rest below, once.
+        tracker.SetCloaked(CloakedWindow(kite));
         // The dragged window gone (its process died mid-drag): its end won't come.
         if (tracker.Dragging() && !IsWindow(reinterpret_cast<HWND>(tracker.DraggingWindow()))) tracker.DragLost();
         visiblePixels = -1;
@@ -585,11 +608,21 @@ struct Occlusion::Worker {
         Set(global.moveSize, globals.moveSize, kMoveSizeStart, kMoveSizeEnd, 0);
         Set(global.minimize, globals.minimize, kMinimizeStart, kMinimizeEnd, 0);
         Set(global.cloak, globals.cloak, kCloaked, kUncloaked, 0);
-        const occlusion::ProcessHooks wanted = tracker.Hooks(kiteProcess, ShellProcess());
+        const DWORD shell = ShellProcess();
+        const occlusion::ProcessHooks wanted = tracker.Hooks(kiteProcess, shell);
         Set(kiteCloak, wanted.kiteCloak, kCloaked, kUncloaked, kiteProcess);
-        Sync(destroyHooks, wanted.destroy, kDestroy, kDestroy);
-        Sync(hideHooks, wanted.hide, kHide, kHide);
-        Sync(showHooks, wanted.show, kShow, kShow);
+        Sync(destroyHooks, wanted.destroy, kDestroy, kDestroy, 0);
+        // The shell's preview threads, found again each time they're wanted (Explorer may have
+        // restarted, or made its Alt+Tab host since).
+        static const std::vector<uint32_t> none;
+        if (shell != hookedShell) {
+            Sync(hideHooks, none, kHide, kHide, hookedShell);
+            Sync(showHooks, none, kShow, kShow, hookedShell);
+            hookedShell = shell;
+        }
+        if (wanted.shellShow || wanted.shellHide) ShellPreviewThreads(shell, shellThreads);
+        Sync(hideHooks, wanted.shellHide ? shellThreads : none, kHide, kHide, shell);
+        Sync(showHooks, wanted.shellShow ? shellThreads : none, kShow, kShow, shell);
     }
 
     static void Set(HWINEVENTHOOK& hook, bool wanted, DWORD first, DWORD last, DWORD process) {
@@ -602,7 +635,8 @@ struct Occlusion::Worker {
         }
     }
 
-    static void Sync(std::map<DWORD, HWINEVENTHOOK>& hooks, const std::vector<uint32_t>& wanted, DWORD first, DWORD last) {
+    // `wanted`: process ids, or with `threadsOf`, that process's thread ids.
+    static void Sync(std::map<DWORD, HWINEVENTHOOK>& hooks, const std::vector<uint32_t>& wanted, DWORD first, DWORD last, DWORD threadsOf) {
         for (auto it = hooks.begin(); it != hooks.end();) {
             if (std::binary_search(wanted.begin(), wanted.end(), it->first)) {
                 ++it;
@@ -611,9 +645,10 @@ struct Occlusion::Worker {
             UnhookWinEvent(it->second);
             it = hooks.erase(it);
         }
-        for (uint32_t process : wanted) {
-            if (hooks.contains(process)) continue;
-            if (HWINEVENTHOOK hook = Hook(first, last, process)) hooks.emplace(process, hook);
+        for (uint32_t id : wanted) {
+            if (hooks.contains(id)) continue;
+            HWINEVENTHOOK hook = threadsOf ? Hook(first, last, threadsOf, id) : Hook(first, last, id);
+            if (hook) hooks.emplace(id, hook);
         }
     }
 
@@ -693,8 +728,19 @@ void Occlusion::RegisterNotifications() {
 }
 
 void Occlusion::WindowChanged(bool display) {
+    if (!display && inSizeMove_) {
+        changedInSizeMove_ = true;
+        return;
+    }
     (display ? displayChanged_ : windowChanged_) = true;
     SetEvent(poke_);
+}
+
+void Occlusion::SizeMoveLoop(bool inLoop) {
+    inSizeMove_ = inLoop;
+    if (inLoop || !changedInSizeMove_) return;
+    changedInSizeMove_ = false;
+    WindowChanged();
 }
 
 void Occlusion::Activated() {

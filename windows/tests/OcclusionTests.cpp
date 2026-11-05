@@ -513,12 +513,13 @@ TEST(theHooksFollowWhatCanChangeTheVerdict) {
     ownCloak.kiteCloak = true;
     CHECK(tracker.Hooks(kite, shell) == ownCloak);
     // Covered: the occluders' destroys (never Kite's own; their hides, a caret's on every key in
-    // the app being typed in, are the heartbeat's), and the shell's thumbnails coming up.
+    // the app being typed in, are the heartbeat's), and the shell's thumbnails coming up (on its
+    // preview threads only).
     tracker.SetPass(CoveredBy({0x10, 0x11, 0x12}, {5, foreground, kite}));
     CHECK(tracker.Globals() == Globals(true, true, true, true));
     ProcessHooks covered;
     covered.destroy = {foreground, 5};
-    covered.show = {shell};
+    covered.shellShow = true;
     CHECK(tracker.Hooks(kite, shell) == covered);
     // A thumbnail or Alt+Tab up: the shell's hides too, so its going doesn't hold Kite drawing.
     Tracker::Pass previewing = CoveredBy({0x10}, {5});
@@ -526,8 +527,8 @@ TEST(theHooksFollowWhatCanChangeTheVerdict) {
     tracker.SetPass(previewing);
     ProcessHooks whilePreviewing;
     whilePreviewing.destroy = {5};
-    whilePreviewing.show = {shell};
-    whilePreviewing.hide = {shell};
+    whilePreviewing.shellShow = true;
+    whilePreviewing.shellHide = true;
     CHECK(tracker.Hooks(kite, shell) == whilePreviewing);
     // Minimized: nothing (its own messages say when it's back).
     Tracker::Pass minimized;

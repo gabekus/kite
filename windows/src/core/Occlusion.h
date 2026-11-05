@@ -143,8 +143,10 @@ std::string_view Name(Hidden hidden);
 //   changing raises nothing.
 // - EVENT_OBJECT_SHOW and EVENT_OBJECT_HIDE come for a caret on every key (a focused edit
 //   control: 21 shows and 22 hides for 20 keys) and for every tooltip and menu, at 5 to 8
-//   context switches each: so SHOW only from the shell (its thumbnails and Alt+Tab, while
-//   covered) and HIDE only from the shell while one of those is up.
+//   context switches each: so SHOW only from the shell's preview threads (its thumbnails and
+//   Alt+Tab, while covered) and HIDE only from those while one of them is up. Threads, not
+//   Explorer's process: File Explorer's windows and Win+R's box are Explorer's too, each on a
+//   thread of its own, and renaming a file raises a caret's SHOW per key.
 // So what uncovers a covered Kite without an event (a restore-down, Win+Arrow, a FancyZones
 // snap, leaving full screen, a monitor change, an occluder turning translucent or hidden) is
 // found by the Heartbeat instead, and the pointer reaching Kite (PointerRecovery).
@@ -193,11 +195,13 @@ struct GlobalHooks {
 };
 
 // The per-process hooks, sorted process ids. Never Kite's own but for `kiteCloak` (its window
-// cloaked on another desktop while nothing system-wide is hooked).
+// cloaked on another desktop while nothing system-wide is hooked). The shell's are only on the
+// threads that show its previews (the taskbars' and the hosts of Alt+Tab and Task View), which
+// the shell finds, never on Explorer's whole process.
 struct ProcessHooks {
     std::vector<uint32_t> destroy;  // EVENT_OBJECT_DESTROY: the windows over a covered Kite closing
-    std::vector<uint32_t> show;     // EVENT_OBJECT_SHOW: the shell's thumbnails and Alt+Tab coming up
-    std::vector<uint32_t> hide;     // EVENT_OBJECT_HIDE: the shell's, going, while one is up
+    bool shellShow = false;         // EVENT_OBJECT_SHOW on the shell's preview threads: a thumbnail or Alt+Tab coming up
+    bool shellHide = false;         // EVENT_OBJECT_HIDE on them: one going, while one is up
     bool kiteCloak = false;         // EVENT_OBJECT_CLOAKED...UNCLOAKED for Kite's process
     bool operator==(const ProcessHooks&) const = default;
 };

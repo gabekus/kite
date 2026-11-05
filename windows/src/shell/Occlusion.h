@@ -14,9 +14,13 @@
 // - Each hook is on only in the states where its events can change the verdict (core's
 //   Tracker::Globals and Hooks): none while locked, display-off, minimized or on another
 //   desktop; only an app coming forward and drags while Kite is in front.
-// - What's hooked is quiet: the system-wide events are a person's actions, and per process
-//   only the occluders' hides and destroys (and the shell's thumbnails). Never moves,
-//   z-order or state changes (core's Event says why).
+// - What's hooked is quiet: the system-wide events are a person's actions; per process, only
+//   the occluders' destroys while Kite is covered; and per thread, the shell's shows on its
+//   preview threads (the taskbars' and Alt+Tab's, never File Explorer's) while covered, and
+//   their hides while a preview is up. Never moves, z-order, state changes, or anyone else's
+//   shows and hides (core's Event says why).
+// - Kite's own move or resize pokes the watcher once, at its end (WindowChanged isn't called
+//   between WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE).
 // - What uncovers Kite without an event (a restore-down, a keyboard snap, leaving full screen,
 //   a window turning translucent) is found by core's Heartbeat: only while Kite is covered, it
 //   re-reads the windows that covered it twice a second, and runs a pass every 4 s. The first
@@ -56,6 +60,10 @@ public:
     // Kite's window moved, resized, was minimized or restored; or (`display`) its monitors,
     // work area or DPI changed.
     void WindowChanged(bool display = false);
+    // Kite's own move or resize loop (WM_ENTERSIZEMOVE, then false at WM_EXITSIZEMOVE): its
+    // window changes at the display's rate meanwhile, so WindowChanged keeps quiet until the
+    // end, which pokes once. Dragged, Kite is in front anyway.
+    void SizeMoveLoop(bool inLoop);
     // Kite's app was activated (WM_ACTIVATEAPP): in front, it's seen.
     void Activated();
     // The pointer reached a covered Kite (PointerRecovery): look again.
@@ -79,6 +87,8 @@ private:
     std::unique_ptr<Worker> worker_;
     HANDLE thread_ = nullptr;
     HPOWERNOTIFY displayNotification_ = nullptr;
+    // Kite's UI thread's alone: in a move or resize loop, and whether the window changed in it.
+    bool inSizeMove_ = false, changedInSizeMove_ = false;
 };
 
 }  // namespace kite

@@ -367,6 +367,10 @@ private:
     // it for an occluded window.
     void OcclusionChanged();
     void SetOccluded(bool hidden);
+    // Watching whether the window can be seen, or not: on from the start but for test runs;
+    // under --perf-control only while kiteperf asks ({"occlusion":"on"}, its covered phase).
+    void StartOcclusion();
+    void StopOcclusion();
     // A window of Kite's process is the foreground window.
     bool KiteInFront() const;
     // The frame clock stops for an unseen window, unless something that isn't drawing still
@@ -598,7 +602,7 @@ private:
     // from the message loop (RunPerfRequests), so the sender isn't held while it runs and its
     // dispatch is timed like any other. False when it isn't one, or the command does nothing now.
     struct PerfRequest {
-        enum class Kind { Command, Mark, Open, Move, Leave } kind;
+        enum class Kind { Command, Mark, Open, Move, Leave, Occlusion } kind;
         std::string text;
         int64_t x = 0, y = 0, qpc = 0;
     };

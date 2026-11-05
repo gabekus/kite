@@ -166,8 +166,9 @@ visibility: they report `hidden` and stop drawing, and `visible` when
 they're back. They keep their size, as on the Mac, so a tab switch doesn't
 resize and reflow them. That leans on Chromium's window layout, so `--smoke-test` fails
 if the widget isn't found; W10's off-screen pages replace it with `WasHidden`.
-A Kite window that's covered rather than minimized still draws its page
-(Chromium's occlusion tracking covers only its own top-level windows).
+A covered Kite (and a locked, display-off or other-desktop one) hides its
+shown page the same way (P2, "A window no one can see draws nothing" below):
+Chromium's own occlusion tracking covers only its top-level windows.
 `windows/helix/pages/popup-opener.html` logs the page's `visibilityState`,
 resizes and opener messages in its title to check all this (on Gabe's PC,
 not in CI). CEF runs its own UI
@@ -1252,8 +1253,9 @@ Windows that means:
     does a UWP app whose `ApplicationFrameWindow` hosts an in-app acrylic (host
     backdrop) brush. Zen (acrylic), WezTerm and Windows Terminal never cover,
     even at full opacity, so a Kite under them earns no savings.
-  - **What counts as seen.** It errs towards visible: Kite in front (its own
-    `WM_ACTIVATEAPP` is the last word), a window being dragged over or near a
+  - **What counts as seen.** It errs towards visible: Kite in front (a window
+    of Kite's process is the foreground window when a verdict arrives, asked of
+    Windows then; `WM_ACTIVATEAPP` clears covered at once), a window being dragged over or near a
     visible Kite or off a covered one (until the pass after the drop), or a
     taskbar thumbnail, Alt+Tab or Task View up. So does a screen recorder that
     runs only to record (OBS, XSplit, Bandicam, Camtasia's recorder,
@@ -1267,10 +1269,13 @@ Windows that means:
     front comes too soon after the foreground change for a hook made then).
     System-wide hooks are kept only for events a person causes at a person's
     rate: an app coming forward, a drag, a minimize, a desktop switch. Per
-    process, only the occluders' destroys, the shell's shows (its thumbnails
-    and Alt+Tab) while Kite is covered, and the shell's hides while one of
-    those is up. Moves, z-order, state changes, shows and hides aren't hooked
-    otherwise. Measured: a caret raises a show, a hide and a move on every key
+    process, only the occluders' destroys while Kite is covered. Per thread,
+    the shell's shows on its preview threads (the taskbars' and the hosts of
+    Alt+Tab and Task View) while Kite is covered, and their hides while one of
+    those is up: never Explorer's whole process, whose File Explorer windows
+    and Win+R box raise a caret's show per key on threads of their own. Moves,
+    z-order, state changes, shows and hides aren't hooked otherwise. Kite's own
+    move or resize pokes the thread once, when it ends (`WM_EXITSIZEMOVE`). Measured: a caret raises a show, a hide and a move on every key
     (in the app being typed in, usually the one over Kite), a tooltip or menu
     a show and a hide, and a moving window tens of moves a second, at 5 to 8
     context switches each, past the watcher's 20 a second. And a maximize or
@@ -1297,7 +1302,9 @@ Windows that means:
     heartbeat's whole passes.
   - **Off for test runs.** `--smoke-test` and `--frame-log` run without
     occlusion, so their checks of the slide and the crossfade can't pass
-    unseen. `--occlusion-log FILE` (test profiles) writes each verdict and the
+    unseen, and so does `--perf-control` until kiteperf asks for it in its
+    covered phase: kiteperf opens Kite behind other windows, so its other
+    phases would measure whatever the desktop happened to cover. `--occlusion-log FILE` (test profiles) writes each verdict and the
     thread's counters.
   - **Known gaps.** A covered Kite uncovered without an event shows its card
     for up to half a second (the heartbeat), or until the pointer reaches it.
@@ -1339,7 +1346,9 @@ behind other windows, without asking for the focus, and never shows a dialog, as
 - `--perf-control`: requests by `WM_COPYDATA` (`dwData` 'KPRF', a UTF-8 JSON object):
   `{"command":ID}` runs a shortcut's command by its id (`kitecore shortcuts`), `{"mark":NAME}`
   logs a mark, `{"open":URL}` opens an http or https page in a tab, `{"input":"move","x":X,
-  "y":Y,"qpc":Q}` posts a pointer move at client pixels, and `{"input":"leave"}` takes it away.
+  "y":Y,"qpc":Q}` posts a pointer move at client pixels, `{"input":"leave"}` takes it away, and
+  `{"occlusion":"on"}` or `"off"` starts or stops watching whether the window can be seen
+  (off under `--perf-control` until asked).
   A request is checked and queued, and the answer is 1, or 0 for one Kite can't run; it then
   runs from the message loop, so the sender isn't held and its dispatch is timed like any
   other. While a posted pointer is over the window the system's `WM_MOUSELEAVE` is ignored,
@@ -1386,7 +1395,9 @@ frame intervals from one clock, p50/p99 and missed, and switch-to-present); swit
 reload (every 0.5 s for 10 s); hover (pointer moves posted at 120 Hz for 10 s over the rows:
 moves sent, committed and move-to-present); titleTick (a page that retitles itself every
 second, 20 s); anim (a CSS and requestAnimationFrame page selected, 10 s), hiddenAnim (the
-same in a background tab, 20 s), covered (under kiteperf's own black window, 20 s) and
+same in a background tab, 20 s), covered (under kiteperf's own black window, with Kite's
+occlusion turned on for the phase and off after it, 20 s; a Kite without the request, like a
+build from before P2, refuses it and is measured as it is) and
 minimized (20 s); then one `WM_CLOSE` and the time until every process is gone. `--phases`
 runs some of them (open and settle always first); `--scenario idle` stops after idle,
 `startup` after the first page, and `smoke` (CI) is a few seconds each of open, idle,

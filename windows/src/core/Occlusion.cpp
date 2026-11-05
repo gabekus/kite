@@ -323,14 +323,14 @@ ProcessHooks Tracker::Hooks(uint32_t kiteProcess, uint32_t shellProcess) const {
     const auto other = [&](uint32_t process) { return process != 0 && process != kiteProcess; };
     // A thumbnail, Alt+Tab or Task View up: its going (Windows 10 hides it; Windows 11 cloaks
     // it, which the system-wide hook sees), so it doesn't hold Kite drawing.
-    if (pass_.previewing && other(shellProcess)) hooks.hide.push_back(shellProcess);
+    if (pass_.previewing && other(shellProcess)) hooks.shellHide = true;
     if (!pass_.covered) return hooks;
     // Covered: the occluders closing (hides, a caret's on every key, are the heartbeat's), and
     // the shell's previews coming up.
     for (uint32_t process : pass_.occluderProcesses) {
         if (other(process)) hooks.destroy.push_back(process);
     }
-    if (other(shellProcess)) hooks.show.push_back(shellProcess);
+    if (other(shellProcess)) hooks.shellShow = true;
     SortUnique(hooks.destroy);
     return hooks;
 }

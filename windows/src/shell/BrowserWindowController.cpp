@@ -291,11 +291,10 @@ std::wstring BrowserWindowController::Init() {
     };
     // Whether the window can be seen. Not for a capture, which draws one frame and goes, nor
     // for a smoke test or a frame log, whose checks of the slide and the crossfade would pass
-    // without a frame if the run were covered (a quiet run usually is).
-    if (!options_.capture && !options_.smokeTest && !options_.frameLog) {
-        occlusion_ = Occlusion::Start(window_.Handle(), kOcclusionMessage, options_.occlusionLog);
-        if (occlusion_) occlusion_->RegisterNotifications();
-    }
+    // without a frame if the run were covered (a quiet run usually is). Nor under
+    // --perf-control: kiteperf opens Kite behind other windows, so what it measured would hang
+    // on what else is on the desktop; it turns occlusion on for its covered phase.
+    if (!options_.capture && !options_.smokeTest && !options_.frameLog && !options_.perfControl) StartOcclusion();
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE): what the pages
     // reported runs first (titles, addresses), then the session, history and downloads.json are
     // saved at once. Closing doesn't wait for the writes (main.cpp does, once the window is gone);
@@ -609,6 +608,18 @@ void BrowserWindowController::Frame(double time, double rateHz) {
     // The display at its highest rate only while something moves on it: a fade, or fingers (or
     // their momentum) moving. Fingers resting on the touchpad, after a fade too, leave it alone.
     clock_->SetBoost(theme_.Fading() || (touchpad_ && touchpad_->Moving()));
+}
+
+void BrowserWindowController::StartOcclusion() {
+    if (occlusion_ || closing_) return;
+    occlusion_ = Occlusion::Start(window_.Handle(), kOcclusionMessage, options_.occlusionLog);
+    if (occlusion_) occlusion_->RegisterNotifications();
+}
+
+void BrowserWindowController::StopOcclusion() {
+    occlusion_.reset();
+    pointerRecovery_.SetVerdict(occlusion::Hidden::No);
+    SetOccluded(false);
 }
 
 void BrowserWindowController::OcclusionChanged() {
@@ -1453,6 +1464,9 @@ bool BrowserWindowController::QueuePerfRequest(const COPYDATASTRUCT* data) {
         queued = {PerfRequest::Kind::Command, *command, 0, 0, number("qpc").value_or(perf::Now())};
     } else if (const std::string* mark = text("mark")) {
         queued = {PerfRequest::Kind::Mark, *mark, 0, 0, 0};
+    } else if (const std::string* occlusion = text("occlusion")) {
+        if (*occlusion != "on" && *occlusion != "off") return false;
+        queued = {PerfRequest::Kind::Occlusion, *occlusion, 0, 0, 0};
     } else if (const std::string* url = text("open")) {
         // Web pages only: nothing of the machine's (file:, view-source:, kite: or a script).
         if (!url->starts_with("http://") && !url->starts_with("https://")) return false;
@@ -1499,6 +1513,11 @@ void BrowserWindowController::RunPerfRequests() {
                 ++perfMovesPosted_;
                 if (perf::On()) perf::Input("move", r.qpc);
             }
+            break;
+        case PerfRequest::Kind::Occlusion:
+            if (r.text == "on") StartOcclusion();
+            else StopOcclusion();
+            perf::Mark("occlusion", r.text);
             break;
         case PerfRequest::Kind::Leave:
             perfPointer_ = false;
@@ -1632,7 +1651,8 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         if (occlusion_->HandleMessage(message, wParam, lParam, result)) return true;
         // Moved, resized, minimized, restored or shown, or the monitors, the work area or the
         // scale changed: what Kite's window covers on screen did (seen, not handled: the
-        // window's own handling follows).
+        // window's own handling follows). In a move or resize loop, once at its end.
+        if (message == WM_ENTERSIZEMOVE || message == WM_EXITSIZEMOVE) occlusion_->SizeMoveLoop(message == WM_ENTERSIZEMOVE);
         if (message == WM_WINDOWPOSCHANGED) occlusion_->WindowChanged();
         if (message == WM_DISPLAYCHANGE || message == WM_DPICHANGED || (message == WM_SETTINGCHANGE && wParam == SPI_SETWORKAREA)) {
             occlusion_->WindowChanged(true);
