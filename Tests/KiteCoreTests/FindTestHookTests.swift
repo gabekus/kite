@@ -122,7 +122,7 @@ struct FindTestHookSourceTests {
         let apply = try body(of: "func applyFindTestHook(_ hook: FindTestHook) {", in: commands)
         let openFind = try body(of: "private func openFind(askEnabled: Bool) {", in: commands)
         #expect(!apply.contains("AskOnPage.isEnabled"))
-        #expect(!apply.contains("showFind("))
+        #expect(!apply.contains("showFind(nil)"))   // the saved setting's path (its Step is still .showFind(askOnPage:))
         #expect(!openFind.contains("AskOnPage.isEnabled"))
         #expect(openFind.contains("bar.askEnabled = askEnabled"))
         #expect(try body(of: "@objc func showFind(_ sender: Any?) {", in: commands)
