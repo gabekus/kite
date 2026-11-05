@@ -41,15 +41,23 @@ their own PR, never as a side effect of a checkpoint.
   (`shell/FrameClock.h`), at the display's rate, only while it changes, and
   the clock stops when it ends. An offset, a scale or an opacity is always an
   `IDCompositionAnimation`.
-- Idle means drawing nothing, not never waking. Watching the system for
-  something only other apps do (a WinEvent hook on their windows, to know when
-  Kite's window is covered) wakes Kite when they act, and that's allowed when
-  it's cheap and draws nothing: off the UI thread, which hears only when the
-  outcome changes; filtered at the first check; debounced; hooked per process
-  rather than system-wide where Windows allows it, and only while it can change
-  the outcome; and with no enumeration (EnumWindows, process lists) while
-  nothing changed. The PR measures what it adds: context switches per second on
-  each Kite thread while another app moves a window, against origin/main.
+- Idle means drawing nothing, and waking only for one narrow exception: Kite may
+  watch the system for a signal that lets it stop drawing or working (whether
+  its window can be seen, covered, locked, the display's power), never for one
+  that starts work. Polling and timers are still never allowed for it. Such a
+  watcher:
+  - runs off the UI thread, which hears only when the outcome changes;
+  - drops each event at the first check unless it can matter, and debounces
+    the work the rest asks for;
+  - hooks system-wide only events that can't be tied to a process in advance,
+    and only in the states where they can change the outcome; everything else
+    per process, in the same way;
+  - enumerates nothing (EnumWindows, process lists) while nothing changed;
+  - stays within 20 context switches a second on its thread in the worst case,
+    with 0 more on the UI thread;
+  - and has its PR measure each Kite thread's context switches per second
+    against origin/main under the worst input for each hook: another app's
+    window moving, the mouse over a hooked app, and typing into it.
 - Render at the display's refresh rate with no 60fps caps (docs/windows.md,
   Refresh rate).
 - No work on the UI thread that can block: file I/O over a few KB, network,
