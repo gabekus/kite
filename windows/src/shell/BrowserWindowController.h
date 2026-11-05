@@ -217,6 +217,7 @@ private:
     std::unique_ptr<Occlusion> occlusion_;
     bool occluded_ = false;   // the verdict as last handled: hidden for any reason
     bool activeApp_ = false;  // WM_ACTIVATEAPP: Kite's app is the active one
+    occlusion::PointerRecovery pointerRecovery_;
     std::unique_ptr<Compositor> compositor_;
     std::unique_ptr<Favicons> favicons_;
     std::unique_ptr<SidebarView> sidebar_;

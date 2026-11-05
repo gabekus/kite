@@ -15,9 +15,10 @@
 // recorder running, a window being dragged near Kite, Alt+Tab or a thumbnail up, Kite being
 // the foreground app, or a handful of pixels still showing all count as "seen".
 //
-// Also here: which window events the shell hooks in each state (Tracker::GlobalHooks and
-// Hooks), and which of the events it gets matter (FilterEvent, Tracker::OnEvent), so the
-// watcher thread wakes as little as it can (docs/windows-architecture.md, Performance).
+// Also here: which window events the shell hooks in each state (Tracker::Globals and Hooks),
+// which of the events it gets matter (FilterEvent, Tracker::OnEvent), and the heartbeat that
+// re-reads the windows over a covered Kite (Heartbeat, OccluderState), so the watcher thread
+// wakes as little as it can (docs/windows-architecture.md, Performance).
 
 #include <cstdint>
 #include <optional>
@@ -131,13 +132,18 @@ enum class Hidden { No, Locked, DisplayOff, Cloaked, Covered };
 std::string_view Name(Hidden hidden);
 
 // The window events the shell hooks (SetWinEventHook).
-// Not EVENT_OBJECT_LOCATIONCHANGE or EVENT_OBJECT_REORDER (measured): a caret moves on every
-// key and a moving window sends tens a second, and z-order changes come for whole processes,
-// each a pass, both far past the watcher's budget. What they'd add is a covered Kite shown
-// the moment a window over it is snapped away by keyboard or moved by a program, rather than at
-// the next event (Kite clicked or Alt+Tabbed to, the window minimized, closed or dragged).
-enum class Event { Foreground, MoveSizeStart, MoveSizeEnd, MinimizeStart, MinimizeEnd, Show, Hide, Destroy, Cloaked, Uncloaked,
-                   StateChange };
+//
+// Not EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER or EVENT_OBJECT_STATECHANGE. Measured:
+// - a caret moves on every key and a moving window sends tens a second, and the app being typed
+//   in is the foreground app, usually the one over Kite: far past the watcher's budget;
+// - z-order changes come for whole processes (OBJID_CLIENT), each a pass;
+// - a maximize, restore, restore-down or program move raises only LOCATIONCHANGE, never a
+//   STATECHANGE on any object (Chromium's comment says otherwise), and a layered window's alpha
+//   changing raises nothing.
+// So what uncovers a covered Kite without an event (a restore-down, Win+Arrow, a FancyZones
+// snap, leaving full screen, a monitor change, an occluder turning translucent) is found by the
+// Heartbeat instead, and the pointer reaching Kite (PointerRecovery).
+enum class Event { Foreground, MoveSizeStart, MoveSizeEnd, MinimizeStart, MinimizeEnd, Show, Hide, Destroy, Cloaked, Uncloaked };
 
 // The WinEvent codes, by value.
 namespace win_event {
@@ -145,20 +151,21 @@ inline constexpr uint32_t kForeground = 0x0003, kMoveSizeStart = 0x000A, kMoveSi
                           kMinimizeEnd = 0x0017, kDestroy = 0x8001, kShow = 0x8002, kHide = 0x8003, kReorder = 0x8004,
                           kStateChange = 0x800A, kLocationChange = 0x800B, kCloaked = 0x8017, kUncloaked = 0x8018;
 inline constexpr int32_t kObjectWindow = 0;  // OBJID_WINDOW
-inline constexpr int32_t kChildSelf = 0;                         // CHILDID_SELF
+inline constexpr int32_t kChildSelf = 0;     // CHILDID_SELF
 }  // namespace win_event
 
 // The first check on every event delivered, before anything is asked of Windows: the event it
 // is, or none for what never matters (carets, cursors, scroll bars, a window's parts, events
-// with no window, events not hooked). `topLevel` is asked only when the answer depends on it (it costs a GetAncestor), so it's a
-// function; `occluder` says the window covered Kite in the last pass (a destroyed one can't
-// be asked whether it's top-level).
+// with no window, events not hooked). `topLevel` is asked only when the answer depends on it
+// (it costs a GetAncestor), so it's a function; `occluder` says the window covered Kite in the
+// last pass (a destroyed one can't be asked whether it's top-level).
 template <typename TopLevel>
 std::optional<Event> FilterEvent(uint32_t code, bool hasWindow, int32_t object, int32_t child, bool occluder, TopLevel topLevel);
 
 // The facts the shell gives OnEvent, for an event FilterEvent kept.
 struct EventFacts {
     Event event = Event::Foreground;
+    uintptr_t window = 0;        // the event's window
     bool kiteProcess = false;    // the window is one of Kite's (for Foreground: Kite is now in front)
     bool kiteWindow = false;     // Kite's own browser window
     bool occluder = false;       // it covered part of Kite in the last pass
@@ -166,8 +173,10 @@ struct EventFacts {
     bool previewWindow = false;  // IsPreviewWindowClass
 };
 
-// The system-wide hooks the shell keeps (events no process can be named for in advance), only
-// in the states where they can change the verdict.
+// The system-wide hooks the shell keeps, only in the states where they can change the verdict.
+// Each is an event a person causes (an app coming forward, a drag, a minimize, a desktop
+// switch, a window opening) at a person's rate, which no process can be named for in advance:
+// the drag may start in any app, Kite's own included.
 struct GlobalHooks {
     bool foreground = false;  // EVENT_SYSTEM_FOREGROUND: an app came forward, Kite or another
     bool moveSize = false;    // EVENT_SYSTEM_MOVESIZESTART...END: a drag
@@ -180,10 +189,9 @@ struct GlobalHooks {
 // The per-process hooks, sorted process ids. Never Kite's own but for `kiteCloak` (its window
 // cloaked on another desktop while nothing system-wide is hooked).
 struct ProcessHooks {
-    std::vector<uint32_t> stateChange;  // EVENT_OBJECT_STATECHANGE (a maximize or a restore, Chromium's signal)
-    std::vector<uint32_t> hide;         // EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE
-    std::vector<uint32_t> show;         // EVENT_OBJECT_SHOW (the shell's thumbnails and Alt+Tab)
-    bool kiteCloak = false;             // EVENT_OBJECT_CLOAKED...UNCLOAKED for Kite's process
+    std::vector<uint32_t> hide;  // EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE
+    std::vector<uint32_t> show;  // EVENT_OBJECT_SHOW (the shell's thumbnails and Alt+Tab)
+    bool kiteCloak = false;      // EVENT_OBJECT_CLOAKED...UNCLOAKED for Kite's process
     bool operator==(const ProcessHooks&) const = default;
 };
 
@@ -194,6 +202,7 @@ public:
     struct Reaction {
         bool recompute = false;   // run a (debounced) pass over the screen's windows
         bool reevaluate = false;  // a signal changed: the verdict (and the hooks) may have, now
+        bool followUp = false;    // and another pass a moment later, once a snap or a monitor change has settled
     };
 
     // Session lock (WTS), display power (GUID_SESSION_DISPLAY_STATUS: off, not dimmed), Kite's
@@ -201,11 +210,15 @@ public:
     Reaction SetLocked(bool locked);
     Reaction SetDisplayOff(bool off);
     Reaction SetCloaked(bool cloaked);
-    // Kite's window moved, resized, was minimized, restored, or its monitors or work area
-    // changed.
+    // Kite's window moved, resized, was minimized or restored.
     Reaction KiteChanged();
-    // Kite's own app was activated (WM_ACTIVATEAPP): in front, it's seen, without a pass.
+    // The monitors, the work area or the scale changed.
+    Reaction DisplayChanged();
+    // Kite's own app was activated (WM_ACTIVATEAPP): in front, it's seen at once; a pass reads
+    // its cloak (coming back from another desktop needn't rely on the uncloak event).
     Reaction KiteActivated();
+    // The pointer reached Kite's window while it was covered (PointerRecovery): a pass.
+    Reaction PointerSeen();
     Reaction OnEvent(const EventFacts& facts);  // ignored while Suspended
     // Whether OnEvent needs `overKite` for this event: only for what could newly cover a
     // visible Kite, or a drag that may come over it, so the shell asks for a rect only then.
@@ -223,7 +236,9 @@ public:
         std::vector<uintptr_t> occluders;          // windows that cover part of Kite, sorted
         std::vector<uint32_t> occluderProcesses;   // their processes, sorted and unique
     };
-    void SetPass(Pass pass);
+    // Takes the pass, and hands back the previous one's buffers, emptied, for the next.
+    void SetPass(Pass& pass);
+    void SetPass(Pass&& pass) { SetPass(pass); }
 
     Hidden Verdict() const;
     // Locked or the display off: nothing on screen can change the verdict, so events are
@@ -232,20 +247,82 @@ public:
     bool Suspended() const { return locked_ || displayOff_; }
     // On another virtual desktop: passes skip the windows, and only Kite's own cloak is hooked.
     bool Cloaked() const { return cloaked_; }
-    // A drag that started near Kite and hasn't had its pass after the drag's end: Covered is
-    // never published meanwhile, so the page doesn't hide and show as a window is dragged.
+    // A drag over or near a visible Kite, or of a window over a covered one, that hasn't had
+    // its pass after the drag's end: Covered isn't published meanwhile, so a covered Kite shows
+    // from the first pixel the drag uncovers and a visible one never hides and shows under it.
     bool Dragging() const { return dragging_; }
+    uintptr_t DraggingWindow() const { return draggingWindow_; }
+    // The drag's hold ends without its end event: the hook went, or the window did.
+    void DragLost();
     GlobalHooks Globals() const;
-    // `foregroundProcess`: the foreground window's; `foregroundNearKite`: that window is on a
-    // monitor Kite's window is on; `shellProcess`: Explorer's (the thumbnails and Alt+Tab).
-    ProcessHooks Hooks(uint32_t kiteProcess, uint32_t foregroundProcess, bool foregroundNearKite, uint32_t shellProcess) const;
+    // `shellProcess`: Explorer's (the thumbnails and Alt+Tab).
+    ProcessHooks Hooks(uint32_t kiteProcess, uint32_t shellProcess) const;
     bool IsOccluder(uintptr_t window) const;
-    bool IsCovered() const { return pass_.covered; }
+    const std::vector<uintptr_t>& Occluders() const { return pass_.occluders; }
 
 private:
     bool locked_ = false, displayOff_ = false, cloaked_ = false;
     bool dragging_ = false, dragEnded_ = false;
+    uintptr_t draggingWindow_ = 0;
     Pass pass_;
+};
+
+// What the heartbeat re-reads of each window that covered Kite in the last pass: only what
+// user32 answers without a round trip (DWM's attributes cost the watcher context switches each,
+// measured at ~24 a second for 18 windows; a cloak comes as an event while covered anyway). Any
+// change (gone, hidden, minimized, restored down, moved or resized, turned translucent or
+// click-through) asks for a pass.
+struct OccluderState {
+    uintptr_t window = 0;
+    bool exists = false;     // IsWindow
+    bool visible = false;    // IsWindowVisible
+    bool minimized = false;  // IsIconic
+    bool maximized = false;  // IsZoomed
+    uint32_t exStyle = 0;    // GWL_EXSTYLE (layered, click-through)
+    bool layeredKnown = false;
+    uint32_t layeredFlags = 0;
+    uint8_t alpha = 255;
+    Rect rect;  // GetWindowRect
+    bool operator==(const OccluderState&) const = default;
+};
+// Whether anything about the windows over Kite changed since the pass that found them.
+bool OccludersChanged(const std::vector<OccluderState>& atPass, const std::vector<OccluderState>& now);
+
+// The verification heartbeat: only while the published verdict is Covered (Kite stopped
+// drawing because it's covered, and the events that would uncover it don't exist), every
+// 0.5 s it re-reads only the windows that covered it (OccluderState), and every 8th beat (4 s)
+// runs a whole pass for z-order changes and new windows. It stops the moment the verdict
+// leaves Covered. A one-shot wait in the watcher's MsgWait, never a timer.
+class Heartbeat {
+public:
+    static constexpr double kInterval = 0.5;
+    static constexpr int kFullPassEvery = 8;
+    enum class Beat { Check, FullPass };
+
+    // The verdict as published, at `now` (seconds).
+    void SetVerdict(Hidden verdict, double now);
+    // When the next beat is due; none while the verdict isn't Covered.
+    std::optional<double> Next() const { return next_; }
+    // A beat at `now`: what to do, and the next one scheduled.
+    Beat Fire(double now);
+
+private:
+    std::optional<double> next_;
+    int beats_ = 0;
+};
+
+// The pointer reaching Kite's window (WM_SETCURSOR, WM_MOUSEMOVE) while the verdict says
+// covered means it isn't: the first one per Covered verdict asks for a pass (it doesn't clear
+// Covered: a pass decides). On Kite's UI thread.
+class PointerRecovery {
+public:
+    void SetVerdict(Hidden verdict);
+    // True when this pointer message should ask for a pass.
+    bool OnPointer();
+
+private:
+    Hidden verdict_ = Hidden::No;
+    bool armed_ = false;
 };
 
 // The theme going to `theme` as the browser window does it: a crossfade on the frame clock
@@ -270,7 +347,6 @@ std::optional<Event> FilterEvent(uint32_t code, bool hasWindow, int32_t object, 
     case kDestroy: event = Event::Destroy; break;
     case kShow: event = Event::Show; break;
     case kHide: event = Event::Hide; break;
-    case kStateChange: event = Event::StateChange; break;
     case kCloaked: event = Event::Cloaked; break;
     case kUncloaked: event = Event::Uncloaked; break;
     default: return std::nullopt;

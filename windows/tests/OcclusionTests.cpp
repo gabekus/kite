@@ -286,7 +286,7 @@ TEST(theEventFilterKeepsOnlyWholeWindows) {
     };
     CHECK(FilterEvent(kForeground, true, kObjectWindow, kChildSelf, false, topLevel) == Event::Foreground);
     CHECK(FilterEvent(kMinimizeStart, true, kObjectWindow, kChildSelf, false, topLevel) == Event::MinimizeStart);
-    CHECK(FilterEvent(kStateChange, true, kObjectWindow, kChildSelf, false, topLevel) == Event::StateChange);
+    CHECK(FilterEvent(kMoveSizeEnd, true, kObjectWindow, kChildSelf, false, topLevel) == Event::MoveSizeEnd);
     CHECK(FilterEvent(kDestroy, true, kObjectWindow, kChildSelf, false, topLevel) == Event::Destroy);
     CHECK(FilterEvent(kCloaked, true, kObjectWindow, kChildSelf, false, topLevel) == Event::Cloaked);
     CHECK(asked == 5);
@@ -295,11 +295,13 @@ TEST(theEventFilterKeepsOnlyWholeWindows) {
     // move: dropped before anything is asked.
     CHECK(!FilterEvent(kShow, true, -8, kChildSelf, false, topLevel));
     CHECK(!FilterEvent(kHide, true, -9, kChildSelf, false, topLevel));
-    // Nor what isn't hooked, should it come anyway: moves, z-order (measured: a caret's every
-    // key, a moving window's tens a second, z-order for the container, OBJID_CLIENT).
+    // Nor what isn't hooked, should it come anyway: moves, z-order, state changes (measured:
+    // a caret's every key, a moving window's tens a second, z-order for the container, and no
+    // STATECHANGE for a maximize).
     CHECK(!FilterEvent(kLocationChange, true, kObjectWindow, kChildSelf, false, topLevel));
     CHECK(!FilterEvent(kReorder, true, kObjectWindow, kChildSelf, false, topLevel));
     CHECK(!FilterEvent(kReorder, true, -4, kChildSelf, false, topLevel));
+    CHECK(!FilterEvent(kStateChange, true, kObjectWindow, kChildSelf, false, topLevel));
     // A window's part (a child id), no window, or an event not hooked.
     CHECK(!FilterEvent(kShow, true, kObjectWindow, 3, false, topLevel));
     CHECK(!FilterEvent(kShow, false, kObjectWindow, kChildSelf, false, topLevel));
@@ -309,7 +311,6 @@ TEST(theEventFilterKeepsOnlyWholeWindows) {
     CHECK(!FilterEvent(kShow, true, kObjectWindow, kChildSelf, false, child));
     CHECK(asked == 1);
     CHECK(FilterEvent(kHide, true, kObjectWindow, kChildSelf, true, child) == Event::Hide);
-    CHECK(asked == 1);
     CHECK(asked == 1);
 }
 
@@ -334,12 +335,15 @@ TEST(lockDisplayAndCloakHideAndComeBack) {
     CHECK(tracker.Cloaked());
     CHECK(tracker.OnEvent(Kite(Event::Uncloaked)).reevaluate);
     CHECK(tracker.Verdict() == Hidden::No);
+    // Coming back by activating Kite needn't rely on the uncloak event: a pass reads the cloak.
+    tracker.SetCloaked(true);
+    CHECK(tracker.KiteActivated().recompute);
 }
 
 TEST(coveredHoldsOnlyWhileNothingSaysKiteShows) {
     Tracker tracker;
     const Tracker::Pass pass = CoveredBy({0x10}, {7});
-    tracker.SetPass(pass);
+    tracker.SetPass(Tracker::Pass(pass));
     CHECK(tracker.Verdict() == Hidden::Covered);
     CHECK(tracker.IsOccluder(0x10) && !tracker.IsOccluder(0x11));
     // A recorder running: drawn anyway.
@@ -347,21 +351,22 @@ TEST(coveredHoldsOnlyWhileNothingSaysKiteShows) {
     recording.recording = true;
     tracker.SetPass(recording);
     CHECK(tracker.Verdict() == Hidden::No);
-    tracker.SetPass(pass);
+    tracker.SetPass(Tracker::Pass(pass));
     // A thumbnail or Alt+Tab shows Kite as it is.
     CHECK(tracker.OnEvent(Preview(Event::Show)).reevaluate);
     CHECK(tracker.Verdict() == Hidden::No);
     // It going (hidden, or cloaked as Windows 11's Alt+Tab is) asks a pass to look again.
     CHECK(tracker.OnEvent(Preview(Event::Hide)).recompute);
     CHECK(tracker.OnEvent(Preview(Event::Cloaked)).recompute);
-    tracker.SetPass(pass);  // the pass found it gone
+    tracker.SetPass(Tracker::Pass(pass));  // the pass found it gone
     CHECK(tracker.Verdict() == Hidden::Covered);
-    // Kite coming to the front, by the event or its own activation: shown now, no pass needed.
+    // Kite coming to the front, by the event or its own activation: shown now; the pass after
+    // it reads Kite's cloak (and skips the windows).
     const Tracker::Reaction front = tracker.OnEvent(Kite(Event::Foreground, false));
-    CHECK(front.reevaluate && !front.recompute);
+    CHECK(front.reevaluate && front.recompute);
     CHECK(tracker.Verdict() == Hidden::No);
-    CHECK(!tracker.IsCovered());
-    tracker.SetPass(pass);
+    CHECK(tracker.Occluders().empty());
+    tracker.SetPass(Tracker::Pass(pass));
     CHECK(tracker.KiteActivated().reevaluate);
     CHECK(tracker.Verdict() == Hidden::No);
     CHECK(!tracker.KiteActivated().reevaluate);  // already in front
@@ -384,22 +389,42 @@ TEST(coveredHoldsOnlyWhileNothingSaysKiteShows) {
     CHECK(tracker.Verdict() == Hidden::Locked);
 }
 
+TEST(aPassHandsBackItsBuffersEmptied) {
+    Tracker tracker;
+    Tracker::Pass pass = CoveredBy({0x12, 0x10, 0x10}, {9, 7, 9});
+    tracker.SetPass(pass);
+    CHECK(tracker.Occluders() == (std::vector<uintptr_t>{0x10, 0x12}));  // sorted, unique
+    CHECK(pass.occluders.empty() && pass.occluderProcesses.empty() && !pass.covered && pass.kiteShown);
+}
+
 TEST(aDragNearKiteHoldsOffCoveredUntilThePassAfterIt) {
     Tracker tracker;
     tracker.SetPass(CoveredBy({0x10}, {7}));
     // Dragging the window over Kite shows Kite at once.
-    CHECK(tracker.OnEvent(Facts(Event::MoveSizeStart, true)).reevaluate);
-    CHECK(tracker.Dragging());
+    EventFacts start = Facts(Event::MoveSizeStart, true);
+    start.window = 0x10;
+    CHECK(tracker.OnEvent(start).reevaluate);
+    CHECK(tracker.Dragging() && tracker.DraggingWindow() == 0x10);
     CHECK(tracker.Verdict() == Hidden::No);
     // Mid-drag, what the window does asks for no pass (it would come every step).
-    CHECK(!tracker.OnEvent(Facts(Event::StateChange, true)).recompute);
-    // The drag's end asks for one, but Covered waits for that pass, not the end itself.
-    CHECK(tracker.OnEvent(Facts(Event::MoveSizeEnd)).recompute);
+    CHECK(!tracker.OnEvent(Facts(Event::Hide, true)).recompute);
+    // The drag's end asks for a pass and one more once a snap has settled; Covered waits for
+    // that pass, not the end itself.
+    const Tracker::Reaction end = tracker.OnEvent(Facts(Event::MoveSizeEnd, true));
+    CHECK(end.recompute && end.followUp);
     CHECK(tracker.Dragging());
     CHECK(tracker.Verdict() == Hidden::No);
     tracker.SetPass(CoveredBy({0x10}, {7}));  // dropped back over Kite
     CHECK(!tracker.Dragging());
     CHECK(tracker.Verdict() == Hidden::Covered);
+
+    // Covered: dragging any other window near Kite changes nothing (it can only cover more),
+    // and its drop asks for no pass.
+    CHECK(!tracker.NeedsOverKite(Event::MoveSizeStart));
+    CHECK(!tracker.OnEvent(Facts(Event::MoveSizeStart, false, true)).reevaluate);
+    CHECK(!tracker.Dragging());
+    CHECK(tracker.Verdict() == Hidden::Covered);
+    CHECK(!tracker.OnEvent(Facts(Event::MoveSizeEnd)).recompute);
 
     // A visible Kite and a window dragged near it: a pass mid-drag can't hide it (no hiding
     // and showing under the drag); the one after the drop can.
@@ -414,11 +439,22 @@ TEST(aDragNearKiteHoldsOffCoveredUntilThePassAfterIt) {
 
     // A drag far from Kite, or of Kite itself, holds nothing.
     Tracker far;
-    far.SetPass(CoveredBy({0x10}, {7}));
     CHECK(!far.OnEvent(Facts(Event::MoveSizeStart, false, false)).reevaluate);
     CHECK(!far.OnEvent(Kite(Event::MoveSizeStart)).reevaluate);
     CHECK(!far.Dragging());
-    CHECK(far.Verdict() == Hidden::Covered);
+
+    // The hold goes without the drag's end when the window does, or the hook (DragLost).
+    Tracker lost;
+    EventFacts drag = Facts(Event::MoveSizeStart, false, true);
+    drag.window = 0x30;
+    lost.OnEvent(drag);
+    EventFacts gone = Facts(Event::Destroy);
+    gone.window = 0x30;
+    lost.OnEvent(gone);
+    CHECK(!lost.Dragging());
+    lost.OnEvent(drag);
+    lost.DragLost();
+    CHECK(!lost.Dragging());
 }
 
 TEST(onlyEventsThatCanChangeTheVerdictAskForAPass) {
@@ -428,72 +464,72 @@ TEST(onlyEventsThatCanChangeTheVerdictAskForAPass) {
     CHECK(tracker.OnEvent(Facts(Event::MoveSizeEnd)).recompute);
     CHECK(tracker.OnEvent(Facts(Event::MinimizeEnd)).recompute);  // a window restored
     CHECK(tracker.NeedsOverKite(Event::Show));
-    CHECK(tracker.NeedsOverKite(Event::StateChange));
     CHECK(!tracker.NeedsOverKite(Event::Hide));
-    CHECK(!tracker.OnEvent(Facts(Event::StateChange)).recompute);              // somewhere else
-    CHECK(tracker.OnEvent(Facts(Event::StateChange, false, true)).recompute);  // maximized over Kite
     CHECK(tracker.OnEvent(Facts(Event::Show, false, true)).recompute);
+    CHECK(!tracker.OnEvent(Facts(Event::Show)).recompute);  // somewhere else
     EventFacts own = Kite(Event::Show, false);
     own.overKite = true;
     CHECK(!tracker.OnEvent(own).recompute);  // Kite's own windows never cover it
-    CHECK(tracker.OnEvent(Kite(Event::StateChange)).recompute);  // its own window maximized
     // Uncovering can't happen while nothing covers.
     CHECK(!tracker.OnEvent(Facts(Event::Hide, true)).recompute);
     CHECK(!tracker.OnEvent(Facts(Event::Destroy, true)).recompute);
     CHECK(!tracker.OnEvent(Facts(Event::MinimizeStart, true)).recompute);
     CHECK(tracker.KiteChanged().recompute);
+    // A monitor, work-area or scale change: a pass now and one once maximized windows refit.
+    const Tracker::Reaction display = tracker.DisplayChanged();
+    CHECK(display.recompute && display.followUp);
 
     // Covered: only what could uncover it, from the windows that cover it.
     tracker.SetPass(CoveredBy({0x10}, {7}));
     CHECK(!tracker.NeedsOverKite(Event::Show));
-    for (Event event : {Event::Hide, Event::Destroy, Event::MinimizeStart, Event::Cloaked, Event::StateChange}) {
+    for (Event event : {Event::Hide, Event::Destroy, Event::MinimizeStart, Event::Cloaked}) {
         CHECK(tracker.OnEvent(Facts(event, true)).recompute);
         CHECK(!tracker.OnEvent(Facts(event, false)).recompute);
     }
+    // An occluder dropped after a move (a keyboard snap shows as one): a pass, and a settling one.
+    const Tracker::Reaction dropped = tracker.OnEvent(Facts(Event::MoveSizeEnd, true));
+    CHECK(dropped.recompute && dropped.followUp);
     // More windows coming over a covered Kite change nothing.
     CHECK(!tracker.OnEvent(Facts(Event::Show, false, true)).recompute);
     CHECK(!tracker.OnEvent(Facts(Event::MinimizeEnd)).recompute);
-    CHECK(tracker.Verdict() == Hidden::Covered);
+    // The pointer reaching a covered Kite asks for a pass.
+    CHECK(tracker.PointerSeen().recompute);
+    CHECK(tracker.Verdict() == Hidden::Covered);  // until the pass says otherwise
 }
 
 TEST(theHooksFollowWhatCanChangeTheVerdict) {
     constexpr uint32_t kite = 1, foreground = 2, shell = 3;
     const GlobalHooks none;
     Tracker tracker;
-    // In the background and visible: all five system-wide, and the foreground app's
-    // maximize when it's on Kite's monitor. Never moves (a caret moves on every key).
+    // In the background and visible: all five system-wide, nothing per process.
     CHECK(tracker.Globals() == Globals(true, true, true, true, true));
-    ProcessHooks near;
-    near.stateChange = {foreground};
-    CHECK(tracker.Hooks(kite, foreground, true, shell) == near);
-    CHECK(tracker.Hooks(kite, foreground, false, shell) == ProcessHooks{});
-    CHECK(tracker.Hooks(kite, 0, true, shell) == ProcessHooks{});
-    // Kite in front: only another app coming forward, and Kite's own desktop switch.
+    CHECK(tracker.Hooks(kite, shell) == ProcessHooks{});
+    // Kite in front: another app coming forward, drags (one that starts now would beat a hook
+    // made after the foreground change), and Kite's own desktop switch.
     tracker.KiteActivated();
-    CHECK(tracker.Globals() == Globals(true, false, false, false, false));
+    CHECK(tracker.Globals() == Globals(true, true, false, false, false));
     ProcessHooks ownCloak;
     ownCloak.kiteCloak = true;
-    CHECK(tracker.Hooks(kite, kite, true, shell) == ownCloak);
-    // Covered: no system-wide show; the occluders' maximizes and hides, the shell's
-    // thumbnails.
+    CHECK(tracker.Hooks(kite, shell) == ownCloak);
+    // Covered: no system-wide show; the occluders' hides and destroys (never Kite's own), and
+    // the shell's thumbnails.
     tracker.SetPass(CoveredBy({0x10, 0x11, 0x12}, {5, foreground, kite}));
     CHECK(tracker.Globals() == Globals(true, true, true, false, true));
     ProcessHooks covered;
-    covered.stateChange = {foreground, 5};
     covered.hide = {foreground, shell, 5};
     covered.show = {shell};
-    CHECK(tracker.Hooks(kite, foreground, true, shell) == covered);
+    CHECK(tracker.Hooks(kite, shell) == covered);
     // Minimized: nothing (its own messages say when it's back).
     Tracker::Pass minimized;
     minimized.kiteShown = false;
     tracker.SetPass(minimized);
     CHECK(tracker.Globals() == none);
-    CHECK(tracker.Hooks(kite, foreground, true, shell) == ProcessHooks{});
+    CHECK(tracker.Hooks(kite, shell) == ProcessHooks{});
     // On another desktop: only Kite's own cloak.
     tracker.SetPass(Tracker::Pass{});
     tracker.SetCloaked(true);
     CHECK(tracker.Globals() == none);
-    CHECK(tracker.Hooks(kite, foreground, true, shell) == ownCloak);
+    CHECK(tracker.Hooks(kite, shell) == ownCloak);
 }
 
 TEST(lockedOrDisplayOffHooksNothingAndIgnoresEvents) {
@@ -502,15 +538,97 @@ TEST(lockedOrDisplayOffHooksNothingAndIgnoresEvents) {
     tracker.SetDisplayOff(true);
     CHECK(tracker.Suspended());
     CHECK(tracker.Globals() == GlobalHooks{});
-    CHECK(tracker.Hooks(1, 2, true, 3) == ProcessHooks{});
+    CHECK(tracker.Hooks(1, 3) == ProcessHooks{});
     CHECK(!tracker.OnEvent(Facts(Event::Hide, true)).recompute);
     CHECK(!tracker.OnEvent(Facts(Event::Foreground)).recompute);
     CHECK(!tracker.NeedsOverKite(Event::MoveSizeStart));
     CHECK(!tracker.KiteChanged().recompute);
+    CHECK(!tracker.DisplayChanged().recompute);
+    CHECK(!tracker.PointerSeen().recompute);
     const Tracker::Reaction on = tracker.SetDisplayOff(false);
     CHECK(on.recompute && on.reevaluate);
     CHECK(!tracker.Suspended());
     CHECK(tracker.Globals() == Globals(true, true, true, false, true));
+}
+
+TEST(theHeartbeatSeesWhatNoEventSays) {
+    // A maximized window over Kite, as the pass found it.
+    OccluderState maximized;
+    maximized.window = 0x10;
+    maximized.exists = maximized.visible = maximized.maximized = true;
+    maximized.rect = {0, 0, 2560, 1392};
+    const std::vector<OccluderState> atPass{maximized};
+    CHECK(!OccludersChanged(atPass, {maximized}));
+    // Restored down (the button, a double-click, Win+Down, leaving full screen): no event, but
+    // the beat sees it.
+    OccluderState restored = maximized;
+    restored.maximized = false;
+    restored.rect = {200, 100, 1400, 900};
+    CHECK(OccludersChanged(atPass, {restored}));
+    // Moved or resized (Win+Arrow, a FancyZones snap, a program): its frame changed.
+    OccluderState moved = maximized;
+    moved.rect = {0, 0, 1280, 1392};
+    CHECK(OccludersChanged(atPass, {moved}));
+    // Turned translucent or click-through: no event at all.
+    OccluderState translucent = maximized;
+    translucent.exStyle = win32::kExLayered;
+    translucent.layeredKnown = true;
+    translucent.layeredFlags = win32::kLayeredAlpha;
+    translucent.alpha = 200;
+    CHECK(OccludersChanged(atPass, {translucent}));
+    OccluderState clickThrough = maximized;
+    clickThrough.exStyle = win32::kExTransparent;
+    CHECK(OccludersChanged(atPass, {clickThrough}));
+    // Gone, hidden, minimized (a cloak comes as an event).
+    for (auto change : {+[](OccluderState& s) { s.exists = false; }, +[](OccluderState& s) { s.visible = false; },
+                        +[](OccluderState& s) { s.minimized = true; }}) {
+        OccluderState now = maximized;
+        change(now);
+        CHECK(OccludersChanged(atPass, {now}));
+    }
+}
+
+TEST(theHeartbeatBeatsOnlyWhileCovered) {
+    Heartbeat beat;
+    CHECK(!beat.Next());
+    beat.SetVerdict(Hidden::No, 0);
+    CHECK(!beat.Next());
+    // Covered: every half second, a whole pass every 8th beat (4 s).
+    beat.SetVerdict(Hidden::Covered, 10);
+    CHECK(beat.Next() == 10 + Heartbeat::kInterval);
+    beat.SetVerdict(Hidden::Covered, 10.2);  // still covered: the beat keeps its time
+    CHECK(beat.Next() == 10 + Heartbeat::kInterval);
+    int full = 0;
+    for (int i = 1; i <= 16; ++i) {
+        if (beat.Fire(10 + i * Heartbeat::kInterval) == Heartbeat::Beat::FullPass) {
+            ++full;
+            CHECK(i % Heartbeat::kFullPassEvery == 0);
+        }
+    }
+    CHECK(full == 2);
+    CHECK(beat.Next() == 10 + 17 * Heartbeat::kInterval);
+    // Not covered for any reason but Covered (locked, display off, cloaked, visible): it stops.
+    for (Hidden other : {Hidden::No, Hidden::Locked, Hidden::DisplayOff, Hidden::Cloaked}) {
+        beat.SetVerdict(Hidden::Covered, 20);
+        beat.SetVerdict(other, 20.1);
+        CHECK(!beat.Next());
+    }
+}
+
+TEST(thePointerReachingACoveredKiteAsksOnceForAPass) {
+    PointerRecovery recovery;
+    CHECK(!recovery.OnPointer());  // visible: nothing to recover
+    recovery.SetVerdict(Hidden::Covered);
+    CHECK(recovery.OnPointer());
+    CHECK(!recovery.OnPointer());  // once per Covered verdict
+    recovery.SetVerdict(Hidden::Covered);
+    CHECK(!recovery.OnPointer());  // the same verdict again isn't a new one
+    recovery.SetVerdict(Hidden::No);
+    CHECK(!recovery.OnPointer());
+    recovery.SetVerdict(Hidden::Covered);  // covered again: armed again
+    CHECK(recovery.OnPointer());
+    recovery.SetVerdict(Hidden::Locked);  // only for covered
+    CHECK(!recovery.OnPointer());
 }
 
 TEST(anUnseenWindowsThemeSnapsInsteadOfFading) {

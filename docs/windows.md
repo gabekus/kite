@@ -397,31 +397,52 @@ Windows that means:
     frames). That rules out the full-monitor `Windows.UI.Core.CoreWindow` the
     emoji panel and touch keyboard use. WezTerm and Windows Terminal never
     cover, since their opacity settings leave no trace in their styles.
+  - **The class list's caveats.** A transparent Electron window (a
+    `Chrome_WidgetWin_1` drawn with alpha, not layered) counts as opaque, and so
+    does a UWP app whose `ApplicationFrameWindow` hosts an in-app acrylic (host
+    backdrop) brush. Zen (acrylic), WezTerm and Windows Terminal never cover,
+    even at full opacity, so a Kite under them earns no savings.
   - **What counts as seen.** It errs towards visible: Kite in front (its own
-    `WM_ACTIVATEAPP` is the last word), a screen recorder or Zoom's sharing
-    host running (not Windows 11's Snipping Tool, which stays running in the
-    background), a window being dragged near it (until the pass after the
-    drop), or a taskbar thumbnail, Alt+Tab or Task View up.
+    `WM_ACTIVATEAPP` is the last word), a window being dragged over or near a
+    visible Kite or off a covered one (until the pass after the drop), or a
+    taskbar thumbnail, Alt+Tab or Task View up. So does a screen recorder that
+    runs only to record (OBS, XSplit, Bandicam, Camtasia's recorder,
+    ScreenToGif, Zoom's sharing host), but not ones that stay resident (Windows
+    11's Snipping Tool, ShareX, Snagit, Loom), which would switch covered
+    detection off for good. Chromium makes no recorder exception at all.
   - **Hooks.** They run on their own thread, so other apps' windows never wake
     Kite's UI thread. Each one is on only while it can change the verdict:
-    none while locked, display-off, minimized or on another desktop, and only
-    foreground changes while Kite is in front. Per process, only quiet events
-    are hooked: a maximize for the foreground app and the occluders, and hides
-    and destroys for the occluders. Moves and z-order aren't hooked at all.
-    Measured, a caret's every keystroke and a moving window's tens of events a
-    second blew the watcher's 20 wakeups/s budget.
+    none while locked, display-off, minimized or on another desktop; while
+    Kite is in front, only foreground changes and drags (a drag that starts in
+    front comes too soon after the foreground change for a hook made then).
+    System-wide hooks are kept only for events a person causes at a person's
+    rate (an app coming forward, a drag, a minimize, a desktop switch, a window
+    shown over a visible Kite). Per process, only the occluders' hides and
+    destroys, and the shell's thumbnails. Moves, z-order and state changes
+    aren't hooked at all. Measured: a caret's every keystroke and a moving
+    window's tens of events a second blow the watcher's 20 wakeups/s budget,
+    and a maximize or restore raises only `LOCATIONCHANGE`, never a
+    `STATECHANGE`.
+  - **Heartbeat.** What uncovers a covered Kite without an event (a
+    restore-down, Win+Arrow, a FancyZones snap, leaving full screen, a monitor
+    change, a window turning translucent) is found by a heartbeat that runs
+    only while Kite is covered. Twice a second it re-reads the windows that
+    covered it with user32 alone (`IsWindow`, visible, minimized, maximized,
+    `GetWindowRect`, the extended style and layered alpha), and runs a pass on
+    any change. Every 4 s it runs a whole pass, for z-order changes and new
+    windows. It's the watcher's MsgWait timeout, not a timer, and stops when
+    Kite is uncovered. The first `WM_SETCURSOR` or `WM_MOUSEMOVE` to reach a
+    covered Kite asks for a pass too. A drop, and a monitor, work-area or scale
+    change, get a second pass 0.3 s later, once snaps and refits have settled.
   - **Off for test runs.** `--smoke-test` and `--frame-log` run without
     occlusion, so their checks of the slide and the crossfade can't pass
     unseen. `--occlusion-log FILE` (test profiles) writes each verdict and the
     thread's counters.
-  - **Known gaps.** A covered Kite uncovered by a keyboard snap (Win+Arrow) or a
-    program moving the window over it shows its card until the next event
-    (Kite clicked or Alt+Tabbed to, the window minimized, closed, dragged or
-    maximized). Whether Windows sends a restore-down as `STATECHANGE`, as
-    Chromium assumes, is unverified. A Kite captured as a window by an app not
-    on the recorder list (a meeting app sharing it while covered) shows its
-    card. A recorder that quits leaves a covered Kite drawing until the next
-    window event.
+  - **Known gaps.** A covered Kite uncovered without an event shows its card
+    for up to half a second (the heartbeat), or until the pointer reaches it.
+    A Kite captured as a window by an app not on the recorder list (a meeting
+    app sharing it while covered) shows its card. A recorder that quits leaves
+    a covered Kite drawing until the next pass (at most 4 s).
 
 ## Plan
 

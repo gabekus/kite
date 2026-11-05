@@ -13,15 +13,19 @@
 // thread quiet (docs/windows-architecture.md, Performance):
 // - Each hook is on only in the states where its events can change the verdict (core's
 //   Tracker::Globals and Hooks): none while locked, display-off, minimized or on another
-//   desktop; only another app coming forward while Kite is in front.
-// - What's hooked per process is quiet: STATECHANGE (a maximize) for the foreground app and
-//   the occluders, hides and destroys for the occluders. Never EVENT_OBJECT_LOCATIONCHANGE (a
-//   caret moves on every key) or EVENT_OBJECT_REORDER, measured past the budget (core's Event).
+//   desktop; only an app coming forward and drags while Kite is in front.
+// - What's hooked is quiet: the system-wide events are a person's actions, and per process
+//   only the occluders' hides and destroys (and the shell's thumbnails). Never moves,
+//   z-order or state changes (core's Event says why).
+// - What uncovers Kite without an event (a restore-down, a keyboard snap, leaving full screen,
+//   a window turning translucent) is found by core's Heartbeat: only while Kite is covered, it
+//   re-reads the windows that covered it twice a second, and runs a pass every 4 s. The first
+//   pointer message to reach a covered Kite asks for a pass too (PointerRecovery, Kite's side).
 // - Every event is filtered at once (core's FilterEvent), passes are debounced, and nothing
 //   is enumerated while nothing changed.
 //
-// The lock and display notifications are window messages, so they're registered on Kite's
-// window (RegisterNotifications) and handed over (HandleMessage).
+// The lock notification is registered and asked from the watcher; the display's is a window
+// message, registered on Kite's window (RegisterNotifications) and handed over (HandleMessage).
 
 #include <windows.h>
 
@@ -44,17 +48,18 @@ public:
     Occlusion(const Occlusion&) = delete;
     Occlusion& operator=(const Occlusion&) = delete;
 
-    // Registers for the lock and display notifications, once the caller holds this object:
-    // Windows may answer the display's at once, and the window's messages reach
-    // HandleMessage only through the caller.
+    // Registers for the display's notifications once the caller holds this object: Windows
+    // answers at once, and the window's messages reach HandleMessage only through the caller.
     void RegisterNotifications();
     // The latest verdict, from Kite's UI thread.
     occlusion::Hidden Verdict() const { return static_cast<occlusion::Hidden>(verdict_.load()); }
-    // Kite's window moved, resized, was minimized or restored, or its monitors, work area or
-    // DPI changed.
-    void WindowChanged();
+    // Kite's window moved, resized, was minimized or restored; or (`display`) its monitors,
+    // work area or DPI changed.
+    void WindowChanged(bool display = false);
     // Kite's app was activated (WM_ACTIVATEAPP): in front, it's seen.
     void Activated();
+    // The pointer reached a covered Kite (PointerRecovery): look again.
+    void RequestPass();
     // WM_WTSSESSION_CHANGE's lock and unlock and WM_POWERBROADCAST's display state, on Kite's
     // window: true when it acted on one, with `result` set; false for anything else.
     bool HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result);
@@ -63,18 +68,16 @@ private:
     Occlusion(HWND window, const std::filesystem::path& log, UINT message);
     struct Worker;  // the thread's state (Occlusion.cpp)
     static DWORD WINAPI ThreadMain(LPVOID self);
-    void Poke();
 
     HWND window_;
     std::atomic<int> verdict_{static_cast<int>(occlusion::Hidden::No)};
     // From Kite's UI thread to the worker: -1 for no news, else 0 or 1.
     std::atomic<int> locked_{-1}, displayOff_{-1};
-    std::atomic<bool> windowChanged_{false}, activated_{false}, queryLock_{false}, waitForSessions_{false};
-    std::atomic<bool> poked_{false};
-    std::atomic<bool> sessionRegistered_{false};
+    std::atomic<bool> windowChanged_{false}, displayChanged_{false}, activated_{false}, passRequested_{false};
+    // Auto-reset: the UI thread has news. Manual-reset: the worker stops.
+    HANDLE poke_ = nullptr, stop_ = nullptr;
     std::unique_ptr<Worker> worker_;
     HANDLE thread_ = nullptr;
-    DWORD threadID_ = 0;
     HPOWERNOTIFY displayNotification_ = nullptr;
 };
 

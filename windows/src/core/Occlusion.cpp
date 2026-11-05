@@ -133,14 +133,15 @@ bool IsPreviewWindowClass(std::string_view className) {
 }
 
 bool IsScreenRecorder(std::string_view exeName) {
-    // Recorders and streamers, and Zoom's screen-sharing host (it runs only while sharing).
-    // Not the meeting apps themselves (Teams, Discord, browsers), nor Windows 11's Snipping
-    // Tool, which stays running in the background after a screenshot (it was, on Gabe's PC):
-    // they'd turn covered detection off for good.
-    static constexpr std::array<std::string_view, 18> kRecorders{
-        "obs64.exe",       "obs32.exe",        "obs.exe",           "Streamlabs OBS.exe",   "Streamlabs Desktop.exe", "XSplit.Core.exe",
-        "bdcam.exe",       "CamRecorder.exe",  "CamtasiaRecorder.exe", "Loom.exe",           "ShareX.exe",             "ScreenToGif.exe",
-        "SnagitCapture.exe", "Snagit32.exe",   "FlashBackRecorder.exe", "Action.exe",        "CptHost.exe",            "ScreenRec.exe"};
+    // Recorders and streamers that run for a recording, and Zoom's screen-sharing host (it runs
+    // only while sharing). Not what stays resident whether or not it's recording: Windows 11's
+    // Snipping Tool (it was running on Gabe's PC), ShareX, Snagit and Loom, nor the meeting apps
+    // (Teams, Discord, browsers). They'd turn covered detection off for good. Chromium makes no
+    // such exception at all.
+    static constexpr std::array<std::string_view, 13> kRecorders{
+        "obs64.exe",        "obs32.exe",       "obs.exe",           "Streamlabs OBS.exe", "Streamlabs Desktop.exe",
+        "XSplit.Core.exe",  "bdcam.exe",       "CamRecorder.exe",   "CamtasiaRecorder.exe", "ScreenToGif.exe",
+        "FlashBackRecorder.exe", "CptHost.exe", "ScreenRec.exe"};
     return std::any_of(kRecorders.begin(), kRecorders.end(), [&](std::string_view name) { return EqualsIgnoringCase(name, exeName); });
 }
 
@@ -159,22 +160,27 @@ Tracker::Reaction Tracker::SetLocked(bool locked) {
     if (locked == locked_) return {};
     locked_ = locked;
     // Unlocked: the windows may have changed meanwhile.
-    return {!Suspended(), true};
+    return {!Suspended(), true, false};
 }
 
 Tracker::Reaction Tracker::SetDisplayOff(bool off) {
     if (off == displayOff_) return {};
     displayOff_ = off;
-    return {!Suspended(), true};
+    return {!Suspended(), true, false};
 }
 
 Tracker::Reaction Tracker::SetCloaked(bool cloaked) {
     if (cloaked == cloaked_) return {};
     cloaked_ = cloaked;
-    return {!cloaked && !Suspended(), true};
+    return {!cloaked && !Suspended(), true, false};
 }
 
-Tracker::Reaction Tracker::KiteChanged() { return {!Suspended(), false}; }
+Tracker::Reaction Tracker::KiteChanged() { return {!Suspended(), false, false}; }
+
+Tracker::Reaction Tracker::DisplayChanged() {
+    // Windows refits maximized windows after the change arrives: look again once they have.
+    return {!Suspended(), false, !Suspended()};
+}
 
 Tracker::Reaction Tracker::KiteActivated() {
     const bool changed = !pass_.kiteForeground || pass_.covered;
@@ -182,13 +188,16 @@ Tracker::Reaction Tracker::KiteActivated() {
     pass_.covered = false;
     pass_.occluders.clear();
     pass_.occluderProcesses.clear();
-    return {false, changed};
+    // The pass in front skips the windows; it reads Kite's cloak.
+    return {!Suspended(), changed, false};
 }
+
+Tracker::Reaction Tracker::PointerSeen() { return {!Suspended(), false, false}; }
 
 bool Tracker::NeedsOverKite(Event event) const {
     if (Suspended()) return false;
-    if (event == Event::MoveSizeStart) return true;
-    return !pass_.covered && (event == Event::Show || event == Event::Uncloaked || event == Event::StateChange);
+    if (event == Event::MoveSizeStart) return !pass_.covered;
+    return !pass_.covered && (event == Event::Show || event == Event::Uncloaked);
 }
 
 Tracker::Reaction Tracker::OnEvent(const EventFacts& e) {
@@ -206,18 +215,23 @@ Tracker::Reaction Tracker::OnEvent(const EventFacts& e) {
         reaction.recompute = true;
         break;
     case Event::MoveSizeStart:
-        // A window being dragged over or near Kite: no Covered until the pass after the drag,
-        // so a covered Kite shows from the first pixel it uncovers and a visible one never
-        // hides and shows again under the drag.
-        if (!e.kiteProcess && (e.occluder || e.overKite)) {
+        // Covered, only dragging a window over Kite can uncover it; visible, a drag over or
+        // near it may cover it.
+        if (!e.kiteProcess && (covered ? e.occluder : (e.occluder || e.overKite))) {
             reaction.reevaluate = !dragging_;
             dragging_ = true;
             dragEnded_ = false;
+            draggingWindow_ = e.window;
         }
         return reaction;
     case Event::MoveSizeEnd:
+        // A drop ends a drag that held Covered off, may cover a visible Kite, or moves a
+        // window that covered it; a snap can settle a moment later.
+        if (dragging_ || !covered || e.occluder) {
+            reaction.recompute = true;
+            reaction.followUp = true;
+        }
         if (dragging_) dragEnded_ = true;
-        reaction.recompute = true;
         return reaction;
     case Event::MinimizeStart: reaction.recompute = covered && e.occluder; break;
     case Event::MinimizeEnd: reaction.recompute = !covered; break;
@@ -237,23 +251,27 @@ Tracker::Reaction Tracker::OnEvent(const EventFacts& e) {
     case Event::Destroy:
     case Event::Cloaked:
         if (e.kiteWindow && e.event == Event::Cloaked) return SetCloaked(true);
+        // The dragged window gone mid-drag: its end won't come.
+        if (dragging_ && e.window == draggingWindow_ && e.event == Event::Destroy) DragLost();
         // Windows 11's Alt+Tab is cloaked rather than hidden when it goes: the pass looks again.
         reaction.recompute = e.previewWindow || (covered && e.occluder);
         break;
-    case Event::StateChange:
-        if (e.kiteProcess) {
-            reaction.recompute = e.kiteWindow;
-            break;
-        }
-        reaction.recompute = covered ? e.occluder : e.overKite;
-        break;
     }
-    if (midDrag) reaction.recompute = false;
+    if (midDrag && dragging_) reaction.recompute = false;
     return reaction;
 }
 
-void Tracker::SetPass(Pass pass) {
-    pass_ = std::move(pass);
+void Tracker::DragLost() {
+    dragging_ = dragEnded_ = false;
+    draggingWindow_ = 0;
+}
+
+void Tracker::SetPass(Pass& pass) {
+    std::swap(pass_, pass);
+    pass.occluders.clear();
+    pass.occluderProcesses.clear();
+    pass.covered = pass.previewing = pass.recording = pass.kiteForeground = false;
+    pass.kiteShown = true;
     SortUnique(pass_.occluders);
     SortUnique(pass_.occluderProcesses);
     if (pass_.kiteForeground || !pass_.kiteShown) {
@@ -262,7 +280,7 @@ void Tracker::SetPass(Pass pass) {
         pass_.occluderProcesses.clear();
     }
     // The pass after a drag's end: the drag's hold on Covered goes.
-    if (dragEnded_) dragging_ = dragEnded_ = false;
+    if (dragEnded_) DragLost();
 }
 
 Hidden Tracker::Verdict() const {
@@ -283,16 +301,18 @@ GlobalHooks Tracker::Globals() const {
     // minimized or hidden (its own messages say when that ends), or on another desktop (its
     // own cloak's per-process hook does).
     if (Suspended() || !pass_.kiteShown || cloaked_) return hooks;
-    hooks.foreground = true;
-    if (pass_.kiteForeground) return hooks;  // only another app coming forward matters
-    hooks.moveSize = hooks.minimize = hooks.cloak = true;
+    // Another app coming forward, and a drag: one that starts while Kite is in front comes
+    // microseconds after the foreground change, before a hook made for it would exist.
+    hooks.foreground = hooks.moveSize = true;
+    if (pass_.kiteForeground) return hooks;
+    hooks.minimize = hooks.cloak = true;
     // Covered, another window appearing changes nothing (the shell's thumbnails are hooked
     // per process).
     hooks.show = !pass_.covered;
     return hooks;
 }
 
-ProcessHooks Tracker::Hooks(uint32_t kiteProcess, uint32_t foregroundProcess, bool foregroundNearKite, uint32_t shellProcess) const {
+ProcessHooks Tracker::Hooks(uint32_t kiteProcess, uint32_t shellProcess) const {
     ProcessHooks hooks;
     if (Suspended() || !pass_.kiteShown) return hooks;
     // Kite's own desktop switch, when nothing system-wide watches cloaks.
@@ -300,26 +320,48 @@ ProcessHooks Tracker::Hooks(uint32_t kiteProcess, uint32_t foregroundProcess, bo
         hooks.kiteCloak = true;
         return hooks;
     }
+    if (!pass_.covered) return hooks;
     const auto other = [&](uint32_t process) { return process != 0 && process != kiteProcess; };
-    if (pass_.covered) {
-        for (uint32_t process : pass_.occluderProcesses) {
-            if (!other(process)) continue;
-            hooks.stateChange.push_back(process);
-            hooks.hide.push_back(process);
-        }
-        if (other(shellProcess)) {
-            hooks.show.push_back(shellProcess);
-            hooks.hide.push_back(shellProcess);
-        }
-    } else if (other(foregroundProcess) && foregroundNearKite) {
-        // The foreground app maximizing over Kite (Chromium's signal for it). Not its moves:
-        // see Event.
-        hooks.stateChange.push_back(foregroundProcess);
+    for (uint32_t process : pass_.occluderProcesses) {
+        if (other(process)) hooks.hide.push_back(process);
     }
-    SortUnique(hooks.stateChange);
+    if (other(shellProcess)) {
+        hooks.show.push_back(shellProcess);
+        hooks.hide.push_back(shellProcess);
+    }
     SortUnique(hooks.hide);
-    SortUnique(hooks.show);
     return hooks;
+}
+
+bool OccludersChanged(const std::vector<OccluderState>& atPass, const std::vector<OccluderState>& now) { return atPass != now; }
+
+void Heartbeat::SetVerdict(Hidden verdict, double now) {
+    if (verdict != Hidden::Covered) {
+        next_.reset();
+        beats_ = 0;
+        return;
+    }
+    if (!next_) {
+        next_ = now + kInterval;
+        beats_ = 0;
+    }
+}
+
+Heartbeat::Beat Heartbeat::Fire(double now) {
+    next_ = now + kInterval;
+    return ++beats_ % kFullPassEvery == 0 ? Beat::FullPass : Beat::Check;
+}
+
+void PointerRecovery::SetVerdict(Hidden verdict) {
+    if (verdict == verdict_) return;
+    verdict_ = verdict;
+    armed_ = verdict == Hidden::Covered;
+}
+
+bool PointerRecovery::OnPointer() {
+    if (!armed_) return false;
+    armed_ = false;
+    return true;
 }
 
 bool CrossfadeTo(ThemeCrossfade& crossfade, const Theme& theme, double now, bool seen, bool& snapped) {

@@ -325,6 +325,7 @@ void BrowserWindowController::Frame(double time) {
 
 void BrowserWindowController::OcclusionChanged() {
     const occlusion::Hidden verdict = occlusion_ ? occlusion_->Verdict() : occlusion::Hidden::No;
+    pointerRecovery_.SetVerdict(verdict);
     // Kite's own activation is the last word on covered (a verdict posted before it may come
     // after it); a lock, the display or another desktop still hide it.
     SetOccluded(verdict != occlusion::Hidden::No && !(verdict == occlusion::Hidden::Covered && activeApp_));
@@ -680,10 +681,14 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         // Moved, resized, minimized, restored or shown, or the monitors, the work area or the
         // scale changed: what Kite's window covers on screen did (seen, not handled: the
         // window's own handling follows).
-        if (message == WM_WINDOWPOSCHANGED || message == WM_DISPLAYCHANGE || message == WM_DPICHANGED ||
-            (message == WM_SETTINGCHANGE && wParam == SPI_SETWORKAREA)) {
-            occlusion_->WindowChanged();
+        if (message == WM_WINDOWPOSCHANGED) occlusion_->WindowChanged();
+        if (message == WM_DISPLAYCHANGE || message == WM_DPICHANGED || (message == WM_SETTINGCHANGE && wParam == SPI_SETWORKAREA)) {
+            occlusion_->WindowChanged(true);
         }
+        // The pointer can only reach a covered Kite if it isn't covered after all (uncovered by
+        // something no event says, before the heartbeat saw it): the first one asks for a
+        // pass, and leaves the verdict to it.
+        if ((message == WM_SETCURSOR || message == WM_MOUSEMOVE) && pointerRecovery_.OnPointer()) occlusion_->RequestPass();
         // Kite's app activated: it's in front, so seen, now on this thread; the watcher hears
         // after.
         if (message == WM_ACTIVATEAPP) {
