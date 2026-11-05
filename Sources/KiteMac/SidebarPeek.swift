@@ -74,6 +74,12 @@ final class HoverStrip: NSView {
     var isActive = false {
         didSet { if isActive != oldValue { inside = false; updateTrackingAreas() } }
     }
+    /// Reports where the pointer is whenever the tracking area is rebuilt (a resize, the sidebar coming
+    /// back, `resync`), not only on enters and exits. For the sidebar's hover (the address field's moon):
+    /// AppKit sends no enter for a pointer that's already inside when the area is made, so without this
+    /// a strip that marked itself inside never said so, and the hover waited for the pointer to leave and
+    /// come back. A pointer that's over another window covering this one doesn't count.
+    var reportsOnRebuild = false
     private var inside = false
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -83,16 +89,34 @@ final class HoverStrip: NSView {
         trackingAreas.forEach(removeTrackingArea)
         guard isActive else { return }
         // A pointer already inside counts as inside, so leaving still reports.
-        let assume: NSTrackingArea.Options = window.map { bounds.contains(convert($0.mouseLocationOutsideOfEventStream, from: nil)) } == true ? .assumeInside : []
-        if !assume.isEmpty { inside = true }
+        let pointerInside = reportsOnRebuild ? isPointerOverStrip : isPointerInBounds
+        let assume: NSTrackingArea.Options = pointerInside ? .assumeInside : []
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect, assume], owner: self))
+        if reportsOnRebuild {
+            if pointerInside != inside {
+                inside = pointerInside
+                onHover?(pointerInside)
+            }
+        } else if pointerInside {
+            inside = true
+        }
+    }
+
+    private var isPointerInBounds: Bool {
+        window.map { bounds.contains(convert($0.mouseLocationOutsideOfEventStream, from: nil)) } == true
+    }
+
+    /// In the strip, and over this window rather than one in front of it.
+    private var isPointerOverStrip: Bool {
+        guard let window, window.isVisible, isPointerInBounds else { return false }
+        return NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0) == window.windowNumber
     }
 
     /// Starts over from where the pointer is now. AppKit holds enters and exits back during a drag
     /// and sends them when it ends; this drops the ones it's holding.
     func resync() {
         guard isActive else { return }
-        inside = false
+        if !reportsOnRebuild { inside = false }
         updateTrackingAreas()
     }
 
