@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.24)
 # Drives kitecore against a fresh profile: ctest runs it with -DKITECORE=<path> -DWORK=<dir>.
 # kitecore writes UTF-8 ("Rename Space…", emoji), so every execute_process that reads its output
 # decodes it as UTF-8: without a policy saying so, CMake decodes it with the console's code page
@@ -415,8 +416,8 @@ kitecore(picker space icon-picker "${reading}" --query grinning --pick 2)
 string(JSON cells LENGTH "${picker}" cells)
 string(JSON picked GET "${picker}" picked icon)
 kitecore(state state)
-string(JSON now GET "${state}" spaces 2 icon)
-if(NOT cells EQUAL 4 OR NOT picked STREQUAL "🤩" OR NOT now STREQUAL "🤩")
+string(JSON nowIcon GET "${state}" spaces 2 icon)
+if(NOT cells EQUAL 4 OR NOT picked STREQUAL "🤩" OR NOT nowIcon STREQUAL "🤩")
   message(FATAL_ERROR "space icon-picker --query grinning --pick 2 gave ${picker}, then ${state}")
 endif()
 kitecore(picker space icon-picker "${reading}" --tab icon --pick 1)
@@ -443,8 +444,8 @@ endif()
 kitecore(picker space icon-picker "${reading}" --hit 41.7,50)
 string(JSON index GET "${picker}" hit index)
 kitecore(outside space icon-picker "${reading}" --hit 10.7,50)
-string(JSON none GET "${outside}" hit target)
-if(NOT index EQUAL 0 OR NOT none STREQUAL "none")
+string(JSON outsideTarget GET "${outside}" hit target)
+if(NOT index EQUAL 0 OR NOT outsideTarget STREQUAL "none")
   message(FATAL_ERROR "space icon-picker --hit 41.7,50 gave ${picker}, 10.7,50 ${outside}")
 endif()
 # Under the header's icon in a window at (500, 50) on a 1920x1040 screen, then pushed in from
