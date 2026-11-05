@@ -372,7 +372,6 @@ target_link_libraries(gen-theme-golden PRIVATE KiteCoreWin)
 target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../Tests/Fixtures"
                                                KITE_STATES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/helix/states"
                                                KITE_MAC_PICKER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../Sources/KiteMac/Views/SpaceIconPicker.swift"
-
                                                KITE_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
                                                KITE_ARC_FIXTURE_DIR="${KITE_ARC_FIXTURE_DIR}")
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)
