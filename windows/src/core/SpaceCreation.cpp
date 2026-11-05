@@ -118,6 +118,15 @@ bool ShowsCreation(const BrowserState& state, const std::optional<SpaceCreation>
     return creation && !state.spaces.empty() && state.selectedSpaceID == creation->spaceID;
 }
 
+std::vector<SpaceMenuItem> SpaceMenu(const BrowserState& state, const std::string& spaceID, const std::optional<SpaceCreation>& creation) {
+    std::vector<SpaceMenuItem> items = SpaceMenu(state, spaceID);
+    if (!creation || creation->spaceID != spaceID) return items;
+    for (SpaceMenuItem& item : items) {
+        if (item.command == SpaceMenuItem::Command::ChangeIcon) item.enabled = false;
+    }
+    return items;
+}
+
 bool DropUnnamedEmptySpaces(BrowserState& state) {
     // for space in spaces where space.name.isEmpty && space.allTabs.isEmpty { deleteSpace(space.id) }:
     // over a copy of the ids, Delete Space's rules each time (it refuses the last space).

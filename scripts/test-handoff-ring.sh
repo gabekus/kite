@@ -5,7 +5,8 @@
 # ringed control. The cases are Tests/Browser/handoff/ring.html, run with the ring in the page's main world so
 # the test can read where it settled (in Kite it runs in an isolated world; the code is the same). The last
 # cases go through Kite's own handoff tool, in its isolated world, on Tests/Browser/handoff/settle.html, a page
-# that redraws its controls on timers.
+# that redraws its controls on timers, and on Tests/Browser/handoff/tag.html: the tag's Skip and Done, steps Kite
+# refuses or can't show, and no card in Kite's interface.
 # Usage: scripts/test-handoff-ring.sh [APP]   (default build/Kite.app; never /Applications/Kite.app)
 # RING_SOURCE=path/to/UserHandoff.swift tests another version of the ring (an older one should fail).
 set -euo pipefail
@@ -137,6 +138,54 @@ if [[ -z "${RING_SOURCE:-}" ]]; then
     "$CLI" click --selector "#invite3" --tab "$TAB" >/dev/null
     if step_has '\[done\].*clicked'; then echo "ok   handoff: a click on the settled control ends the step"; passes=$((passes + 1));
     else echo "FAIL handoff: the button's click wasn't heard: $LINE"; failures=$((failures + 1)); fi
+
+    # The tag beside the ring is the only place a step shows (no card over the page): its Skip and Done end the step,
+    # a step Kite can't show is reported to Claude at once, and steps with nowhere to show are refused.
+    pass() { echo "ok   $1"; passes=$((passes + 1)); }
+    fail() { echo "FAIL $1"; failures=$((failures + 1)); }
+    TAGPAGE="http://127.0.0.1:$PORT/tag.html"
+    "$CLI" open "$TAGPAGE" --tab "$TAB" >/dev/null
+    for _ in $(seq 25); do [[ $(js "String(!!window.tagBox)") == true ]] && break; sleep 0.2; done
+    OUT=$("$CLI" call handoff "{\"reason\":\"Test\",\"tab\":\"$TAB\",\"steps\":[{\"instruction\":\"Run it\",\"command\":\"ls\"}]}" 2>&1 || true)
+    grep -q "can't show a command" <<<"$OUT" && pass "handoff: a command step is refused" || fail "handoff: a command step: $OUT"
+    OUT=$("$CLI" call handoff "{\"reason\":\"Test\",\"tab\":\"$TAB\",\"steps\":[{\"instruction\":\"Read this\"}]}" 2>&1 || true)
+    grep -q "needs its control" <<<"$OUT" && pass "handoff: a step without a control is refused" || fail "handoff: a note step: $OUT"
+    START=$(date +%s)
+    OUT=$("$CLI" call handoff "{\"reason\":\"Test\",\"tab\":\"$TAB\",\"wait\":60,\"steps\":[{\"instruction\":\"Click it\",\"text\":\"Nowhere on this page\"}]}" 2>&1 || true)
+    if grep -q "NOT SHOWN: Kite can't find its control" <<<"$OUT" && (( $(date +%s) - START < 15 )); then
+        pass "handoff: a control that isn't on the page is reported at once, not waited on"
+    else fail "handoff: a missing control ($(( $(date +%s) - START ))s): $OUT"; fi
+    "$CLI" call handoff_status '{"cancel":true}' >/dev/null
+    # No card over the page: nothing in Kite's own interface says "Claude needs you".
+    "$CLI" call handoff "{\"reason\":\"Only you can approve\",\"tab\":\"$TAB\",\"steps\":[{\"instruction\":\"Approve it\",\"text\":\"Approve\"},{\"instruction\":\"Save it\",\"text\":\"Save\"}]}" >/dev/null
+    sleep 1
+    OUT=$("$CLI" ui tree '{"match":"Claude needs you"}' 2>&1 || true)
+    grep -q 'Nothing matches "Claude needs you"' <<<"$OUT" && pass "no card in Kite's interface, only the ring on the page" \
+        || fail "a card shows in Kite's interface: $OUT"
+    # press WHICH: presses the tag's Done (its right end) or Skip (left of Done) beside control ID.
+    press() {
+        local box x y
+        box=$(js "window.tagBox('$2')")
+        x=$(python3 -c "import json,sys; b=json.loads(sys.argv[1]); off=24 if sys.argv[2]=='done' else 68; print(round((b['right']-off)*b['scale']))" "$box" "$1")
+        y=$(python3 -c "import json,sys; b=json.loads(sys.argv[1]); print(round(b['y']*b['scale']))" "$box")
+        "$CLI" call computer "{\"action\":\"left_click\",\"coordinate\":[$x,$y],\"tab\":\"$TAB\"}" >/dev/null
+    }
+    # The step's line in handoff_status: N PATTERN, polled.
+    nth_has() {
+        for _ in $(seq 50); do
+            LINE=$("$CLI" call handoff_status '{}' | grep -E "^$1\. \[") || true
+            grep -qE "$2" <<<"$LINE" && return 0
+            sleep 0.2
+        done
+        return 1
+    }
+    press done approve
+    nth_has 1 '\[done\].*pressed Done' && pass "the tag's Done ends the step" || fail "the tag's Done: $LINE"
+    [[ $(js "String(window.menuOpen)") == true ]] && pass "a press on the tag isn't a press on the page (its menu stays open)" \
+        || fail "the page heard the tag's press: presses $(js "JSON.stringify(window.presses)")"
+    sleep 1
+    press skip save
+    nth_has 2 '\[skipped\].*skipped it' && pass "the tag's Skip skips the step (the ring moved on to it)" || fail "the tag's Skip: $LINE"
 fi
 
 echo "$passes of $((passes + failures)) checks passed"

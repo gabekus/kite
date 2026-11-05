@@ -17,6 +17,7 @@
 #include "core/KeyBindings.h"
 #include "core/Models.h"
 #include "core/SpaceBar.h"
+#include "core/SpaceEditing.h"
 
 namespace kite {
 
@@ -83,6 +84,12 @@ bool ShowsCreation(const BrowserState& state, const std::optional<SpaceCreation>
 // never the last space), as the Mac's dropUnnamedEmptySpaces does after loading the session. True
 // when one went.
 bool DropUnnamedEmptySpaces(BrowserState& state);
+
+// The space's menu while Create a Space is open (SpaceEditing.h's SpaceMenu): on the space being
+// made, Change Space Icon… is disabled, its header (where the picker hangs) being under the page;
+// the Mac's opens the picker on a header no one sees. Its Rename Space… goes to the page's name
+// field (the window's).
+std::vector<SpaceMenuItem> SpaceMenu(const BrowserState& state, const std::string& spaceID, const std::optional<SpaceCreation>& creation);
 
 // What a space is for, in the user's words (Space.about, Kite's own: Claude reads it): kept in
 // the space's `extra` as the Mac writes it. Space.cleanAbout: lines joined with spaces, spaces

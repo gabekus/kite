@@ -80,15 +80,28 @@ void BrowserWindowController::ShowThemeSwatches(const BarRect& row) {
     if (!swatches_ || !creation_) return;
     std::vector<ThemeColor> accents;
     for (const Theme& preset : Theme::Presets()) accents.push_back(Accent(preset));
-    // As the Mac's present: one open already closes first. Kite's window takes the keyboard when it's
-    // the one in front, so a press in the page (its own window) moves the focus and closes the
-    // popover, as a press anywhere else closes a transient one.
-    swatches_->Close();
-    if (GetForegroundWindow() == window_.Handle() && GetFocus() != window_.Handle()) SetFocus(window_.Handle());
-    if (std::wstring problem = swatches_->Open(row, window_.Dpi(), dark_.value_or(true), std::move(accents)); !problem.empty()) {
-        OutputDebugStringW((L"Kite: Choose a Theme couldn't open: " + problem + L"\n").c_str());
+    // The popover holds the keyboard while it's open (the Mac's popover is the key window), from
+    // now: the page's field lets it go (remembered, for Escape to give back), the picker closes, and
+    // a page can't take it meanwhile. Opened again (Choose a Theme pressed while it's open), it keeps
+    // the field it remembered.
+    if (!swatchesKeyboard_) swatchesReturn_ = sidebar_->Creation().KeyboardField();
+    swatchesKeyboard_ = true;
+    GiveKeyboard(KeyboardField::ThemeSwatches);
+    // Open closes the popover before it (the Mac's present): the keyboard stays its throughout.
+    openingSwatches_ = true;
+    const std::wstring problem = swatches_->Open(row, window_.Dpi(), dark_.value_or(true), std::move(accents));
+    openingSwatches_ = false;
+    // A failure, or lost on the way (a GPU lost in its draw): nothing holds the keyboard.
+    if (!problem.empty() || !swatches_->IsOpen()) {
+        ReleaseSwatchesKeyboard(false);
+        if (!problem.empty()) OutputDebugStringW((L"Kite: Choose a Theme couldn't open: " + problem + L"\n").c_str());
         if (swatches_->DeviceLost()) Draw();
+        return;
     }
+    UpdateFindHole();
+    // Kite's window takes the focus when it's the one in front, so a press in the page (its own
+    // window) moves it, and closes the popover.
+    TakeFocusIfInFront();
 }
 
 void BrowserWindowController::PickSpaceTheme(size_t preset) {
@@ -99,10 +112,42 @@ void BrowserWindowController::PickSpaceTheme(size_t preset) {
     if (swatches_) swatches_->SetDark(dark_.value_or(true));
 }
 
-void BrowserWindowController::CloseThemeSwatches() {
+void BrowserWindowController::CloseThemeSwatches(bool handBack) {
     if (!swatches_ || !swatches_->IsOpen()) return;
+    // Its closed callback lets the keyboard go, as this close says.
+    swatchesHandBack_ = handBack;
     swatches_->Close();
+    swatchesHandBack_ = false;
     if (compositor_) compositor_->Commit();
+}
+
+void BrowserWindowController::ReleaseSwatchesKeyboard(bool handBack) {
+    if (!swatchesKeyboard_) return;
+    swatchesKeyboard_ = false;
+    const std::optional<SpaceCreationView::Field> back = std::exchange(swatchesReturn_, std::nullopt);
+    // Another field taking the keyboard (GiveKeyboard) sets the page's hold itself as it ends.
+    if (givingKeyboard_) return;
+    // Escape: back to the page's field that had it, while the page still shows.
+    if (handBack && back && sidebar_->CreationShown()) return TakeKeyboardForCreation(*back);
+    UpdateFindHole();
+#ifdef KITE_HAS_CEF
+    // Nothing of Kite's has it now: the page, only from the window in front (a close as the user
+    // switches apps never brings Kite back), and never for a press, a deactivation or a move.
+    if (handBack && chromium_ && KeyboardOwner() == KeyboardField::None) {
+        ++pageFocusHandoffs_;
+        if (!testFocus_ && GetForegroundWindow() == window_.Handle()) chromium_->Focus();
+    }
+#endif
+}
+
+void BrowserWindowController::TakeKeyboardForCreation(SpaceCreationView::Field field, bool selectAll) {
+    // As TakeKeyboardForRename: the others' carets go first, then the field takes it, and only then
+    // does the window take the focus (its onFocus must see the field's), the page holding none of
+    // its own while a navigation lands (UpdateFindHole's KeepKeyboard).
+    GiveKeyboard(KeyboardField::Creation, false);
+    sidebar_->FocusCreation(field, selectAll);
+    TakeFocusIfInFront();
+    UpdateFindHole();
 }
 
 void BrowserWindowController::ShowCreationProfileMenu(POINT screen) {
@@ -126,13 +171,16 @@ void BrowserWindowController::FollowCreation() {
     const std::optional<bool> shown = sidebar_->TakeCreationShownChange();
     if (!shown) return;
     // onAppear { nameFocused = true }: the other fields let the keyboard go first.
-    if (*shown) return GiveKeyboard(KeyboardField::Creation);
+    if (*shown) return TakeKeyboardForCreation(SpaceCreationView::Field::Name);
     // The page went (created, cancelled, another space selected), its field's keyboard with it:
     // the popover goes, and the page takes the keyboard, as when the command bar closes.
     CloseThemeSwatches();
     UpdateFindHole();
 #ifdef KITE_HAS_CEF
-    if (chromium_ && KeyboardOwner() == KeyboardField::None && GetForegroundWindow() == window_.Handle()) chromium_->Focus();
+    if (chromium_ && KeyboardOwner() == KeyboardField::None) {
+        ++pageFocusHandoffs_;
+        if (!testFocus_ && GetForegroundWindow() == window_.Handle()) chromium_->Focus();
+    }
 #endif
 }
 

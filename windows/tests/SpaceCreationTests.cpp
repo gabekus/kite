@@ -228,6 +228,23 @@ TEST(aDraftLeftAtQuitIsDroppedOnLoad) {
     CHECK(all.spaces.size() == 1 && all.selectedSpaceID == all.spaces[0].id);
 }
 
+TEST(theDraftsMenuCantChangeItsIcon) {
+    // Its header, where Change Space Icon…'s picker hangs, is under the page; the other spaces'
+    // menus are as ever.
+    BrowserState state = ThreeSpaces();
+    std::optional<SpaceCreation> creation;
+    const std::string draft = BeginNewSpace(state, creation);
+    const auto changeIcon = [](const std::vector<SpaceMenuItem>& items) {
+        for (const SpaceMenuItem& item : items) {
+            if (item.command == SpaceMenuItem::Command::ChangeIcon) return item.enabled;
+        }
+        return true;
+    };
+    CHECK(!changeIcon(SpaceMenu(state, draft, creation)));
+    CHECK(changeIcon(SpaceMenu(state, state.spaces[0].id, creation)) == changeIcon(SpaceMenu(state, state.spaces[0].id)));
+    CHECK(SpaceMenu(state, draft, std::nullopt) == SpaceMenu(state, draft));
+}
+
 TEST(aDraftDeletedElsewhereEndsTheCreation) {
     BrowserState state = ThreeSpaces();
     std::optional<SpaceCreation> creation;

@@ -7,13 +7,11 @@
 // it closes as one does: Escape, a press anywhere else, the window losing the keyboard, moving or
 // minimizing, or the page closing.
 //
-// In NSPopover's place, a window of its own owned by the browser window (it reaches over the page,
-// which is a child window), made the first time it opens, never activated, kept inside the work area
-// of the monitor it opens on, and drawn with DirectComposition in its own target on the window's
-// compositor: one surface, drawn when it opens and when its appearance changes. A press picks on
-// release over the same swatch, as a plain SwiftUI Button; nothing hovers. Beside the arrow, the
-// window's corners are clear and pass the pointer through.
-// A popover window shared with W9e's icon picker (shell/PopoverWindow) comes once both are on main.
+// In NSPopover's place, a window of its own (shell/PopoverWindow, as W9e's icon picker's), kept
+// inside the work area of the monitor it opens on: one surface, drawn when it opens and when its
+// appearance changes. A press picks on release over the same swatch, as a plain SwiftUI Button;
+// nothing hovers. In W21's keyboard model it holds the keyboard while it's open (the controller's
+// KeyboardField::ThemeSwatches), as the Mac's popover becomes the key window.
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -31,6 +29,7 @@
 #include "core/SpaceCreation.h"
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
+#include "shell/PopoverWindow.h"
 
 namespace kite {
 
@@ -39,6 +38,8 @@ public:
     struct Callbacks {
         // Swatch `preset` (Theme::Presets()) pressed and let go.
         std::function<void(size_t preset)> pick;
+        // It closed, however it did (a close, a reopen's, its window gone, a lost GPU).
+        std::function<void()> closed;
     };
     // For `owner` (the browser window), drawing with `dwrite` (the sidebar's, which outlives it).
     // `offscreen`: a quiet run's (a test, a capture), whose popover opens and takes the messages sent
@@ -62,7 +63,7 @@ public:
 
     // For the tests: its window, where swatch `index`'s middle is in that window's client px, and
     // how many times its surface has drawn.
-    HWND Window() const { return window_; }
+    HWND Window() const { return popover_.Handle(); }
     std::optional<POINT> SwatchPoint(size_t index) const;
     size_t Draws() const { return draws_; }
     // For --capture: the popover as it shows off `row`, drawn without its window, and its top-left
@@ -71,13 +72,13 @@ public:
     bool DeviceLost() const { return deviceLost_; }
     // A draw of its own (a new appearance) found the GPU gone: the owner rebuilds.
     std::function<void()> onDeviceLost;
+    // For the smoke test: the next Open loses the GPU in its draw, as a removed device would.
+    void LoseDeviceInOpenForTest() { loseDeviceInOpen_ = true; }
 
 private:
-    ThemeSwatchesView(HWND owner, Callbacks callbacks, bool offscreen) : owner_(owner), callbacks_(std::move(callbacks)), offscreen_(offscreen) {}
-    // Its window, the first time it opens. Empty on success.
-    std::wstring MakeWindow();
-    static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
-    LRESULT Handle(UINT message, WPARAM wParam, LPARAM lParam);
+    ThemeSwatchesView(HWND owner, Callbacks callbacks, bool offscreen) : popover_(owner), callbacks_(std::move(callbacks)), offscreen_(offscreen) {}
+    // Its window's messages (shell/PopoverWindow takes the rest): none for the default.
+    std::optional<LRESULT> Handle(UINT message, WPARAM wParam, LPARAM lParam);
 
     // The window's size and its body's top-left in it, px, and the body's in the owner's client
     // area, for `row` at `scale`; with `onScreen`, moved inside the work area of the monitor the row
@@ -95,13 +96,11 @@ private:
     std::wstring DrawInto(IDCompositionVirtualSurface* surface, const Frame& frame, Pixels* readBack, HRESULT& hr);
     std::optional<size_t> SwatchAt(LPARAM client) const;
 
-    HWND owner_;
+    PopoverWindow popover_;  // its window, made as it first opens
     Callbacks callbacks_;
     bool offscreen_ = false;
-    HWND window_ = nullptr;
     Compositor* compositor_ = nullptr;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> chevronFormat_;
-    Microsoft::WRL::ComPtr<IDCompositionTarget> target_;
     Microsoft::WRL::ComPtr<IDCompositionVisual> visual_;
     Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> surface_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
@@ -114,6 +113,7 @@ private:
     ThemeSwatchesLayout layout_;
     Frame frame_;
     std::optional<size_t> pressed_;
+    bool loseDeviceInOpen_ = false;
     size_t draws_ = 0;
 };
 

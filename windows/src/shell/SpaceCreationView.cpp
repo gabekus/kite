@@ -204,6 +204,7 @@ void SpaceCreationView::Show(const Model& model) {
     // onAppear: a new page, its fields empty (the Mac's @State), the name about to take the keyboard.
     shown_ = true;
     model_ = model;
+    windowFocused_ = GetFocus() == window_;
     keyboard_.reset();
     pressed_.reset();
     selecting_.reset();
@@ -235,8 +236,6 @@ void SpaceCreationView::Focus(Field field, bool selectAll) {
     if (keyboard_ && *keyboard_ != field) FieldOf(*keyboard_).EndEditing();
     if (keyboard_ != field) GpuOf(field == Field::Name ? Field::About : Field::Name).dirty = true;
     keyboard_ = field;
-    // The keyboard, when Kite is the window in front (a quiet test run never activates).
-    if (GetForegroundWindow() == window_ && GetFocus() != window_) SetFocus(window_);
     if (selectAll) FieldOf(field).SelectAll();
     FocusChanged();
     GpuOf(field).dirty = true;
@@ -254,7 +253,7 @@ void SpaceCreationView::LoseKeyboard() {
 }
 
 void SpaceCreationView::FocusChanged() {
-    const bool window = assumeFocus_ || GetFocus() == window_;
+    const bool window = windowFocused_;
     const bool name = shown_ && keyboard_ == Field::Name && window;
     const bool about = shown_ && keyboard_ == Field::About && window;
     // The field losing the keyboard first: a thread has one system caret, and the loser's
@@ -360,6 +359,7 @@ bool SpaceCreationView::HandleKey(UINT message, WPARAM wParam, LPARAM lParam) {
         Edited(*keyboard_, TextField::Change::Selection);
         return false;
     case WM_SETFOCUS:
+        windowFocused_ = true;
         FocusChanged();
         nameGpu_.dirty = aboutGpu_.dirty = true;
         Redraw();
@@ -368,6 +368,7 @@ bool SpaceCreationView::HandleKey(UINT message, WPARAM wParam, LPARAM lParam) {
         // The page took it (a click in it): the field lets it go, as the web view becoming first
         // responder ends the Mac's field editor. Another app, or a window of Kite's own (the
         // swatches, the tip), leaves it the first responder.
+        windowFocused_ = false;
         if (const auto to = reinterpret_cast<HWND>(wParam); to && IsChild(window_, to)) LoseKeyboard();
         if (selecting_ && GetCapture() == window_) ReleaseCapture();
         FocusChanged();

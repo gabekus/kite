@@ -217,4 +217,45 @@ std::wstring Compositor::Draw(UINT width, UINT height, const ThemeUniforms& unif
     return readBackError;
 }
 
+std::wstring Compositor::DrawSurfaceRect(perf::View view, IDCompositionVirtualSurface* surface, const RECT& rect, UINT dpi,
+                                         const Content& content, HRESULT& hr) {
+    hr = S_OK;
+    if (rect.right <= rect.left || rect.bottom <= rect.top) return {};
+    const float scale = static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
+    Microsoft::WRL::ComPtr<IDXGISurface> update;
+    POINT offset{};
+    if (FAILED(hr = surface->BeginDraw(&rect, IID_PPV_ARGS(update.GetAddressOf()), &offset))) {
+        return HResultMessage(L"starting to draw part of a surface", hr);
+    }
+    const D2D1_BITMAP_PROPERTIES1 targetProps =
+        D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), static_cast<float>(dpi),
+                                static_cast<float>(dpi));
+    ID2D1DeviceContext* context = d2dContext_.Get();
+    Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap;
+    hr = context->CreateBitmapFromDxgiSurface(update.Get(), &targetProps, bitmap.GetAddressOf());
+    if (SUCCEEDED(hr)) {
+        context->SetTarget(bitmap.Get());
+        context->SetDpi(static_cast<float>(dpi), static_cast<float>(dpi));
+        context->BeginDraw();
+        // The update's pixels start at `offset` in its texture (an atlas, maybe) for the rect's
+        // top-left: the drawing is moved so its own coordinates land there, and clipped to it.
+        const float dx = static_cast<float>(offset.x - rect.left) / scale, dy = static_cast<float>(offset.y - rect.top) / scale;
+        context->SetTransform(D2D1::Matrix3x2F::Translation(dx, dy));
+        context->PushAxisAlignedClip(D2D1_RECT_F{static_cast<float>(rect.left) / scale, static_cast<float>(rect.top) / scale,
+                                                 static_cast<float>(rect.right) / scale, static_cast<float>(rect.bottom) / scale},
+                                     D2D1_ANTIALIAS_MODE_ALIASED);
+        context->Clear(D2D1_COLOR_F{0, 0, 0, 0});
+        content(context);
+        context->PopAxisAlignedClip();
+        hr = context->EndDraw();
+        context->SetTarget(nullptr);
+    }
+    const HRESULT ended = surface->EndDraw();
+    perf::CountSurfaceDraw(view);
+    if (FAILED(hr)) return HResultMessage(L"drawing part of a surface", hr);
+    if (FAILED(hr = ended)) return HResultMessage(L"finishing part of a surface", hr);
+    return {};
+}
+
 }  // namespace kite

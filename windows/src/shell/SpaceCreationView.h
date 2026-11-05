@@ -82,8 +82,8 @@ public:
     void Hide();
     bool Shown() const { return shown_; }
 
-    // The keyboard: `field` takes it (its text all selected with `selectAll`), the window taking
-    // the focus when it's the one in front; or it goes (a press elsewhere, the page, another field
+    // The keyboard: `field` takes it (its text all selected with `selectAll`; the controller then
+    // gives the window the focus when it's the one in front); or it goes (a press elsewhere, the page, another field
     // of Kite's), the selection collapsing as the Mac's field editor ends.
     void Focus(Field field, bool selectAll = false);
     void LoseKeyboard();
@@ -99,6 +99,9 @@ public:
     void Release(D2D1_POINT_2F p);
     void CaptureLost();
     bool OverField(D2D1_POINT_2F p) const;
+    // Whether a point is on Choose a Theme's row (whose press reopens its popover rather than
+    // closing it).
+    bool OverChooseTheme(D2D1_POINT_2F p) const { return shown_ && layout_.theme.Contains(p.x, p.y); }
     // The window's keys, characters, IME, focus and the carets' timers, while it's shown. True
     // when it took `message`.
     bool HandleKey(UINT message, WPARAM wParam, LPARAM lParam);
@@ -120,12 +123,6 @@ public:
     size_t PageDraws() const { return pageDraws_; }
     size_t FieldDraws() const { return fieldDraws_; }
     size_t CreateDraws() const { return createDraws_; }
-    // For the smoke test, whose window never has the keyboard (a quiet run never comes to the front):
-    // the fields act as when it has, so their system carets and focus can be checked.
-    void AssumeWindowFocusForTest(bool assume) {
-        assumeFocus_ = assume;
-        FocusChanged();
-    }
     bool FieldFocused(Field field) const { return FieldOf(field).Focused(); }
 
     // The fields' caret blinks (view timers: 0x4B42 to 0x4B49 are taken or reserved, W9e's icon
@@ -204,7 +201,9 @@ private:
     std::optional<Field> selecting_;            // a field being drag-selected
     TextField name_, about_;
     size_t pageDraws_ = 0, fieldDraws_ = 0, createDraws_ = 0;
-    bool assumeFocus_ = false;  // AssumeWindowFocusForTest
+    // The window has the keyboard focus, as its WM_SETFOCUS and WM_KILLFOCUS say (a test delivers
+    // WM_SETFOCUS with no activation); read from GetFocus as the page appears.
+    bool windowFocused_ = false;
 };
 
 }  // namespace kite

@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include "shell/Errors.h"
 
@@ -18,7 +19,6 @@ namespace {
 
 namespace T = theme_swatches_metrics;
 
-constexpr wchar_t kClassName[] = L"KiteThemeSwatches";
 // chevron.left and chevron.right in Segoe Fluent Icons and Segoe MDL2 Assets.
 constexpr wchar_t kChevronLeft = 0xE76B, kChevronRight = 0xE76C;
 // labelColor's 85%, which the chevrons' 30% fades.
@@ -30,19 +30,6 @@ D2D1_COLOR_F Srgb(int r, int g, int b, float a = 1) { return D2D1_COLOR_F{r / 25
 // Arc's PopoverBackground, as the find bar's popover colours, and its edge.
 D2D1_COLOR_F Fill(bool dark) { return dark ? Srgb(0x15, 0x1C, 0x30) : Srgb(0xFA, 0xFB, 0xFF); }
 D2D1_COLOR_F Edge(bool dark) { return dark ? D2D1_COLOR_F{1, 1, 1, 0.12f} : D2D1_COLOR_F{0, 0, 0, 0.12f}; }
-
-bool RegisterOnce(HINSTANCE instance, WNDPROC proc) {
-    static const bool registered = [&] {
-        WNDCLASSEXW wc{};
-        wc.cbSize = sizeof(wc);
-        wc.lpfnWndProc = proc;
-        wc.hInstance = instance;
-        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        wc.lpszClassName = kClassName;
-        return RegisterClassExW(&wc) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
-    }();
-    return registered;
-}
 
 }  // namespace
 
@@ -68,68 +55,39 @@ std::unique_ptr<ThemeSwatchesView> ThemeSwatchesView::Create(HWND owner, IDWrite
     }
     view->chevronFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     view->chevronFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    // Its window (made as it first opens): the clear corners beside the arrow and the edge's margin
+    // pass the pointer to what's under.
+    ThemeSwatchesView* raw = view.get();
+    PopoverWindow::Callbacks window;
+    window.onPopover = [raw](POINT at) { return raw->OnPopover(at); };
+    window.message = [raw](UINT message, WPARAM wParam, LPARAM lParam) { return raw->Handle(message, wParam, lParam); };
+    // Destroyed with its owner: closed, its surface with it.
+    window.destroyed = [raw] {
+        raw->visual_.Reset();
+        raw->surface_.Reset();
+        raw->Close();
+    };
+    view->popover_.SetCallbacks(std::move(window));
     return view;
 }
 
-std::wstring ThemeSwatchesView::MakeWindow() {
-    if (window_) return {};
-    const HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(owner_, GWLP_HINSTANCE));
-    if (!RegisterOnce(instance, &ThemeSwatchesView::WindowProc)) return L"registering the theme swatches' window class failed";
-    // Never activated (the browser window keeps the keyboard), never in the taskbar or Alt+Tab;
-    // DirectComposition draws all of it.
-    const HWND made = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kClassName, L"", WS_POPUP, 0, 0, 1, 1,
-                                      owner_, nullptr, instance, this);
-    if (!made) return L"creating the theme swatches' window failed";
-    window_ = made;
-    return {};
-}
-
 ThemeSwatchesView::~ThemeSwatchesView() {
+    callbacks_ = {};
     UseCompositor(nullptr);
-    if (window_) DestroyWindow(window_);
 }
 
-LRESULT CALLBACK ThemeSwatchesView::WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
-    if (message == WM_NCCREATE) {
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams));
-    }
-    auto* view = reinterpret_cast<ThemeSwatchesView*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    // Windows destroys an owned window with its owner: the view forgets it, and its target.
-    if (message == WM_NCDESTROY && view && view->window_ == hwnd) {
-        view->window_ = nullptr;
-        view->open_ = false;
-        view->target_.Reset();
-        view->visual_.Reset();
-        view->surface_.Reset();
-    }
-    // Only once CreateWindowExW has returned it (WM_NCCREATE, WM_CREATE and the rest before that
-    // are the default's).
-    if (view && view->window_ == hwnd && message != WM_NCDESTROY) return view->Handle(message, wParam, lParam);
-    return DefWindowProcW(hwnd, message, wParam, lParam);
-}
-
-LRESULT ThemeSwatchesView::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
+std::optional<LRESULT> ThemeSwatchesView::Handle(UINT message, WPARAM, LPARAM lParam) {
+    const HWND window = popover_.Handle();
     switch (message) {
-    case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
-    case WM_NCHITTEST: {
-        // The clear corners beside the arrow and the edge's margin pass the pointer to what's under.
-        POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-        ScreenToClient(window_, &at);
-        return OnPopover(at) ? HTCLIENT : HTTRANSPARENT;
-    }
-    // Windows shows an owned window again with its restored owner: it shows only when opened.
-    case WM_SHOWWINDOW:
-        if (wParam && lParam == SW_PARENTOPENING) return 0;
-        break;
     case WM_LBUTTONDOWN:
     case WM_LBUTTONDBLCLK:
         pressed_ = SwatchAt(lParam);
-        if (pressed_) SetCapture(window_);
+        if (pressed_) SetCapture(window);
         return 0;
     case WM_LBUTTONUP: {
         const std::optional<size_t> pressed = pressed_;
         pressed_.reset();
-        if (GetCapture() == window_) ReleaseCapture();
+        if (GetCapture() == window) ReleaseCapture();
         // A plain Button: on release over what was pressed.
         if (pressed && SwatchAt(lParam) == pressed && callbacks_.pick) callbacks_.pick(*pressed);
         return 0;
@@ -137,13 +95,13 @@ LRESULT ThemeSwatchesView::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_CAPTURECHANGED: pressed_.reset(); return 0;
     default: break;
     }
-    return DefWindowProcW(window_, message, wParam, lParam);
+    return std::nullopt;
 }
 
 void ThemeSwatchesView::UseCompositor(Compositor* compositor) {
     if (compositor == compositor_) return;
     Close();
-    target_.Reset();
+    popover_.ReleaseTarget();
     visual_.Reset();
     surface_.Reset();
     brush_.Reset();
@@ -164,13 +122,10 @@ ThemeSwatchesView::Frame ThemeSwatchesView::FrameFor(const BarRect& row, float s
     // Inside the work area of the monitor the row is on (NSPopover keeps to the screen's visible
     // frame), the arrow moving along its edge to stay level with the row.
     POINT anchor{std::lround(row.right * scale), std::lround((row.top + row.bottom) / 2 * scale)};
-    ClientToScreen(owner_, &anchor);
-    MONITORINFO monitor{};
-    monitor.cbSize = sizeof(monitor);
-    if (!GetMonitorInfoW(MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST), &monitor)) return f;
+    ClientToScreen(popover_.Owner(), &anchor);
     POINT screen = f.origin;
-    ClientToScreen(owner_, &screen);
-    const RECT& work = monitor.rcWork;
+    ClientToScreen(popover_.Owner(), &screen);
+    const RECT work = PopoverWindow::WorkArea(anchor);
     LONG dx = 0, dy = 0;
     if (screen.x + static_cast<LONG>(f.width) > work.right) dx = work.right - (screen.x + static_cast<LONG>(f.width));
     if (screen.x + dx < work.left) dx = work.left - screen.x;
@@ -269,12 +224,14 @@ std::wstring ThemeSwatchesView::DrawInto(IDCompositionVirtualSurface* surface, c
     }
     ++draws_;
     return compositor_->DrawSurface(
-        perf::View::Sidebar, surface, frame.width, frame.height, dpi_, [&](ID2D1DeviceContext* context) { Paint(context, frame); }, readBack, hr);
+        perf::View::ThemeSwatches, surface, frame.width, frame.height, dpi_, [&](ID2D1DeviceContext* context) { Paint(context, frame); }, readBack, hr);
 }
 
 std::wstring ThemeSwatchesView::Open(const BarRect& row, UINT dpi, bool dark, std::vector<ThemeColor> accents) {
+    // A popover open already (Choose a Theme again) closes first, as the Mac's present does.
+    Close();
     if (!compositor_) return L"no compositor";
-    if (std::wstring problem = MakeWindow(); !problem.empty()) return problem;
+    if (std::wstring problem = popover_.Make(); !problem.empty()) return problem;
     dpi_ = dpi;
     dark_ = dark;
     accents_ = std::move(accents);
@@ -288,10 +245,9 @@ std::wstring ThemeSwatchesView::Open(const BarRect& row, UINT dpi, bool dark, st
         return HResultMessage(what, hr);
     };
     IDCompositionDevice* device = compositor_->Device();
-    if (!target_) {
-        if (FAILED(hr = device->CreateTargetForHwnd(window_, TRUE, target_.GetAddressOf())) ||
-            FAILED(hr = device->CreateVisual(visual_.GetAddressOf())) || FAILED(hr = target_->SetRoot(visual_.Get()))) {
-            target_.Reset();
+    if (!popover_.HasTarget()) {
+        if (!visual_ && FAILED(hr = device->CreateVisual(visual_.GetAddressOf()))) return fail(L"building the theme swatches' composition");
+        if (FAILED(hr = popover_.MakeTarget(device, visual_.Get()))) {
             visual_.Reset();
             return fail(L"building the theme swatches' composition");
         }
@@ -311,13 +267,15 @@ std::wstring ThemeSwatchesView::Open(const BarRect& row, UINT dpi, bool dark, st
         Close();
         return error;
     }
+    if (std::exchange(loseDeviceInOpen_, false)) {
+        hr = DXGI_ERROR_DEVICE_REMOVED;
+        return fail(L"the smoke test's lost GPU");
+    }
     if (FAILED(hr = compositor_->Commit())) return fail(L"showing the theme swatches");
     POINT topLeft = frame_.origin;
-    ClientToScreen(owner_, &topLeft);
-    // Just over its owner (an owned window always is), never over another app's window; a quiet
-    // run's stays hidden, its size and place set all the same.
-    SetWindowPos(window_, nullptr, topLeft.x, topLeft.y, static_cast<int>(frame_.width), static_cast<int>(frame_.height),
-                 SWP_NOACTIVATE | (offscreen_ ? 0 : SWP_SHOWWINDOW) | SWP_NOZORDER | SWP_NOOWNERZORDER);
+    ClientToScreen(popover_.Owner(), &topLeft);
+    // A quiet run's stays hidden, its size and place set all the same.
+    popover_.Place(topLeft, frame_.width, frame_.height, !offscreen_);
     open_ = true;
     return {};
 }
@@ -340,13 +298,11 @@ void ThemeSwatchesView::Close() {
     pressed_.reset();
     if (!open_) return;
     open_ = false;
-    if (window_) {
-        if (GetCapture() == window_) ReleaseCapture();
-        ShowWindow(window_, SW_HIDE);
-    }
+    popover_.Hide();
     // Its surface goes until it opens again (the next commit carries it).
     if (visual_) visual_->SetContent(nullptr);
     surface_.Reset();
+    if (callbacks_.closed) callbacks_.closed();
 }
 
 std::wstring ThemeSwatchesView::Render(const BarRect& row, UINT dpi, bool dark, std::vector<ThemeColor> accents, Pixels& out, POINT& origin) {
