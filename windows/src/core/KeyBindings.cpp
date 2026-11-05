@@ -302,6 +302,7 @@ const std::vector<ShortcutCommand>& ShortcutCommands() {
         std::vector<ShortcutCommand> c{
             {"newTab", "New Tab…", Ctrl("t")},
             {"reopenClosedTab", "Restore Last Closed Tab", CtrlShift("t"), {}},
+            {"importFromArc", "Import from Arc…", std::nullopt},
             {"openLocation", "Open Location…", std::nullopt},
             {"archiveTab", "Archive Tab", Ctrl("w"), {Ctrl("f4")}},  // closes the bar first
             {"closeWindow", "Close Window", CtrlShift("w"), {}},

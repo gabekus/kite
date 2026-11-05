@@ -76,11 +76,21 @@ struct ParseError {
 // Strict RFC 8259: one value, optional surrounding whitespace, nothing else.
 std::variant<Value, ParseError> Parse(std::string_view text);
 
+// The value, or nullopt when the text isn't one value.
+std::optional<Value> ParseValue(std::string_view text);
+
 // Compact, sorted keys, UTF-8 output; numbers use the shortest round-trip form.
 std::string Write(const Value& value);
 // The same, appended to `out`: for a file written as a stream (history.json) rather than
 // built as one Value first.
 void Append(std::string& out, const Value& value);
 void AppendString(std::string& out, std::string_view text);
+
+// Lookups for walking loosely typed files (Arc's): a missing object passes through as nullptr.
+const Value* Member(const Value* object, std::string_view key);
+// The member when it's an object, else nullptr.
+const Value* ObjectMember(const Value* object, std::string_view key);
+// The member when it's a string, else nullptr.
+const std::string* StringMember(const Value* object, std::string_view key);
 
 }  // namespace kite::json
