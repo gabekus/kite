@@ -6,22 +6,27 @@
 //
 // The session's changes go into the BrowserState the caller saves; the shortcut changes and Air
 // Traffic Control routes go into the profile's keybindings.json and LinkRouting.json, as the
-// Mac's KeyBindingsStore and AirTrafficControlStore keep them.
+// Mac's KeyBindingsStore and AirTrafficControlStore keep them; each Arc profile's history goes
+// into the history of the Kite profile its spaces went to (MergeHistories, core/HistoryStore.h).
 //
-// Reading takes a moment (Arc's files, the Web Data database), so the app runs Read* off its UI
-// thread. Delete with ArcImport.h once Arc has shut down.
+// Reading takes a moment (Arc's files, the Web Data and History databases), so the app runs
+// Read* off its UI thread. Delete with ArcImport.h once Arc has shut down.
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
 #include <variant>
 #include <vector>
 
+#include "core/ArcHistoryImport.h"
 #include "core/ArcImport.h"
 #include "core/ArcImportFiles.h"
+#include "core/HistoryStore.h"
 #include "core/Json.h"
 #include "core/Models.h"
 
@@ -53,11 +58,17 @@ struct Sidebar {
 inline constexpr size_t kMaxArcFileBytes = size_t{1} << 30;
 
 // How Arc's files are read: imported tabs' time, the size cap (tests make it small), and a flag
-// the app sets to stop a read whose window is closing (checked between files).
+// the app sets to stop a read whose window is closing (checked between files, and before each
+// leaf page of a History).
 struct ReadOptions {
     Timestamp now = Now();
     size_t maxFileBytes = kMaxArcFileBytes;
     const std::atomic<bool>* cancel = nullptr;
+    // Whether to read each profile's History: not when there's no history to put it in (the
+    // Mac's incognito windows).
+    bool history = true;
+    // The most pages read from each profile's History (History::kMaxEntries; tests make it small).
+    size_t maxHistoryEntries = History::kMaxEntries;
 };
 
 // Why no sidebar imported, in the Mac's words. `failure` none: no file could be read.
@@ -66,7 +77,11 @@ struct LoadError {
     std::string message;
     std::string detail;
     bool tooLarge = false;  // the sidebar is past ReadOptions::maxFileBytes
+    bool internal = false;  // the read itself failed (out of memory, say): no folder would help
 };
+// An exception out of a read (ReadAuto, ReadPicked) as a LoadError: callers on a worker catch
+// everything, so a crafted file can never end the process.
+LoadError ReadFailed(const char* what);
 
 // Arc's sidebar from `folder`: StorableSidebar.json, read again a moment later if it was cut
 // short (Arc writing it), then Arc's dated backups newest first. Failing that, why the current
@@ -91,6 +106,10 @@ struct Plan {
     std::optional<LinkRouting> routes;
     std::map<std::string, std::string> profileNames;
     Settings settings;
+    // Each Arc profile's history (Default and the profiles the sidebar's spaces use), by Arc
+    // profile folder: the ones whose History read.
+    std::map<std::string, HistoryRead> histories;
+    size_t historyCap = History::kMaxEntries;  // the most read from each (ReadOptions::maxHistoryEntries)
     // Files that are there but didn't come over, for the confirmation and the summary.
     std::vector<FileProblem> unreadable;
 };
@@ -125,6 +144,15 @@ struct Imported {
     json::Array skipped, notes;
     std::vector<KeyBindingOverride> keyBindings;  // for keybindings.json
     std::optional<LinkRouting> routes;            // for LinkRouting.json, to spaces Kite has
+    // For MergeHistories: each Arc profile's pages with the Kite profile folder they go to (two
+    // Arc profiles can go to one).
+    struct PendingHistory {
+        std::string kiteProfile;
+        std::vector<HistoryEntry> entries;
+    };
+    std::vector<PendingHistory> histories;
+    // What MergeHistories has done so far, across its passes.
+    size_t historyMerged = 0, historyAdded = 0, historyDropped = 0;
 };
 
 // The import (the Mac's perform), in two steps so the session is saved before anything else is
@@ -133,6 +161,21 @@ struct Imported {
 // shortcut changes and routes into `profileDirectory`'s keybindings.json and LinkRouting.json.
 Imported Import(BrowserState& state, const Plan& plan, ImportOptions options = {});
 void WriteProfileFiles(Imported& imported, const std::filesystem::path& profileDirectory);
+// Then (in any order after Import) each Arc profile's history into its Kite profile's store, as
+// the Mac's perform does (History::Merge: a page already there keeps the later visit and the
+// higher count, so importing again doubles nothing). Counts what was new, and what Kite's
+// 20,000-page cap then dropped, into the summary; the stores save at once. The stores must have
+// been started (HistoryStores::Start). `waitForLoads`: how long to wait for their files to be
+// read first, so the counts are against what they hold; false, and nothing merged, when they
+// weren't read in that time. Zero (the app's) doesn't wait: a store whose file isn't read yet
+// queues the pages and merges them over it once it is (new pages aren't counted then).
+// `profiles`: how many of the waiting profiles this pass merges (the app merges one a message, so
+// the UI thread is held for one profile's merge at a time); the rest stay in `histories`, and
+// the counts add up across passes. Merging on the history worker, from a snapshot, is the
+// follow-up that takes it off the UI thread altogether.
+bool MergeHistories(Imported& imported, HistoryStores& stores,
+                    std::chrono::milliseconds waitForLoads = std::chrono::milliseconds::zero(),
+                    size_t profiles = std::numeric_limits<size_t>::max());
 // Counts per kind of what came over, what was skipped and why, and the notes. Never Arc's
 // titles, addresses or names.
 json::Value Summary(const Imported& imported);

@@ -1,5 +1,5 @@
 // Ports of KiteCore's ArcArchiveSettingsImportTests (the archive and settings cases; its
-// history cases wait for a history store), ArcKeyBindingsImportTests and
+// history cases are in HistoryTests.cpp, and the history import in ArcHistoryImportTests.cpp), ArcKeyBindingsImportTests and
 // ArcLinkRoutingImportTests, case for case, each named after its Swift test. Then what Kite for
 // Windows adds: Arc for Windows' settings plist, the Web Data reader behind Site Search (the
 // Mac uses the system's SQLite), and ArcImportController's folder handling and import, on the
@@ -661,6 +661,27 @@ TEST(SQLiteReader_refusesOverflowLoopsAndSharedChains) {
     CHECK(!ReadT(Database(kT, "t", {TablePage(false, {{200, cellTo(77)}})})));
 }
 
+TEST(ArcHistoryImport_aNumberTitleReadsAsSQLiteWritesIt) {
+    // A title stored as a REAL or an INTEGER (a column without affinity, as a crafted file can
+    // have) is the text sqlite3_column_text gives the Mac: "%!.15g", "1.5", "3.0", "42".
+    const std::string sql = "CREATE TABLE urls(id INTEGER PRIMARY KEY, url, title, visit_count, last_visit_time, hidden)";
+    const double visited = 13.4e15;  // Chromium microseconds, as a REAL (read as the integer it is)
+    auto row = [&](int id, const std::string& url, std::variant<std::string, double, int> title) {
+        return LeafCell(id, Record({id, url, title, 1, visited - id * 1000, 0}));
+    };
+    const std::string file = Database(sql, "urls",
+                                      {TablePage(false, {{100, row(1, "https://a.example/", 1.5)},
+                                                         {200, row(2, "https://b.example/", 3.0)},
+                                                         {300, row(3, "https://c.example/", 42)},
+                                                         {400, row(4, "https://d.example/", std::string("Text"))}})});
+    sqlite::MemoryPages pages(file);
+    auto read = ReadChromiumHistory(pages);
+    CHECK(read && read->entries.size() == 4);
+    if (!read || read->entries.size() != 4) return;
+    CHECK(read->entries[0].title == "1.5" && read->entries[1].title == "3.0" && read->entries[2].title == "42" && read->entries[3].title == "Text");
+    CHECK(read->entries[0].lastVisit == History::ChromiumDate(static_cast<int64_t>(visited - 1000)));
+}
+
 TEST(SQLiteReader_aHotJournalIsSeen) {
     CHECK(sqlite::IsHotJournal(std::string("\xD9\xD5\x05\xF9\x20\xA1\x63\xD7", 8) + std::string(504, '\0')));
     CHECK(!sqlite::IsHotJournal(""));
@@ -807,7 +828,7 @@ TEST(ArcImportController_importsTheFixtureFolder) {
     CHECK(!IncludesUntitled(plan, {}));  // the fixture has a named space: the Mac's default
     const auto lines = ConfirmLines(plan, state, false);
     CHECK(lines.size() >= 3 && lines[0] == "Found 1 space, 1 favorite, 6 tabs, 1 folder and 1 split view.");
-    CHECK(lines[1] == "Also imports 2 archived tabs, 6 Site Search shortcuts, 2 keyboard shortcut changes, 1 Air Traffic Control route and "
+    CHECK(lines[1] == "Also imports 2 archived tabs, 86 history pages, 6 Site Search shortcuts, 2 keyboard shortcut changes, 1 Air Traffic Control route and "
                       "2 Arc settings (Warn before quitting, Archive tabs after: 7 days).");
     CHECK(UntitledCounts(plan) == std::make_pair(1, 1));
 
@@ -829,7 +850,7 @@ TEST(ArcImportController_importsTheFixtureFolder) {
         return 0;
     };
     CHECK(skippedKind("unnamedSpaces") == 1 && skippedKind("routesToProfiles") == 1 && skippedKind("sidebarItem:easel") == 1 &&
-          skippedKind("history") == -1);
+          skippedKind("historyHidden") == 1 && skippedKind("history") == 0);
     // The one icon Kite has no match for is the unnamed space's, which stayed out.
     CHECK(skippedKind("spaceIcons") == 0);
 
@@ -870,7 +891,7 @@ TEST(ArcImportController_aHotWebDataJournalLeavesSiteSearchOut) {
     if (!std::holds_alternative<Plan>(read)) return;
     const Plan& plan = std::get<Plan>(read);
     CHECK(plan.siteSearches.empty() && plan.unreadable.size() == 1 && plan.unreadable[0].file == "Web Data" &&
-          plan.unreadable[0].reason.starts_with("Arc is writing it"));
+          plan.unreadable[0].reason.starts_with("Arc didn't finish its last write"));
     // Only its first 8 bytes are read: a hot journal far past any read cap is still hot.
     fs::resize_file(dir.path / "Arc" / "User Data" / "Default" / "Web Data-journal", uintmax_t{70} << 20);
     read = ReadAuto(dir.path / "Arc");
