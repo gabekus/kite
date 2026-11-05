@@ -82,6 +82,8 @@ public:
     Outcome Move(float x, float y);
     Outcome Release(float x, float y);
     bool InField(float x, float y) const;
+    // The field's box (its left to right, its line), in page points.
+    D2D1_RECT_F Box() const { return D2D1_RECT_F{left_, lineTop_, right_, lineTop_ + lineHeight_}; }
     // Done's box, in page points (for a test's press); none with no Done.
     std::optional<D2D1_RECT_F> DoneBox() const { return done_ ? std::optional<D2D1_RECT_F>(doneBox_) : std::nullopt; }
 

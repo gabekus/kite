@@ -53,6 +53,13 @@
 //   Kite.exe --capture FILE.png --favorite-hover N | --favorite-click N
 //                            the same with the pointer resting on the Nth favorite's pane (from 1, in
 //                            the grid's order), or after a click on it (pressed and let go there).
+//   Kite.exe --capture FILE.png --rename-row N | --hover-row N
+//                            the same with the selected space's Nth row (from 1, as kitecore's
+//                            `sidebar` lists them) renamed in place, a tab's or folder's, its name
+//                            all selected; or with the pointer resting on it (a pinned tab off its
+//                            page shows Back to Pinned URL).
+//   Kite.exe --capture FILE.png --run-command ID
+//                            the same after the command ID (pinTab, say) ran, as its shortcut runs it.
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it

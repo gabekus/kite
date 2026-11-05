@@ -832,7 +832,7 @@ std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
         return L"the space menu isn't the Mac's";
     }
 
-    // Rename Spaceâ€¦: the field opens with the name, takes what's typed, and Return renames.
+    // Rename Space…: the field opens with the name, takes what's typed, and Return renames.
     const size_t index = state_.SelectedSpaceIndex();
     const std::string name = state_.spaces[index].name;
     if (std::wstring problem = HoldRename(index, "Smoke"); !problem.empty()) return problem;
@@ -1020,13 +1020,26 @@ std::wstring BrowserWindowController::SmokeTestTabEditing() {
     SendMouse(window_.Handle(), WM_LBUTTONUP, *at, 0);
     if (sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Tab, tab}) return done(L"a double-click on a tab's row didn't rename it");
     if (std::wstring problem = Draw(); !problem.empty()) return done(L"the tab's rename field couldn't draw: " + problem);
+    // A press in its row past the field's end (where the hidden close button would be) does nothing:
+    // the tab stays, still renaming.
+    if (const std::optional<POINT> end = sidebar_->RenameFieldEnd()) {
+        const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+        const POINT past{end->x + std::lround(4 * scale), end->y};
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, past, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, past, 0);
+        if (!state_.FindTabByID(tab)) return done(L"a press past a renamed tab's field closed the tab");
+        if (sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Tab, tab}) return done(L"a press in a renamed tab's row ended its rename");
+    } else {
+        return done(L"the tab's rename field has no place");
+    }
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the tab's rename field couldn't draw: " + problem);
     const size_t pageDraws = sidebar_->PageDraws();
     typed(L"Smoke");
     if (std::wstring problem = Draw(); !problem.empty()) return done(L"the tab's rename field couldn't draw: " + problem);
     if (sidebar_->PageDraws() != pageDraws) return done(L"typing in a tab's rename drew its page, not only the field");
     SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
     if (sidebar_->Renaming() || state_.FindTabByID(tab)->DisplayTitle() != "Smoke") return done(L"Return didn't rename the tab");
-    // Rename Current Tabâ€¦: Escape keeps the name; a blank name goes back to the page's title.
+    // Rename Current Tab…: Escape keeps the name; a blank name goes back to the page's title.
     RunCommand("renameCurrentTab");
     typed(L"Not this");
     SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
@@ -1103,7 +1116,11 @@ std::wstring BrowserWindowController::SmokeTestLiveReset() {
     const Tab* shown = state_.SelectedTab();
     // The CI smoke's page (windows/helix/pages/smoke.html), whose neighbour audio.html is where it
     // goes: a page of the same origin (file://, no network), so it stays in its renderer.
-    if (!chromium_ || !firstPageMade_ || !shown || !shown->url || !shown->url->ends_with("/smoke.html")) return {};
+    if (!chromium_) return {};  // a build or run without pages: nothing live to reset
+    // With pages, the smoke test runs on the CI's smoke page: anything else fails, rather than skip.
+    if (!firstPageMade_ || !shown || !shown->url || !shown->url->ends_with("/smoke.html")) {
+        return L"Back to Pinned URL's live check needs the shown tab on windows/helix/pages/smoke.html";
+    }
     const std::string id = shown->id, home = *shown->url;
     const bool wasPinned = state_.Location(id)->section == TabSection::Pinned;
     // The page's reports (its address, its title) as the message loop would run them, for at most

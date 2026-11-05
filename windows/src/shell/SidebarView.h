@@ -140,6 +140,8 @@ public:
     // For the tests: the rename's Done, its centre in client px; and the rename drawn with the
     // keyboard (a quiet capture's window never has it), its selection in the focused colour.
     std::optional<POINT> RenameDoneCentre() const;
+    // The open field's right end, mid-line, in client px (a test's press just past it).
+    std::optional<POINT> RenameFieldEnd() const;
     // The middle of the selected space's name in its header, client px (a click there renames).
     std::optional<POINT> HeaderNameCentre();
     void FocusRenameForCapture();
@@ -326,6 +328,9 @@ private:
     void FinishDrop();
     // Whether `row` is the one being renamed.
     bool Renames(const SidebarRow& row) const;
+    // Whether a point on the selected page (page points) is in the pill of the tab or folder row
+    // being renamed.
+    bool InRenamedRow(D2D1_POINT_2F q) const;
     // Where the rename field sits over its row drawn at `top` (DrawRow's), even one out of view
     // (the field's clip hides it there).
     void PlaceRenameField(const SidebarRow& row, float top);

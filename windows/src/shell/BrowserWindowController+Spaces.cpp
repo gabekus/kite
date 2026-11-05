@@ -62,7 +62,7 @@ void BrowserWindowController::RenameSpace(const std::string& spaceID, const std:
     const auto index = state_.SpaceIndex(spaceID);
     if (!index) return;
     const std::string before = state_.spaces[*index].name;
-    state_.RenameSpace(spaceID, name);
+    RecordEdit([&] { state_.RenameSpace(spaceID, name); });
     if (state_.spaces[*index].name != before) StateChanged();
 }
 

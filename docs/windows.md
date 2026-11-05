@@ -1061,7 +1061,9 @@ Tab… opens the row's name field (`shell/RenameField`, W9d's header field gener
 title all selected in the row's 14pt, "Keep it short and sweet!" when empty, over the field
 editor's background, with no Done; Return renames (a blank name goes back to the page's title),
 Escape doesn't, and leaving it keeps what was typed, as does its row going (another space shown,
-the tab moved into a closed folder: `SidebarShowsRow`, one walk to the row). A row that only moves
+the tab moved into a closed folder: `SidebarShowsRow`, one walk to the row). A press elsewhere in the
+renamed row does nothing and the field keeps editing (the Mac's row hides its close and Back to
+Pinned URL while it renames, and its tap ignores a renaming row). A row that only moves
 (Pin Tab mid-rename) keeps its field, still editing, as the Mac's list moves a row by its id
 (SidebarList.apply's moveRow), keeping its cell and field. A double-click on a split pane's row does
 nothing (the Mac's split is one SplitRowCell, with no doubleTapped). A folder's field is the same in its 14pt semibold with no
