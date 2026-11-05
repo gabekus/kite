@@ -74,6 +74,57 @@ public enum FindTestHook: Equatable, Sendable {
         return pageShown && !pageLoading
     }
 
+    /// Whether a look at the selected tab (polled, for a load that finished before the hook was armed, or one whose
+    /// notification didn't match) finds its page loaded: shown, not loading, and its progress at 1.
+    public static func runs(selectedTab: UUID?, pageShown: Bool, pageLoading: Bool?, progress: Double?) -> Bool {
+        guard selectedTab != nil, pageShown, pageLoading == false, let progress else { return false }
+        return progress >= 1
+    }
+
+    /// Whether this run's pages keep answering in a covered window. A test-safe window sits behind the user's
+    /// windows, and WebKit stops serving an occluded window's page (its window occlusion detection): the selected
+    /// page never finishes loading, so the hook would never run, and a find would never come back. With a find hook
+    /// a page's occlusion detection is off, as `KITE_TEST_CONTEXT_MENU` already turns it off. It only keeps the
+    /// page drawing and answering behind the other windows; nothing comes to the front.
+    public static func keepsCoveredPagesAnswering(environment: [String: String], testSafe: Bool) -> Bool {
+        from(environment: environment, testSafe: testSafe) != nil
+    }
+
+    /// The stderr line when the hook starts waiting for the page.
+    public static func armedLine(_ hook: FindTestHook, coveredPagesAnswer: Bool, windowVisible: Bool) -> String {
+        let what: String
+        switch hook {
+        case .open: what = "open, empty"
+        case .query(let text): what = "query \(quote(text))"
+        }
+        return "\(logPrefix) armed: \(what); waiting up to \(Int(pageLoadTimeout)) s for the selected tab's page to load "
+            + "(covered pages answer: \(coveredPagesAnswer ? "yes" : "no"), window visible: \(windowVisible ? "yes" : "no"))"
+    }
+
+    /// What the hook saw while it waited, for the line it writes when it gives up.
+    public struct Wait: Equatable, Sendable {
+        /// Finished-load notifications from the window's pages, and how many were the selected tab's.
+        public var loads = 0
+        public var selectedLoads = 0
+        public var selectedTab = false
+        public var pageShown = false
+        public var pageLoading: Bool?
+        public var progress: Double?
+        public var windowVisible = false
+
+        public init() {}
+    }
+
+    /// The stderr line when no page finished loading in time; the bar stays closed.
+    public static func timeoutLine(_ wait: Wait) -> String {
+        let loading = wait.pageLoading.map { $0 ? "yes" : "no" } ?? "unknown"
+        let progress = wait.progress.map { String(format: "%.2f", $0) } ?? "unknown"
+        return "\(logPrefix) no page finished loading in \(Int(pageLoadTimeout)) s, so the find bar wasn't opened "
+            + "(finished loads seen: \(wait.loads), of the selected tab: \(wait.selectedLoads); selected tab: "
+            + "\(wait.selectedTab ? "yes" : "no"), page shown: \(wait.pageShown ? "yes" : "no"), loading: \(loading), "
+            + "progress: \(progress), window visible: \(wait.windowVisible ? "yes" : "no"))"
+    }
+
     /// The stderr line once the bar is open with an empty field.
     public static var openLine: String { "\(logPrefix) ready: open, empty" }
 
@@ -84,11 +135,6 @@ public enum FindTestHook: Equatable, Sendable {
         if let activeMatch { parts.append("active \(activeMatch)") }
         parts.append("counter \(quote(counter))")
         return parts.joined(separator: ", ")
-    }
-
-    /// The stderr line when no page finished loading in time; the bar stays closed.
-    public static var timeoutLine: String {
-        "\(logPrefix) no page finished loading in \(Int(pageLoadTimeout)) s, so the find bar wasn't opened"
     }
 
     /// The stderr line for a value a test-safe run doesn't take.
