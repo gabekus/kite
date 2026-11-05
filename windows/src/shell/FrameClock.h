@@ -50,7 +50,9 @@ public:
     // Now, in seconds (QueryPerformanceCounter).
     static double Now();
     // When the next frame reaches the screen, in Now()'s seconds; Now() when `device` can't say.
-    static double NextFrameTime(IDCompositionDevice* device);
+    // With `rateHz`, also the compositor's current rate (0 when it can't say), from the same
+    // statistics.
+    static double NextFrameTime(IDCompositionDevice* device, double* rateHz = nullptr);
 
 private:
     void Run();

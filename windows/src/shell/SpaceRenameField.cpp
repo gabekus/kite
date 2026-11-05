@@ -174,7 +174,7 @@ std::wstring SpaceRenameField::Draw(Pixels* readBack, POINT* origin) {
         visual_->SetOffsetY(static_cast<float>(at.y));
         const D2D1_POINT_2F shift{-static_cast<float>(at.x) / scale, -static_cast<float>(at.y) / scale};
         const std::wstring error = compositor_->DrawSurface(
-            surface_.Get(), width, height, dpi_,
+            perf::View::Sidebar, surface_.Get(), width, height, dpi_,
             [&](ID2D1DeviceContext* context) {
                 D2D1_MATRIX_3X2_F base{};
                 context->GetTransform(&base);

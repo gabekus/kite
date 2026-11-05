@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 
+#include "shell/PerfLog.h"
 #include "shell/Renderer.h"
 
 namespace kite {
@@ -52,17 +53,25 @@ public:
     // Draws `content` (in points, at `dpi`) into all of `surface`, `width` × `height` px,
     // cleared first, then the same drawing into a texture read back as premultiplied BGRA when
     // `readBack` is given (for --capture). Empty on success, else what failed;
-    // IsDeviceLost(hr) says whether the GPU went.
+    // IsDeviceLost(hr) says whether the GPU went. `view` is whose surface it is, for
+    // --perf-log's count of surface draws.
     using Content = std::function<void(ID2D1DeviceContext*)>;
-    std::wstring DrawSurface(IDCompositionVirtualSurface* surface, UINT width, UINT height, UINT dpi, const Content& content,
-                             Pixels* readBack, HRESULT& hr);
+    std::wstring DrawSurface(perf::View view, IDCompositionVirtualSurface* surface, UINT width, UINT height, UINT dpi,
+                             const Content& content, Pixels* readBack, HRESULT& hr);
     // Draws `content` (the surface's whole drawing, in points at `dpi`) again only inside
     // `rect` (px of the surface), cleared first: the rest of the surface keeps its pixels. For a
     // part that changed alone (a cell, a field), or rows of a large virtual surface drawn as
     // they scroll into view.
-    std::wstring DrawSurfaceRect(IDCompositionVirtualSurface* surface, const RECT& rect, UINT dpi, const Content& content, HRESULT& hr);
+    std::wstring DrawSurfaceRect(perf::View view, IDCompositionVirtualSurface* surface, const RECT& rect, UINT dpi, const Content& content,
+                                 HRESULT& hr);
     // Shows every change made to the tree and its surfaces since the last commit, at once.
-    HRESULT Commit() { return device_->Commit(); }
+    // Every commit of the window's device comes through here, so --perf-log counts them all.
+    HRESULT Commit() {
+        perf::CountCommit();
+        const HRESULT hr = device_->Commit();
+        if (perf::On()) perf::Committed();
+        return hr;
+    }
 
     // The GPU was reset or removed (a driver update, a TDR, a hybrid GPU switching): this
     // compositor and its renderer can't draw again and have to be recreated.

@@ -579,14 +579,14 @@ std::wstring SpaceIconPickerView::Redraw() {
     frameHeight_ = height;
     const auto paint = [this](ID2D1DeviceContext* context) { PaintFrame(context); };
     if (frameDirty_) {
-        if (std::wstring error = compositor_->DrawSurface(frameSurface_.Get(), width, height, dpi_, paint, nullptr, hr); !error.empty()) {
+        if (std::wstring error = compositor_->DrawSurface(perf::View::IconPicker, frameSurface_.Get(), width, height, dpi_, paint, nullptr, hr); !error.empty()) {
             deviceLost_ = IsDeviceLost(hr);
             return error;
         }
         ++draws_;
     } else {
         for (const RECT& part : frameParts_) {
-            if (std::wstring error = compositor_->DrawSurfaceRect(frameSurface_.Get(), part, dpi_, paint, hr); !error.empty()) {
+            if (std::wstring error = compositor_->DrawSurfaceRect(perf::View::IconPicker, frameSurface_.Get(), part, dpi_, paint, hr); !error.empty()) {
                 deviceLost_ = IsDeviceLost(hr);
                 return error;
             }
@@ -650,7 +650,7 @@ std::wstring SpaceIconPickerView::DrawGridRows(HRESULT& hr) {
         const RECT rect{0, rowTop(row), static_cast<LONG>(width), std::min(rowTop(last), static_cast<LONG>(height))};
         const size_t from = row, to = last;
         if (std::wstring error = compositor_->DrawSurfaceRect(
-                gridSurface_.Get(), rect, dpi_, [&](ID2D1DeviceContext* context) { PaintEmoji(context, from, to); }, hr);
+                perf::View::IconPicker, gridSurface_.Get(), rect, dpi_, [&](ID2D1DeviceContext* context) { PaintEmoji(context, from, to); }, hr);
             !error.empty()) {
             return error;
         }
@@ -666,7 +666,7 @@ std::wstring SpaceIconPickerView::DrawGridRows(HRESULT& hr) {
             const PickerRect frame = IconPickerCellFrame(layout_, index, layout_.grid.top);
             const RECT rect{std::lround(std::floor(frame.left * scale)), rowTop(row), std::lround(std::ceil(frame.right * scale)), rowTop(row + 1)};
             if (std::wstring error = compositor_->DrawSurfaceRect(
-                    gridSurface_.Get(), rect, dpi_, [&](ID2D1DeviceContext* context) { PaintEmoji(context, row, row + 1); }, hr);
+                    perf::View::IconPicker, gridSurface_.Get(), rect, dpi_, [&](ID2D1DeviceContext* context) { PaintEmoji(context, row, row + 1); }, hr);
                 !error.empty()) {
                 return error;
             }
@@ -740,7 +740,7 @@ std::wstring SpaceIconPickerView::Render(Pixels& out, POINT& origin) {
                                                                         surface.GetAddressOf()))) {
         error = HResultMessage(L"creating the icon picker's surface", hr);
     } else {
-        error = compositor_->DrawSurface(surface.Get(), width, height, dpi_, [this](ID2D1DeviceContext* context) { PaintAll(context); }, &out, hr);
+        error = compositor_->DrawSurface(perf::View::IconPicker, surface.Get(), width, height, dpi_, [this](ID2D1DeviceContext* context) { PaintAll(context); }, &out, hr);
     }
     placement_ = shown;
     return error;

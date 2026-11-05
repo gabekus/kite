@@ -32,6 +32,7 @@
 #include "core/Uuid.h"
 #include "shell/Keys.h"
 #include "shell/MainWindow.h"
+#include "shell/PerfLog.h"
 #include "shell/QuietRun.h"
 #include "shell/Text.h"
 
@@ -356,9 +357,30 @@ void ApplyEnergySaver(const Chromium::Shared& shared) {
 // launch hands over to this one instead of opening a Chrome window of its own.
 class KiteApp : public CefApp, public CefBrowserProcessHandler {
 public:
-    explicit KiteApp(std::shared_ptr<Chromium::Shared> shared) : shared_(std::move(shared)) {}
+    KiteApp(std::shared_ptr<Chromium::Shared> shared, std::vector<std::string> switches)
+        : shared_(std::move(shared)), switches_(std::move(switches)) {}
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
 
+    // --chromium-switches, in the browser process only (its helpers get what Chromium passes on).
+    void OnBeforeCommandLineProcessing(const CefString& processType, CefRefPtr<CefCommandLine> commandLine) override {
+        if (!processType.empty()) return;
+        for (const std::string& entry : switches_) {
+            const size_t equals = entry.find('=');
+            if (equals == std::string::npos) {
+                commandLine->AppendSwitch(entry);
+                continue;
+            }
+            const std::string name = entry.substr(0, equals);
+            std::string value = entry.substr(equals + 1);
+            // A feature list adds to what's already there (CEF's own, or an earlier entry), never
+            // replaces it: appending a switch again replaces its value.
+            if (name == "disable-features" && commandLine->HasSwitch(name)) {
+                const std::string existing = commandLine->GetSwitchValue(name).ToString();
+                if (!existing.empty()) value = existing + "," + value;
+            }
+            commandLine->AppendSwitchWithValue(name, value);
+        }
+    }
     // Where the Mac applies Energy Saver after CefInitialize, and again at its first browser in
     // case the context wasn't ready: here the global preferences exist, and no browser does
     // yet, so one try covers both, and the browsers Chromium makes itself (the Mac's
@@ -378,6 +400,7 @@ public:
 
 private:
     const std::shared_ptr<Chromium::Shared> shared_;
+    const std::vector<std::string> switches_;
     IMPLEMENT_REFCOUNTING(KiteApp);
 };
 
@@ -424,6 +447,7 @@ public:
     // CefLifeSpanHandler
 
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
+        perf::Mark("browser-created", tabID_);
         // As the Mac's attachBrowser: the dark backdrop covers only the moments before a page
         // draws; a page with no background of its own is white, as in Chrome.
         CefRefPtr<CefDictionaryValue> color = CefDictionaryValue::Create();
@@ -747,6 +771,7 @@ public:
     // CefLoadHandler
 
     void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading, bool, bool) override {
+        perf::Mark(isLoading ? "load-begin" : "load-end", tabID_);
         shared_->Post([shared = shared_, id = tabID_, browser, isLoading] {
             if (shared->PageFor(id, browser) && shared->events.loadingChanged) shared->events.loadingChanged(id, isLoading);
         });
@@ -865,7 +890,7 @@ int RunChromiumSubprocess(HINSTANCE instance) {
 }
 
 Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
-                                      bool quiet, std::unique_ptr<Chromium>& out, std::wstring& error) {
+                                      bool quiet, std::vector<std::string> switches, std::unique_ptr<Chromium>& out, std::wstring& error) {
     // Chromium wants root_cache_path absolute and every cache_path inside it, else it keeps
     // that profile in memory only; built from the resolved path, like the Mac (realpath).
     std::error_code ec;
@@ -903,7 +928,10 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
     CefString(&settings.cache_path) = (resolved / L"Default").wstring();
     CefString(&settings.log_file) = (resolved / L"chromium.log").wstring();
     CefMainArgs args(instance);
-    if (!CefInitialize(args, settings, new KiteApp(shared), nullptr)) {
+    perf::Mark("cef-init-begin");
+    const bool initialized = CefInitialize(args, settings, new KiteApp(shared, std::move(switches)), nullptr);
+    perf::Mark("cef-init-end");
+    if (!initialized) {
         const int code = CefGetExitCode();
         CloseHandle(shared->allClosed);
         if (code == CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED) return StartResult::AlreadyRunning;
