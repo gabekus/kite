@@ -33,6 +33,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "core/HistoryStore.h"
@@ -92,6 +93,8 @@ public:
         // The profile's SpaceIcons folder: the pictures chosen as space icons (a capture
         // decodes them in place, the rest on a worker).
         std::filesystem::path spaceIcons;
+        // The profile's folder, where Import from Arc puts its shortcut changes and routes.
+        std::filesystem::path supportDirectory;
     };
 
     // The window and everything in it, laid out and wired, not yet shown or drawn. Null with
@@ -182,7 +185,11 @@ private:
     // (BrowserWindowController's Layout.defaultSidebarWidth and ArcMetrics.Content.inset).
     static constexpr int kSidebarWidth = 240;
     static constexpr int kContentInset = 10;
-    // The window's timers and posted messages.
+    // The window's timers and posted messages. The WM_APP messages, each its own: +1
+    // MainWindow::kWakeMessage, +2 the command bar's redraw, +3 the sidebar's redraw, +4 favicons,
+    // +5 the frame clock, +6 space icons, +7 memory pressure (W11), +8 history, +9 Import from
+    // Arc's read (kArcReadMessage), +10 arcSaved, +11 downloads, +20 perf. Filter checks that the
+    // ids it sees don't overlap.
     static constexpr UINT_PTR kSmokeTimer = 1;
     // The auto-archive's pass, every 15 minutes as on the Mac (AppDelegate's archiveTimer).
     static constexpr UINT_PTR kArchiveTimer = 2;
@@ -336,6 +343,19 @@ private:
     void ArchiveTab();
     void ReopenClosedTab();
     void MakeCommands();
+    // Import from Arc (BrowserWindowControllerArcImport.cpp, the Mac's ArcImportController):
+    // Arc's files are read on a worker, which posts kArcReadMessage when they're in.
+    static constexpr UINT kArcReadMessage = WM_APP + 9;  // the window's WM_APP ids: above, with kSmokeTimer
+    // The window's system menu item for it (Alt+Space): a WM_SYSCOMMAND id, under 0xF000.
+    static constexpr UINT kImportFromArcMenuID = 0x0A10;
+    // How long Import from Arc waits for the session's write before it writes the other files.
+    static constexpr std::chrono::milliseconds kArcImportFlush{3000};
+    struct ArcJob;
+    void ImportFromArc();
+    void ReadArc(std::optional<std::filesystem::path> picked);
+    void ArcRead();
+    // As the window goes: asks a running read to stop and waits for it (a few seconds at most).
+    void StopArcRead();
     void RunCommand(const std::string& command);
     bool PageCommand(const std::string& command);
     void DropCompositor();
@@ -398,7 +418,7 @@ private:
     std::vector<LoggedSave> saves_;
     uint64_t saveArms_ = 0;  // times a change (re)armed the save timer (the smoke test checks it)
     double createdAt_ = 0;  // FrameClock::Now() when the window was made, for the save log
-    bool closing_ = false;
+    bool closing_ = false;  // the window has begun to close (its session saved at once)
     // Destroyed in reverse: the views and the compositor before the window, the window before
     // Chromium (closing it destroys the browsers' windows, which Chromium's shutdown waits
     // for), and the GPU last.
@@ -487,6 +507,10 @@ private:
     std::map<std::string, std::function<void()>, std::less<>> commands_;
     // A shortcut ran from a key: the character Windows makes of that key isn't typed.
     bool dropCharacter_ = false;
+    // Import from Arc's read: the worker (joined before the window goes) and what it hands back.
+    std::thread arcThread_;
+    std::shared_ptr<ArcJob> arcJob_;
+    bool arcReading_ = false;  // from the command until the confirmation's answer
 #ifdef KITE_HAS_CEF
     // Each open popup's tab and the tab that opened it (the Mac's PagePool.popupOpeners).
     std::map<std::string, std::string> popupOpeners_;

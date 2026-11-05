@@ -35,8 +35,13 @@ endif()
 
 # The model (the Windows counterpart of KiteCore): standard C++ only, unit-tested headless.
 add_library(KiteCoreWin STATIC
+  src/core/AirTrafficControl.cpp
+  src/core/ArcImport.cpp
+  src/core/ArcImportController.cpp
+  src/core/ArcImportFiles.cpp
   src/core/CommandBar.cpp
   src/core/CommandLine.cpp
+  src/core/Files.cpp
   src/core/History.cpp
   src/core/HistoryStore.cpp
   src/core/Json.cpp
@@ -54,6 +59,10 @@ add_library(KiteCoreWin STATIC
   src/core/SymbolShape.cpp
   src/core/TextMatch.cpp
   src/core/PictureLoads.cpp
+  src/core/Plist.cpp
+  src/core/Profiles.cpp
+  src/core/SiteSearch.cpp
+  src/core/SQLiteReader.cpp
   src/core/SpaceSwipe.cpp
   src/core/SpaceSwipeGesture.cpp
   src/core/TouchpadPhases.cpp
@@ -127,6 +136,7 @@ if(WIN32)
     src/shell/BrowserWindowController+Chromium.cpp
     src/shell/BrowserWindowController+Spaces.cpp
     src/shell/BrowserWindowController+Tests.cpp
+    src/shell/BrowserWindowControllerArcImport.cpp
     src/shell/CaptionButtonsView.cpp
     src/shell/Capture.cpp
     src/shell/CommandBarView.cpp
@@ -305,6 +315,8 @@ endif()
 enable_testing()
 add_executable(KiteCoreTests
   tests/main.cpp
+  tests/ArcImportTests.cpp
+  tests/ArcImportFilesTests.cpp
   tests/CommandBarTests.cpp
   tests/CommandLineTests.cpp
   tests/HistoryTests.cpp
@@ -333,6 +345,14 @@ add_executable(KiteCoreTests
   tests/WorkerThreadTests.cpp
 )
 target_link_libraries(KiteCoreTests PRIVATE KiteCoreWin)
+if(NOT MSVC)
+  # GCC 15's -Wmaybe-uninitialized misfires inside std::variant copies of the tests' nested
+  # json::Value initializer lists (where it lands moves with inlining); the core keeps it.
+  target_compile_options(KiteCoreTests PRIVATE -Wno-maybe-uninitialized)
+endif()
+# The hand-made Arc for Windows folder Import from Arc's tests read (scripts/make-web-data.py
+# writes its Web Data), at the place Arc's package keeps it under %LOCALAPPDATA%.
+set(KITE_ARC_FIXTURE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/arc-windows/Packages/TheBrowserCompany.Arc_kitetest0001/LocalCache/Local/Arc")
 # What history costs (tests/HistoryBench.cpp): its own executable, since it counts every
 # allocation with its own operator new. CTest runs a small one so it keeps building and running.
 add_executable(history-bench tests/HistoryBench.cpp)
@@ -350,13 +370,16 @@ add_executable(gen-theme-golden EXCLUDE_FROM_ALL tests/GenThemeGolden.cpp)
 target_link_libraries(gen-theme-golden PRIVATE KiteCoreWin)
 # The session fixture shared with the Mac test suite.
 target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../Tests/Fixtures"
-                                               KITE_STATES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/helix/states")
+                                               KITE_STATES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/helix/states"
+                                               KITE_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+                                               KITE_ARC_FIXTURE_DIR="${KITE_ARC_FIXTURE_DIR}")
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)
 add_test(NAME history-bench COMMAND history-bench 300)
 add_test(NAME chromium-ignores-kites-command-line
   COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/shell/Chromium.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ChromiumSettingsCheck.cmake)
 add_test(NAME kitecore-cli
   COMMAND ${CMAKE_COMMAND} -DKITECORE=$<TARGET_FILE:kitecore> -DWORK=${CMAKE_CURRENT_BINARY_DIR}/kitecore-cli-test
+          -DARC_LOCAL_APP_DATA=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/arc-windows
           -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/KitecoreCliTest.cmake)
 if(KITE_BOOTSTRAPPED)
   # Kite.dll's load-time imports, both binaries' CFG and CET, and Kite.exe's manifest, version
