@@ -155,7 +155,21 @@ DirectComposition are untouched; CEF's callbacks reach Kite's thread through
 stay synchronous between the threads, because a child window on another
 thread shares its parent's input (focus and DPI changes, destroying the
 window), until W10 removes the child windows. A second
-launch hands over to the running Kite (Chromium allows one per profile). Profiles sit where the Mac keeps them: `<support>\Chromium`
+launch hands over to the running Kite (Chromium allows one per profile). Kite.exe's command
+line is Kite's, but Chromium reads the raw line too: CEF's startup parses it before
+`command_line_args_disabled` stops the browser process's later reads, and each helper's
+`CefExecuteProcess` reads it whole. Chromium trims every argument of Unicode whitespace and takes
+`--`, `-` and `/` as switch prefixes, case-insensitively, and acts on `chromehtml:` itself. So
+Kite takes only its own flags and their values (`core/CommandLine.h`): any other argument, a
+value Chromium could read as a switch, or `chromehtml:` anywhere, is an error before anything
+starts. `--type` launches are Chromium's own helpers: one spelled any other way than Chromium's
+`--type=X`, or for a helper Kite doesn't run (a crashpad handler), exits at once.
+`--wait-for-debugger` is still honoured before Kite's parser runs (CEF's own startup); it only
+waits. W30's protocol and file handlers must register as `"Kite.exe" --single-argument %1`, as
+Chrome does, with `Arguments()` reading the raw line the same way (everything after
+`--single-argument` is one argument, never a switch), and must pass the URL it checked itself: a
+second launch's arguments don't reach `OnAlreadyRunningAppRelaunch` with arguments disabled, so
+the relaunch message has to carry and validate it. Profiles sit where the Mac keeps them: `<support>\Chromium`
 is `root_cache_path`, the default profile is `Chromium\Default`, and a
 space's other profile gets its own request context in `Chromium\<directory>`.
 Popups and `target=_blank` links open as tabs that keep `window.opener`, as
