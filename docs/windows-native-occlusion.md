@@ -112,8 +112,10 @@ Reading them:
     runs were such runs, and their "on" arm stayed `hidden`). With the tracker off, it would
     have run through a lock or display off.
   - #410 re-hides a page Kite has hidden by showing and hiding its windows: when the page
-    reports it reads as visible, and at 0.5, 1.5, 3 and 6 s after each of its load ends
-    whatever it says (docs/windows.md, P2, "A page Kite hides stays hidden").
+    reports it reads as visible, and at 0.5, 1, 1.5, 3 and 6 s after anything the browser sees
+    that might make Chromium show it (its browser made, its placement going hidden, a main
+    frame's load starting or ending), whatever it says (docs/windows.md, P2, "A page Kite
+    hides stays hidden").
   - Measured with `--p2-from-launch` (P2 on from Kite's start, Kite covered by the desktop
     from about 0.16 s), medians. CPU is Kite's total, "off" arm (Kite's default), before #410
     → with it. The animating page, 3 runs per arm; `--page docopen`, the same page written over
@@ -121,14 +123,14 @@ Reading them:
 
     | phase | anim: Kite CPU ms/s | docopen: Kite CPU ms/s | page hidden %, rAF fps (both) |
     |---|---:|---:|---|
-    | idle | 488 → 7.6 | 561 → 9.9 | 0 %, 350 → 100 %, 0 |
-    | nearMover | 471 → 2.2 | 519 → 2.1 | 0 %, 348 → 100 %, 0 |
-    | covered | 484 → 3.2 | 561 → 3.1 | 0 %, 350 → 100 %, 0 |
-    | overMover | 474 → 3.2 | 502 → 3.0 | 0 %, 348 → 100 %, 0 |
-    | lockNotice | 482 → 2.3 | 521 → 2.2 | 0 %, 350 → 100 %, 0 |
+    | idle | 488 → 9.7 | 561 → 7.8 | 0 %, 350 → 100 %, 0 |
+    | nearMover | 471 → 2.1 | 519 → 2.1 | 0 %, 348 → 100 %, 0 |
+    | covered | 484 → 3.6 | 561 → 3.1 | 0 %, 350 → 100 %, 0 |
+    | overMover | 474 → 4.1 | 502 → 3.0 | 0 %, 348 → 100 %, 0 |
+    | lockNotice | 482 → 2.3 | 521 → 2.6 | 0 %, 350 → 100 %, 0 |
 
-    The "on" arm (tracker back on) went the same way: covered 481 → 3.5 (docopen 579 → 4.2),
-    lockNotice 477 → 2.3. Its movers stayed at 21–23 ms/s, the tracker's ~1,840–1,930 cs/s.
+    The "on" arm (tracker back on) went the same way: covered 481 → 3.2 (docopen 579 → 3.6),
+    lockNotice 477 → 2.6. Its movers stayed at 22–23 ms/s, the tracker's ~1,840–1,930 cs/s.
     ("with it" is #410 as merged, after its review.)
 
 ## Short answer (P12a)
