@@ -669,6 +669,13 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         }))
     }
 
+    func browser(_ browser: KCBrowser, systemBlocksPermissions permissions: [NSNumber]) {
+        let devices = permissions.compactMap { KCSitePermission(rawValue: $0.intValue) }.compactMap { permission in
+            permission == .camera ? SystemMediaAccess.Device.camera : permission == .microphone ? .microphone : nil
+        }
+        SystemMediaAccess.reportBlocked(devices, in: browser.view.window)
+    }
+
     func browser(_ browser: KCBrowser, runJavaScriptDialog kind: JavaScriptDialogKind, message: String,
                  defaultText: String, origin: URL?, completion: @escaping (Bool, String?) -> Void) {
         pageDialog?.dismiss()
