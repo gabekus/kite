@@ -137,7 +137,7 @@ struct Occlusion::Worker {
     double followUp = 0;  // when the settling pass after a drop or a display change runs; 0 for none
     // The hooks on now: the system-wide ones (core's GlobalHooks), and per process.
     struct Global {
-        HWINEVENTHOOK foreground = nullptr, moveSize = nullptr, minimize = nullptr, show = nullptr, cloak = nullptr;
+        HWINEVENTHOOK foreground = nullptr, moveSize = nullptr, minimize = nullptr, cloak = nullptr;
     } global;
     HWINEVENTHOOK kiteCloak = nullptr;
     std::map<DWORD, HWINEVENTHOOK> destroyHooks, hideHooks, showHooks;
@@ -153,22 +153,19 @@ struct Occlusion::Worker {
     std::vector<occlusion::OccluderState> atPass, now;
     // Whether each process with a window is a screen recorder, asked once per process.
     std::map<DWORD, bool> recorders;
-    // DWM's answers for each window a pass asked about: each is a round trip to dwm.exe and
-    // context switches on this thread, so they're asked again only when the window's rect
-    // changed (its frame with it) or a cloak event came (any cloak drops the lot). Entries for
-    // windows no pass saw go. Measured: the heartbeat's whole passes cost ~10 a second without.
-    struct DwmAnswers {
-        RECT outer{};
-        Rect frame;
-        int backdrop = 0;
-        bool cloaked = false;
-        uint64_t seen = 0;  // the pass that last asked
-    };
-    std::map<HWND, DwmAnswers> dwm;
+    // DWM's answers for each window a pass asked about (core's DwmCache): asked again when the
+    // window's rect changes, and for all on a reaction's refreshWindows and the heartbeat's
+    // whole passes. Measured: re-asking every pass cost ~10 context switches a second.
+    occlusion::DwmCache dwm;
+    // A screen recorder found running: its process, waited on, so its exit runs a pass (the
+    // verdict is visible while it runs, so there's no heartbeat to notice).
+    HANDLE recorderProcess = nullptr;
+    DWORD recorderID = 0;
     // What the last pass saw, for the log.
     int64_t visiblePixels = -1;
     size_t occluderCount = 0;
     bool previewing = false, covered = false;
+    bool kiteInFront = false, kiteShown = false;  // what the last pass found of Kite
     bool loggedCovered = false;
     size_t loggedOccluders = 0;
     // Counters: every event delivered, those that changed something, passes and their time,
@@ -196,7 +193,7 @@ struct Occlusion::Worker {
 
     // On the worker thread: a hook goes from the thread that set it.
     void Unhook() {
-        for (HWINEVENTHOOK* hook : {&global.foreground, &global.moveSize, &global.minimize, &global.show, &global.cloak, &kiteCloak}) {
+        for (HWINEVENTHOOK* hook : {&global.foreground, &global.moveSize, &global.minimize, &global.cloak, &kiteCloak}) {
             if (*hook) UnhookWinEvent(*hook);
             *hook = nullptr;
         }
@@ -222,15 +219,24 @@ struct Occlusion::Worker {
                 if (when > 0 && (due == 0 || when < due)) due = when;
             }
             const DWORD timeout = due == 0 ? INFINITE : due <= at ? 0 : static_cast<DWORD>((due - at) * 1000) + 1;
-            HANDLE waits[3] = {owner.stop_, owner.poke_, sessionsReady};
-            const DWORD count = sessionsReady ? 3 : 2;
+            HANDLE waits[4] = {owner.stop_, owner.poke_};
+            DWORD count = 2;
+            const DWORD sessionsAt = sessionsReady ? count : 99;  // 99: none (never a wait result here)
+            if (sessionsReady) waits[count++] = sessionsReady;
+            const DWORD recorderAt = recorderProcess ? count : 99;
+            if (recorderProcess) waits[count++] = recorderProcess;
             const DWORD woke = MsgWaitForMultipleObjectsEx(count, waits, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             if (woke == WAIT_OBJECT_0) break;
             if (woke == WAIT_OBJECT_0 + 1) Poked();
-            if (sessionsReady && woke == WAIT_OBJECT_0 + 2) {
+            if (woke == WAIT_OBJECT_0 + sessionsAt) {
                 CloseHandle(sessionsReady);
                 sessionsReady = nullptr;
                 RegisterSessions();
+            }
+            if (woke == WAIT_OBJECT_0 + recorderAt) {
+                // The recorder quit: a covered Kite can stop drawing again.
+                WatchRecorder(0);
+                Schedule();
             }
             MSG msg;
             // Dispatching delivers the hooks' events (OnEvent).
@@ -251,6 +257,7 @@ struct Occlusion::Worker {
         Unhook();
         if (sessionRegistered) WTSUnRegisterSessionNotification(kite);
         if (sessionsReady) CloseHandle(sessionsReady);
+        WatchRecorder(0);
         current = nullptr;
     }
 
@@ -263,6 +270,7 @@ struct Occlusion::Worker {
     // more once things have settled.
     void Apply(occlusion::Tracker::Reaction reaction, bool hooksMayChange = false) {
         if (reaction.recompute || reaction.reevaluate) ++relevant;
+        if (reaction.refreshWindows) dwm.Clear();
         if (reaction.reevaluate) Publish();
         if (reaction.reevaluate || hooksMayChange) UpdateHooks();
         if (reaction.recompute) Schedule();
@@ -300,7 +308,6 @@ struct Occlusion::Worker {
         if (owner.activated_.exchange(false)) {
             // Back from another desktop, maybe: the pass reads Kite's cloak afresh, whether or
             // not the uncloak event came.
-            dwm.clear();
             Apply(tracker.KiteActivated());
         }
         if (owner.passRequested_.exchange(false)) Apply(tracker.PointerSeen());
@@ -329,7 +336,6 @@ struct Occlusion::Worker {
         const bool showOrHide = *event == Event::Show || *event == Event::Hide || *event == Event::Destroy || *event == Event::Cloaked ||
                                 *event == Event::Uncloaked;
         if (showOrHide && process && process == ShellProcess()) facts.previewWindow = IsPreview(hwnd);
-        if (*event == Event::Cloaked || *event == Event::Uncloaked) dwm.clear();
         if (tracker.NeedsOverKite(*event)) {
             // The window's rect holds its frame: one nowhere near Kite (a menu, a tooltip
             // elsewhere) is ruled out without a round trip to DWM.
@@ -366,6 +372,8 @@ struct Occlusion::Worker {
         state.visible = IsWindowVisible(hwnd) != 0;
         state.minimized = IsIconic(hwnd) != 0;
         state.maximized = IsZoomed(hwnd) != 0;
+        state.owned = GetWindow(hwnd, GW_OWNER) != nullptr;
+        state.style = static_cast<uint32_t>(GetWindowLongW(hwnd, GWL_STYLE));
         state.exStyle = static_cast<uint32_t>(GetWindowLongW(hwnd, GWL_EXSTYLE));
         if (state.exStyle & WS_EX_LAYERED) {
             BYTE alpha = 255;
@@ -384,7 +392,10 @@ struct Occlusion::Worker {
     void Beat(double t) {
         ++beats;
         const occlusion::Heartbeat::Beat beat = heartbeat.Fire(t);
-        if (beat == occlusion::Heartbeat::Beat::FullPass) return Pass();  // now: no second wake
+        if (beat == occlusion::Heartbeat::Beat::FullPass) {
+            dwm.Clear();  // the occluders' cloak and backdrop asked afresh too
+            return Pass();  // now: no second wake
+        }
         now.clear();
         for (uintptr_t window : tracker.Occluders()) now.push_back(Read(reinterpret_cast<HWND>(window)));
         if (occlusion::OccludersChanged(atPass, now)) {
@@ -432,7 +443,7 @@ struct Occlusion::Worker {
         // What's left to ask DWM can only rule a window out: the cheap answer first.
         if (!occlusion::CanOcclude(w)) return true;
         w.region = scratch ? GetWindowRgn(hwnd, scratch) : 0;
-        DwmAnswers& answers = Dwm(hwnd, outer);
+        const occlusion::DwmAnswers& answers = Dwm(hwnd, outer);
         w.cloaked = answers.cloaked;
         w.backdrop = answers.backdrop;
         w.rect = answers.frame;
@@ -446,18 +457,15 @@ struct Occlusion::Worker {
         return true;
     }
 
-    DwmAnswers& Dwm(HWND hwnd, const RECT& outer) {
-        auto [it, added] = dwm.try_emplace(hwnd);
-        DwmAnswers& answers = it->second;
-        if (added || !EqualRect(&answers.outer, &outer)) {
-            answers.outer = outer;
+    const occlusion::DwmAnswers& Dwm(HWND hwnd, const RECT& outer) {
+        return dwm.Get(reinterpret_cast<uintptr_t>(hwnd), ToRect(outer), passes + 1, [hwnd] {
+            occlusion::DwmAnswers answers;
             answers.cloaked = CloakedWindow(hwnd);
             int backdrop = 0;
-            answers.backdrop = SUCCEEDED(DwmGetWindowAttribute(hwnd, kDwmSystemBackdropType, &backdrop, sizeof backdrop)) ? backdrop : 0;
+            if (SUCCEEDED(DwmGetWindowAttribute(hwnd, kDwmSystemBackdropType, &backdrop, sizeof backdrop))) answers.backdrop = backdrop;
             answers.frame = FrameRect(hwnd);
-        }
-        answers.seen = passes + 1;
-        return answers;
+            return answers;
+        });
     }
 
     // Recorders and sharing hosts have windows (OBS's, a sharing toolbar), so the processes
@@ -474,13 +482,22 @@ struct Occlusion::Worker {
         std::sort(owners.begin(), owners.end());
         owners.erase(std::unique(owners.begin(), owners.end()), owners.end());
         std::erase_if(recorders, [&](const auto& entry) { return !std::binary_search(owners.begin(), owners.end(), entry.first); });
-        bool running = false;
+        DWORD running = 0;
         for (DWORD process : owners) {
             auto [it, added] = recorders.try_emplace(process, false);
             if (added) it->second = IsRecorderProcess(process);
-            running = running || it->second;
+            if (it->second && !running) running = process;
         }
-        return running;
+        WatchRecorder(running);
+        return running != 0;
+    }
+
+    // The recorder's exit runs a pass: a waited-on handle, not a poll.
+    void WatchRecorder(DWORD process) {
+        if (process == recorderID) return;
+        if (recorderProcess) CloseHandle(recorderProcess);
+        recorderID = process;
+        recorderProcess = process ? OpenProcess(SYNCHRONIZE, FALSE, process) : nullptr;
     }
 
     static bool IsRecorderProcess(DWORD process) {
@@ -507,6 +524,8 @@ struct Occlusion::Worker {
         if (const HWND front = GetForegroundWindow()) GetWindowThreadProcessId(front, &foreground);
         pass.kiteForeground = foreground == kiteProcess;
         pass.kiteShown = IsWindowVisible(kite) && !IsIconic(kite);
+        kiteInFront = pass.kiteForeground;
+        kiteShown = pass.kiteShown;
         // The cloak as of now (DWM's, asked again after a cloak event or Kite's activation);
         // published with the rest below, once.
         RECT kiteOuter{};
@@ -535,7 +554,8 @@ struct Occlusion::Worker {
             covered = pass.covered;
             if (pass.covered) pass.recording = RecorderRunning();
         }
-        std::erase_if(dwm, [&](const auto& entry) { return entry.second.seen != passes + 1; });
+        if (!pass.recording) WatchRecorder(0);
+        dwm.Prune(passes + 1);
         tracker.SetPass(pass);  // hands back the last pass's buffers, emptied
         // What the heartbeat compares against.
         atPass.clear();
@@ -564,11 +584,10 @@ struct Occlusion::Worker {
         if (global.moveSize && !globals.moveSize) tracker.DragLost();
         Set(global.moveSize, globals.moveSize, kMoveSizeStart, kMoveSizeEnd, 0);
         Set(global.minimize, globals.minimize, kMinimizeStart, kMinimizeEnd, 0);
-        Set(global.show, globals.show, kShow, kShow, 0);
         Set(global.cloak, globals.cloak, kCloaked, kUncloaked, 0);
         const occlusion::ProcessHooks wanted = tracker.Hooks(kiteProcess, ShellProcess());
         Set(kiteCloak, wanted.kiteCloak, kCloaked, kUncloaked, kiteProcess);
-        Sync(destroyHooks, wanted.hide, kDestroy, kDestroy);
+        Sync(destroyHooks, wanted.destroy, kDestroy, kDestroy);
         Sync(hideHooks, wanted.hide, kHide, kHide);
         Sync(showHooks, wanted.show, kShow, kShow);
     }
@@ -600,7 +619,7 @@ struct Occlusion::Worker {
 
     size_t HookCount() const {
         size_t count = destroyHooks.size() + hideHooks.size() + showHooks.size();
-        for (HWINEVENTHOOK hook : {global.foreground, global.moveSize, global.minimize, global.show, global.cloak, kiteCloak}) count += hook != nullptr;
+        for (HWINEVENTHOOK hook : {global.foreground, global.moveSize, global.minimize, global.cloak, kiteCloak}) count += hook != nullptr;
         return count;
     }
 
@@ -620,11 +639,13 @@ struct Occlusion::Worker {
         loggedOccluders = occluderCount;
         char line[768];
         std::snprintf(line, sizeof line,
-                      "{\"t\":%.4f,\"%s\":\"%s\",\"covered\":%s,\"visiblePixels\":%lld,\"occluders\":%zu,\"previewing\":%s,\"dragging\":%s,"
+                      "{\"t\":%.4f,\"%s\":\"%s\",\"covered\":%s,\"visiblePixels\":%lld,\"occluders\":%zu,\"previewing\":%s,\"dragging\":%s,\"kiteInFront\":%s,\"kiteShown\":%s,"
+                      "\"kiteCloaked\":%s,\"suspended\":%s,"
                       "\"events\":%llu,\"relevant\":%llu,\"passes\":%llu,\"beats\":%llu,\"beatPasses\":%llu,\"passMaxMs\":%.3f,"
                       "\"passTotalMs\":%.3f,\"hooks\":%zu,\"thread\":%lu}\n",
                       Seconds() - started, what, occlusion::Name(published).data(), Json(covered), static_cast<long long>(visiblePixels),
-                      occluderCount, Json(previewing), Json(tracker.Dragging()), static_cast<unsigned long long>(events),
+                      occluderCount, Json(previewing), Json(tracker.Dragging()), Json(kiteInFront), Json(kiteShown),
+                      Json(tracker.Cloaked()), Json(tracker.Suspended()), static_cast<unsigned long long>(events),
                       static_cast<unsigned long long>(relevant), static_cast<unsigned long long>(passes), static_cast<unsigned long long>(beats),
                       static_cast<unsigned long long>(beatPasses), passMaxSeconds * 1000, passSeconds * 1000, HookCount(), GetCurrentThreadId());
         log << line;

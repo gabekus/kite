@@ -504,9 +504,18 @@ void BrowserWindowController::Frame(double time) {
 void BrowserWindowController::OcclusionChanged() {
     const occlusion::Hidden verdict = occlusion_ ? occlusion_->Verdict() : occlusion::Hidden::No;
     pointerRecovery_.SetVerdict(verdict);
-    // Kite's own activation is the last word on covered (a verdict posted before it may come
-    // after it); a lock, the display or another desktop still hide it.
-    SetOccluded(verdict != occlusion::Hidden::No && !(verdict == occlusion::Hidden::Covered && activeApp_));
+    // Kite in front is the last word on covered (a verdict posted before its activation may
+    // come after it); a lock, the display or another desktop still hide it. Asked of Windows
+    // now, not remembered from WM_ACTIVATEAPP: when the foreground passes to no window, no
+    // WM_ACTIVATEAPP(FALSE) comes, and a remembered "active" kept a covered Kite drawing for good
+    // (measured: 802 ms/s covered).
+    SetOccluded(verdict != occlusion::Hidden::No && !(verdict == occlusion::Hidden::Covered && KiteInFront()));
+}
+
+bool BrowserWindowController::KiteInFront() const {
+    DWORD process = 0;
+    if (const HWND front = GetForegroundWindow()) GetWindowThreadProcessId(front, &process);
+    return process == GetCurrentProcessId();
 }
 
 void BrowserWindowController::SetOccluded(bool hidden) {
@@ -954,8 +963,7 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         // Kite's app activated: it's in front, so seen, now on this thread; the watcher hears
         // after.
         if (message == WM_ACTIVATEAPP) {
-            activeApp_ = wParam != FALSE;
-            if (activeApp_) {
+            if (wParam != FALSE) {
                 if (occlusion_->Verdict() == occlusion::Hidden::Covered) SetOccluded(false);
                 occlusion_->Activated();
             }

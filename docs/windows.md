@@ -635,24 +635,35 @@ Windows that means:
     Kite is in front, only foreground changes and drags (a drag that starts in
     front comes too soon after the foreground change for a hook made then).
     System-wide hooks are kept only for events a person causes at a person's
-    rate (an app coming forward, a drag, a minimize, a desktop switch, a window
-    shown over a visible Kite). Per process, only the occluders' hides and
-    destroys, and the shell's thumbnails. Moves, z-order and state changes
-    aren't hooked at all. Measured: a caret's every keystroke and a moving
-    window's tens of events a second blow the watcher's 20 wakeups/s budget,
-    and a maximize or restore raises only `LOCATIONCHANGE`, never a
-    `STATECHANGE`.
+    rate: an app coming forward, a drag, a minimize, a desktop switch. Per
+    process, only the occluders' destroys, the shell's shows (its thumbnails
+    and Alt+Tab) while Kite is covered, and the shell's hides while one of
+    those is up. Moves, z-order, state changes, shows and hides aren't hooked
+    otherwise. Measured: a caret raises a show, a hide and a move on every key
+    (in the app being typed in, usually the one over Kite), a tooltip or menu
+    a show and a hide, and a moving window tens of moves a second, at 5 to 8
+    context switches each, past the watcher's 20 a second. And a maximize or
+    restore raises only `LOCATIONCHANGE`, never a `STATECHANGE`. So a window
+    newly over a visible Kite without coming forward is found at the next pass
+    (it costs rendering, never a blank).
   - **Heartbeat.** What uncovers a covered Kite without an event (a
     restore-down, Win+Arrow, a FancyZones snap, leaving full screen, a monitor
-    change, a window turning translucent) is found by a heartbeat that runs
-    only while Kite is covered. Twice a second it re-reads the windows that
-    covered it with user32 alone (`IsWindow`, visible, minimized, maximized,
-    `GetWindowRect`, the extended style and layered alpha), and runs a pass on
-    any change. Every 4 s it runs a whole pass, for z-order changes and new
-    windows. It's the watcher's MsgWait timeout, not a timer, and stops when
-    Kite is uncovered. The first `WM_SETCURSOR` or `WM_MOUSEMOVE` to reach a
-    covered Kite asks for a pass too. A drop, and a monitor, work-area or scale
-    change, get a second pass 0.3 s later, once snaps and refits have settled.
+    change, a window hidden or turning translucent) is found by a heartbeat
+    that runs only while Kite is covered. Twice a second it re-reads the
+    windows that covered it with user32 alone (`IsWindow`, visible, minimized,
+    maximized, its owner, `GetWindowRect`, the style, the extended style and
+    layered alpha), and runs a pass on any change. Every 4 s it runs a whole
+    pass, asking DWM afresh too, for z-order changes, new windows and a cloak
+    or backdrop change. It's the watcher's MsgWait timeout, not a timer, and
+    stops when Kite is uncovered. The first `WM_SETCURSOR` or `WM_MOUSEMOVE` to
+    reach a covered Kite asks for a pass too. A drop, and a monitor, work-area
+    or scale change, get a second pass 0.3 s later, once snaps and refits have
+    settled.
+  - **DWM's answers** (a window's frame, backdrop and cloak, each a round trip
+    to dwm.exe) are cached per window by its rect, and asked again for every
+    window when they could be stale: the end of a lock or display-off, the
+    pointer on a covered Kite, Kite's activation, any cloak event, and the
+    heartbeat's whole passes.
   - **Off for test runs.** `--smoke-test` and `--frame-log` run without
     occlusion, so their checks of the slide and the crossfade can't pass
     unseen. `--occlusion-log FILE` (test profiles) writes each verdict and the
@@ -660,8 +671,9 @@ Windows that means:
   - **Known gaps.** A covered Kite uncovered without an event shows its card
     for up to half a second (the heartbeat), or until the pointer reaches it.
     A Kite captured as a window by an app not on the recorder list (a meeting
-    app sharing it while covered) shows its card. A recorder that quits leaves
-    a covered Kite drawing until the next pass (at most 4 s).
+    app sharing it while covered) shows its card. While a recorder runs, a
+    covered Kite draws (the verdict is visible, so there's no heartbeat); the
+    watcher waits on the recorder's process, and its exit runs a pass.
 
 ## Plan
 

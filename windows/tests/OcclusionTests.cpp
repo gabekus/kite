@@ -76,12 +76,11 @@ EventFacts Preview(Event event) {
     return facts;
 }
 
-GlobalHooks Globals(bool foreground, bool moveSize, bool minimize, bool show, bool cloak) {
+GlobalHooks Globals(bool foreground, bool moveSize, bool minimize, bool cloak) {
     GlobalHooks hooks;
     hooks.foreground = foreground;
     hooks.moveSize = moveSize;
     hooks.minimize = minimize;
-    hooks.show = show;
     hooks.cloak = cloak;
     return hooks;
 }
@@ -501,24 +500,35 @@ TEST(theHooksFollowWhatCanChangeTheVerdict) {
     constexpr uint32_t kite = 1, foreground = 2, shell = 3;
     const GlobalHooks none;
     Tracker tracker;
-    // In the background and visible: all five system-wide, nothing per process.
-    CHECK(tracker.Globals() == Globals(true, true, true, true, true));
+    // In the background and visible: the four system-wide (no EVENT_OBJECT_SHOW: a caret's on
+    // every key, and a window newly over Kite costs only rendering until the next pass),
+    // nothing per process.
+    CHECK(tracker.Globals() == Globals(true, true, true, true));
     CHECK(tracker.Hooks(kite, shell) == ProcessHooks{});
     // Kite in front: another app coming forward, drags (one that starts now would beat a hook
     // made after the foreground change), and Kite's own desktop switch.
     tracker.KiteActivated();
-    CHECK(tracker.Globals() == Globals(true, true, false, false, false));
+    CHECK(tracker.Globals() == Globals(true, true, false, false));
     ProcessHooks ownCloak;
     ownCloak.kiteCloak = true;
     CHECK(tracker.Hooks(kite, shell) == ownCloak);
-    // Covered: no system-wide show; the occluders' hides and destroys (never Kite's own), and
-    // the shell's thumbnails.
+    // Covered: the occluders' destroys (never Kite's own; their hides, a caret's on every key in
+    // the app being typed in, are the heartbeat's), and the shell's thumbnails coming up.
     tracker.SetPass(CoveredBy({0x10, 0x11, 0x12}, {5, foreground, kite}));
-    CHECK(tracker.Globals() == Globals(true, true, true, false, true));
+    CHECK(tracker.Globals() == Globals(true, true, true, true));
     ProcessHooks covered;
-    covered.hide = {foreground, shell, 5};
+    covered.destroy = {foreground, 5};
     covered.show = {shell};
     CHECK(tracker.Hooks(kite, shell) == covered);
+    // A thumbnail or Alt+Tab up: the shell's hides too, so its going doesn't hold Kite drawing.
+    Tracker::Pass previewing = CoveredBy({0x10}, {5});
+    previewing.previewing = true;
+    tracker.SetPass(previewing);
+    ProcessHooks whilePreviewing;
+    whilePreviewing.destroy = {5};
+    whilePreviewing.show = {shell};
+    whilePreviewing.hide = {shell};
+    CHECK(tracker.Hooks(kite, shell) == whilePreviewing);
     // Minimized: nothing (its own messages say when it's back).
     Tracker::Pass minimized;
     minimized.kiteShown = false;
@@ -548,7 +558,63 @@ TEST(lockedOrDisplayOffHooksNothingAndIgnoresEvents) {
     const Tracker::Reaction on = tracker.SetDisplayOff(false);
     CHECK(on.recompute && on.reevaluate);
     CHECK(!tracker.Suspended());
-    CHECK(tracker.Globals() == Globals(true, true, true, false, true));
+    CHECK(tracker.Globals() == Globals(true, true, true, true));
+}
+
+TEST(staleDwmAnswersAreAskedAgainWhenTheyCouldHaveChanged) {
+    // The occluder as DWM answered before the display went off: opaque, covering Kite.
+    DwmCache cache;
+    const Rect outer{0, 0, 2560, 1392};
+    DwmAnswers opaque;
+    opaque.frame = outer;
+    DwmAnswers acrylic = opaque;
+    acrylic.backdrop = win32::kBackdropAcrylic;
+    DwmAnswers cloaked = opaque;
+    cloaked.cloaked = true;
+    int asked = 0;
+    const auto answer = [&](const DwmAnswers& now) {
+        return [&asked, now] {
+            ++asked;
+            return now;
+        };
+    };
+    CHECK(cache.Get(0x10, outer, 1, answer(opaque)).backdrop == 0);
+    CHECK(asked == 1);
+    // The same rect: the cached answer, no round trip.
+    CHECK(cache.Get(0x10, outer, 2, answer(acrylic)).backdrop == 0);
+    CHECK(asked == 1);
+    // Meanwhile (display off) it turned acrylic, or went to another desktop, rect unchanged.
+    // The display coming back drops the cache, so the next pass sees it and Kite isn't held
+    // covered by a stale answer.
+    for (const DwmAnswers& changed : {acrylic, cloaked}) {
+        Tracker tracker;
+        tracker.SetPass(CoveredBy({0x10}, {7}));
+        tracker.SetDisplayOff(true);
+        const Tracker::Reaction resumed = tracker.SetDisplayOff(false);
+        CHECK(resumed.recompute && resumed.refreshWindows);
+        if (resumed.refreshWindows) cache.Clear();
+        const DwmAnswers& now = cache.Get(0x10, outer, 3, answer(changed));
+        WindowFacts w = Opaque(now.frame);
+        w.backdrop = now.backdrop;
+        w.cloaked = now.cloaked;
+        CHECK(!CanOcclude(w));  // so the pass finds Kite uncovered
+        cache.Clear();
+        cache.Get(0x10, outer, 3, answer(opaque));
+    }
+    // Everything else that could make an answer stale drops it too: the end of a lock, the
+    // pointer on a covered Kite, Kite's activation, any cloak.
+    Tracker tracker;
+    tracker.SetLocked(true);
+    CHECK(tracker.SetLocked(false).refreshWindows);
+    CHECK(tracker.PointerSeen().refreshWindows);
+    CHECK(tracker.KiteActivated().refreshWindows);
+    CHECK(tracker.OnEvent(Facts(Event::Cloaked)).refreshWindows);
+    CHECK(tracker.OnEvent(Facts(Event::Uncloaked)).refreshWindows);
+    CHECK(!tracker.OnEvent(Facts(Event::Destroy)).refreshWindows);
+    // Windows no pass saw go.
+    cache.Get(0x20, outer, 4, answer(opaque));
+    cache.Prune(4);
+    CHECK(cache.Size() == 1);
 }
 
 TEST(theHeartbeatSeesWhatNoEventSays) {
@@ -579,6 +645,13 @@ TEST(theHeartbeatSeesWhatNoEventSays) {
     OccluderState clickThrough = maximized;
     clickThrough.exStyle = win32::kExTransparent;
     CHECK(OccludersChanged(atPass, {clickThrough}));
+    // Turned into a popup or a tool window, or given an owner.
+    OccluderState popup = maximized;
+    popup.style = win32::kPopup;
+    CHECK(OccludersChanged(atPass, {popup}));
+    OccluderState owned = maximized;
+    owned.owned = true;
+    CHECK(OccludersChanged(atPass, {owned}));
     // Gone, hidden, minimized (a cloak comes as an event).
     for (auto change : {+[](OccluderState& s) { s.exists = false; }, +[](OccluderState& s) { s.visible = false; },
                         +[](OccluderState& s) { s.minimized = true; }}) {

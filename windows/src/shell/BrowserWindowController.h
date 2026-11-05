@@ -227,6 +227,8 @@ private:
     // it for an occluded window.
     void OcclusionChanged();
     void SetOccluded(bool hidden);
+    // A window of Kite's process is the foreground window.
+    bool KiteInFront() const;
     // The frame clock stops for an unseen window, unless something that isn't drawing still
     // needs its frames.
     void StopFrameClockUnseen();
@@ -369,7 +371,6 @@ private:
     // Whether the window can be seen (after the window, which it posts to, in destruction).
     std::unique_ptr<Occlusion> occlusion_;
     bool occluded_ = false;   // the verdict as last handled: hidden for any reason
-    bool activeApp_ = false;  // WM_ACTIVATEAPP: Kite's app is the active one
     bool touchpadFrames_ = false;  // the touchpad still needed frames at the clock's last one
     occlusion::PointerRecovery pointerRecovery_;
     std::unique_ptr<Compositor> compositor_;

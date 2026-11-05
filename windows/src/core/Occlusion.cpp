@@ -159,20 +159,20 @@ std::string_view Name(Hidden hidden) {
 Tracker::Reaction Tracker::SetLocked(bool locked) {
     if (locked == locked_) return {};
     locked_ = locked;
-    // Unlocked: the windows may have changed meanwhile.
-    return {!Suspended(), true, false};
+    // Unlocked: the windows (and DWM's answers about them) may have changed meanwhile.
+    return {!Suspended(), true, false, !Suspended()};
 }
 
 Tracker::Reaction Tracker::SetDisplayOff(bool off) {
     if (off == displayOff_) return {};
     displayOff_ = off;
-    return {!Suspended(), true, false};
+    return {!Suspended(), true, false, !Suspended()};
 }
 
 Tracker::Reaction Tracker::SetCloaked(bool cloaked) {
     if (cloaked == cloaked_) return {};
     cloaked_ = cloaked;
-    return {!cloaked && !Suspended(), true, false};
+    return {!cloaked && !Suspended(), true, false, !cloaked};
 }
 
 Tracker::Reaction Tracker::KiteChanged() { return {!Suspended(), false, false}; }
@@ -188,11 +188,11 @@ Tracker::Reaction Tracker::KiteActivated() {
     pass_.covered = false;
     pass_.occluders.clear();
     pass_.occluderProcesses.clear();
-    // The pass in front skips the windows; it reads Kite's cloak.
-    return {!Suspended(), changed, false};
+    // The pass in front skips the windows; it reads Kite's cloak, afresh.
+    return {!Suspended(), changed, false, true};
 }
 
-Tracker::Reaction Tracker::PointerSeen() { return {!Suspended(), false, false}; }
+Tracker::Reaction Tracker::PointerSeen() { return {!Suspended(), false, false, true}; }
 
 bool Tracker::NeedsOverKite(Event event) const {
     if (Suspended()) return false;
@@ -238,6 +238,7 @@ Tracker::Reaction Tracker::OnEvent(const EventFacts& e) {
     case Event::Show:
     case Event::Uncloaked:
         if (e.kiteWindow && e.event == Event::Uncloaked) return SetCloaked(false);
+        reaction.refreshWindows = e.event == Event::Uncloaked;
         if (e.previewWindow) {
             // A thumbnail or Alt+Tab shows Kite's window as it is: draw it, now.
             reaction.reevaluate = !pass_.previewing;
@@ -251,6 +252,8 @@ Tracker::Reaction Tracker::OnEvent(const EventFacts& e) {
     case Event::Destroy:
     case Event::Cloaked:
         if (e.kiteWindow && e.event == Event::Cloaked) return SetCloaked(true);
+        // A cloak changes DWM's answer for that window.
+        reaction.refreshWindows = e.event == Event::Cloaked;
         // The dragged window gone mid-drag: its end won't come.
         if (dragging_ && e.window == draggingWindow_ && e.event == Event::Destroy) DragLost();
         // Windows 11's Alt+Tab is cloaked rather than hidden when it goes: the pass looks again.
@@ -306,9 +309,6 @@ GlobalHooks Tracker::Globals() const {
     hooks.foreground = hooks.moveSize = true;
     if (pass_.kiteForeground) return hooks;
     hooks.minimize = hooks.cloak = true;
-    // Covered, another window appearing changes nothing (the shell's thumbnails are hooked
-    // per process).
-    hooks.show = !pass_.covered;
     return hooks;
 }
 
@@ -320,17 +320,23 @@ ProcessHooks Tracker::Hooks(uint32_t kiteProcess, uint32_t shellProcess) const {
         hooks.kiteCloak = true;
         return hooks;
     }
-    if (!pass_.covered) return hooks;
     const auto other = [&](uint32_t process) { return process != 0 && process != kiteProcess; };
+    // A thumbnail, Alt+Tab or Task View up: its going (Windows 10 hides it; Windows 11 cloaks
+    // it, which the system-wide hook sees), so it doesn't hold Kite drawing.
+    if (pass_.previewing && other(shellProcess)) hooks.hide.push_back(shellProcess);
+    if (!pass_.covered) return hooks;
+    // Covered: the occluders closing (hides, a caret's on every key, are the heartbeat's), and
+    // the shell's previews coming up.
     for (uint32_t process : pass_.occluderProcesses) {
-        if (other(process)) hooks.hide.push_back(process);
+        if (other(process)) hooks.destroy.push_back(process);
     }
-    if (other(shellProcess)) {
-        hooks.show.push_back(shellProcess);
-        hooks.hide.push_back(shellProcess);
-    }
-    SortUnique(hooks.hide);
+    if (other(shellProcess)) hooks.show.push_back(shellProcess);
+    SortUnique(hooks.destroy);
     return hooks;
+}
+
+void DwmCache::Prune(uint64_t pass) {
+    std::erase_if(entries_, [&](const auto& entry) { return entry.second.seen != pass; });
 }
 
 bool OccludersChanged(const std::vector<OccluderState>& atPass, const std::vector<OccluderState>& now) { return atPass != now; }
