@@ -657,6 +657,10 @@ void BrowserWindowController::GiveKeyboard(KeyboardField to) {
     if (to != KeyboardField::Rename) sidebar_->EndRenaming(true);
     if (to == KeyboardField::Find && findBar_) {
         if (commandBar_ && commandBar_->IsOpen()) commandBar_->Hide();
+        // Before the field takes it: a navigation landing meanwhile doesn't take it back.
+#ifdef KITE_HAS_CEF
+        if (chromium_) chromium_->KeepKeyboard(true);
+#endif
         findBar_->Focus();
     }
     UpdateFindHole();

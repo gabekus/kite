@@ -514,13 +514,16 @@ void BrowserWindowController::StartSmokeFind() {
     if (!findBar_ || !chromium_->CanFind()) return CloseAfterSmoke();
     smokeFind_ = SmokeFind::Matching;
     ShowFind();
-    if (std::wstring problem = SmokeTestKeyboard(); !problem.empty()) return FailSmokeFind(std::move(problem));
     findBar_->Type("kite SMOKE");  // case-insensitive, as the Mac's find
 }
 
 std::wstring BrowserWindowController::SmokeTestKeyboard() {
-    // One field at a time has the keyboard (and the thread's one system caret).
+    // One field at a time has the keyboard (and the thread's one system caret). Run once the page
+    // has loaded and been searched, so its own focus as it was made (Chromium::Show) has landed:
+    // a page taking the keyboard rightly takes it from the field.
+    ShowFind();
     if (KeyboardOwner() != KeyboardField::Find) return L"Ctrl+F didn't give the find field the keyboard";
+    const std::string query = findBar_->Query().Query();
     const size_t index = state_.SelectedSpaceIndex();
     const std::string id = state_.spaces[index].id, name = state_.spaces[index].name;
     const auto restore = [&] {
@@ -532,7 +535,7 @@ std::wstring BrowserWindowController::SmokeTestKeyboard() {
     if (KeyboardOwner() != KeyboardField::Rename || findBar_->HasKeyboard()) return L"a rename didn't take the keyboard from the find field";
     SendMessageW(window_.Handle(), WM_CHAR, L'Q', 0);
     SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
-    if (sidebar_->Renaming() || state_.spaces[index].name != "Q" || !findBar_->Query().Query().empty()) {
+    if (sidebar_->Renaming() || state_.spaces[index].name != "Q" || findBar_->Query().Query() != query) {
         return L"keys typed in a rename begun over the find field didn't go to the rename";
     }
     restore();
@@ -586,8 +589,10 @@ void BrowserWindowController::SmokeTestFind(int count, int activeMatch, bool fin
         if (chromium_->PageTakesClickAt(inside)) return FailSmokeFind(L"a click on the bar would reach the page");
         if (!chromium_->PageTakesClickAt(outside)) return FailSmokeFind(L"a click on the page beside the bar wouldn't reach it");
         if (!chromium_->PageTakesClickAt(corner)) return FailSmokeFind(L"the hole isn't rounded at the bar's corner");
+        if (std::wstring problem = SmokeTestKeyboard(); !problem.empty()) return FailSmokeFind(std::move(problem));
+        // Ctrl+F selected the query: this replaces it with one the page doesn't have.
         smokeFind_ = SmokeFind::Missing;
-        findBar_->Type(" zqxj");
+        findBar_->Type("kite zqxj");
         return;
     }
     case SmokeFind::Missing: {
