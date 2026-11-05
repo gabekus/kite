@@ -227,9 +227,11 @@ void SidebarView::SetActions(Actions actions) {
     callbacks.profileMenu = [this](POINT screen) {
         if (actions_.creationProfileMenu) actions_.creationProfileMenu(screen);
     };
-    callbacks.takeKeyboard = [this] {
-        if (actions_.creationTakesKeyboard) actions_.creationTakesKeyboard();
+    callbacks.takeKeyboard = [this](SpaceCreationView::Field field) {
+        if (actions_.creationTakesKeyboard) actions_.creationTakesKeyboard(field);
     };
+    // Drawn again on the next pass: a GPU gone shows there (DeviceLost) and the window rebuilds.
+    callbacks.drawFailed = [this] { ScheduleDraw(); };
     creationView_->SetCallbacks(std::move(callbacks));
 }
 
@@ -393,8 +395,10 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
     }
     icons_->Retain(pictures);
     // Create a Space: open, and shown while its space is selected (SidebarColumnView.update).
-    next.creating = creation_.has_value() && state.SpaceIndex(creation_->spaceID).has_value();
-    next.creationShown = next.creating && ShowsCreation(state, creation_);
+    const std::optional<SpaceCreation> none;
+    const std::optional<SpaceCreation>& creation = creation_ ? *creation_ : none;
+    next.creating = creation.has_value() && state.SpaceIndex(creation->spaceID).has_value();
+    next.creationShown = next.creating && ShowsCreation(state, creation);
     if (next.creationShown) {
         const Space& space = state.SelectedSpace();
         next.creation.dark = next.dark;
@@ -431,14 +435,12 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
         if (index == selected) next.rows = page.rows;
         next.pages.push_back(std::move(page));
     }
-    // Create a Space takes the place of the favorites and the pages (none built, none to hit).
-    if (next.creationShown) {
-        next.favorites.clear();
-        next.rows.clear();
-        next.pages.clear();
-    }
+    // Create a Space takes the place of the favorites and the pages: the tray goes, and the strip
+    // is hidden (its pages stay built, so a slide from or to the draft still runs).
+    if (next.creationShown) next.favorites.clear();
     if (next == model_) return;
-    if (next.creationShown != model_.creationShown) {
+    const bool creationChanged = next.creationShown != model_.creationShown;
+    if (creationChanged) {
         dirty_ = true;  // the address field goes, or comes back
         // The page appears with its fields empty, or goes, its visuals with it.
         if (!next.creationShown) creationView_->Hide();
@@ -479,6 +481,10 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
         it = pages_.erase(it);
     }
     model_ = std::move(next);
+    if (creationChanged) {
+        ClipPages();
+        hover_.reset();
+    }
     built_.clear();
     for (const PageModel& page : model_.pages) built_.push_back(page.index);
     PlaceFavorites();
@@ -529,6 +535,12 @@ double SidebarView::SlidePages(float from, float to) {
 float SidebarView::PageOffset() const {
     if (!slide_) return pageOffset_;
     return static_cast<float>(slide_->to + ValueAt(slide_->segments, slide_->duration, FrameClock::Now() - slide_->start));
+}
+
+void SidebarView::ClipPages() {
+    if (!pagesClip_ || !compositor_) return;
+    const float largest = static_cast<float>(compositor_->GetRenderer().MaxTextureSize());
+    pagesClip_->SetClip(model_.creationShown ? D2D_RECT_F{0, 0, 0, 0} : D2D_RECT_F{0, 0, static_cast<float>(clipWidth_), largest});
 }
 
 void SidebarView::PlaceStrip() {
@@ -807,7 +819,7 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
     // The pages show only over the sidebar, whichever way they slide.
     if (width != clipWidth_) {
         clipWidth_ = width;
-        pagesClip_->SetClip(D2D_RECT_F{0, 0, static_cast<float>(width), static_cast<float>(largest)});
+        ClipPages();
         PlacePages();
         PlaceStrip();
     }
@@ -899,6 +911,7 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         const RECT clip{0, 0, static_cast<LONG>(width), static_cast<LONG>(readBack->height)};
         const float strip = PageOffset() * scale;
         for (const auto& [index, shot] : pageShots) {
+            if (model_.creationShown) break;  // the strip is hidden under Create a Space
             const float x = (static_cast<float>(index) - static_cast<float>(model_.index)) * static_cast<float>(clipWidth_) + strip;
             if (std::abs(x) < static_cast<float>(width)) ComposeOver(*readBack, shot, POINT{std::lround(x), 0}, 1, &clip);
             if (rename_ && index == model_.index && !field.bgra.empty()) {
@@ -1299,6 +1312,8 @@ D2D1_POINT_2F SidebarView::OnPage(D2D1_POINT_2F p) const {
 
 SidebarHit SidebarView::HitAt(D2D1_POINT_2F p) const {
     if (p.x < 0 || p.x >= width_) return {};
+    // Create a Space hides the address field and the strip: nothing of them is under the pointer.
+    if (model_.creationShown && creationView_->Contains(p)) return {};
     const D2D1_POINT_2F q = OnPage(p);
     return SidebarHitTest(model_.rows, width_, Height(), scroll_, q.x, q.y, listTop_);
 }
@@ -2026,6 +2041,8 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         if (p.x < 0 || p.x >= width_) return false;
         if (press_ || barPress_ || topPress_ || favoritePress_ || renamePressed_) return true;
         middlePress_.reset();
+        // Create a Space's page: no rows under it to close.
+        if (model_.creationShown && creationView_->Contains(p)) return true;
         // While something is renamed, as a left press: in its field (or on Done), or elsewhere in a
         // renamed tab's or folder's row (InRenamedRow), it does nothing and the field keeps editing
         // (the row's close button is hidden while it renames, and closing a Today tab would lose

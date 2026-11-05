@@ -116,7 +116,7 @@ public:
         std::function<void()> cancelCreation;
         std::function<void(const BarRect& row)> chooseTheme;
         std::function<void(POINT screen)> creationProfileMenu;
-        std::function<void()> creationTakesKeyboard;
+        std::function<void(SpaceCreationView::Field field)> creationTakesKeyboard;
     };
     void SetActions(Actions actions);
 
@@ -187,10 +187,19 @@ public:
     // the compositor is rebuilt after a lost device).
     void UseCompositor(Compositor* compositor);
 
-    // Create a Space (the Mac's BrowserStore.spaceCreation), shown from the next Update: its page
-    // while its space is selected, the bar's end buttons gone while it's open.
-    void SetCreation(const std::optional<SpaceCreation>& creation) { creation_ = creation; }
+    // Create a Space (the Mac's BrowserStore.spaceCreation): the controller's, which it reads at each
+    // Update (its page while its space is selected, the bar's end buttons gone while it's open).
+    // Set once; it outlives the sidebar.
+    void SetCreation(const std::optional<SpaceCreation>* creation) { creation_ = creation; }
     bool CreationShown() const { return model_.creationShown; }
+    // Whether the page appeared or went since the last call (the controller's keyboard follows it).
+    std::optional<bool> TakeCreationShownChange() {
+        if (creationShownTaken_ == model_.creationShown) return std::nullopt;
+        creationShownTaken_ = model_.creationShown;
+        return model_.creationShown;
+    }
+    // Its text factory, which Choose a Theme's swatches draw with too.
+    IDWriteFactory* DWrite() const { return dwrite_.Get(); }
     SpaceCreationView& Creation() { return *creationView_; }
     const SpaceCreationView& Creation() const { return *creationView_; }
     // The page's keyboard (the controller's KeyboardField::Creation): a field takes it, or the
@@ -285,7 +294,8 @@ public:
     // The caller commits the compositor. Empty on success.
     std::wstring Draw(Pixels* readBack = nullptr);
     bool DeviceLost() const {
-        return deviceLost_ || (bar_ && bar_->DeviceLost()) || (topRow_ && topRow_->DeviceLost()) || (favorites_ && favorites_->DeviceLost());
+        return deviceLost_ || (bar_ && bar_->DeviceLost()) || (topRow_ && topRow_->DeviceLost()) || (favorites_ && favorites_->DeviceLost()) ||
+               (creationView_ && creationView_->DeviceLost());
     }
 
     // The window's messages: its posted redraw, and the space tip's timer. True when it handled
@@ -453,9 +463,12 @@ private:
     std::unique_ptr<SpaceBarView> bar_;
     std::unique_ptr<SidebarTopRowView> topRow_;
     std::unique_ptr<FavoritesView> favorites_;
-    // Create a Space: the page, and the creation the controller set (SetCreation).
+    // Create a Space: the page, and the controller's creation (SetCreation).
     std::unique_ptr<SpaceCreationView> creationView_;
-    std::optional<SpaceCreation> creation_;
+    const std::optional<SpaceCreation>* creation_ = nullptr;
+    bool creationShownTaken_ = false;  // TakeCreationShownChange's last answer
+    // The pages' clip: the sidebar's width, or nothing while Create a Space hides the strip.
+    void ClipPages();
     bool creationPress_ = false;  // a left press went to the page
     bool plusPress_ = false;      // a left press on the + button
     FavoritesView::DrawIcon drawIcon_;  // the favorites' icons, drawn as the rows'

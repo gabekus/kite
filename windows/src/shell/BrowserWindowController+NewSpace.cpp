@@ -68,7 +68,9 @@ void BrowserWindowController::CancelNewSpace() {
     if (const auto index = state_.SpaceIndex(creation_->spaceID)) {
         for (const Tab* tab : state_.spaces[*index].AllTabs()) tabs.push_back(tab->id);
     }
-    kite::CancelNewSpace(state_, creation_);
+    // The draft the only space left (the others deleted meanwhile): Delete Space refuses the last
+    // space, so the page stays, as Delete Space beeps for it.
+    if (!kite::CancelNewSpace(state_, creation_)) return static_cast<void>(MessageBeep(MB_OK));
     for (const std::string& tab : tabs) PageGone(tab);
     // The space it was opened from is selected again, and slides back in.
     SelectionMoved();
@@ -78,8 +80,11 @@ void BrowserWindowController::ShowThemeSwatches(const BarRect& row) {
     if (!swatches_ || !creation_) return;
     std::vector<ThemeColor> accents;
     for (const Theme& preset : Theme::Presets()) accents.push_back(Accent(preset));
-    // As the Mac's present: one open already closes first.
+    // As the Mac's present: one open already closes first. Kite's window takes the keyboard when it's
+    // the one in front, so a press in the page (its own window) moves the focus and closes the
+    // popover, as a press anywhere else closes a transient one.
     swatches_->Close();
+    if (GetForegroundWindow() == window_.Handle() && GetFocus() != window_.Handle()) SetFocus(window_.Handle());
     if (std::wstring problem = swatches_->Open(row, window_.Dpi(), dark_.value_or(true), std::move(accents)); !problem.empty()) {
         OutputDebugStringW((L"Kite: Choose a Theme couldn't open: " + problem + L"\n").c_str());
         if (swatches_->DeviceLost()) Draw();
@@ -118,19 +123,12 @@ void BrowserWindowController::ShowCreationProfileMenu(POINT screen) {
 }
 
 void BrowserWindowController::FollowCreation() {
-    if (!creation_) CloseThemeSwatches();
-    const bool shown = sidebar_->CreationShown();
-    if (shown == creationShown_) return;
-    creationShown_ = shown;
-    if (shown) {
-        // onAppear { nameFocused = true }: the other fields let the keyboard go first.
-        GiveKeyboard(KeyboardField::Creation);
-        sidebar_->FocusCreation(SpaceCreationView::Field::Name);
-        UpdateFindHole();
-        return;
-    }
+    const std::optional<bool> shown = sidebar_->TakeCreationShownChange();
+    if (!shown) return;
+    // onAppear { nameFocused = true }: the other fields let the keyboard go first.
+    if (*shown) return GiveKeyboard(KeyboardField::Creation);
     // The page went (created, cancelled, another space selected), its field's keyboard with it:
-    // the page takes it, as when the command bar closes.
+    // the popover goes, and the page takes the keyboard, as when the command bar closes.
     CloseThemeSwatches();
     UpdateFindHole();
 #ifdef KITE_HAS_CEF

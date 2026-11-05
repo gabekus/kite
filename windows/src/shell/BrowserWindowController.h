@@ -471,9 +471,10 @@ private:
     // appears (and a press in either field), closing the command bar, as Ctrl+F does.
     enum class KeyboardField { None, CommandBar, Rename, Find, Creation };
     KeyboardField KeyboardOwner() const;
-    // With `focusFindField` false (a press in it), the find field takes it itself, the caret
-    // where the press is rather than its text all selected.
-    void GiveKeyboard(KeyboardField to, bool focusFindField = true);
+    // With `focusField` false (a press in it), the find field or Create a Space's takes it itself,
+    // the caret where the press is (and the caller updates the page's keyboard after); else the
+    // find field's text is all selected, or Create a Space's name field focused (onAppear).
+    void GiveKeyboard(KeyboardField to, bool focusField = true);
     // The content card in client px (the page's bounds).
     RECT ContentBounds() const;
     CommandBarView::Look BarLook() const;
@@ -812,11 +813,11 @@ private:
     bool heldNewItemMenu_ = false;
     // A capture's swatches popover, open off this row (HoldCreateSpace with a preset).
     std::optional<BarRect> heldSwatches_;
-    // Create a Space (the Mac's BrowserStore.spaceCreation): open while it's set, its page shown
-    // (creationShown_) while its space is selected.
+    // Create a Space (the Mac's BrowserStore.spaceCreation): open while it's set. The sidebar reads
+    // it (SidebarView::SetCreation) and says when its page appears or goes.
     std::optional<SpaceCreation> creation_;
-    bool creationShown_ = false;
-    // Choose a Theme's popover (after the sidebar, whose text factory it borrows, so it goes first).
+    // Choose a Theme's popover (declared after the sidebar, so it goes first: it borrows the
+    // sidebar's text factory). Its window is made the first time it opens.
     std::unique_ptr<ThemeSwatchesView> swatches_;
     // How the + menu and the profile pill's menu are shown and answered: Windows' (a menu loop), or
     // the smoke test's, which reads them and picks, as KITE_TEST_CONTEXT_MENU does.

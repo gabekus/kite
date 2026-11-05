@@ -184,6 +184,50 @@ TEST(cancelWithTheSpaceToGoBackToGoneLeavesTheOneBefore) {
     CHECK(state.selectedSpaceID == state.spaces[0].id);
 }
 
+TEST(cancelLeavesTheOnlySpaceAndItsPage) {
+    // The others deleted while the page was open: Delete Space refuses the last space, so Cancel
+    // keeps the page (and the space) rather than leave a nameless space behind.
+    BrowserState state = ThreeSpaces();
+    std::optional<SpaceCreation> creation;
+    const std::string id = BeginNewSpace(state, creation);
+    while (state.spaces.size() > 1) state.DeleteSpace(state.spaces[0].id == id ? state.spaces[1].id : state.spaces[0].id);
+    const BrowserState before = state;
+    CHECK(!CancelNewSpace(state, creation));
+    CHECK(creation && state == before);
+    CHECK(FinishNewSpace(state, creation, "Only"));
+}
+
+// BrowserStore's load and SessionStore.restoringSidebar: dropUnnamedEmptySpaces.
+TEST(aDraftLeftAtQuitIsDroppedOnLoad) {
+    BrowserState state = ThreeSpaces();
+    std::optional<SpaceCreation> creation;
+    const std::string draft = BeginNewSpace(state, creation);
+    // Saved with the page open, then read back at the next launch: the draft goes, and the one
+    // before it (B) is selected, as Delete Space selects.
+    std::optional<BrowserState> loaded = RoundTrip(state);
+    CHECK(loaded.has_value());
+    if (!loaded) return;
+    CHECK(DropUnnamedEmptySpaces(*loaded));
+    CHECK(Names(*loaded) == (std::vector<std::string>{"A", "B", "C"}));
+    CHECK(loaded->selectedSpaceID == state.spaces[1].id && !loaded->SpaceIndex(draft));
+    CHECK(!DropUnnamedEmptySpaces(*loaded));
+    // A nameless space with a tab, or a pinned one, stays; so does a named empty one.
+    BrowserState kept = ThreeSpaces();
+    kept.spaces[0].name.clear();
+    kept.OpenTab("https://example.com", kept.spaces[0].id, false);
+    kept.spaces[2].name.clear();
+    Tab pinned;
+    pinned.id = "PINNED";
+    pinned.url = "https://example.org";
+    kept.spaces[2].pinnedItems.push_back(PinnedItem{pinned});
+    CHECK(!DropUnnamedEmptySpaces(kept));
+    // Every space nameless and empty: the last one stays (Delete Space refuses it).
+    BrowserState all = ThreeSpaces();
+    for (Space& space : all.spaces) space.name.clear();
+    CHECK(DropUnnamedEmptySpaces(all));
+    CHECK(all.spaces.size() == 1 && all.selectedSpaceID == all.spaces[0].id);
+}
+
 TEST(aDraftDeletedElsewhereEndsTheCreation) {
     BrowserState state = ThreeSpaces();
     std::optional<SpaceCreation> creation;
@@ -250,9 +294,6 @@ TEST(thePageLaysOutAsArcs) {
     // Cancel 16.5pt over the bar, Create Space 14.5pt over Cancel.
     CHECK(Near(l.cancel.bottom, 753.5f) && Near(l.cancel.top, 738));
     CHECK(Near(l.create.bottom, 723.5f) && Near(l.create.top, 687.5f) && Near(l.create.left, 14) && Near(l.create.right, 226));
-    // Without the profile row, Choose a Theme comes up.
-    const SpaceCreationLayout bare = LayOutSpaceCreation(240, 820, false);
-    CHECK(Near(bare.theme.top, 323));
 }
 
 TEST(aShortWindowKeepsCreateUnderChooseATheme) {
@@ -280,6 +321,10 @@ TEST(pressesLandOnThePagesParts) {
     CHECK(SpaceCreationPartAt(l, 30, 745, 44, pill) == P::None);
     CHECK(SpaceCreationPartAt(l, 120, 150, 44, pill) == P::None);
     CHECK(std::string(SpaceCreationPartName(P::ChooseTheme)) == "theme");
+    // kitecore's estimates: the pill sits after "Profile", inside its row.
+    const BarRect estimated = EstimatedPill(l);
+    CHECK(estimated.left > l.profile.left + 48 && estimated.right < l.profile.right && Near((estimated.top + estimated.bottom) / 2, 339));
+    CHECK(SpaceCreationPartAt(l, (estimated.left + estimated.right) / 2, 339, kEstimatedCancelWidth, estimated) == P::ProfilePill);
 }
 
 // MARK: Choose a Theme's swatches (ThemeEditor.presets, ArcMetrics.ThemeEditor)

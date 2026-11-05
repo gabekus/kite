@@ -828,9 +828,11 @@ GiveKeyboard: the find field and a rename let it go first, and the command bar c
 between the fields, Return in either creates when there's a name (the space named and its
 `about` cleaned as Space.cleanAbout does), Escape and Cancel delete the draft and select the space
 it came from. Another space selected hides the page (its fields go with it, as the Mac's @State
-does); New Space again goes back to it. Delete Space on the draft cancels it. The profile pill
-lists the profiles and sets the draft's, while it has no tabs (Windows can't move a space's pages
-yet). Choose a Theme opens the theme editor's preset row (`shell/ThemeSwatchesView`): a popover of
+does); New Space again goes back to it. Delete Space on the draft cancels it, and Rename Space… on
+it goes to the page's name field (the Mac renames its hidden header). A draft left at quit or by a
+crash goes when the session loads (Kite.exe and kitecore), as the Mac's dropUnnamedEmptySpaces
+drops every nameless space with no tabs, Delete Space's rules each time. The profile pill lists
+the profiles and sets the draft's. Choose a Theme opens the theme editor's preset row (`shell/ThemeSwatchesView`): a popover of
 its own window off the row's trailing edge, with the editor's chevrons and its seven 24pt
 swatches; a swatch sets the space's colours and grain, its intensity kept, and the popover stays
 open, closing as a transient popover does (Escape, a press anywhere else, the window losing the
@@ -839,17 +841,27 @@ as it opens, and again only for a new size, scale, appearance or profile), each 
 keystroke draws only its field) and Create Space's (drawn again only as it turns on or off); the
 carets are TextField's visuals, so nothing runs while it's idle but the focused field's blink.
 `kitecore click` on the + button prints its menu, `space plus-menu` prints it, `space create
-[--about TEXT] [--theme N] [--cancel] NAME` runs the page step by step, `space new [--about TEXT]
-[--theme N] NAME` fills it in and creates, and `space create-page [HEIGHT]` prints the page's
-layout, the bar while it's open and the swatches. `--capture FILE --new-item-menu` reads back the
+[--about TEXT] [--theme N] [--away] [--cancel|--delete-draft] NAME` runs the page step by step,
+`space new [--about TEXT] [--theme N] NAME` fills it in and creates, and `space create-page
+[HEIGHT] [--hit X,Y] [--swatch X,Y]` prints the page's layout, the bar while it's open, the
+swatches, and what a press lands on. `--capture FILE --new-item-menu` reads back the
 + menu over its button, and `--create-space NAME [--create-space-about TEXT] [--create-space-theme
 N]` holds the page with its fields typed in and, with N, the swatches open and preset N clicked.
 
-Known differences for W9f: the + menu is a Win32 menu without the popover's icons; Choose a
-Theme's popover holds only the theme editor's presets (its colour grid, intensity and grain come
-with the theme editor), in Arc's PopoverBackground colours with a thin edge and no shadow; the
-help tags (the about field's and the profile's info button) aren't shown yet; and Undo New Space
-waits for undo (W16).
+Known differences for W9f:
+- The + menu is a Win32 menu without the popover's icons.
+- Choose a Theme's popover holds only the theme editor's presets (its colour grid, intensity and
+  grain come with the theme editor), in Arc's PopoverBackground colours with a thin edge and no
+  shadow, kept inside the monitor's work area. As it opens Kite's window takes the keyboard, so a
+  press in the page (its own window) closes it.
+- The profile pill changes the draft's profile only while the draft has no tabs (a tab opened in it
+  with Ctrl+T); the Mac's moves the pages, which Windows can't yet, as the space menu's Set Profile.
+- Cancel with the draft the only space left (the others deleted meanwhile) beeps and keeps the
+  page: Delete Space refuses the last space, and the Mac's would end the page and leave the
+  nameless space for the next launch to drop.
+- Rename Space… on the draft goes to the page's name field.
+- The help tags (the about field's and the profile's info button) and the + button's tooltip
+  aren't shown yet, and Undo New Space waits for undo (W16).
 
 ## Saving the session
 

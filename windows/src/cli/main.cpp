@@ -25,8 +25,8 @@
 //   kitecore [--profile DIR] space swipe DX [SECONDS]
 //   kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID
 //   kitecore [--profile DIR] space new [--about TEXT] [--theme N] NAME...
-//   kitecore [--profile DIR] space create [--about TEXT] [--theme N] [--cancel] [NAME...]
-//   kitecore [--profile DIR] space plus-menu|create-page [HEIGHT]
+//   kitecore [--profile DIR] space create [--about TEXT] [--theme N] [--away] [--cancel|--delete-draft] [NAME...]
+//   kitecore [--profile DIR] space plus-menu|create-page [HEIGHT] [--hit X,Y] [--swatch X,Y]
 //   kitecore [--profile DIR] space move ID PLACE|drag ID X [Y]
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
 //   kitecore [--profile DIR] backups
@@ -62,11 +62,15 @@
 // `space new` is + › New Space with Create a Space's fields filled in and Create Space pressed:
 // the space right after the selected one, selected, with its theme (or preset N, from 1, its
 // intensity kept) and profile, and what it's for. `space create` runs the page step by step and
-// prints each: the draft space it opens, the theme picked, then Create Space (or Cancel, or a
-// blank name, which leaves the draft as the window would while the page is open; the session is
-// saved with it, as the Mac's is). `space plus-menu` prints the + menu as the profile's shortcuts
+// prints each: the draft space it opens and whether its page shows, the theme picked, with
+// --away the space it came from selected again (the page hidden, the creation kept), then Create
+// Space (or Cancel, or --delete-draft, the draft deleted by another path and the creation over, or
+// a blank name, which leaves the draft as the window would while the page is open; the next load
+// drops it, as the Mac's does). `space plus-menu` prints the + menu as the profile's shortcuts
 // show it, `space create-page` the page's layout and words for a 240pt sidebar HEIGHT tall
-// (default 820), the bar while it's open and Choose a Theme's swatches.
+// (default 820), the bar while it's open and Choose a Theme's swatches; --hit X,Y says what a
+// press there lands on (sidebar points; the pill and Cancel at their measured sizes estimated) and
+// --swatch X,Y which swatch a press in the popover's body takes.
 // `collapse` is View → Collapse / Expand Pinned Tabs for a space. `click … --double` is the
 // second press of a double-click there (a tab's row renames, in the window). `click … --button middle`
 // is a middle click (pressed and let go at the point): on a tab's row it closes the tab as its close
@@ -238,8 +242,8 @@ int Usage() {
         "       kitecore [--profile DIR] space swipe DX [SECONDS]\n"
         "       kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID\n"
         "       kitecore [--profile DIR] space new [--about TEXT] [--theme N] NAME...\n"
-        "       kitecore [--profile DIR] space create [--about TEXT] [--theme N] [--cancel] [NAME...]\n"
-        "       kitecore [--profile DIR] space plus-menu|create-page [HEIGHT]\n"
+        "       kitecore [--profile DIR] space create [--about TEXT] [--theme N] [--away] [--cancel|--delete-draft] [NAME...]\n"
+        "       kitecore [--profile DIR] space plus-menu|create-page [HEIGHT] [--hit X,Y] [--swatch X,Y]\n"
         "       kitecore [--profile DIR] space move ID PLACE|drag ID X [Y]\n"
         "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n"
         "       kitecore [--profile DIR] backups\n"
@@ -915,6 +919,9 @@ int main(int argc, char** argv) {
     // The profile's one-shot flags (the favorites' empty state, dismissed or not).
     OneShotFlags flags = OneShotFlags::Load(std::get<std::filesystem::path>(resolved));
     state = existed ? std::move(std::get<BrowserState>(loaded)) : BrowserState::MakeDefault();
+    // As Kite.exe loads it: a Create a Space page left open (a nameless, empty space) goes
+    // (dropUnnamedEmptySpaces), saved with the command's change when it makes one.
+    DropUnnamedEmptySpaces(state);
 
     // The page the selected tab shows, as Chromium would report it (kitecore has no pages): what the
     // top row shows (sidebar, click). And the sidebar hidden (View › Hide Sidebar, which the session
@@ -1757,7 +1764,7 @@ int main(int argc, char** argv) {
             // Create a Space's fields, then the name: --about TEXT and --theme N (a preset, from 1).
             std::string about;
             std::optional<size_t> preset;
-            bool cancel = false;
+            bool cancel = false, away = false, deleteDraft = false;
             size_t i = 2;
             for (; i < args.size(); ++i) {
                 if (args[i] == "--about" && i + 1 < args.size()) {
@@ -1770,6 +1777,10 @@ int main(int argc, char** argv) {
                     preset = n - 1;
                 } else if (args[i] == "--cancel" && action == "create") {
                     cancel = true;
+                } else if (args[i] == "--away" && action == "create") {
+                    away = true;
+                } else if (args[i] == "--delete-draft" && action == "create") {
+                    deleteDraft = true;
                 } else {
                     break;
                 }
@@ -1785,13 +1796,22 @@ int main(int argc, char** argv) {
                 std::optional<SpaceCreation> creation;
                 const std::string id = BeginNewSpace(state, creation);
                 json::Object out{{"space", id}, {"returnTo", creation->returnTo}, {"after", state.spaces[*state.SpaceIndex(id) - 1].id}};
+                out.emplace("shown", ShowsCreation(state, creation));
                 if (preset) ChooseSpaceTheme(state, creation, id, *preset);
                 out.emplace("themeChosen", creation->themeChosen);
                 out.emplace("canCreate", CanCreateSpace(name));
+                if (away) {
+                    state.SelectSpace(creation->returnTo);
+                    CreationFollowsState(state, creation);
+                    out.emplace("shownAway", ShowsCreation(state, creation));
+                }
                 std::string outcome = "open";  // a blank name: Create Space is disabled
-                if (cancel) {
-                    CancelNewSpace(state, creation);
-                    outcome = "cancelled";
+                if (deleteDraft) {
+                    state.DeleteSpace(id);
+                    CreationFollowsState(state, creation);
+                    outcome = creation ? "open" : "gone";
+                } else if (cancel) {
+                    outcome = CancelNewSpace(state, creation) ? "cancelled" : "refused";
                 } else if (FinishNewSpace(state, creation, name, about)) {
                     outcome = "created";
                 }
@@ -1815,11 +1835,30 @@ int main(int argc, char** argv) {
             }
             std::puts(json::Write(NewItemMenuJson(NewItemMenu(ShortcutTable(*bindings)))).c_str());
             return kOk;
-        } else if (action == "create-page" && (args.size() == 2 || args.size() == 3)) {
+        } else if (action == "create-page" && args.size() >= 2) {
             float height = 820;
-            if (args.size() == 3) {
-                auto [end, error] = std::from_chars(args[2].data(), args[2].data() + args[2].size(), height);
-                if (error != std::errc() || end != args[2].data() + args[2].size() || !(height > 0 && height <= 16384)) return Usage();
+            std::optional<std::pair<float, float>> hit, swatchAt;
+            const auto point = [](const std::string& text) -> std::optional<std::pair<float, float>> {
+                const size_t comma = text.find(',');
+                if (comma == std::string::npos) return std::nullopt;
+                float x = 0, y = 0;
+                auto [xEnd, xError] = std::from_chars(text.data(), text.data() + comma, x);
+                auto [yEnd, yError] = std::from_chars(text.data() + comma + 1, text.data() + text.size(), y);
+                if (xError != std::errc() || yError != std::errc() || xEnd != text.data() + comma || yEnd != text.data() + text.size()) {
+                    return std::nullopt;
+                }
+                return std::pair{x, y};
+            };
+            for (size_t i = 2; i < args.size(); ++i) {
+                if ((args[i] == "--hit" || args[i] == "--swatch") && i + 1 < args.size()) {
+                    const auto at = point(args[i + 1]);
+                    if (!at) return Usage();
+                    (args[i] == "--hit" ? hit : swatchAt) = at;
+                    ++i;
+                } else {
+                    auto [end, error] = std::from_chars(args[i].data(), args[i].data() + args[i].size(), height);
+                    if (error != std::errc() || end != args[i].data() + args[i].size() || !(height > 0 && height <= 16384)) return Usage();
+                }
             }
             namespace M = space_creation_metrics;
             const SpaceCreationLayout l = LayOutSpaceCreation(240, height);
@@ -1853,6 +1892,14 @@ int main(int argc, char** argv) {
                                           {"width", static_cast<double>(s.width)},
                                           {"height", static_cast<double>(s.height)},
                                           {"presets", json::Value(std::move(swatches))}}}};
+            if (hit) {
+                const BarRect pill = EstimatedPill(l);
+                out.emplace("hit", std::string(SpaceCreationPartName(SpaceCreationPartAt(l, hit->first, hit->second, kEstimatedCancelWidth, pill))));
+            }
+            if (swatchAt) {
+                const std::optional<size_t> index = ThemeSwatchAt(s, swatchAt->first, swatchAt->second);
+                out.emplace("swatch", index ? json::Value(static_cast<double>(*index + 1)) : json::Value());
+            }
             std::puts(json::Write(json::Value(std::move(out))).c_str());
             return kOk;
         } else if (action == "move" && args.size() == 4) {

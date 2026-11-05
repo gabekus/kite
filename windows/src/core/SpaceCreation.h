@@ -63,7 +63,9 @@ bool CanCreateSpace(std::string_view name);
 // page closed. False, changing nothing, with no creation open or a blank name.
 bool FinishNewSpace(BrowserState& state, std::optional<SpaceCreation>& creation, std::string_view name, std::string_view about = {});
 // Cancel and Escape (cancelNewSpace): the space deleted and the one it was opened from selected.
-// False with no creation open.
+// False, changing nothing, with no creation open, or when its space is the only one left (Delete
+// Space refuses the last space: the Mac would end the page and leave the nameless space for
+// DropUnnamedEmptySpaces; Windows keeps the page open instead, so nothing nameless is left).
 bool CancelNewSpace(BrowserState& state, std::optional<SpaceCreation>& creation);
 // The theme editor's preset swatch `preset` (Theme::Presets()) picked for space `spaceID`: its
 // colours and grain, the space's intensity kept (ThemeEditor.presets' set), and a creation of that
@@ -75,6 +77,12 @@ bool ChooseSpaceTheme(BrowserState& state, std::optional<SpaceCreation>& creatio
 void CreationFollowsState(const BrowserState& state, std::optional<SpaceCreation>& creation);
 // Whether the page shows: a creation open for the selected space (SidebarColumn's check).
 bool ShowsCreation(const BrowserState& state, const std::optional<SpaceCreation>& creation);
+
+// A Create a Space page left open at quit (or a crash) leaves a nameless space behind: each space
+// with no name and no tabs goes, as Delete Space takes it (the one before a selected one selected,
+// never the last space), as the Mac's dropUnnamedEmptySpaces does after loading the session. True
+// when one went.
+bool DropUnnamedEmptySpaces(BrowserState& state);
 
 // What a space is for, in the user's words (Space.about, Kite's own: Claude reads it): kept in
 // the space's `extra` as the Mac writes it. Space.cleanAbout: lines joined with spaces, spaces
@@ -146,30 +154,29 @@ inline constexpr std::string_view kProfileTitle = "Profile";
 inline constexpr std::string_view kThemeTitle = "Choose a Theme";
 inline constexpr std::string_view kCreateTitle = "Create Space";
 inline constexpr std::string_view kCancelTitle = "Cancel";
-// The help tags the Mac shows (the about field's and the profile's info button).
-inline constexpr std::string_view kAboutHelp =
-    "Claude reads this to open tabs in the right space, e.g. \xE2\x80\x9CMy bakery: orders, suppliers, the shop\xE2\x80\x99s money\xE2\x80\x9D.";
-inline constexpr std::string_view kProfileHelp = "A profile keeps its own logins, history, cookies and extensions.";
 }  // namespace space_creation_metrics
 
 // Where everything on the page sits, in points from the sidebar's top-left, for a sidebar
 // `width` wide and `height` tall (the page fills the room between the top row and the space bar;
-// Create Space and Cancel sit at its bottom, under a Spacer that can shrink to nothing).
+// Create Space and Cancel sit at its bottom, under a Spacer that can shrink to nothing). The
+// profile's row always shows: the Mac hides it only in an incognito window, which Windows hasn't.
 struct SpaceCreationLayout {
     BarRect page;          // between the top row and the space bar, the sidebar's padding in
     BarRect illustration;  // the cards' frame, centred
     BarRect title, subtitle;  // their line boxes, the text centred in them
-    BarRect name, about, profile, theme;  // the rows (no profile row when it doesn't show)
+    BarRect name, about, profile, theme;  // the rows
     BarRect nameField, aboutField;  // the text fields: from the text's x to the row's trailing padding
     BarRect create;
     BarRect cancel;  // Cancel's line box, the page's width (its text is centred in it)
-    bool showsProfile = true;
     bool operator==(const SpaceCreationLayout&) const = default;
 };
-SpaceCreationLayout LayOutSpaceCreation(float width, float height, bool showsProfile = true);
+SpaceCreationLayout LayOutSpaceCreation(float width, float height);
 
 // What a press at (x, y) lands on. Cancel's own button is its text's width (`cancelWidth`), the
 // profile's pill its own frame (`pill`, which the shell measures); a row's field is the field.
+// kitecore, which measures no text, uses these for both.
+inline constexpr float kEstimatedCancelWidth = 44;
+BarRect EstimatedPill(const SpaceCreationLayout& layout);
 enum class SpaceCreationPart { None, NameField, AboutField, ProfilePill, ChooseTheme, Create, Cancel };
 SpaceCreationPart SpaceCreationPartAt(const SpaceCreationLayout& layout, float x, float y, float cancelWidth,
                                       const std::optional<BarRect>& pill = std::nullopt);

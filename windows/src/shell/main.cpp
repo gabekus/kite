@@ -142,6 +142,7 @@
 #include "core/KeyBindings.h"
 #include "core/ProfileSettings.h"
 #include "core/SessionStore.h"
+#include "core/SpaceCreation.h"
 #include "core/SessionWriter.h"
 #include "core/SupportDirectory.h"
 #include "shell/BackdropTest.h"
@@ -666,6 +667,10 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     const bool maySave = kite::SessionStore::MaySave(loaded);
     if (auto* existing = std::get_if<kite::BrowserState>(&loaded)) {
         state = std::move(*existing);
+        // A Create a Space page left open at quit or by a crash leaves a nameless, empty space: it
+        // goes, as the Mac's BrowserStore drops it after loading (dropUnnamedEmptySpaces). Saved
+        // with the next change, as the Mac's is.
+        kite::DropUnnamedEmptySpaces(state);
     } else {
         if (auto* error = std::get_if<kite::SessionStore::Error>(&loaded)) {
             OutputDebugStringW((L"Kite: session unreadable, starting fresh" + std::wstring(maySave ? L"" : L" without saving") +

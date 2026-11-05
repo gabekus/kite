@@ -143,7 +143,7 @@ void SpaceCreationView::Layout(float width, float height, UINT dpi) {
     width_ = width;
     height_ = height;
     dpi_ = dpi;
-    layout_ = LayOutSpaceCreation(width_, height_, true);
+    layout_ = LayOutSpaceCreation(width_, height_);
     Measure();
     PlaceFields();
     dirty_ = createDirty_ = true;
@@ -254,9 +254,25 @@ void SpaceCreationView::LoseKeyboard() {
 }
 
 void SpaceCreationView::FocusChanged() {
-    const bool window = GetFocus() == window_;
-    name_.SetFocused(shown_ && keyboard_ == Field::Name && window);
-    about_.SetFocused(shown_ && keyboard_ == Field::About && window);
+    const bool window = assumeFocus_ || GetFocus() == window_;
+    const bool name = shown_ && keyboard_ == Field::Name && window;
+    const bool about = shown_ && keyboard_ == Field::About && window;
+    // The field losing the keyboard first: a thread has one system caret, and the loser's
+    // DestroyCaret would take the gainer's with it.
+    if (!name) name_.SetFocused(false);
+    if (!about) about_.SetFocused(false);
+    if (name) name_.SetFocused(true);
+    if (about) about_.SetFocused(true);
+}
+
+void SpaceCreationView::Redraw() {
+    if (!compositor_) return;
+    if (std::wstring problem = Draw(); !problem.empty()) {
+        OutputDebugStringW((L"Kite: Create a Space couldn't draw: " + problem + L"\n").c_str());
+        if (callbacks_.drawFailed) callbacks_.drawFailed();
+        return;
+    }
+    compositor_->Commit();
 }
 
 bool SpaceCreationView::CanCreate() const { return CanCreateSpace(Narrow(name_.Text())); }
@@ -273,13 +289,8 @@ void SpaceCreationView::Edited(Field field, TextField::Change change) {
     GpuOf(field).dirty = true;
     // Create Space turns on with a name and off without one: it alone draws again then.
     if (CanCreate() != canCreate_) createDirty_ = true;
-    if (!compositor_) return;
     // At once, as the field's own redraw: the page and the other field stay as they are.
-    if (std::wstring problem = Draw(); !problem.empty()) {
-        OutputDebugStringW((L"Kite: Create a Space couldn't draw: " + problem + L"\n").c_str());
-        return;
-    }
-    compositor_->Commit();
+    Redraw();
 }
 
 void SpaceCreationView::Submit() {
@@ -321,7 +332,7 @@ bool SpaceCreationView::HandleKey(UINT message, WPARAM wParam, LPARAM lParam) {
         if (key == VK_TAB && !ctrl && !alt) {
             // The key view loop between the two fields; the one tabbed into has its text selected.
             Focus(field == Field::Name ? Field::About : Field::Name, true);
-            if (compositor_ && Draw().empty()) compositor_->Commit();
+            Redraw();
             return true;
         }
         const std::optional<TextField::Change> change = FieldOf(field).KeyDown(key, ctrl, shift);
@@ -351,7 +362,7 @@ bool SpaceCreationView::HandleKey(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_SETFOCUS:
         FocusChanged();
         nameGpu_.dirty = aboutGpu_.dirty = true;
-        if (compositor_ && Draw().empty()) compositor_->Commit();
+        Redraw();
         return false;
     case WM_KILLFOCUS:
         // The page took it (a click in it): the field lets it go, as the web view becoming first
@@ -361,15 +372,19 @@ bool SpaceCreationView::HandleKey(UINT message, WPARAM wParam, LPARAM lParam) {
         if (selecting_ && GetCapture() == window_) ReleaseCapture();
         FocusChanged();
         nameGpu_.dirty = aboutGpu_.dirty = true;
-        if (compositor_ && Draw().empty()) compositor_->Commit();
+        Redraw();
         return false;
     case WM_TIMER: {
         TextField* field = name_.HandleTimer(wParam) ? &name_ : about_.HandleTimer(wParam) ? &about_ : nullptr;
         if (!field) return false;
         FieldGpu& gpu = field == &name_ ? nameGpu_ : aboutGpu_;
         if (compositor_ && gpu.visual) {
-            field->UpdateCaret(compositor_->Device(), compositor_->D2D(), gpu.visual.Get(), kCaret);
-            compositor_->Commit();
+            if (const HRESULT hr = field->UpdateCaret(compositor_->Device(), compositor_->D2D(), gpu.visual.Get(), kCaret); FAILED(hr)) {
+                deviceLost_ = IsDeviceLost(hr);
+                if (callbacks_.drawFailed) callbacks_.drawFailed();
+            } else {
+                compositor_->Commit();
+            }
         }
         return true;
     }
@@ -410,8 +425,8 @@ bool SpaceCreationView::Press(D2D1_POINT_2F p, bool shift) {
         // controller takes the keyboard from its other fields first); one that has it just moves
         // the caret, so Shift extends from where the selection was.
         if (keyboard_ != field) {
-            if (callbacks_.takeKeyboard) callbacks_.takeKeyboard();
-            Focus(field);
+            if (callbacks_.takeKeyboard) callbacks_.takeKeyboard(field);
+            if (keyboard_ != field) Focus(field);
         }
         selecting_ = field;
         SetCapture(window_);

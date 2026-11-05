@@ -48,6 +48,19 @@ void BrowserWindowController::RunSpaceMenuItem(const std::string& spaceID, Space
 void BrowserWindowController::BeginRenaming(const std::string& spaceID) {
     const auto index = state_.SpaceIndex(spaceID);
     if (!index) return;
+    // The space Create a Space is making has no header to rename in (the page is over it; the
+    // Mac's renames a header no one sees): its page's name field, its text all selected.
+    if (creation_ && creation_->spaceID == spaceID) {
+        SetSidebarShown(true);
+        if (state_.selectedSpaceID != spaceID) {
+            state_.SelectSpace(spaceID);
+            SelectionMoved();
+        }
+        GiveKeyboard(KeyboardField::Creation, false);
+        sidebar_->FocusCreation(SpaceCreationView::Field::Name, true);
+        UpdateFindHole();
+        return;
+    }
     // beginRenaming(space:): the sidebar shown, its space selected, then its header's field.
     SetSidebarShown(true);
     if (state_.selectedSpaceID != spaceID) {

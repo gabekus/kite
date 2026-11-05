@@ -90,6 +90,7 @@ bool FinishNewSpace(BrowserState& state, std::optional<SpaceCreation>& creation,
 
 bool CancelNewSpace(BrowserState& state, std::optional<SpaceCreation>& creation) {
     if (!creation) return false;
+    if (state.spaces.size() <= 1 && state.SpaceIndex(creation->spaceID)) return false;
     const SpaceCreation closing = *creation;
     creation.reset();
     state.DeleteSpace(closing.spaceID);
@@ -115,6 +116,18 @@ void CreationFollowsState(const BrowserState& state, std::optional<SpaceCreation
 
 bool ShowsCreation(const BrowserState& state, const std::optional<SpaceCreation>& creation) {
     return creation && !state.spaces.empty() && state.selectedSpaceID == creation->spaceID;
+}
+
+bool DropUnnamedEmptySpaces(BrowserState& state) {
+    // for space in spaces where space.name.isEmpty && space.allTabs.isEmpty { deleteSpace(space.id) }:
+    // over a copy of the ids, Delete Space's rules each time (it refuses the last space).
+    std::vector<std::string> unnamed;
+    for (const Space& space : state.spaces) {
+        if (space.name.empty() && space.AllTabs().empty()) unnamed.push_back(space.id);
+    }
+    const size_t before = state.spaces.size();
+    for (const std::string& id : unnamed) state.DeleteSpace(id);
+    return state.spaces.size() != before;
 }
 
 std::optional<std::string> CleanAbout(std::string_view text) {
@@ -168,11 +181,10 @@ std::optional<std::string> NewSpace(BrowserState& state, std::string_view name, 
 
 // MARK: The page's layout
 
-SpaceCreationLayout LayOutSpaceCreation(float width, float height, bool showsProfile) {
+SpaceCreationLayout LayOutSpaceCreation(float width, float height) {
     namespace M = space_creation_metrics;
     namespace S = sidebar_metrics;
     SpaceCreationLayout l;
-    l.showsProfile = showsProfile;
     // SidebarColumnView: the column inside the sidebar's padding, from under the top row to the bar.
     const float top = S::kTopRowY + S::kTopRowHeight;
     const float barTop = SpaceBarTop(height);
@@ -184,12 +196,8 @@ SpaceCreationLayout LayOutSpaceCreation(float width, float height, bool showsPro
     l.subtitle = band(l.title.bottom + M::kSubtitleTop, 2 * M::kSubtitleLineHeight);
     l.name = band(l.subtitle.bottom + M::kFieldsTop, M::kRowHeight);
     l.about = band(l.name.bottom + M::kProfileGap, M::kRowHeight);
-    float last = l.about.bottom;
-    if (showsProfile) {
-        l.profile = band(l.about.bottom + M::kProfileGap, M::kRowHeight);
-        last = l.profile.bottom;
-    }
-    l.theme = band(last + M::kThemeGap, M::kRowHeight);
+    l.profile = band(l.about.bottom + M::kProfileGap, M::kRowHeight);
+    l.theme = band(l.profile.bottom + M::kThemeGap, M::kRowHeight);
     const auto field = [&](const BarRect& row) {
         return BarRect{M::kRowTextX, row.top, std::max(row.right - M::kRowTrailing, M::kRowTextX), row.bottom};
     };
@@ -208,13 +216,22 @@ SpaceCreationPart SpaceCreationPartAt(const SpaceCreationLayout& layout, float x
     using P = SpaceCreationPart;
     if (layout.nameField.Contains(x, y)) return P::NameField;
     if (layout.aboutField.Contains(x, y)) return P::AboutField;
-    if (layout.showsProfile && pill && pill->Contains(x, y)) return P::ProfilePill;
+    if (pill && pill->Contains(x, y)) return P::ProfilePill;
     if (layout.theme.Contains(x, y)) return P::ChooseTheme;
     if (layout.create.Contains(x, y)) return P::Create;
     const float middle = (layout.cancel.left + layout.cancel.right) / 2;
     const BarRect cancel{middle - cancelWidth / 2, layout.cancel.top, middle + cancelWidth / 2, layout.cancel.bottom};
     if (cancel.Contains(x, y)) return P::Cancel;
     return P::None;
+}
+
+BarRect EstimatedPill(const SpaceCreationLayout& layout) {
+    // "Profile" at 15pt semibold is about 52pt, "Default" at 13pt semibold about 46: the pill from
+    // 108 to 176 in a 240pt sidebar.
+    namespace M = space_creation_metrics;
+    const float left = M::kRowTextX + 52 + M::kRowSpacing;
+    const float middle = (layout.profile.top + layout.profile.bottom) / 2;
+    return BarRect{left, middle - M::kPillHeight / 2, left + 2 * M::kPillPadding + 46 + M::kPillGap + 8, middle + M::kPillHeight / 2};
 }
 
 const char* SpaceCreationPartName(SpaceCreationPart part) {

@@ -36,6 +36,7 @@ namespace kite {
 
 class SpaceCreationView {
 public:
+    enum class Field { Name, About };
     struct Callbacks {
         // Return in a field, or Create Space, with a name (CanCreateSpace): the controller makes it.
         std::function<void(const std::string& name, const std::string& about)> create;
@@ -45,11 +46,13 @@ public:
         std::function<void(const BarRect& row)> chooseTheme;
         // The profile's pill: its menu, at `screen` (px, under the pill).
         std::function<void(POINT screen)> profileMenu;
-        // A press in a field that doesn't have the keyboard: the controller takes it from its other
-        // fields first (GiveKeyboard), so one caret is left.
-        std::function<void()> takeKeyboard;
+        // A press in `field` while it doesn't have the keyboard: the controller takes it from its
+        // other fields first (GiveKeyboard), so one caret is left, then focuses `field` (Focus).
+        std::function<void(Field field)> takeKeyboard;
+        // A draw of its own (a keystroke's, the caret's, the focus's) failed: the owner draws again
+        // on its next pass, which rebuilds the GPU when it's gone.
+        std::function<void()> drawFailed;
     };
-    enum class Field { Name, About };
     // What it shows besides its own fields: the space's appearance and its profile's name, and
     // whether the pill's menu can change it.
     struct Model {
@@ -114,10 +117,16 @@ public:
     void Type(Field field, std::string_view text);
     bool CanCreate() const;
     std::optional<D2D1_POINT_2F> CentreOf(SpaceCreationPart part) const;
-    BarRect Pill() const { return pill_; }
     size_t PageDraws() const { return pageDraws_; }
     size_t FieldDraws() const { return fieldDraws_; }
     size_t CreateDraws() const { return createDraws_; }
+    // For the smoke test, whose window never has the keyboard (a quiet run never comes to the front):
+    // the fields act as when it has, so their system carets and focus can be checked.
+    void AssumeWindowFocusForTest(bool assume) {
+        assumeFocus_ = assume;
+        FocusChanged();
+    }
+    bool FieldFocused(Field field) const { return FieldOf(field).Focused(); }
 
     // The fields' caret blinks (view timers: 0x4B42 to 0x4B49 are taken or reserved, W9e's icon
     // picker's caret at 0x4B49).
@@ -144,6 +153,8 @@ private:
     // A field changed: it draws again, and Create Space with it when the name turns it on or off.
     void Edited(Field field, TextField::Change change);
     void FocusChanged();
+    // Draws what an input changed now and commits (a field's own redraw); a failure goes to drawFailed.
+    void Redraw();
     void Submit();
     LOGFONTW FieldFont() const;
     void ReleaseGpu();
@@ -193,6 +204,7 @@ private:
     std::optional<Field> selecting_;            // a field being drag-selected
     TextField name_, about_;
     size_t pageDraws_ = 0, fieldDraws_ = 0, createDraws_ = 0;
+    bool assumeFocus_ = false;  // AssumeWindowFocusForTest
 };
 
 }  // namespace kite

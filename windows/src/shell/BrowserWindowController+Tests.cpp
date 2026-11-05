@@ -1903,6 +1903,33 @@ std::wstring BrowserWindowController::SmokeTestNewSpace() {
     if (sidebar_->PlusCentre()) return L"Create a Space left the + button in the bar";
     if (KeyboardOwner() != KeyboardField::Creation || page.KeyboardField() != Field::Name) return L"Create a Space's name field didn't take the keyboard";
     if (std::wstring problem = drawn(); !problem.empty()) return problem;
+    // One system caret a thread: Tab hands it from the name field to the other and back, the losing
+    // field's DestroyCaret coming first (the window's keyboard assumed, as a quiet run never has it).
+    {
+        const auto caretOwner = [] {
+            GUITHREADINFO info{sizeof(info)};
+            return GetGUIThreadInfo(GetCurrentThreadId(), &info) ? info.hwndCaret : nullptr;
+        };
+        page.AssumeWindowFocusForTest(true);
+        const bool named = page.FieldFocused(Field::Name) && caretOwner() == window_.Handle();
+        key(VK_TAB);
+        const bool about = page.FieldFocused(Field::About) && !page.FieldFocused(Field::Name) && caretOwner() == window_.Handle();
+        key(VK_TAB);
+        const bool back = page.FieldFocused(Field::Name) && caretOwner() == window_.Handle();
+        page.AssumeWindowFocusForTest(false);
+        if (!named || !about || !back) return L"Tab between Create a Space's fields lost the system caret";
+        if (caretOwner()) return L"Create a Space's fields left a system caret without the keyboard";
+    }
+    // Rename Space… on the space being made renames it in the page's name field (there's no header
+    // to rename in), and New Folder there leaves the keyboard where it is.
+    RunSpaceMenuItem(draft, SpaceMenuItem::Command::Rename);
+    if (sidebar_->Renaming() || KeyboardOwner() != KeyboardField::Creation || page.KeyboardField() != Field::Name) {
+        return L"Rename Space… on the space being made didn't go to the page's name field";
+    }
+    RunSpaceMenuItem(draft, SpaceMenuItem::Command::NewFolder);
+    if (sidebar_->Renaming() || KeyboardOwner() != KeyboardField::Creation) return L"New Folder on the space being made took the keyboard";
+    state_.spaces[*state_.SpaceIndex(draft)].pinnedItems.clear();
+    StateChanged();
     // Return with no name creates nothing (Create Space is disabled).
     key(VK_RETURN);
     if (!creation_ || page.CanCreate()) return L"Return with no name created a space";
@@ -1937,6 +1964,10 @@ std::wstring BrowserWindowController::SmokeTestNewSpace() {
     // Escape closes the swatches and nothing else.
     key(VK_ESCAPE);
     if (swatches_->IsOpen() || !creation_) return L"Escape over the swatches didn't close just them";
+    // A press in the page (its window tells Kite's) closes them too.
+    click(client(SpaceCreationPart::ChooseTheme));
+    SendMessageW(window_.Handle(), WM_PARENTNOTIFY, MAKEWPARAM(WM_LBUTTONDOWN, 0), MAKELPARAM(900, 300));
+    if (swatches_->IsOpen()) return L"a press in the page didn't close the swatches";
     // A press elsewhere in the window closes them too.
     click(client(SpaceCreationPart::ChooseTheme));
     click(client(SpaceCreationPart::NameField));

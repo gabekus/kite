@@ -76,7 +76,7 @@ void Append(HMENU menu, const std::vector<ContextMenuEntry>& entries, size_t& ne
             continue;
         }
         // A tab right-aligns what follows it: the shortcut, in the menu's column for them.
-        const std::wstring title = ContextMenuText(entry.title) + (entry.shortcut.empty() ? L"" : L"\t" + Widen(entry.shortcut));
+        const std::wstring title = ContextMenuText(entry.title) + (entry.shortcut.empty() ? L"" : L"\t" + ContextMenuText(entry.shortcut));
         const UINT state = entry.enabled ? MF_ENABLED : MF_GRAYED;
         if (entry.submenu) {
             // A submenu with nothing in it yet (one whose items come with their checkpoint) is

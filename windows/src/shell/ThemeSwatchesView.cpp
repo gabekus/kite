@@ -46,14 +46,14 @@ bool RegisterOnce(HINSTANCE instance, WNDPROC proc) {
 
 }  // namespace
 
-std::unique_ptr<ThemeSwatchesView> ThemeSwatchesView::Create(HWND owner, Callbacks callbacks, bool offscreen, std::wstring& error) {
+std::unique_ptr<ThemeSwatchesView> ThemeSwatchesView::Create(HWND owner, IDWriteFactory* dwrite, Callbacks callbacks, bool offscreen,
+                                                             std::wstring& error) {
     std::unique_ptr<ThemeSwatchesView> view(new ThemeSwatchesView(owner, std::move(callbacks), offscreen));
-    ComPtr<IDWriteFactory> dwrite;
-    HRESULT hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(dwrite.GetAddressOf()));
-    if (FAILED(hr)) {
-        error = HResultMessage(L"DWriteCreateFactory", hr);
+    if (!dwrite) {
+        error = L"no text factory";
         return nullptr;
     }
+    HRESULT hr = S_OK;
     ComPtr<IDWriteFontCollection> fonts;
     dwrite->GetSystemFontCollection(fonts.GetAddressOf());
     UINT32 index = 0;
@@ -68,20 +68,20 @@ std::unique_ptr<ThemeSwatchesView> ThemeSwatchesView::Create(HWND owner, Callbac
     }
     view->chevronFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     view->chevronFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    const HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(owner, GWLP_HINSTANCE));
-    if (!RegisterOnce(instance, &ThemeSwatchesView::WindowProc)) {
-        error = L"registering the theme swatches' window class failed";
-        return nullptr;
-    }
+    return view;
+}
+
+std::wstring ThemeSwatchesView::MakeWindow() {
+    if (window_) return {};
+    const HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(owner_, GWLP_HINSTANCE));
+    if (!RegisterOnce(instance, &ThemeSwatchesView::WindowProc)) return L"registering the theme swatches' window class failed";
     // Never activated (the browser window keeps the keyboard), never in the taskbar or Alt+Tab;
     // DirectComposition draws all of it.
-    view->window_ = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kClassName, L"", WS_POPUP, 0, 0, 1, 1,
-                                    owner, nullptr, instance, view.get());
-    if (!view->window_) {
-        error = L"creating the theme swatches' window failed";
-        return nullptr;
-    }
-    return view;
+    const HWND made = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kClassName, L"", WS_POPUP, 0, 0, 1, 1,
+                                      owner_, nullptr, instance, this);
+    if (!made) return L"creating the theme swatches' window failed";
+    window_ = made;
+    return {};
 }
 
 ThemeSwatchesView::~ThemeSwatchesView() {
@@ -94,18 +94,29 @@ LRESULT CALLBACK ThemeSwatchesView::WindowProc(HWND hwnd, UINT message, WPARAM w
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams));
     }
     auto* view = reinterpret_cast<ThemeSwatchesView*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    // Windows destroys an owned window with its owner: the view forgets it.
-    if (message == WM_NCDESTROY && view) {
+    // Windows destroys an owned window with its owner: the view forgets it, and its target.
+    if (message == WM_NCDESTROY && view && view->window_ == hwnd) {
         view->window_ = nullptr;
         view->open_ = false;
+        view->target_.Reset();
+        view->visual_.Reset();
+        view->surface_.Reset();
     }
-    if (view && message != WM_NCCREATE && message != WM_NCDESTROY) return view->Handle(message, wParam, lParam);
+    // Only once CreateWindowExW has returned it (WM_NCCREATE, WM_CREATE and the rest before that
+    // are the default's).
+    if (view && view->window_ == hwnd && message != WM_NCDESTROY) return view->Handle(message, wParam, lParam);
     return DefWindowProcW(hwnd, message, wParam, lParam);
 }
 
 LRESULT ThemeSwatchesView::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
+    case WM_NCHITTEST: {
+        // The clear corners beside the arrow and the edge's margin pass the pointer to what's under.
+        POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        ScreenToClient(window_, &at);
+        return OnPopover(at) ? HTCLIENT : HTTRANSPARENT;
+    }
     // Windows shows an owned window again with its restored owner: it shows only when opened.
     case WM_SHOWWINDOW:
         if (wParam && lParam == SW_PARENTOPENING) return 0;
@@ -140,7 +151,7 @@ void ThemeSwatchesView::UseCompositor(Compositor* compositor) {
     deviceLost_ = false;
 }
 
-ThemeSwatchesView::Frame ThemeSwatchesView::FrameFor(const BarRect& row, float scale) const {
+ThemeSwatchesView::Frame ThemeSwatchesView::FrameFor(const BarRect& row, float scale, bool onScreen) const {
     Frame f;
     f.placement = PlaceThemeSwatches(row, layout_);
     f.margin = kMargin;
@@ -149,7 +160,38 @@ ThemeSwatchesView::Frame ThemeSwatchesView::FrameFor(const BarRect& row, float s
     f.origin = POINT{std::lround(left * scale), std::lround(top * scale)};
     f.width = static_cast<UINT>(std::ceil((T::kArrowDepth + layout_.width + 2 * kMargin) * scale));
     f.height = static_cast<UINT>(std::ceil((layout_.height + 2 * kMargin) * scale));
+    if (!onScreen) return f;
+    // Inside the work area of the monitor the row is on (NSPopover keeps to the screen's visible
+    // frame), the arrow moving along its edge to stay level with the row.
+    POINT anchor{std::lround(row.right * scale), std::lround((row.top + row.bottom) / 2 * scale)};
+    ClientToScreen(owner_, &anchor);
+    MONITORINFO monitor{sizeof(monitor)};
+    if (!GetMonitorInfoW(MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST), &monitor)) return f;
+    POINT screen = f.origin;
+    ClientToScreen(owner_, &screen);
+    const RECT& work = monitor.rcWork;
+    LONG dx = 0, dy = 0;
+    if (screen.x + static_cast<LONG>(f.width) > work.right) dx = work.right - (screen.x + static_cast<LONG>(f.width));
+    if (screen.x + dx < work.left) dx = work.left - screen.x;
+    if (screen.y + static_cast<LONG>(f.height) > work.bottom) dy = work.bottom - (screen.y + static_cast<LONG>(f.height));
+    if (screen.y + dy < work.top) dy = work.top - screen.y;
+    f.origin.x += dx;
+    f.origin.y += dy;
+    f.placement.left += static_cast<float>(dx) / scale;
+    f.placement.top += static_cast<float>(dy) / scale;
+    const float reach = T::kCornerRadius + T::kArrowWidth / 2;
+    f.placement.arrowY = std::clamp(f.placement.arrowY - static_cast<float>(dy) / scale, reach, std::max(reach, layout_.height - reach));
     return f;
+}
+
+bool ThemeSwatchesView::OnPopover(POINT client) const {
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    const float x = static_cast<float>(client.x) / scale - frame_.margin, y = static_cast<float>(client.y) / scale - frame_.margin;
+    if (y < 0 || y >= layout_.height) return false;
+    if (x >= T::kArrowDepth) return x < T::kArrowDepth + layout_.width;
+    // The arrow: its tip at x 0, its base T::kArrowWidth tall at the body's edge.
+    const float half = T::kArrowWidth / 2 * x / T::kArrowDepth;
+    return x >= 0 && std::abs(y - frame_.placement.arrowY) <= half;
 }
 
 std::optional<size_t> ThemeSwatchesView::SwatchAt(LPARAM client) const {
@@ -231,14 +273,13 @@ std::wstring ThemeSwatchesView::DrawInto(IDCompositionVirtualSurface* surface, c
 
 std::wstring ThemeSwatchesView::Open(const BarRect& row, UINT dpi, bool dark, std::vector<ThemeColor> accents) {
     if (!compositor_) return L"no compositor";
-    if (!window_) return L"the theme swatches' window is gone";
-    row_ = row;
+    if (std::wstring problem = MakeWindow(); !problem.empty()) return problem;
     dpi_ = dpi;
     dark_ = dark;
     accents_ = std::move(accents);
     layout_ = LayOutThemeSwatches(accents_.size());
     const float scale = static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
-    frame_ = FrameFor(row, scale);
+    frame_ = FrameFor(row, scale, !offscreen_);
     HRESULT hr = S_OK;
     auto fail = [&](const wchar_t* what) {
         deviceLost_ = IsDeviceLost(hr);
@@ -288,6 +329,7 @@ void ThemeSwatchesView::SetDark(bool dark) {
     if (std::wstring error = DrawInto(surface_.Get(), frame_, nullptr, hr); !error.empty()) {
         deviceLost_ = IsDeviceLost(hr);
         Close();
+        if (deviceLost_ && onDeviceLost) onDeviceLost();
         return;
     }
     compositor_->Commit();
@@ -312,7 +354,8 @@ std::wstring ThemeSwatchesView::Render(const BarRect& row, UINT dpi, bool dark, 
     dark_ = dark;
     accents_ = std::move(accents);
     layout_ = LayOutThemeSwatches(accents_.size());
-    const Frame frame = FrameFor(row, static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI);
+    // As it shows in the window (a capture keeps to the window, not the screen).
+    const Frame frame = FrameFor(row, static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI, false);
     origin = frame.origin;
     HRESULT hr = S_OK;
     ComPtr<IDCompositionVirtualSurface> surface;

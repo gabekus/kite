@@ -276,14 +276,23 @@ std::wstring BrowserWindowController::Init() {
     actions.cancelCreation = [this] { CancelNewSpace(); };
     actions.chooseTheme = [this](const BarRect& row) { ShowThemeSwatches(row); };
     actions.creationProfileMenu = [this](POINT screen) { ShowCreationProfileMenu(screen); };
-    actions.creationTakesKeyboard = [this] { GiveKeyboard(KeyboardField::Creation); };
+    actions.creationTakesKeyboard = [this](SpaceCreationView::Field field) {
+        // The others' carets go first, then the field's own, then the page keeps no keyboard of
+        // its own while a navigation lands (UpdateFindHole's KeepKeyboard).
+        GiveKeyboard(KeyboardField::Creation, false);
+        sidebar_->FocusCreation(field);
+        UpdateFindHole();
+    };
     sidebar_->SetActions(std::move(actions));
+    sidebar_->SetCreation(&creation_);
     // Choose a Theme's swatches: a window of their own, over the page.
     ThemeSwatchesView::Callbacks swatches;
     swatches.pick = [this](size_t preset) { PickSpaceTheme(preset); };
-    swatches_ = ThemeSwatchesView::Create(window_.Handle(), std::move(swatches), options_.quiet, error);
+    swatches_ = ThemeSwatchesView::Create(window_.Handle(), sidebar_->DWrite(), std::move(swatches), options_.quiet, error);
     if (!swatches_) return L"Kite couldn't make Choose a Theme's swatches: " + error;
     swatches_->UseCompositor(compositor_.get());
+    // Its own redraw found the GPU gone: rebuild and draw everything.
+    swatches_->onDeviceLost = [this] { Draw(); };
     showNewItemMenu_ = [this](const std::vector<NewItemMenuItem>& items, POINT screen) -> std::optional<NewItemMenuItem::Command> {
         const std::optional<size_t> chosen =
             ShowContextMenu(window_.Handle(), NewItemEntries(items), screen, dark_.value_or(true), ContextMenuPlacement::AboveCentred);
@@ -988,7 +997,6 @@ void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save)
     // Create a Space follows the session (its space deleted elsewhere, it's over) before the
     // sidebar shows it.
     kite::CreationFollowsState(state_, creation_);
-    sidebar_->SetCreation(creation_);
     SyncSpace();
     // The selected tab's page's status first, so the top row's update shows both together.
     ShowPageStatus();
@@ -1143,18 +1151,11 @@ BrowserWindowController::KeyboardField BrowserWindowController::KeyboardOwner() 
     return KeyboardField::None;
 }
 
-void BrowserWindowController::GiveKeyboard(KeyboardField to, bool focusFindField) {
-    if (to == KeyboardField::Find && findBar_) {
+void BrowserWindowController::GiveKeyboard(KeyboardField to, bool focusField) {
+    const bool field = (to == KeyboardField::Find && findBar_) || to == KeyboardField::Creation;
+    if (field) {
         // First, so nothing on the way hands the keyboard to the page: not the command bar
         // closing (BlockPages' Focus), not a navigation landing meanwhile.
-#ifdef KITE_HAS_CEF
-        if (chromium_) chromium_->KeepKeyboard(true);
-#endif
-        if (commandBar_ && commandBar_->IsOpen()) commandBar_->Hide();
-    }
-    if (to == KeyboardField::Creation) {
-        // As for the find field: no navigation hands the keyboard to the page meanwhile, and the
-        // command bar goes.
 #ifdef KITE_HAS_CEF
         if (chromium_) chromium_->KeepKeyboard(true);
 #endif
@@ -1164,9 +1165,11 @@ void BrowserWindowController::GiveKeyboard(KeyboardField to, bool focusFindField
     if (to != KeyboardField::Find && findBar_) findBar_->LoseKeyboard();
     if (to != KeyboardField::Rename) sidebar_->EndRenaming(true);
     if (to != KeyboardField::Creation) sidebar_->CreationLosesKeyboard();
-    if (to == KeyboardField::Find && findBar_ && focusFindField) findBar_->Focus();
-    // A press in the field takes it itself, after this (focusFindField false): Kite keeps it.
-    if (to == KeyboardField::Find && !focusFindField) return;
+    // A press in the field takes it itself, after this (focusField false): Kite keeps it, and the
+    // caller updates the page's hold once the field has it.
+    if (field && !focusField) return;
+    if (to == KeyboardField::Find && findBar_) findBar_->Focus();
+    if (to == KeyboardField::Creation) sidebar_->FocusCreation(SpaceCreationView::Field::Name);
     UpdateFindHole();
 }
 
@@ -1564,7 +1567,7 @@ std::wstring BrowserWindowController::DrawAt(double time, Pixels* readBack) {
     for (int attempt = 0; attempt < 2; ++attempt) {
         const auto lost = [this] {
             return !compositor_ || compositor_->DeviceLost() || sidebar_->DeviceLost() || caption_->DeviceLost() ||
-                   (findBar_ && findBar_->DeviceLost());
+                   (findBar_ && findBar_->DeviceLost()) || (swatches_ && swatches_->DeviceLost());
         };
         if (lost()) {
             if (problem = Rebuild(); !problem.empty()) break;
@@ -1656,9 +1659,14 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
             result = 0;
             return true;
         }
+        // A press in the page reaches the window as WM_PARENTNOTIFY (when the page's windows pass it
+        // on) or as the focus going to the page (Choose a Theme gives Kite's window the focus as the
+        // popover opens, so it moves on such a press).
+        const bool pagePress = message == WM_PARENTNOTIFY &&
+                               (LOWORD(wParam) == WM_LBUTTONDOWN || LOWORD(wParam) == WM_RBUTTONDOWN || LOWORD(wParam) == WM_MBUTTONDOWN);
         if (message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN || message == WM_MBUTTONDOWN || message == WM_NCLBUTTONDOWN ||
             message == WM_NCRBUTTONDOWN || message == WM_KILLFOCUS || message == WM_MOVE || (message == WM_ACTIVATE && LOWORD(wParam) == WA_INACTIVE) ||
-            (message == WM_ACTIVATEAPP && !wParam)) {
+            (message == WM_ACTIVATEAPP && !wParam) || pagePress) {
             CloseThemeSwatches();
         }
     }
