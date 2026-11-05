@@ -184,6 +184,12 @@ final class PagePool {
             ?? url.flatMap { historyFiles?.load(tab: tab.id, url: $0, profile: engine.profileDirectory) }
         let page = engine.makePage(url: url, restoring: restoring)
         register(page, id: tab.id)
+        // The engine started the load before the page was registered, so its first "loading" event went to no one
+        // (PageRegistration): record it now, as that event would have, or a slow first load shows reload, not the X.
+        if PageRegistration.loadingToRecord(pageIsLoading: page.isLoading, recorded: store.pages[tab.id]?.isLoading) == true {
+            store.updatePage(tab.id) { $0.isLoading = true }
+            onLoadingChanged?(tab.id, page, true)
+        }
         pageProfiles[tab.id] = engine.profileDirectory
         // Before the engine asks for the first document's scripts.
         page.themeCSS = themeCSS(forTabs: [tab.id])[tab.id] ?? nil
