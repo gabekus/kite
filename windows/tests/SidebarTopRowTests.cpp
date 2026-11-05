@@ -20,13 +20,6 @@ namespace {
 
 bool Near(double a, double b, double within = 0.01) { return std::fabs(a - b) <= within; }
 
-const TopRowItem* Find(const std::vector<TopRowItem>& items, TopRowButton button) {
-    for (const TopRowItem& item : items) {
-        if (item.button == button) return &item;
-    }
-    return nullptr;
-}
-
 BrowserState WithTab() {
     BrowserState state = BrowserState::MakeDefault();
     state.OpenTab("https://example.com/");
