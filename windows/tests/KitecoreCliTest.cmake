@@ -220,8 +220,8 @@ if(NOT target STREQUAL "pinnedChevron" OR NOT collapsed)
   message(FATAL_ERROR "click on the chevron gave ${hit}, then ${bar}")
 endif()
 # The space bar: Personal and Work centred between the end buttons (cells at 85 and 119, 8pt
-# into the 50pt bar), Personal lit, its emoji drawn and Work's SF Symbol (briefcase) as Segoe
-# Fluent's E821, in its theme's accent. A click on Work's cell, in the bar at the window's bottom, selects it.
+# into the 50pt bar), Personal lit, its emoji drawn and Work's SF Symbol (briefcase) drawn as
+# Kite's own shape, in its theme's accent. A click on Work's cell, in the bar at the window's bottom, selects it.
 string(JSON cells LENGTH "${bar}" spaceBar cells)
 string(JSON left0 GET "${bar}" spaceBar cells 0 left)
 string(JSON left1 GET "${bar}" spaceBar cells 1 left)
@@ -231,11 +231,11 @@ string(JSON lit1 GET "${bar}" spaceBar cells 1 lit)
 string(JSON workID GET "${bar}" spaceBar cells 1 id)
 string(JSON shows0 GET "${bar}" spaceBar cells 0 shows)
 string(JSON shows1 GET "${bar}" spaceBar cells 1 shows)
-string(JSON glyph1 GET "${bar}" spaceBar cells 1 glyph fluent)
+string(JSON glyph1 GET "${bar}" spaceBar cells 1 glyph drawn)
 string(JSON accent1 GET "${bar}" spaceBar cells 1 accent)
 string(JSON headerShows GET "${bar}" rows 0 shows)
 if(NOT cells EQUAL 2 OR NOT left0 EQUAL 85 OR NOT left1 EQUAL 119 OR NOT top0 EQUAL 8 OR NOT lit0 EQUAL 1 OR NOT lit1 EQUAL 0
-   OR NOT shows0 STREQUAL "emoji" OR NOT shows1 STREQUAL "symbol" OR NOT glyph1 STREQUAL "E821"
+   OR NOT shows0 STREQUAL "emoji" OR NOT shows1 STREQUAL "symbol" OR NOT glyph1 STREQUAL "ON"
    OR NOT accent1 STREQUAL "#D74B86" OR NOT headerShows STREQUAL "emoji")
   message(FATAL_ERROR "the space bar gave ${bar}")
 endif()
@@ -256,17 +256,17 @@ endif()
 # Work's page header shows its briefcase too, in the same accent.
 sidebar_kitecore(work sidebar "${workID}")
 string(JSON workShows GET "${work}" rows 0 shows)
-string(JSON workGlyph GET "${work}" rows 0 glyph fluent)
+string(JSON workGlyph GET "${work}" rows 0 glyph drawn)
 string(JSON workAccent GET "${work}" rows 0 accent)
-if(NOT workShows STREQUAL "symbol" OR NOT workGlyph STREQUAL "E821" OR NOT workAccent STREQUAL "#D74B86")
+if(NOT workShows STREQUAL "symbol" OR NOT workGlyph STREQUAL "ON" OR NOT workAccent STREQUAL "#D74B86")
   message(FATAL_ERROR "Work's header gave ${work}")
 endif()
 # Work's icon as a picture (a valid name and an invalid one), as a symbol Windows has no
-# stand-in for, as one Kite draws as its own shape, and as none: a picture in the bar and the
-# header; the dot in the bar with a blank slot in the header; the drawn symbol in both; the dot
-# with no slot.
+# stand-in for, as one drawn from a Segoe glyph (Kite's own shapes are the briefcase's, above),
+# and as none: a picture in the bar and the header; the dot in the bar with a blank slot in the
+# header; the glyph in both; the dot with no slot.
 file(READ "${CMAKE_CURRENT_LIST_DIR}/../helix/states/sidebar.json" sidebarState)
-foreach(icon "image:x.png" "image:a/b.png" "symbol:not.a.symbol" "symbol:pawprint.fill" "")
+foreach(icon "image:x.png" "image:a/b.png" "symbol:not.a.symbol" "symbol:star.fill" "")
   set(other "${WORK}-icon")
   file(REMOVE_RECURSE "${other}")
   file(MAKE_DIRECTORY "${other}")
@@ -283,13 +283,16 @@ foreach(icon "image:x.png" "image:a/b.png" "symbol:not.a.symbol" "symbol:pawprin
   elseif(icon STREQUAL "")
     set(wantCell "dot")
     set(wantHead "none")
-  elseif(icon STREQUAL "symbol:pawprint.fill")
+  elseif(icon STREQUAL "symbol:star.fill")
     set(wantCell "symbol")
     set(wantHead "symbol")
-    string(JSON cellDrawn GET "${out}" spaceBar cells 1 glyph drawn)
-    string(JSON headDrawn GET "${out}" rows 0 glyph drawn)
-    if(NOT cellDrawn STREQUAL "ON" OR NOT headDrawn STREQUAL "ON")
-      message(FATAL_ERROR "Work's drawn symbol gave ${out}")
+    string(JSON cellGlyph GET "${out}" spaceBar cells 1 glyph fluent)
+    string(JSON headGlyph GET "${out}" rows 0 glyph fluent)
+    string(JSON cellMdl2 GET "${out}" spaceBar cells 1 glyph mdl2)
+    string(JSON headMdl2 GET "${out}" rows 0 glyph mdl2)
+    if(NOT cellGlyph STREQUAL "E735" OR NOT headGlyph STREQUAL "E735" OR NOT cellMdl2 STREQUAL "E735"
+       OR NOT headMdl2 STREQUAL "E735")
+      message(FATAL_ERROR "Work's glyph symbol gave ${out}")
     endif()
   else()
     set(wantCell "dot")
