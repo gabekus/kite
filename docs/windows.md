@@ -190,7 +190,7 @@ would take typing keys is ignored and the command keeps its default, as the
 Mac ignores an unsafe one. An override with no shortcut removes the command's
 shortcut (a priority-only change keeps it in the file, as the Mac writes it). A
 few commands also take the keys Windows users expect, without showing them:
-Ctrl+F4, F5, Ctrl+F5, Shift+F5, F12, Ctrl+Shift+I, Ctrl+U, Alt+Left and
+Ctrl+F4, F3, Shift+F3, F5, Ctrl+F5, Shift+F5, F12, Ctrl+Shift+I, Ctrl+U, Alt+Left and
 Alt+Right; like the Mac's hidden alternates (⌘← for Back), they stay when the
 command is rebound or its shortcut removed, unless another command's shortcut
 takes them.
@@ -221,6 +221,46 @@ Ctrl+D again" prompt for Use Both, the toast after Copy URL, Ctrl+W closing a
 focused Developer Tools window, and Print (Ctrl+P): with CEF 156 on Windows 11,
 once the print dialog is cancelled CEF never prints again and Chromium's
 shutdown hangs, so Print waits until that's fixed.
+
+## Find in page
+
+Ctrl+F opens the Mac's find bar (W21, `shell/FindBarView`, ported from `FindBar.swift` with Ask
+on Page off, which is Arc's `FindInPageView`): 300 × 32pt, 10pt in from the content card's
+top-right corner and narrower in a narrow card, with the magnifier, the query field ("Find in
+page…"), the n/N counter ("Not Found" in red), the previous and next arrows, a divider and close,
+in Arc's popover colours and shadow, light or dark as the app's appearance (the session's
+`pageAppearance`, else Windows' apps' mode). It appears and goes without animation. Every
+keystroke searches at once (no debounce, as on the Mac): `CefBrowserHost::Find`, and a new search
+steps once more so its first match is active, as the Mac's `ChromiumEngine.find`; each
+`OnFindResult` fills the counter. Return and Shift+Return, the arrows, Ctrl+G and Ctrl+Shift+G
+(and Windows' F3 and Shift+F3) step through the matches, or open the bar when it's closed or
+empty; Esc or close ends the search (`StopFinding`, the active match left selected) and gives the
+page the keyboard. Like every Edit › Find item on the Mac these are Prefer Websites, so a page that
+uses Ctrl+F keeps it. The bar closes when the shown tab changes (another tab, a closed tab, a
+space switch) and stays through a navigation, as the Mac's. With no page, Ctrl+F beeps.
+
+The bar is a small surface in the overlay target, in a page layer under the command bar's
+(`Compositor::PageOverlay`), so it draws over the page's child window and typing redraws only the
+bar. The page keeps taking input everywhere else: its window gets a region with a hole under the
+bar (`Chromium::SetOverlayHole`, `SetWindowRgn` on CEF's thread), so the bar's clicks fall
+through to Kite's window, and `--smoke-test` checks with `ChildWindowFromPointEx` that a click on
+the bar misses the page and one beside it doesn't. The field is the window's first responder from
+Ctrl+F or a click in it until a click in the page takes the keyboard back; while it has it, a
+navigation doesn't move the keyboard to the page, and the window's focus doesn't go back to the
+page when Kite is activated again.
+
+The field is `shell/TextField`, the one-line field the command bar's field and the rename field
+are to share (W21b): `shell/TextEditing` and `shell/TextLine` (from W9d), undo and redo as the
+Mac's field editor groups them (`core/TextUndo`: a run of typing is one undo; Ctrl+Z, Ctrl+Y and
+Ctrl+Shift+Z), the caret and drag selection, the hidden system caret, Windows' IME composition
+window at the caret, and the caret's blink on a visual of its own (view timer 0x4B47), which runs
+only while the field has the keyboard and stops after Windows' caret timeout. `--smoke-test` finds
+in `windows/helix/pages/smoke.html` after it loads (1/1, then Not Found). `--capture … --find TEXT
+[--find-result ACTIVE/TOTAL]` captures the bar; a capture runs without Chromium, so the page's
+report is given. `kitecore find` prints the query's search, counter and frame. Not yet: the
+buttons' tooltips and accessibility names, Use Selection to Find (Ctrl+E) and Jump to Selection,
+Ask on Page's card, and an inline IME composition (Windows' composition window draws it, as in
+the command bar).
 
 ## Spaces
 

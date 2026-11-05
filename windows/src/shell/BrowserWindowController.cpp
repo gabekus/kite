@@ -38,25 +38,6 @@ constexpr UINT kFaviconsMessage = WM_APP + 4;
 constexpr UINT kFrameMessage = WM_APP + 5;
 constexpr UINT kSpaceIconsMessage = WM_APP + 6;
 
-// Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
-bool CopyText(HWND owner, const std::wstring& text) {
-    if (!OpenClipboard(owner)) return false;
-    bool copied = false;
-    if (EmptyClipboard()) {
-        const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
-        if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
-            if (void* data = GlobalLock(memory)) {
-                std::memcpy(data, text.c_str(), bytes);
-                GlobalUnlock(memory);
-                copied = SetClipboardData(CF_UNICODETEXT, memory) != nullptr;
-            }
-            if (!copied) GlobalFree(memory);  // the clipboard owns it only once it's set
-        }
-    }
-    CloseClipboard();
-    return copied;
-}
-
 // Puts `top` (premultiplied BGRA) over `base` with its top-left at `origin`, as
 bool Inked(const Pixels& pixels, UINT fromRow = 0) {
     for (size_t i = static_cast<size_t>(fromRow) * pixels.width * 4 + 3; i < pixels.bgra.size(); i += 4) {
@@ -157,6 +138,9 @@ std::wstring BrowserWindowController::Init() {
     bar.suggestions = [this](std::string_view text, CommandBarMode mode) { return CommandBarSuggestions(text, state_, mode); };
     bar.commit = [this](const CommandSuggestion& row, CommandBarMode mode) { Commit(row, mode); };
     bar.opened = [this] {
+        // The find field lets the keyboard go first, so the bar's system caret is the one left.
+        if (findBar_) findBar_->LoseKeyboard();
+        UpdateFindHole();
         BlockPages(true);
         sidebar_->ClearHover();  // the bar takes the pointer while it's open
     };
@@ -168,6 +152,15 @@ std::wstring BrowserWindowController::Init() {
         barError_ = error;
         OutputDebugStringW((L"Kite: no command bar: " + error + L"\n").c_str());
     }
+
+    // The find bar (Ctrl+F), over the page and under the command bar.
+    FindBarView::Callbacks find;
+    find.search = [this](const FindQuery::Search& search) { FindInPage(search); };
+    find.close = [this] { HideFindBar(true); };
+    find.dpi = [this] { return window_.Dpi(); };
+    findBar_ = FindBarView::Create(window_.Handle(), std::move(find), error);
+    if (findBar_) findBar_->UseCompositor(compositor_.get());
+    else OutputDebugStringW((L"Kite: no find bar: " + error + L"\n").c_str());
 
     window_.onSize = [this] { OnSize(); };
     // The space tip is a window of its own: it goes when the window moves or is minimized,
@@ -326,6 +319,7 @@ std::wstring BrowserWindowController::SaveFrameLog(const std::filesystem::path& 
 // MARK: The session and the pages
 
 void BrowserWindowController::StateChanged() {
+    FindBarFollowsSelection();
     SyncSpace();
     sidebar_->Update(state_, pagesAnchor_);
     // A slide begins at once: the new page and the caption buttons' appearance drawn and the
@@ -425,6 +419,101 @@ void BrowserWindowController::Commit(const CommandSuggestion& row, CommandBarMod
     StateChanged();
 }
 
+// MARK: Find in page
+
+bool BrowserWindowController::FindBarDark() const {
+    const json::Value* appearance = nullptr;
+    if (auto it = state_.extra.find("pageAppearance"); it != state_.extra.end()) appearance = &it->second;
+    const std::string* name = appearance ? appearance->AsString() : nullptr;
+    // Windows' apps' mode, as Automatic follows macOS's.
+    DWORD light = 1, size = sizeof(light);
+    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"AppsUseLightTheme",
+                 RRF_RT_REG_DWORD, nullptr, &light, &size);
+    return FindBarIsDark(name ? std::string_view(*name) : std::string_view(), light == 0);
+}
+
+void BrowserWindowController::ShowFind() {
+    if (!findBar_) return;
+    // As the Mac's showFind: no page, nothing to find in.
+    bool page = false;
+#ifdef KITE_HAS_CEF
+    page = chromium_ && chromium_->HasShownPage();
+#endif
+    const Tab* tab = state_.SelectedTab();
+    if (!page || !tab) {
+        MessageBeep(MB_OK);
+        return;
+    }
+    // Ctrl+F over the command bar: the bar goes and the field takes the keyboard.
+    if (commandBar_ && commandBar_->IsOpen()) commandBar_->Hide();
+    findTabID_ = tab->id;
+    findBar_->SetCard(ContentBounds());
+    findBar_->Show(FindBarDark());
+    findBar_->Focus();
+    UpdateFindHole();
+}
+
+void BrowserWindowController::StepFind(bool forward) {
+    // stepFind: a closed or empty bar opens instead.
+    if (!findBar_ || !findBar_->IsOpen() || findBar_->Query().Query().empty()) return ShowFind();
+    findBar_->Step(forward);
+}
+
+void BrowserWindowController::FindInPage(const FindQuery::Search& search) {
+#ifdef KITE_HAS_CEF
+    if (!chromium_) return;
+    if (search.text.empty()) chromium_->StopFinding();
+    else chromium_->Find(search.text, search.forward, search.findNext);
+#else
+    (void)search;
+#endif
+}
+
+void BrowserWindowController::HideFindBar(bool focusPage) {
+    if (!findBar_ || !findBar_->IsOpen()) return;
+    // The search ends in the page it ran in, which is still the shown one here.
+#ifdef KITE_HAS_CEF
+    if (chromium_) chromium_->StopFinding();
+#endif
+    findBar_->Query().Stopped();
+    findBar_->Hide();
+    findTabID_.clear();
+    UpdateFindHole();
+#ifdef KITE_HAS_CEF
+    if (focusPage && chromium_ && GetForegroundWindow() == window_.Handle()) chromium_->Focus();
+#else
+    (void)focusPage;
+#endif
+}
+
+void BrowserWindowController::FindBarFollowsSelection() {
+    if (!findBar_ || !findBar_->IsOpen()) return;
+    const Tab* tab = state_.SelectedTab();
+    if (!tab || tab->id != findTabID_) HideFindBar(false);
+}
+
+void BrowserWindowController::UpdateFindHole() {
+#ifdef KITE_HAS_CEF
+    if (!chromium_) return;
+    const bool open = findBar_ && findBar_->IsOpen();
+    chromium_->SetOverlayHole(open ? findBar_->Frame() : RECT{});
+    chromium_->KeepKeyboard(open && findBar_->HasKeyboard());
+#endif
+}
+
+RECT BrowserWindowController::ContentBounds() const {
+    RECT client{};
+    GetClientRect(window_.Handle(), &client);
+    const int dpi = static_cast<int>(window_.Dpi());
+    auto px = [dpi](int points) { return MulDiv(points, dpi, USER_DEFAULT_SCREEN_DPI); };
+    // Its top under the caption buttons.
+    RECT card{px(kSidebarWidth), px(static_cast<int>(title_bar::kContentTop)), client.right - px(kContentInset),
+              client.bottom - px(kContentInset)};
+    card.right = std::max(card.right, card.left + 1);
+    card.bottom = std::max(card.bottom, card.top + 1);
+    return card;
+}
+
 // MARK: Commands
 
 void BrowserWindowController::CloseTab(std::string id) {
@@ -511,6 +600,9 @@ void BrowserWindowController::MakeCommands() {
          [this] {
              if (!PageCommand("developerTools")) MessageBeep(MB_OK);
          }},
+        {"find", [this] { ShowFind(); }},
+        {"findNext", [this] { StepFind(true); }},
+        {"findPrevious", [this] { StepFind(false); }},
     };
     for (int n = 1; n <= 9; ++n) {
         commands_[n == 9 ? "lastTab" : "tab" + std::to_string(n)] = [this, n] {
@@ -556,6 +648,7 @@ void BrowserWindowController::DropCompositor() {
     sidebar_->UseCompositor(nullptr);
     caption_->UseCompositor(nullptr);
     if (commandBar_) commandBar_->UseCompositor(nullptr);
+    if (findBar_) findBar_->UseCompositor(nullptr);
     compositor_.reset();
 }
 
@@ -569,6 +662,7 @@ std::wstring BrowserWindowController::Rebuild() {
         sidebar_->UseCompositor(compositor_.get());
         caption_->UseCompositor(compositor_.get());
         if (commandBar_) commandBar_->UseCompositor(compositor_.get());
+        if (findBar_) findBar_->UseCompositor(compositor_.get());
     }
     return problem;
 }
@@ -614,6 +708,8 @@ void BrowserWindowController::OnSize() {
     caption_->Layout(window_.Dpi());
     Draw();
     if (commandBar_) commandBar_->Layout();
+    if (findBar_) findBar_->SetCard(ContentBounds());
+    UpdateFindHole();
 #ifdef KITE_HAS_CEF
     if (chromium_) {
         chromium_->WindowMoved();
@@ -650,7 +746,8 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         const auto pressed =
             ShortcutOfKey(static_cast<UINT>(wParam), GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_MENU) < 0, GetKeyState(VK_SHIFT) < 0);
         const ShortcutTarget* target = pressed ? FindShortcut(shortcuts_, *pressed) : nullptr;
-        if (target && !(commandBar_ && commandBar_->IsOpen() && EditsText(*pressed)) && CommandEnabled(target->command->id)) {
+        const bool editing = (commandBar_ && commandBar_->IsOpen()) || (findBar_ && findBar_->HasKeyboard() && GetFocus() == window_.Handle());
+        if (target && !(editing && EditsText(*pressed)) && CommandEnabled(target->command->id)) {
             // The character TranslateMessage made of it goes too (Alt+K's WM_SYSCHAR would beep).
             dropCharacter_ = true;
             RunCommand(target->command->id);  // a held key repeats it, as the Mac's menus do
@@ -661,6 +758,16 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     if (commandBar_ && commandBar_->HandleMessage(message, wParam, lParam, result)) {
         if (message == WM_LBUTTONDOWN) sidebar_->ForgetActivation();
         return true;
+    }
+    if (findBar_) {
+        const bool handled = findBar_->HandleMessage(message, wParam, lParam, result);
+        // Who has the keyboard decides whether a navigation may take it.
+        if (message == WM_SETFOCUS || message == WM_KILLFOCUS || message == WM_LBUTTONDOWN) UpdateFindHole();
+        if (handled) return true;
+        // The system's light or dark mode changed: the bar follows (pageAppearance automatic).
+        if (message == WM_SETTINGCHANGE && lParam && std::wstring_view(reinterpret_cast<const wchar_t*>(lParam)) == L"ImmersiveColorSet") {
+            findBar_->SetDark(FindBarDark());
+        }
     }
     if (sidebar_->HandleMouse(message, wParam, lParam)) return true;
     // The caption buttons' appearance changes with the sidebar's, at its commit.
@@ -803,7 +910,8 @@ std::wstring BrowserWindowController::SmokeTest() {
     return {};
 }
 
-std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip) {
+std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip,
+                                              const std::optional<CaptureFind>& find) {
     // The window's own frame, read back as it's presented: at the window's scale.
     std::wstring problem = Draw(&pixels);
     if (problem.empty()) {
@@ -825,6 +933,21 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
         POINT origin{};
         problem = sidebar_->RenderTip(*tip, tipPixels, origin);
         if (problem.empty()) ComposeOver(pixels, tipPixels, origin);
+    }
+    if (problem.empty() && find) {
+        // The find bar as Ctrl+F opens it over the selected tab, the query typed in and the page's
+        // report shown (no Chromium in a capture, so no page to ask).
+        if (!findBar_) return L"Kite couldn't make the find bar";
+        if (const Tab* tab = state_.SelectedTab()) findTabID_ = tab->id;
+        else return L"--find needs a selected tab";
+        findBar_->SetCard(ContentBounds());
+        findBar_->Show(FindBarDark());
+        findBar_->Type(find->query);
+        if (find->result) findBar_->ShowResult(*find->result);
+        Pixels bar;
+        POINT origin{};
+        problem = findBar_->Draw(&bar, &origin);
+        if (problem.empty()) ComposeOver(pixels, bar, origin);
     }
     if (problem.empty() && barText) {
         // The bar as Ctrl+T opens it, with the text typed in.
@@ -889,20 +1012,9 @@ void BrowserWindowController::RunMessageLoop() {
 
 // MARK: Chromium
 
-RECT BrowserWindowController::ContentBounds() const {
-    RECT client{};
-    GetClientRect(window_.Handle(), &client);
-    const int dpi = static_cast<int>(window_.Dpi());
-    auto px = [dpi](int points) { return MulDiv(points, dpi, USER_DEFAULT_SCREEN_DPI); };
-    // Its top under the caption buttons.
-    RECT card{px(kSidebarWidth), px(static_cast<int>(title_bar::kContentTop)), client.right - px(kContentInset),
-              client.bottom - px(kContentInset)};
-    card.right = std::max(card.right, card.left + 1);
-    card.bottom = std::max(card.bottom, card.top + 1);
-    return card;
-}
-
 void BrowserWindowController::ShowSelectedTab() {
+    // Before the page changes: the bar closes and its search ends in the page it ran in.
+    FindBarFollowsSelection();
     const Tab* tab = state_.SelectedTab();
     // No tab: the card shows through (the Mac's "Press ⌘T to open a tab" comes later).
     if (!tab) return chromium_->ShowNothing();
@@ -953,8 +1065,11 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         } else if (pageLoading_ && !pageLoaded_) {
             pageLoaded_ = true;
             if (options_.smokeTest) {
-                closeAskedAt_ = GetTickCount64();
-                PostMessageW(window_.Handle(), WM_CLOSE, 0, 0);
+                // Find in the page first (its reports come as findResult), then close.
+                if (!findBar_ || !chromium_->HasShownPage()) return CloseAfterSmoke();
+                smokeFind_ = SmokeFind::Matching;
+                ShowFind();
+                findBar_->Type("kite SMOKE");  // case-insensitive, as the Mac's find
             }
         }
     };
@@ -984,6 +1099,12 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     events.keepAlive = [this](const std::string& id) { return IsLinkedToPopup(popupOpeners_, state_, id); };
     events.pageDiscarded = [this](const std::string& id) {
         std::erase_if(popupOpeners_, [&](const auto& entry) { return entry.first == id || entry.second == id; });
+    };
+    events.findResult = [this](const std::string& id, int count, int activeMatch, bool final) {
+        if (findBar_ && findBar_->IsOpen() && id == findTabID_) {
+            findBar_->ShowResult(FindResult{count > 0, count, activeMatch});
+        }
+        if (options_.smokeTest) SmokeTestFind(count, activeMatch, final);
     };
     events.shortcuts = shortcuts_;
     events.command = [this](const std::string& command) { RunCommand(command); };
@@ -1017,8 +1138,8 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     };
     window_.mayClose = [this] { return chromium_->MayCloseWindow(); };
     window_.onFocus = [this] {
-        // The open bar keeps the keyboard in Kite's window.
-        if (!commandBar_ || !commandBar_->IsOpen()) chromium_->Focus();
+        // The open command bar, or the find field with the keyboard, keeps it in Kite's window.
+        if ((!commandBar_ || !commandBar_->IsOpen()) && !(findBar_ && findBar_->HasKeyboard())) chromium_->Focus();
     };
     return Chromium::StartResult::Started;
 }
@@ -1032,12 +1153,66 @@ std::wstring BrowserWindowController::ShutDownChromium() {
     if (!closedCleanly) return L"a browser didn't close in time; Chromium shut down under it";
     if (!pageLoaded_) return L"the first page didn't finish loading within 30 s";
     if (!chromium_->PagesCanBeHidden()) return L"a page had no Chromium widget window to hide: background tabs would keep drawing";
+    if (!smokeFindProblem_.empty()) return L"find in page: " + smokeFindProblem_;
+    if (findBar_ && smokeFind_ != SmokeFind::Done) return L"find in page: the page's search never finished";
     // One WM_CLOSE must close the window (the browsers first); the 30 s timer's second one
     // would otherwise hide a close that hangs.
     if (GetTickCount64() - closeAskedAt_ > 5'000) {
         return L"the window took " + std::to_wstring((GetTickCount64() - closeAskedAt_) / 1000) + L" s to close";
     }
     return {};
+}
+
+void BrowserWindowController::CloseAfterSmoke() {
+    closeAskedAt_ = GetTickCount64();
+    PostMessageW(window_.Handle(), WM_CLOSE, 0, 0);
+}
+
+void BrowserWindowController::SmokeTestFind(int count, int activeMatch, bool final) {
+    // A search's last report, once its first match is active (a new search reports twice: its
+    // highlights, then the step that makes the first match active).
+    if (!final) return;
+    const std::string label = findBar_ ? findBar_->Query().Label() : std::string();
+    auto fail = [this](std::wstring problem) {
+        smokeFindProblem_ = std::move(problem);
+        smokeFind_ = SmokeFind::Done;
+        HideFindBar(false);
+        CloseAfterSmoke();
+    };
+    switch (smokeFind_) {
+    case SmokeFind::Matching: {
+        if (activeMatch < 1) return;
+        // windows/helix/pages/smoke.html says "Kite smoke page" once in its body.
+        if (count != 1 || activeMatch != 1) return fail(L"\"kite SMOKE\" found " + std::to_wstring(count) + L" matches, the page has 1");
+        if (label != "1/1") return fail(L"the counter read \"" + Widen(label) + L"\" for 1 of 1");
+        // The page's window has its hole under the bar, and only there.
+        const RECT frame = findBar_->Frame();
+        const POINT inside{(frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2};
+        const POINT outside{frame.left - 20, frame.bottom + 20};
+        if (chromium_->PageTakesClickAt(inside)) return fail(L"a click on the bar would reach the page");
+        if (!chromium_->PageTakesClickAt(outside)) return fail(L"a click on the page beside the bar wouldn't reach it");
+        smokeFind_ = SmokeFind::Missing;
+        findBar_->Type(" zqxj");
+        return;
+    }
+    case SmokeFind::Missing:
+        // The step after the stale search's last report can still come; only no match counts.
+        if (count != 0) return;
+        if (label != "Not Found") return fail(L"the counter read \"" + Widen(label) + L"\" for no match");
+        smokeFind_ = SmokeFind::Done;
+        HideFindBar(false);
+        if (!findBar_->Query().Query().empty() || findBar_->IsOpen()) return fail(L"the bar didn't close");
+        if (HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE); out && out != INVALID_HANDLE_VALUE) {
+            static constexpr char kReport[] =
+                "Kite smoke test: find in page read 1/1, then Not Found; the page's window had its hole under the bar\n";
+            DWORD written = 0;
+            WriteFile(out, kReport, static_cast<DWORD>(sizeof kReport - 1), &written, nullptr);
+        }
+        CloseAfterSmoke();
+        return;
+    case SmokeFind::Idle:
+    case SmokeFind::Done: return;
+    }
 }
 
 #endif  // KITE_HAS_CEF

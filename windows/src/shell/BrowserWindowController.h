@@ -1,7 +1,7 @@
 #pragma once
 // The browser window and what's in it, as the Mac's BrowserWindowController: the backdrop,
-// the sidebar, the caption buttons, the command bar, the pages (Chromium) and Kite's
-// shortcuts, wired to the session (core/Models.h). main.cpp parses the command line, loads and
+// the sidebar, the caption buttons, the command bar, the find bar, the pages (Chromium) and
+// Kite's shortcuts, wired to the session (core/Models.h). main.cpp parses the command line, loads and
 // saves the session, and runs one of these.
 //
 // Everything here is on Kite's UI thread. The session is the caller's, borrowed for the
@@ -29,6 +29,7 @@
 #include "shell/CommandBarView.h"
 #include "shell/Compositor.h"
 #include "shell/Favicons.h"
+#include "shell/FindBarView.h"
 #include "shell/FrameClock.h"
 #include "shell/MainWindow.h"
 #include "shell/Renderer.h"
@@ -66,6 +67,7 @@ public:
 
     MainWindow& Window() { return window_; }
     CommandBarView* CommandBar() { return commandBar_.get(); }
+    FindBarView* FindBar() { return findBar_.get(); }
     // Why there's no command bar, when there isn't one.
     const std::wstring& CommandBarError() const { return barError_; }
     UINT MaxTextureSize() const { return renderer_ ? renderer_->MaxTextureSize() : 0; }
@@ -96,7 +98,14 @@ public:
     std::wstring SmokeTest();
     // The window's frame as the screen shows it: the backdrop with the sidebar, the caption
     // buttons and (with `barText`) the command bar opened with that text, composed over it.
-    std::wstring Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip = std::nullopt);
+    // With `find`, the find bar open over the card with that query typed, and `findResult` as the
+    // page's report on it (a capture runs without Chromium; none leaves the counter empty).
+    struct CaptureFind {
+        std::string query;
+        std::optional<FindResult> result;
+    };
+    std::wstring Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip = std::nullopt,
+                         const std::optional<CaptureFind>& find = std::nullopt);
 
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
@@ -146,6 +155,24 @@ private:
     void BlockPages(bool blocked);
     // The Mac's newTab and openLocation.
     void OpenCommandBar(CommandBarMode mode);
+    // Find in page (BrowserWindowController+PageCommands.swift): Ctrl+F opens the bar over the
+    // shown page and focuses its field, or beeps with no page; Ctrl+G and Ctrl+Shift+G step through
+    // the matches, or open the bar when it's closed or empty.
+    void ShowFind();
+    void StepFind(bool forward);
+    // The page's search (an empty text: stop).
+    void FindInPage(const FindQuery::Search& search);
+    // Closes the bar and ends the search; with `focusPage` (Esc, close) the page takes the keyboard.
+    void HideFindBar(bool focusPage);
+    // The shown tab changed (another tab, or none): the bar closes with it, as the Mac's
+    // findBarLeavesTab does without a conversation.
+    void FindBarFollowsSelection();
+    // The page's hole under the bar, and whether the page may take the keyboard on a navigation.
+    void UpdateFindHole();
+    // The app's appearance (the session's pageAppearance, else the system's apps' mode).
+    bool FindBarDark() const;
+    // The content card in client px (the page's bounds).
+    RECT ContentBounds() const;
     CommandBarView::Look BarLook() const;
     void Commit(const CommandSuggestion& row, CommandBarMode mode);
     // A tab's close button and Ctrl+W (the Mac's close(tab:)). The id by value: Ctrl+W's is the
@@ -161,7 +188,6 @@ private:
     void OnSize();
     bool Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result);
 #ifdef KITE_HAS_CEF
-    RECT ContentBounds() const;
     void ShowSelectedTab();
     void ShowFirstPage();
     Tab* TabNamed(const std::string& id);
@@ -204,6 +230,8 @@ private:
     std::unique_ptr<CaptionButtonsView> caption_;
     std::unique_ptr<CommandBarView> commandBar_;
     std::wstring barError_;
+    std::unique_ptr<FindBarView> findBar_;
+    std::string findTabID_;  // the tab the find bar is open on
     // Frames while something animates (before the window in destruction: it posts to it).
     std::unique_ptr<FrameClock> clock_;
     struct LoggedFrame {
@@ -222,6 +250,12 @@ private:
     bool firstPageMade_ = false;
     bool pageLoading_ = false, pageLoaded_ = false;
     ULONGLONG closeAskedAt_ = 0;  // when the smoke test asked the window to close
+    // The smoke test's find, once the first page loaded: its query, then one with no match.
+    enum class SmokeFind { Idle, Matching, Missing, Done };
+    SmokeFind smokeFind_ = SmokeFind::Idle;
+    std::wstring smokeFindProblem_;
+    void SmokeTestFind(int count, int activeMatch, bool final);
+    void CloseAfterSmoke();
 #endif
 };
 

@@ -77,9 +77,14 @@ std::unique_ptr<Compositor> Compositor::Create(HWND hwnd, Renderer& renderer, st
         FAILED(hr = c.device_->CreateTargetForHwnd(hwnd, TRUE, c.overlayTarget_.GetAddressOf())) ||
         FAILED(hr = c.device_->CreateVisual(c.root_.GetAddressOf())) || FAILED(hr = c.device_->CreateVisual(c.backdrop_.GetAddressOf())) ||
         FAILED(hr = c.device_->CreateVisual(c.chrome_.GetAddressOf())) || FAILED(hr = c.device_->CreateVisual(c.overlay_.GetAddressOf())) ||
+        FAILED(hr = c.device_->CreateVisual(c.overlayRoot_.GetAddressOf())) ||
+        FAILED(hr = c.device_->CreateVisual(c.pageOverlay_.GetAddressOf())) ||
+        // The page's own bars (find) under Kite's panels (the command bar), whichever is made first.
+        FAILED(hr = c.overlayRoot_->AddVisual(c.pageOverlay_.Get(), FALSE, nullptr)) ||
+        FAILED(hr = c.overlayRoot_->AddVisual(c.overlay_.Get(), TRUE, c.pageOverlay_.Get())) ||
         FAILED(hr = c.backdrop_->SetContent(c.swapChain_.Get())) || FAILED(hr = c.root_->AddVisual(c.backdrop_.Get(), FALSE, nullptr)) ||
         FAILED(hr = c.root_->AddVisual(c.chrome_.Get(), TRUE, c.backdrop_.Get())) || FAILED(hr = c.target_->SetRoot(c.root_.Get())) ||
-        FAILED(hr = c.overlayTarget_->SetRoot(c.overlay_.Get())) || FAILED(hr = c.device_->Commit())) {
+        FAILED(hr = c.overlayTarget_->SetRoot(c.overlayRoot_.Get())) || FAILED(hr = c.device_->Commit())) {
         error = HResultMessage(L"building the composition tree", hr);
         return nullptr;
     }

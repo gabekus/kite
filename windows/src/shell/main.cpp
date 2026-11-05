@@ -17,6 +17,12 @@
 //   Kite.exe --capture FILE.png --command-bar TEXT
 //                            the same with the command bar open (Ctrl+T) and TEXT typed in
 //                            it, composed over the window's frame as DirectComposition shows it.
+//   Kite.exe --capture FILE.png --find TEXT [--find-result ACTIVE/TOTAL]
+//                            the same with the find bar open (Ctrl+F) over the selected tab and
+//                            TEXT typed in it. A capture runs without Chromium, so
+//                            --find-result stands in for the page's report: 3/12 shows "3/12",
+//                            0/0 "Not Found"; without it the counter is empty, as before the
+//                            page answers.
 //   Kite.exe --capture FILE.png --space-tip N
 //                            the same with space N's tip (1-based) over its cell, at rest (the
 //                            cell's hover backing isn't drawn: no pointer is on it).
@@ -165,7 +171,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         const std::wstring& a = args[i];
         if (a == L"--smoke-test" || a == L"--backdrop-test") continue;
         if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar" || a == L"--frame-log" ||
-            a == L"--space-tip") {
+            a == L"--space-tip" || a == L"--find" || a == L"--find-result") {
             ++i;
             continue;
         }
@@ -218,6 +224,23 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         tipIndex = static_cast<size_t>(std::stoi(*tipOption.value) - 1);
     }
     if (tipOption.present && !captureOption.present) return Fail(quiet, L"--space-tip only goes with --capture", kUsage);
+    const OptionValue findOption = Option(args, L"--find");
+    if (findOption.present && !findOption.value) return Fail(quiet, L"--find takes the text typed in the find bar (\"\" for none)", kUsage);
+    if (findOption.present && !captureOption.present) return Fail(quiet, L"--find only goes with --capture", kUsage);
+    const OptionValue findResultOption = Option(args, L"--find-result");
+    std::optional<kite::FindResult> findResult;
+    if (findResultOption.present) {
+        // ACTIVE/TOTAL, as the counter reads: the page's report a capture can't ask for.
+        const std::wstring& text = findResultOption.value.value_or(L"");
+        const size_t slash = text.find(L'/');
+        const auto active = slash == std::wstring::npos ? std::nullopt : ParseInt(std::wstring_view(text).substr(0, slash));
+        const auto total = slash == std::wstring::npos ? std::nullopt : ParseInt(std::wstring_view(text).substr(slash + 1));
+        if (!active || !total || *active > *total || (*total > 0 && *active < 1)) {
+            return Fail(quiet, L"--find-result takes ACTIVE/TOTAL (3/12, or 0/0 for none)", kUsage);
+        }
+        findResult = kite::FindResult{*total > 0, *total, *active};
+    }
+    if (findResultOption.present && !findOption.present) return Fail(quiet, L"--find-result only goes with --find", kUsage);
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
 
@@ -287,6 +310,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, save, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
     if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar: " + controller->CommandBarError(), kWindowFailed);
+    if (findOption.present && !controller->FindBar()) return Fail(quiet, L"Kite couldn't make the find bar", kWindowFailed);
     kite::MainWindow& window = controller->Window();
 
     // Sized after the swap chain exists, so a capture also goes through a resize, as a real
@@ -352,7 +376,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         kite::Pixels pixels;
         const std::optional<std::string> barText =
             commandBarOption.present ? std::optional<std::string>(Narrow(*commandBarOption.value)) : std::nullopt;
-        captureError = controller->Capture(pixels, barText, tipIndex);
+        std::optional<kite::BrowserWindowController::CaptureFind> find;
+        if (findOption.present) find = kite::BrowserWindowController::CaptureFind{Narrow(*findOption.value), findResult};
+        captureError = controller->Capture(pixels, barText, tipIndex, find);
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);
         PostMessageW(window.Handle(), WM_CLOSE, 0, 0);
     }

@@ -15,6 +15,7 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "include/cef_find_handler.h"
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_focus_handler.h"
 #include "include/cef_keyboard_handler.h"
@@ -81,6 +82,8 @@ struct Chromium::Shared {
     std::atomic<bool> inputBlocked{false};
     // Keys that reach a page go to Kite: from Ctrl+T in a page until Kite unblocks input.
     std::atomic<bool> keysToKite{false};
+    // KeepKeyboard: a navigation doesn't move the keyboard to the page.
+    std::atomic<bool> kiteKeepsKeyboard{false};
     // Use Both's "second press" bookkeeping, on CEF's UI thread only (OnPreKeyEvent, OnKeyEvent).
     ShortcutPriorityGate gate;
 
@@ -113,6 +116,7 @@ struct Chromium::Shared {
         Timestamp lastShown = Now();  // made, or last on the card (the Mac's lastShown)
         bool mediaInUse = false;      // camera, microphone or screen capture (OnMediaAccessChange)
         std::string profile;          // the profile directory it was made in (a popup: its opener's)
+        RECT hole{};                  // the overlay's hole as last sent, in its window's px
     };
     // Kite's UI thread only. Browsers Kite closed (Close) whose DoClose hasn't come back yet:
     // out of `pages`, so their tab can have a new page, but the window waits for them.
@@ -124,6 +128,7 @@ struct Chromium::Shared {
     std::map<std::string, CefRefPtr<CefRequestContext>> contexts;  // by profile directory
     std::string shown;
     bool minimized = false;
+    RECT overlayHole{};  // SetOverlayHole's, in client px
     LiveTabPolicy policy;  // at most six live pages, as the Mac's PagePool
     ULONGLONG closingSince = 0;  // when MayCloseWindow started closing
     bool closeForced = false;    // the deadline closed the window before every browser was ready
@@ -179,6 +184,7 @@ struct Chromium::Shared {
             page.placed = wanted;
             changes.emplace_back(page.hwnd, wanted);
         }
+        ApplyHoles(card);
         if (changes.empty()) return;
         // Shown first, then hidden, so the card is never empty in between.
         std::stable_partition(changes.begin(), changes.end(), [](const auto& c) { return c.second.visible; });
@@ -194,6 +200,40 @@ struct Chromium::Shared {
                     if (widget) ShowWindow(widget, SW_HIDE);
                     ShowWindow(host, SW_HIDE);
                 }
+            }
+        });
+    }
+
+    // The overlay's hole in the shown page's window, and none in the others, on CEF's thread.
+    // A window's region clips its hit-testing (and its drawing, where the bar covers it anyway),
+    // so a click there falls through to Kite's window behind it.
+    void ApplyHoles(const RECT& card) {
+        std::vector<std::pair<HWND, RECT>> changes;
+        for (auto& [id, page] : pages) {
+            if (!page.hwnd) continue;
+            RECT wanted{};
+            if (id == shown && !minimized && !IsRectEmpty(&overlayHole)) {
+                wanted = overlayHole;
+                OffsetRect(&wanted, -card.left, -card.top);
+            }
+            if (EqualRect(&wanted, &page.hole)) continue;
+            page.hole = wanted;
+            changes.emplace_back(page.hwnd, wanted);
+        }
+        if (changes.empty()) return;
+        RunOnCefUIThread([changes = std::move(changes)] {
+            for (const auto& [host, hole] : changes) {
+                if (IsRectEmpty(&hole)) {
+                    SetWindowRgn(host, nullptr, TRUE);
+                    continue;
+                }
+                // As big as a window can be, less the hole, so it holds through any resize.
+                HRGN region = CreateRectRgn(0, 0, 32767, 32767);
+                HRGN cut = CreateRectRgn(hole.left, hole.top, hole.right, hole.bottom);
+                if (region && cut) CombineRgn(region, region, cut, RGN_DIFF);
+                if (cut) DeleteObject(cut);
+                // The window owns the region once it's set.
+                if (region && !SetWindowRgn(host, region, TRUE)) DeleteObject(region);
             }
         });
     }
@@ -328,6 +368,7 @@ class PageClient : public CefClient,
                    public CefLifeSpanHandler,
                    public CefDisplayHandler,
                    public CefFocusHandler,
+                   public CefFindHandler,
                    public CefKeyboardHandler,
                    public CefLoadHandler,
                    public CefRequestHandler,
@@ -340,6 +381,7 @@ public:
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
     CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
+    CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
@@ -535,7 +577,20 @@ public:
 
     // While Kite's command bar is open, a page never takes the keyboard back (Chromium
     // focuses a page as it navigates), as the Mac blurs its pages while the bar is open.
-    bool OnSetFocus(CefRefPtr<CefBrowser>, FocusSource) override { return shared_->inputBlocked; }
+    // Nor, while Kite's find field has the keyboard, on a navigation (a click is the system's).
+    bool OnSetFocus(CefRefPtr<CefBrowser>, FocusSource source) override {
+        return shared_->inputBlocked || (source == FOCUS_SOURCE_NAVIGATION && shared_->kiteKeepsKeyboard);
+    }
+
+    // CefFindHandler
+
+    // Every report, the interim ones too, as the Mac's KCBrowser passes them on: the count grows
+    // as Chromium scans the page.
+    void OnFindResult(CefRefPtr<CefBrowser> browser, int, int count, const CefRect&, int activeMatchOrdinal, bool finalUpdate) override {
+        shared_->Post([shared = shared_, id = tabID_, browser, count, activeMatchOrdinal, finalUpdate] {
+            if (shared->PageFor(id, browser) && shared->events.findResult) shared->events.findResult(id, count, activeMatchOrdinal, finalUpdate);
+        });
+    }
 
     // CefKeyboardHandler
 
@@ -943,6 +998,42 @@ bool Chromium::Act(PageAction action) {
         }
     });
     return true;
+}
+
+bool Chromium::HasShownPage() const {
+    auto it = shared_->pages.find(shared_->shown);
+    return it != shared_->pages.end() && it->second.browser && !shared_->closing;
+}
+
+bool Chromium::Find(const std::string& text, bool forward, bool findNext) {
+    if (!HasShownPage()) return false;
+    RunOnCefUIThread([browser = shared_->pages.at(shared_->shown).browser, text, forward, findNext] {
+        CefRefPtr<CefBrowserHost> host = browser->GetHost();
+        host->Find(text, forward, false, findNext);
+        // A new search only highlights; stepping once makes the first match active (1/N), like Chrome.
+        if (!findNext) host->Find(text, forward, false, true);
+    });
+    return true;
+}
+
+void Chromium::StopFinding() {
+    if (!HasShownPage()) return;
+    // Keep the active match selected, like Chrome and Arc.
+    RunOnCefUIThread([browser = shared_->pages.at(shared_->shown).browser] { browser->GetHost()->StopFinding(false); });
+}
+
+void Chromium::SetOverlayHole(const RECT& hole) {
+    shared_->overlayHole = hole;
+    shared_->ApplyHoles(shared_->Bounds());
+}
+
+void Chromium::KeepKeyboard(bool keep) { shared_->kiteKeepsKeyboard = keep; }
+
+bool Chromium::PageTakesClickAt(POINT client) const {
+    auto it = shared_->pages.find(shared_->shown);
+    if (it == shared_->pages.end() || !it->second.hwnd) return false;
+    // Windows' own search for the child window under a point, which honours window regions.
+    return ChildWindowFromPointEx(shared_->window, client, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED) == it->second.hwnd;
 }
 
 bool Chromium::MayCloseWindow() {

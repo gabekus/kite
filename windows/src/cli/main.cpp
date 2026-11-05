@@ -5,6 +5,9 @@
 //   kitecore [--profile DIR] state
 //   kitecore [--profile DIR] resolve TEXT...
 //   kitecore [--profile DIR] suggest TEXT... [--current]
+//   kitecore [--profile DIR] find TEXT... [--result ACTIVE/TOTAL] [--width W]
+//                                       the find bar with TEXT typed: what it asks the page, its
+//                                       counter for that report and its frame (core/FindBar.h)
 //   kitecore [--profile DIR] sidebar [SPACE_ID]
 //   kitecore [--profile DIR] collapse SPACE_ID
 //   kitecore [--profile DIR] open TEXT... [--space ID] [--background]
@@ -38,6 +41,7 @@
 #include <vector>
 
 #include "core/CommandBar.h"
+#include "core/FindBar.h"
 #include "core/KeyBindings.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
@@ -46,6 +50,7 @@
 #include "core/SpaceBar.h"
 #include "core/SupportDirectory.h"
 #include "core/ThemeBackdrop.h"
+#include "core/TitleBar.h"
 #include "core/URLInput.h"
 #include "core/Unicode.h"
 #include "core/Uuid.h"
@@ -66,6 +71,7 @@ int Usage() {
         "usage: kitecore [--profile DIR] state\n"
         "       kitecore [--profile DIR] resolve TEXT...\n"
         "       kitecore [--profile DIR] suggest TEXT... [--current]\n"
+        "       kitecore [--profile DIR] find TEXT... [--result ACTIVE/TOTAL] [--width W]\n"
         "       kitecore [--profile DIR] sidebar [SPACE_ID]\n"
         "       kitecore [--profile DIR] collapse SPACE_ID\n"
         "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]]\n"
@@ -294,6 +300,41 @@ int main(int argc, char** argv) {
         auto url = url_input::Resolve(Join(args, 1), engine);
         if (!url) return kNotFound;
         std::puts(url->c_str());
+        return kOk;
+    } else if (command == "find") {
+        // The find bar (Ctrl+F) with TEXT typed: its placeholder, the search it asks the page for,
+        // the counter for a page report ACTIVE/TOTAL, and its frame in a window WIDTH points wide.
+        std::vector<std::string> words;
+        std::optional<FindResult> result;
+        double width = 1280;
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--result" && i + 1 < args.size()) {
+                const std::string& report = args[++i];
+                const size_t slash = report.find('/');
+                int active = -1, total = -1;
+                if (slash != std::string::npos) {
+                    std::from_chars(report.data(), report.data() + slash, active);
+                    std::from_chars(report.data() + slash + 1, report.data() + report.size(), total);
+                }
+                if (active < 0 || total < active) return Usage();
+                result = FindResult{total > 0, total, active};
+            } else if (args[i] == "--width" && i + 1 < args.size()) {
+                width = std::atof(args[++i].c_str());
+            } else {
+                words.push_back(args[i]);
+            }
+        }
+        FindQuery query;
+        const FindQuery::Search search = query.TextChanged(Join(words, 0));
+        if (result) query.Show(*result);
+        // The content card: right of the sidebar's 240, 10 from the window's right, under the 32pt buttons.
+        const FindBarFrame frame = FindBarFrameIn(240, title_bar::kContentTop, width - 10);
+        json::Object o{{"placeholder", ask_on_page::Placeholder(false, false)},
+                       {"search", json::Object{{"text", search.text}, {"forward", search.forward}, {"findNext", search.findNext}}},
+                       {"label", query.Label()},
+                       {"notFound", query.LabelIsNotFound()},
+                       {"frame", json::Object{{"left", frame.left}, {"top", frame.top}, {"width", frame.width}, {"height", frame.height}}}};
+        std::puts(json::Write(json::Value(std::move(o))).c_str());
         return kOk;
     } else if (command == "suggest") {
         CommandBarMode mode = CommandBarMode::NewTab;

@@ -33,6 +33,7 @@ endif()
 # The model (the Windows counterpart of KiteCore): standard C++ only, unit-tested headless.
 add_library(KiteCoreWin STATIC
   src/core/CommandBar.cpp
+  src/core/FindBar.cpp
   src/core/Json.cpp
   src/core/KeyBindings.cpp
   src/core/Models.cpp
@@ -106,6 +107,7 @@ if(WIN32)
     src/shell/CommandBarView.cpp
     src/shell/Compositor.cpp
     src/shell/Favicons.cpp
+    src/shell/FindBarView.cpp
     src/shell/FrameClock.cpp
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
@@ -114,10 +116,13 @@ if(WIN32)
     src/shell/SpaceBarView.cpp
     src/shell/SpaceIconPainter.cpp
     src/shell/SpaceTipView.cpp
+    src/shell/TextEditing.cpp
+    src/shell/TextField.cpp
+    src/shell/TextLine.cpp
     ${KITE_SHADER_HEADERS}
   )
   target_include_directories(Kite PRIVATE "${KITE_SHADER_DIR}")
-  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp)
+  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp advapi32)
 
   # Chromium (CEF), from windows/scripts/fetch-cef.ps1. Without it (no download yet, or the
   # MinGW check, which can't link CEF's MSVC wrapper) Kite.exe builds without pages.
@@ -169,6 +174,7 @@ enable_testing()
 add_executable(KiteCoreTests
   tests/main.cpp
   tests/CommandBarTests.cpp
+  tests/FindBarTests.cpp
   tests/JsonTests.cpp
   tests/KeyBindingsTests.cpp
   tests/ModelTests.cpp

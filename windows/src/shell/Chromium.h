@@ -75,6 +75,9 @@ struct PageEvents {
     std::function<bool(const std::string& tabID)> keepAlive;
     // A page closed for the limit; its tab stays and loads again when it's next shown.
     std::function<void(const std::string& tabID)> pageDiscarded;
+    // What Find found in the tab's page (CefFindHandler::OnFindResult): the matches so far, the
+    // active one (1-based, 0 before one is), and whether this is the search's last report.
+    std::function<void(const std::string& tabID, int count, int activeMatch, bool final)> findResult;
 };
 
 class Chromium {
@@ -124,6 +127,25 @@ public:
     // showDevTools…). False when no page is shown yet.
     enum class PageAction { Back, Forward, Reload, ReloadIgnoringCache, Stop, DevTools };
     bool Act(PageAction action);
+    // Whether a page is shown and made (what find needs; the Mac's shownPage).
+    bool HasShownPage() const;
+    // Finds `text` in the shown page, as the Mac's ChromiumEngine.find: `findNext` moves through
+    // the matches of the same text; a new search also steps once, so its first match is active
+    // (1/N), as in Chrome. Reports come as PageEvents::findResult. False when no page is shown.
+    bool Find(const std::string& text, bool forward, bool findNext);
+    // Ends the shown page's search and its highlights, keeping the active match selected, as
+    // Chrome and Arc do.
+    void StopFinding();
+    // Where something of Kite's sits over the shown page (the find bar), in client px; empty for
+    // nothing. The page's window has a hole there, so clicks on it come to Kite's window while
+    // the rest of the page keeps taking input. It follows the shown page and the card's size.
+    void SetOverlayHole(const RECT& hole);
+    // While Kite's own field has the keyboard (the find bar's), a page doesn't take it back on a
+    // navigation, as the Mac's field stays first responder while the page loads.
+    void KeepKeyboard(bool keep);
+    // Test-only: whether a click at `client` (client px) would reach the shown page's window,
+    // asked of its region the way Windows hit-tests (the smoke test's check of the hole).
+    bool PageTakesClickAt(POINT client) const;
     // Ctrl+T was pressed in a page and the keyboard moved to Kite's window, but Kite hasn't
     // answered yet (PageEvents::newTab is on its way): keys arriving now are for the bar.
     bool KeysComeToKite() const;

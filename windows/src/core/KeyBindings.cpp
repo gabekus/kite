@@ -309,6 +309,10 @@ const std::vector<ShortcutCommand>& ShortcutCommands() {
             // Print (⌘P) waits for printing that survives a cancelled dialog: after Windows 11's
             // print dialog is dismissed, CEF 156 never prints again and Chromium's shutdown hangs.
             {"copyCurrentURL", "Copy URL", CtrlShift("c")},
+            // Edit › Find. F3 and Shift+F3 are Windows' own Find Next and Previous.
+            {"find", "Find…", Ctrl("f")},
+            {"findNext", "Find Next", Ctrl("g"), {Bare("f3")}},
+            {"findPrevious", "Find Previous", CtrlShift("g"), {KeyShortcut("f3", {Modifier::Shift})}},
             {"collapsePinnedSection", "Collapse Pinned Tabs", std::nullopt},
             {"stopLoading", "Stop Loading", Ctrl(".")},
             {"reloadPage", "Refresh the Page", Ctrl("r"), {Bare("f5")}},
