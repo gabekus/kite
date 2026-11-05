@@ -48,6 +48,9 @@ public:
     // sidebar's). Nothing when there's none. Done by the next Step, after DirectManipulation's
     // update (this may be asked from within one of its reports).
     void ReleaseContact();
+    // How many times ReleaseContact was asked, held contact or not (the smoke test's, which
+    // has no contact to let go).
+    size_t ReleasesAsked() const { return releasesAsked_; }
     // Once a frame while the clock runs: DirectManipulation's manual update, when it needs one
     // (a gesture or its momentum under way, a contact taken and still held, or the viewport's
     // recentring to apply). A contact held past kLongestRest without moving is released. True
@@ -97,6 +100,7 @@ private:
     bool contactHeld_ = false;   // taken and not yet released or lifted
     bool contactTaken_ = false;  // held and not yet moving: polled until it does
     bool releaseWanted_ = false;  // ReleaseContact was asked: the next Step lets it go
+    size_t releasesAsked_ = 0;
     // Frames for at least this long after a contact is taken (s), held or not.
     double pollUntil_ = 0;
     double restUntil_ = 0;     // and while held without moving, until this
