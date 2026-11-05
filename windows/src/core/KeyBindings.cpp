@@ -315,6 +315,7 @@ const std::vector<ShortcutCommand>& ShortcutCommands() {
             // The Spaces menu's command-bar Add to Favorites (Remove from Favorites for a favorite).
             {"toggleFavorite", "Add to Favorites", std::nullopt},
             {"reopenClosedTab", "Restore Last Closed Tab", CtrlShift("t"), {}},
+            {"importFromArc", "Import from Arc…", std::nullopt},
             {"openLocation", "Open Location…", std::nullopt},
             {"archiveTab", "Archive Tab", Ctrl("w"), {Ctrl("f4")}},  // closes the bar first
             {"closeWindow", "Close Window", CtrlShift("w"), {}},

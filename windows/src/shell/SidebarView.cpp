@@ -10,6 +10,7 @@
 
 #include "core/OKLab.h"
 #include "core/SpaceSwipe.h"
+#include "core/SymbolShape.h"
 #include "shell/Errors.h"
 #include "shell/FrameClock.h"
 #include "shell/Text.h"
@@ -32,7 +33,9 @@ constexpr float kHeaderIconX = 13;   // in the window
 constexpr float kHeaderTextX = 41;   // in the window
 constexpr float kHeaderFontSize = 13;
 constexpr float kHeaderTextOpacity = 0.45f;
-constexpr float kHeaderIconFontSize = 15;  // SpaceIconImageView's size in the header: emoji, symbols, pictures
+// SpaceIconImageView's size in the header: emoji, symbols, pictures. The drawn symbols' header
+// places are for this size (PlaceDrawnSymbol), so it's theirs.
+constexpr float kHeaderIconFontSize = kHeaderSymbolSize;
 constexpr float kDoneFontSize = kHeaderFontSize - 1;  // the rename's Done (SidebarDoneButton)
 constexpr float kIconSize = 18;
 constexpr float kIconTextGap = 8;
@@ -696,7 +699,7 @@ std::wstring SidebarView::DrawPageSurface(const PageModel& page, Page& gpu, Pixe
     drawnIcons_ = &icons;
     if (page.spaceID == model_.spaceID) ++pageDraws_;
     std::wstring error = compositor_->DrawSurface(
-        gpu.surface.Get(), width, height, dpi_,
+        perf::View::Sidebar, gpu.surface.Get(), width, height, dpi_,
         [&](ID2D1DeviceContext* context) {
             DrawPage(context, page, scroll, static_cast<float>(height) / scale, page.spaceID == model_.spaceID);
         },
@@ -762,7 +765,7 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         surfaceWidth_ = width;
         surfaceHeight_ = height;
         error = compositor_->DrawSurface(
-            surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawHeader(context); }, readBack ? &header : nullptr,
+            perf::View::Sidebar, surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawHeader(context); }, readBack ? &header : nullptr,
             hr);
         if (!error.empty()) {
             deviceLost_ = IsDeviceLost(hr);
@@ -1162,14 +1165,20 @@ void SidebarView::DrawPage(ID2D1DeviceContext* context, const PageModel& page, f
     const float listTop = listTop_;
     const float listBottom = std::max(listTop, bottom);
     context->PushAxisAlignedClip(Rect(0, listTop, width_, listBottom), D2D1_ANTIALIAS_MODE_ALIASED);
+    // A row being renamed out of view still places its field, which its clip hides: rows past the
+    // bottom are walked until it's placed.
+    bool fieldPending = rename_ && renamePage_ == page.spaceID;
     for (const SidebarRow& row : page.rows) {
         const float top = listTop + row.top - scroll;
-        // A row being renamed out of view still places its field, which its clip hides.
         if (top >= listBottom || top + row.height <= listTop) {
-            if (renamePage_ == page.spaceID && Renames(row)) PlaceRenameField(row, top);
-            if (top >= listBottom && !(rename_ && renamePage_ == page.spaceID)) break;
+            if (fieldPending && Renames(row)) {
+                PlaceRenameField(row, top);
+                fieldPending = false;
+            }
+            if (top >= listBottom && !fieldPending) break;
             continue;
         }
+        if (Renames(row)) fieldPending = false;
         const bool hovered = selected && hover_ && hover_->first == row.kind && hover_->second == row.id;
         DrawRow(context, row, top, hovered);
     }
@@ -1493,6 +1502,10 @@ bool SidebarView::ScrollList(POINT at, float distance) {
     pointer_ = at;
     SetScroll(scrollExact_ + distance);
     return true;
+}
+
+void SidebarView::ScrollListBy(float distance) {
+    if (distance != 0) SetScroll(scrollExact_ + distance);
 }
 
 void SidebarView::SetScroll(float scroll) {

@@ -2,6 +2,8 @@
 .build/
 .swiftpm/
 build/
+# Build tools' sources (windows/tools/build), not a build folder.
+!windows/tools/build/
 ThirdParty/
 *.xcodeproj/
 DerivedData/

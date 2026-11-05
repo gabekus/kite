@@ -46,6 +46,62 @@ import Testing
         #expect(history.search("swift", now: now).first?.url == often)
     }
 
+    /// Accents match whether a page wrote them precomposed or as combining marks, and either case.
+    @Test func searchMatchesAccentsAndCase() {
+        var history = History()
+        history.recordVisit(URL(string: "https://example.com/menu")!, title: "Cafe\u{301} Menu", at: now)
+        history.recordVisit(URL(string: "https://example.com/uber")!, title: "ÜBER uns", at: now)
+        #expect(history.search("café", now: now).first?.url.path() == "/menu")
+        #expect(history.search("über", now: now).first?.url.path() == "/uber")
+        #expect(history.search("cafe", now: now).isEmpty)
+    }
+
+    /// The search keeps only the best `limit` as it goes; that must pick what sorting every match did.
+    @Test func searchPicksWhatSortingEveryMatchPicked() {
+        var history = History()
+        var generator = SeededGenerator(seed: 7)
+        let hosts = ["github.com", "www.google.com", "docs.swift.org", "en.wikipedia.org", "x.com"]
+        let words = ["Swift", "Kite", "browser", "Pull", "request", "Café", "release", "notes", "Git", "go"]
+        for i in 0..<600 {
+            let host = hosts[Int(generator.next() % UInt64(hosts.count))]
+            let title = (0..<3).map { _ in words[Int(generator.next() % UInt64(words.count))] }.joined(separator: " ")
+            let url = URL(string: "https://\(host)/\(i)")!
+            for _ in 0..<Int(generator.next() % 4) + 1 {
+                history.recordVisit(url, title: title, at: now.addingTimeInterval(-Double(generator.next() % 8_000_000)))
+            }
+        }
+        for query in ["g", "gi", "git", "go", "sw", "café", "re", "x", "1", "notes k", "zzz"] {
+            for limit in [1, 4, 6] {
+                let reference = Self.referenceSearch(history, query, limit: limit, now: now)
+                #expect(history.search(query, limit: limit, now: now).map(\.url) == reference.map(\.url), "\(query) \(limit)")
+            }
+        }
+    }
+
+    /// Main's search before HistorySearchItem: every entry scored on lowercased copies, then sorted.
+    private static func referenceSearch(_ history: History, _ query: String, limit: Int, now: Date) -> [HistoryEntry] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return [] }
+        func score(_ entry: HistoryEntry) -> Int? {
+            let title = entry.title.lowercased()
+            let host = (entry.url.host() ?? "").lowercased().replacingOccurrences(of: "www.", with: "")
+            let url = entry.url.absoluteString.lowercased()
+            if host.hasPrefix(q) { return 100 }
+            if title.hasPrefix(q) { return 90 }
+            if title.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains(where: { $0.hasPrefix(q) }) { return 75 }
+            if title.contains(q) { return 55 }
+            if url.contains(q) { return 40 }
+            return nil
+        }
+        return history.entries.values.compactMap { entry -> (HistoryEntry, Double)? in
+            guard let match = score(entry) else { return nil }
+            let days = max(0, now.timeIntervalSince(entry.lastVisit)) / 86_400
+            return (entry, Double(match) + log2(Double(entry.visitCount) + 1) * 8 - min(days, 90) / 3)
+        }
+        .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.lastVisit > $1.0.lastVisit }
+        .prefix(limit).map(\.0)
+    }
+
     @Test func roundTripsThroughJSON() throws {
         var history = History()
         history.recordVisit(URL(string: "https://example.com/")!, title: "Example", at: now)
@@ -101,5 +157,18 @@ import Testing
         #expect(InternalPage(URL(string: "https://history")) == nil)
         #expect(InternalPage.history.url.absoluteString == "kite://history")
         #expect(!History.records(InternalPage.history.url))
+    }
+}
+
+/// A repeatable generator for tests that want varied data (SplitMix64).
+private struct SeededGenerator: RandomNumberGenerator {
+    var state: UInt64
+    init(seed: UInt64) { state = seed }
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
     }
 }

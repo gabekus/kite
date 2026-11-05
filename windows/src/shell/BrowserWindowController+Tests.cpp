@@ -33,13 +33,20 @@ bool Inked(const Pixels& pixels, UINT fromRow = 0) {
 
 bool BrowserWindowController::RunUntil(const std::function<bool()>& done, double seconds) {
     // Only the clock's frames and the window's timers: the rest waits for the message loop, so
-    // a page that loads meanwhile can't close the window mid-test.
+    // a page that loads meanwhile can't close the window mid-test. A manual clock's frames are
+    // stepped here at 60 Hz while it runs, as its thread would post them (SmokeTest). Timers come
+    // first: a 500 Hz clock nearly always has a frame waiting, and the slide's end (a timer)
+    // would wait behind them.
     const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(seconds * 1000);
+    double nextFrame = 0;
     MSG message;
     while (!done() && GetTickCount64() < deadline) {
-        if (PeekMessageW(&message, window_.Handle(), kFrameMessage, kFrameMessage, PM_REMOVE) ||
-            PeekMessageW(&message, window_.Handle(), WM_TIMER, WM_TIMER, PM_REMOVE)) {
+        if (PeekMessageW(&message, window_.Handle(), WM_TIMER, WM_TIMER, PM_REMOVE) ||
+            PeekMessageW(&message, window_.Handle(), kFrameMessage, kFrameMessage, PM_REMOVE)) {
             DispatchMessageW(&message);
+        } else if (clock_->Manual() && clock_->Running() && FrameClock::Now() >= nextFrame) {
+            nextFrame = FrameClock::Now() + 1.0 / 60;
+            Frame(FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr), 0);  // rate unknown (0), as Filter's without --perf-log
         } else {
             Sleep(1);
         }
@@ -47,17 +54,28 @@ bool BrowserWindowController::RunUntil(const std::function<bool()>& done, double
     return done();
 }
 
+bool BrowserWindowController::BoostsBalance() const {
+    // Kite's count of boosts held is exactly this window's holders that are on: the clock's, the
+    // pages' slide's and the sidebar toggle's.
+    return FrameClock::ProcessBoosts() == int{clock_->Boosted()} + int{slideBoost_.On()} + int{toggleBoost_.On()};
+}
+
 std::wstring BrowserWindowController::RunToRest(const wchar_t* what) {
     const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
     const bool fades = theme_.Fading();
     if (visible && !sidebarSliding_) return std::wstring(what) + L" didn't slide the pages";
     if (!visible && (sidebarSliding_ || fades)) return std::wstring(what) + L" animated a hidden window";
-    // The clock's frames until the fade ends and the slide's timer fires (2 s at most).
+    // The display at its highest rate while the pages slide, whether or not the theme fades.
+    if (sidebarSliding_ && !(slideBoost_.On() && BoostsBalance())) return std::wstring(what) + L": the pages' slide didn't boost the display";
+    // The clock's frames until the fade ends and the slide's timer fires (2 s at most): the fade
+    // asks for frames and draws on them, the frame after its end stops the clock, and the slide
+    // ends on its timer, its boost with it.
     const size_t framesBefore = frameCount_;
     RunUntil([this] { return !clock_->Running() && !sidebarSliding_; }, 2);
     if (clock_->Running()) return std::wstring(what) + L": the frame clock never stopped";
     if (sidebarSliding_) return std::wstring(what) + L": the pages' slide never ended";
     if (fades && frameCount_ == framesBefore) return std::wstring(what) + L": the crossfade got no frames";
+    if (slideBoost_.On() || !BoostsBalance()) return std::wstring(what) + L": the display stayed boosted at rest";
     if (sidebar_->PageOffset() != 0 || pagesAnchor_ || pendingLanding_) return std::wstring(what) + L": the pages didn't come to rest";
     if (theme_.Fading() || theme_.Interactive() || theme_.from != state_.SelectedSpace().theme) {
         return std::wstring(what) + L": the theme didn't come to rest";
@@ -90,6 +108,8 @@ std::wstring BrowserWindowController::SmokeTestSwipe() {
     // The pointer over the list, and over the page beside the sidebar.
     const POINT list{std::lround(120 * scale), std::lround(200 * scale)};
     const POINT page{std::lround((kSidebarWidth + 200) * scale), std::lround(200 * scale)};
+    // And over the top row, on the sidebar but above the list.
+    const POINT header{std::lround(80 * scale), std::lround(20 * scale)};
     double stamp = FrameClock::Now();
     const auto sendAt = [&](POINT at, Phase phase, double dx, double dy, double after = 1.0 / 60) {
         stamp += after;
@@ -117,6 +137,49 @@ std::wstring BrowserWindowController::SmokeTestSwipe() {
         return L"a gesture moving over the page swiped";
     }
     sendAt(page, Phase::Ended, 0, 0);
+    // With rows enough to scroll (taken away again): a vertical gesture decided over the list is
+    // the list's to its end, its momentum included, wherever the pointer goes (the Mac asks where
+    // it is only until the gesture is decided); one whose pointer is over the page before it's
+    // decided scrolls nothing, nor does the rest of it. Only the undecided one lets the contact go
+    // (counted: the smoke test has no contact to release), and so does one decided vertical over
+    // the top row, where nothing scrolls with it. The rows are taken away by hand, not closed, so
+    // they leave nothing in Recently Closed or the archive.
+    {
+        std::vector<std::string> rows;
+        for (int i = 0; i < 40; ++i) rows.push_back(state_.OpenTab("about:blank", before, false));
+        StateChanged();
+        const float top = sidebar_->ListScroll();
+        const size_t releases = touchpad_->ReleasesAsked();
+        send(Phase::Began, 0, 0);
+        send(Phase::Changed, 0, -30);
+        const float decided = sidebar_->ListScroll();
+        const bool latched = sendAt(page, Phase::Changed, 0, -30) == Step::Pass && sendAt(page, Phase::Ended, 0, 0) == Step::Pass &&
+                             sendAt(page, Phase::Momentum, 0, -20) == Step::Pass && decided == top + 30 &&
+                             sidebar_->ListScroll() == decided + 50 && touchpad_->ReleasesAsked() == releases;
+        sendAt(page, Phase::MomentumEnded, 0, 0);
+        const float scrolled = sidebar_->ListScroll();
+        send(Phase::Began, 0, 0);
+        sendAt(page, Phase::Changed, 0, -30);
+        const bool undecidedReleased = touchpad_->ReleasesAsked() == releases + 1;
+        sendAt(page, Phase::Ended, 0, 0);
+        sendAt(page, Phase::Momentum, 0, -20);
+        const bool released = undecidedReleased && sidebar_->ListScroll() == scrolled && touchpad_->ReleasesAsked() == releases + 1;
+        sendAt(page, Phase::MomentumEnded, 0, 0);
+        // Over the top row (the sidebar, but not the list): held while undecided, released as it's
+        // decided vertical.
+        sendAt(header, Phase::Began, 0, 0);
+        const bool headerHeld = touchpad_->ReleasesAsked() == releases + 1;
+        sendAt(header, Phase::Changed, 0, -30);
+        const bool headerReleased = headerHeld && touchpad_->ReleasesAsked() == releases + 2 && sidebar_->ListScroll() == scrolled;
+        sendAt(header, Phase::Ended, 0, 0);
+        sidebar_->ScrollListBy(top - sidebar_->ListScroll());
+        Space& space = state_.spaces[index];
+        std::erase_if(space.tabs, [&](const Tab& tab) { return std::find(rows.begin(), rows.end(), tab.id) != rows.end(); });
+        StateChanged();
+        if (!latched) return L"a vertical gesture's rest over the page didn't scroll the list";
+        if (!released) return L"a gesture over the page before it was decided wasn't released, or scrolled the list";
+        if (!headerReleased) return L"a vertical gesture decided over the top row kept its contact";
+    }
 
     // Sideways: the pages and the theme follow the fingers, and a frame draws it.
     send(Phase::Began, 0, 0);
@@ -260,18 +323,21 @@ std::wstring BrowserWindowController::SmokeTestSwipeThreeSpaces() {
         if (state_.SelectedSpaceIndex() != 0) return L"a swipe past the first space moved the selection";
 
         // A fade's boost ends with it, though the clock runs on for fingers resting on the
-        // touchpad (made here by asking the touchpad for frames, as a contact taken does).
+        // touchpad (made here by asking the touchpad for frames, as a contact taken does, for
+        // longer than the check can take: it ends them itself), and stops at the next frame once
+        // they're done.
         if (state_.spaces[0].theme != state_.spaces[1].theme && touchpad_) {
             RunCommand("nextSpace");
-            touchpad_->PollFor(1.5);
+            touchpad_->PollFor(60);
             if (!theme_.Fading() || !clock_->Boosted()) return L"a space switch's crossfade didn't boost the display";
             if (!RunUntil([this] { return !theme_.Fading(); }, 2)) return L"a space switch's crossfade never ended";
             // A frame after it, for the clock to hear.
             const size_t frames = frameCount_;
-            RunUntil([&] { return frameCount_ > frames; }, 0.5);
+            if (!RunUntil([&] { return frameCount_ > frames; }, 0.5)) return L"the clock gave no frame after a crossfade under the touchpad's";
             if (!clock_->Running()) return L"the clock stopped while the touchpad wanted frames";
             if (clock_->Boosted()) return L"fingers resting on the touchpad kept a crossfade's boost";
-            if (!RunUntil([this] { return !clock_->Running() && !sidebarSliding_; }, 3)) return L"the touchpad's frames never stopped";
+            touchpad_->PollFor(0);
+            if (!RunUntil([this] { return !clock_->Running() && !sidebarSliding_; }, 2)) return L"the touchpad's frames never stopped";
             if (sidebar_->PageOffset() != 0 || pagesAnchor_) return L"the pages didn't come to rest under the touchpad's frames";
             if (std::wstring problem = selectFirst(); !problem.empty()) return problem;
         }
@@ -347,6 +413,44 @@ std::wstring BrowserWindowController::HoldSwipe(double dx) {
 }
 
 std::wstring BrowserWindowController::SmokeTest() {
+    // The clock's own thread gives frame after frame while something wants them (the compositor
+    // clock's, or DwmFlush's when its wait fails, as with the display off: 500 Hz there), here
+    // the touchpad's polling; once nothing does, its next frame stops the clock, unboosted. The
+    // 5 s allow for DwmFlush's stalls of a few hundred ms; a thread that stops ticking fails.
+    const size_t framesBefore = frameCount_;
+    if (touchpad_) {
+        touchpad_->PollFor(5);
+        clock_->Start(false);
+        const bool ticked = RunUntil([&] { return frameCount_ >= framesBefore + 3; }, 5);
+        touchpad_->PollFor(0);
+        if (!ticked) {
+            clock_->Stop();
+            return L"the frame clock gave fewer than 3 frames in 5 s";
+        }
+        if (!clock_->Running()) return L"the frame clock stopped while the touchpad wanted frames";
+    } else {
+        clock_->Start(false);
+    }
+    const size_t polled = frameCount_;
+    if (!RunUntil([&] { return frameCount_ > polled; }, 5)) {
+        clock_->Stop();
+        return L"the frame clock gave no frame in 5 s";
+    }
+    if (clock_->Running() || clock_->Boosted()) return L"a frame with nothing to animate didn't stop the frame clock";
+    // The rest steps the clock's frames in RunUntil, at 60 Hz while it runs: what's checked is
+    // when the window starts, boosts and stops it, and what it does with its frames, never
+    // whether the display is ticking. Back to the thread's frames however the checks end.
+    struct ManualClock {
+        FrameClock& clock;
+        explicit ManualClock(FrameClock& c) : clock(c) { clock.SetManual(true); }
+        ~ManualClock() { clock.SetManual(false); }
+        ManualClock(const ManualClock&) = delete;
+        ManualClock& operator=(const ManualClock&) = delete;
+    } manual(*clock_);
+    return SmokeTestWindow();
+}
+
+std::wstring BrowserWindowController::SmokeTestWindow() {
     // The command bar opens over the window, draws with text in it, and closes.
     if (!commandBar_) return L"Kite couldn't make the command bar";
     commandBar_->Show(CommandBarMode::NewTab, "", BarLook());
@@ -378,7 +482,10 @@ std::wstring BrowserWindowController::SmokeTest() {
     // Switching spaces: the pages slide on the compositor and the theme crossfades on the
     // clock's frames, and both come to rest on the next space, then back on this one.
     if (state_.spaces.size() > 1) {
+        const uint64_t armed = saveArms_;
         if (std::wstring problem = SmokeTestSpaces(); !problem.empty()) return problem;
+        // A change arms the session's save (it may have fired already: the settling ran timers).
+        if (writer_ && writer_->MaySave() && saveArms_ == armed) return L"switching spaces didn't schedule a save";
         // And swiping between them with two fingers on a touchpad.
         if (std::wstring problem = SmokeTestSwipe(); !problem.empty()) return problem;
         // And editing them: drags in the bar, the menu, renaming, New Folder, Delete Space.
@@ -388,6 +495,8 @@ std::wstring BrowserWindowController::SmokeTest() {
     // draw again (a real device removal can't be caused from a test).
     DropCompositor();
     if (std::wstring problem = Draw(); !problem.empty()) return L"Kite couldn't rebuild its renderer: " + problem;
+    // Last, as it runs the pages' reports: Back to Pinned URL on the shown page, loaded for real.
+    if (std::wstring problem = SmokeTestLiveReset(); !problem.empty()) return problem;
     // With Chromium it waits for the first page instead, for at most 30 s.
     UINT smokeMs = 1000;
 #ifdef KITE_HAS_CEF
@@ -436,6 +545,12 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
     if (problem.empty() && barText) {
         // The bar as Ctrl+T opens it, with the text typed in.
         if (!commandBar_) return L"Kite couldn't make the command bar";
+        // Its history rows are the profile's file's: read on history's worker, waited for here
+        // (a test run, before the first frame it saves).
+        if (history_) {
+            history_->ForProfile(state_.SelectedProfileDirectory());
+            if (!history_->WaitForLoads(std::chrono::seconds(10))) return L"history wasn't read within 10 s";
+        }
         commandBar_->Show(CommandBarMode::NewTab, "", BarLook());
         commandBar_->Type(*barText);
         Pixels bar;
@@ -500,7 +615,7 @@ std::wstring BrowserWindowController::HoldRowRename(size_t index, const std::opt
         return L"that row isn't a tab or a folder";
     }
     const SidebarView::RenameTarget target{rows[index].kind, rows[index].id};
-    if (target.kind == SidebarRow::Kind::Tab) BeginRenamingTab(target.id);
+    if (target.kind == SidebarRow::Kind::Tab) BeginRenamingTab(target.id, false);
     else BeginRenamingFolder(target.id);
     if (sidebar_->Renaming() != target) return L"the row's rename field didn't open";
     if (text) sidebar_->TypeInRename(*text);
@@ -719,7 +834,7 @@ std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
         return L"the space menu isn't the Mac's";
     }
 
-    // Rename Space…: the field opens with the name, takes what's typed, and Return renames.
+    // Rename Spaceâ€¦: the field opens with the name, takes what's typed, and Return renames.
     const size_t index = state_.SelectedSpaceIndex();
     const std::string name = state_.spaces[index].name;
     if (std::wstring problem = HoldRename(index, "Smoke"); !problem.empty()) return problem;
@@ -913,7 +1028,7 @@ std::wstring BrowserWindowController::SmokeTestTabEditing() {
     if (sidebar_->PageDraws() != pageDraws) return done(L"typing in a tab's rename drew its page, not only the field");
     SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
     if (sidebar_->Renaming() || state_.FindTabByID(tab)->DisplayTitle() != "Smoke") return done(L"Return didn't rename the tab");
-    // Rename Current Tab…: Escape keeps the name; a blank name goes back to the page's title.
+    // Rename Current Tabâ€¦: Escape keeps the name; a blank name goes back to the page's title.
     RunCommand("renameCurrentTab");
     typed(L"Not this");
     SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
@@ -1176,6 +1291,58 @@ std::wstring BrowserWindowController::SmokeTestMiddleClick() {
     }
     if (GetCapture() == window) return done(L"a middle click on a favorite kept the mouse");
     return done({});
+}
+
+std::wstring BrowserWindowController::SmokeTestLiveReset() {
+#ifdef KITE_HAS_CEF
+    const Tab* shown = state_.SelectedTab();
+    // The CI smoke's page (windows/helix/pages/smoke.html), whose neighbour audio.html is where it
+    // goes: a page of the same origin (file://, no network), so it stays in its renderer.
+    if (!chromium_ || !firstPageMade_ || !shown || !shown->url || !shown->url->ends_with("/smoke.html")) return {};
+    const std::string id = shown->id, home = *shown->url;
+    const bool wasPinned = state_.Location(id)->section == TabSection::Pinned;
+    // The page's reports (its address, its title) as the message loop would run them, for at most
+    // `seconds`; the window's timers go on meanwhile.
+    const auto wait = [&](const std::function<bool()>& done, double seconds) {
+        const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(seconds * 1000);
+        MSG message;
+        while (!done() && GetTickCount64() < deadline) {
+            chromium_->RunPending();
+            if (PeekMessageW(&message, window_.Handle(), WM_TIMER, WM_TIMER, PM_REMOVE)) DispatchMessageW(&message);
+            else Sleep(5);
+        }
+        return done();
+    };
+    const auto titled = [&](std::string_view prefix) {
+        const Tab* tab = state_.FindTabByID(id);
+        return tab && tab->title.starts_with(prefix);
+    };
+    const ULONGLONG closeAsked = closeAskedAt_;
+    const std::wstring problem = [&]() -> std::wstring {
+        if (!wasPinned) RunCommand("pinTab");
+        if (state_.FindTabByID(id)->pinnedURL != home) return L"pinning the shown tab didn't remember its page";
+        // Its page goes elsewhere, as a link would take it.
+        LoadInTab(id, home.substr(0, home.size() - std::string_view("smoke.html").size()) + "audio.html");
+        if (!wait([&] { return titled("audio:") && state_.CanReset(id); }, 15)) return L"the shown page didn't go elsewhere";
+        if (!CommandEnabled("resetTab")) return L"Reset Tab was disabled for the live page off its pinned page";
+        RunCommand("resetTab");
+        // Home, and done loading there (a navigation still under way would hold up the window's close).
+        const auto loaded = [&] {
+            const auto status = pageStatus_.find(id);
+            return status != pageStatus_.end() && !status->second.isLoading;
+        };
+        if (!wait([&] { return titled("Kite smoke page") && loaded(); }, 15)) return L"Back to Pinned URL didn't take the live page home";
+        if (state_.CanReset(id)) return L"the live page came home but still offers Back to Pinned URL";
+        return {};
+    }();
+    if (!wasPinned && state_.Location(id) && state_.Location(id)->section == TabSection::Pinned) RunCommand("pinTab");
+    // The first page's load may have asked the window to close while this held the loop: its
+    // deadline counts from now, when the loop gets back to it (this runs last in the smoke test).
+    if (closeAskedAt_ && closeAskedAt_ != closeAsked) closeAskedAt_ = GetTickCount64();
+    return problem;
+#else
+    return {};
+#endif
 }
 
 std::wstring BrowserWindowController::HoldFavoriteHover(size_t index) {

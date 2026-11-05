@@ -55,6 +55,7 @@ SidebarRow TabRow(const Tab& tab, bool pinned, bool selected, int depth) {
     row.selected = selected;
     row.favicon = FaviconSourceOf(tab.url, tab.faviconURL);
     row.canReset = pinned && tab.HasLeftPinnedURL();
+    row.renamed = tab.customTitle.has_value();
     return row;
 }
 
@@ -394,9 +395,47 @@ TabRowTrailing TabRowTrailingOf(const SidebarRow& row, float width, bool hovered
     return out;
 }
 
+namespace {
+
+// Where the item `id` (a tab or folder) sits in the tree: found, and whether every folder above it
+// is open.
+struct TreePlace {
+    bool found = false;
+    bool open = true;
+};
+TreePlace PlaceIn(const std::vector<PinnedItem>& items, SidebarRow::Kind kind, const std::string& id) {
+    for (const PinnedItem& item : items) {
+        const bool isFolder = std::holds_alternative<Folder>(item.value);
+        if (item.Id() == id && isFolder == (kind == SidebarRow::Kind::Folder)) return {true, true};
+        if (!isFolder) continue;
+        const Folder& folder = std::get<Folder>(item.value);
+        TreePlace inside = PlaceIn(folder.items, kind, id);
+        if (inside.found) return {true, inside.open && folder.isExpanded};
+    }
+    return {};
+}
+
+}  // namespace
+
 bool SidebarShowsRow(const BrowserState& state, size_t space, SidebarRow::Kind kind, const std::string& id) {
-    const std::vector<SidebarRow> rows = SidebarRows(state, space);
-    return std::any_of(rows.begin(), rows.end(), [&](const SidebarRow& row) { return row.kind == kind && row.id == id; });
+    if (space >= state.spaces.size()) return false;
+    const Space& s = state.spaces[space];
+    switch (kind) {
+    case SidebarRow::Kind::Header: return id == s.id;
+    case SidebarRow::Kind::NewTab: return id == s.id;
+    case SidebarRow::Kind::Divider: return id == s.id && (!s.pinnedItems.empty() || !s.tabs.empty());
+    case SidebarRow::Kind::Tab:
+        if (std::any_of(s.tabs.begin(), s.tabs.end(), [&](const Tab& tab) { return tab.id == id; })) return true;
+        [[fallthrough]];
+    case SidebarRow::Kind::Folder: {
+        const TreePlace place = PlaceIn(s.pinnedItems, kind, id);
+        if (!place.found) return false;
+        // The selected pinned tab shows from under a closed folder or a collapsed section.
+        const bool selected = kind == SidebarRow::Kind::Tab && s.selectedTabID == id;
+        return selected || (place.open && !IsPinnedSectionCollapsed(state, s.id));
+    }
+    }
+    return false;
 }
 
 }  // namespace kite

@@ -16,42 +16,39 @@
 
 namespace kite {
 
-void BrowserWindowController::EditState(const std::function<void()>& change, bool selectionMoved) {
-    // W16 (undo) records the step here, before and after `change`, as the Mac's BrowserStore.mutate
-    // registers one for every change; StateChanged syncs the pinned URLs as mutate does.
+void BrowserWindowController::RecordEdit(const std::function<void()>& change) {
+    // W16 (undo) records the step here, the session before and after `change`, as the Mac's
+    // BrowserStore.mutate registers one for every change.
     change();
+}
+
+void BrowserWindowController::EditState(const std::function<void()>& change, bool selectionMoved) {
+    RecordEdit(change);
+    // A sidebar change, saved soon (SelectionMoved's save is Soon too); StateChanged syncs the
+    // pinned URLs, as the Mac's mutate does.
     if (selectionMoved) SelectionMoved();
-    else StateChanged();
+    else StateChanged(SessionSaveDelay::Soon);
 }
 
-void BrowserWindowController::LoadInLivePage(const std::string& tabID, const std::string& url) {
-#ifdef KITE_HAS_CEF
-    // The Mac's load(_:in:): only a page that's there (and never one of Kite's own); an unloaded
-    // tab picks the address up when it's next shown.
-    if (chromium_ && !url.starts_with("kite:")) chromium_->Navigate(tabID, url);
-#else
-    (void)tabID;
-    (void)url;
-#endif
+void BrowserWindowController::TakeKeyboardForRename() {
+    // The one seam W21 fills: GiveKeyboard(KeyboardField::Rename) first, so the find field's caret
+    // goes before the rename's. Then the keyboard, when Kite is the window in front (a quiet test run
+    // never activates).
+    if (GetForegroundWindow() == window_.Handle()) SetFocus(window_.Handle());
 }
 
-bool BrowserWindowController::TabCommandEnabled(const std::string& command, bool& enabled) const {
-    // validateMenuItem's cases for the tab commands; false when `command` isn't one of them.
+std::optional<bool> BrowserWindowController::TabCommandEnabled(const std::string& command) const {
+    // validateMenuItem's cases for the tab commands; none when `command` isn't one of them.
     const Tab* tab = state_.SelectedTab();
-    if (command == "pinTab" || command == "renameCurrentTab" || command == "toggleFavorite") {
-        enabled = tab != nullptr;
-    } else if (command == "resetTab") {
-        enabled = tab && state_.CanReset(tab->id);
-    } else if (command == "replacePinnedTab") {
-        // Offered once the pinned tab has left its pinned page, on a web page.
-        enabled = tab && tab->url && state_.CanReset(tab->id) && !InternalPageOf(tab->url);
-    } else if (command == "resetSpace") {
+    if (command == "pinTab" || command == "renameCurrentTab" || command == "toggleFavorite") return tab != nullptr;
+    if (command == "resetTab") return tab && state_.CanReset(tab->id);
+    // Offered once the pinned tab has left its pinned page, on a web page.
+    if (command == "replacePinnedTab") return tab && tab->url && state_.CanReset(tab->id) && !InternalPageOf(tab->url);
+    if (command == "resetSpace") {
         const auto pinned = state_.SelectedSpace().Pinned();
-        enabled = std::any_of(pinned.begin(), pinned.end(), [](const Tab* t) { return t->HasLeftPinnedURL(); });
-    } else {
-        return false;
+        return std::any_of(pinned.begin(), pinned.end(), [](const Tab* t) { return t->HasLeftPinnedURL(); });
     }
-    return true;
+    return std::nullopt;
 }
 
 void BrowserWindowController::MakeTabCommands() {
@@ -73,7 +70,7 @@ void BrowserWindowController::MakeTabCommands() {
     commands_["renameCurrentTab"] = [this] {
         const Tab* tab = state_.SelectedTab();
         if (!tab) return static_cast<void>(MessageBeep(MB_OK));
-        BeginRenamingTab(tab->id);
+        BeginRenamingTab(tab->id, false);
     };
     commands_["resetSpace"] = [this] { ResetAllTabsInSpace(); };
     commands_["resetTab"] = [this] {
@@ -100,57 +97,52 @@ void BrowserWindowController::MakeTabCommands() {
 void BrowserWindowController::BackToPinnedURL(const std::string& tabID) {
     std::optional<std::string> url;
     EditState([&] { url = state_.ResetTab(tabID); });
-    if (url) LoadInLivePage(tabID, *url);
+    // The Mac's load(_:in:): its page goes there (one that closed itself gets a new one).
+    if (url) LoadInTab(tabID, *url);
 }
 
 void BrowserWindowController::ResetAllTabsInSpace() {
     std::vector<std::pair<std::string, std::string>> reset;
     EditState([&] { reset = state_.ResetPinnedTabs(); });
     if (reset.empty()) return static_cast<void>(MessageBeep(MB_OK));
-    for (const auto& [id, url] : reset) LoadInLivePage(id, url);
+    for (const auto& [id, url] : reset) LoadInTab(id, url);
 }
 
-void BrowserWindowController::BeginRenamingTab(const std::string& tabID) {
+void BrowserWindowController::BeginRenamingTab(const std::string& tabID, bool fromDoubleClick) {
     const auto location = state_.Location(tabID);
     if (!location) return;
-    // Favorites and split panes have no title row to edit in (nor a tab another space lists, or
-    // one inside a closed folder). The Mac's Rename Tab… dialog for those, and for a hidden sidebar,
-    // comes with ArcDialog (W19): a beep until then.
-    const bool hasRow = location->section != TabSection::Favorite && !state_.SplitContaining(tabID) &&
-                        SidebarShowsRow(state_, state_.SelectedSpaceIndex(), SidebarRow::Kind::Tab, tabID);
+    // Favorites and split panes have no title row to edit in. A double-click is on a row the Mac
+    // wouldn't have (its split is one SplitRowCell, with no doubleTapped): nothing. From Rename
+    // Current Tab… (or with the sidebar hidden) the Mac opens Rename Tab…, which comes with
+    // ArcDialog (W19): a beep until then.
+    const bool favoriteOrPane = location->section == TabSection::Favorite || state_.SplitContaining(tabID);
+    if (fromDoubleClick && favoriteOrPane) return;
+    const bool hasRow = !favoriteOrPane && SidebarShowsRow(state_, state_.SelectedSpaceIndex(), SidebarRow::Kind::Tab, tabID);
     if (!sidebarShown_ || !hasRow) return static_cast<void>(MessageBeep(MB_OK));
-    // The keyboard, when Kite is the window in front (a quiet test run never activates).
-    if (GetForegroundWindow() == window_.Handle()) SetFocus(window_.Handle());
+    TakeKeyboardForRename();
     sidebar_->BeginRenaming(SidebarView::RenameTarget{SidebarRow::Kind::Tab, tabID}, state_.TabAt(*location)->DisplayTitle());
 }
 
 void BrowserWindowController::BeginRenamingFolder(const std::string& folderID) {
-    const auto found = state_.FolderMatching(folderID);
-    if (!found || found->folder->id != folderID) return;
-    const std::string name = found->folder->name;
+    const Folder* folder = state_.FolderByID(folderID);
+    if (!folder) return;
+    const std::string name = folder->name;
     // beginRenaming(folder:): the sidebar shown first; the field in its row, which the selected
     // space's page has to show.
     SetSidebarShown(true);
     if (!SidebarShowsRow(state_, state_.SelectedSpaceIndex(), SidebarRow::Kind::Folder, folderID)) return;
-    if (GetForegroundWindow() == window_.Handle()) SetFocus(window_.Handle());
+    TakeKeyboardForRename();
     sidebar_->BeginRenaming(SidebarView::RenameTarget{SidebarRow::Kind::Folder, folderID}, name);
 }
 
 void BrowserWindowController::RenameTab(const std::string& tabID, const std::string& name) {
-    const Tab* tab = state_.FindTabByID(tabID);
-    if (!tab) return;
-    const std::optional<std::string> before = tab->customTitle;
-    state_.RenameTab(tabID, name);
-    // A field committed unchanged redraws nothing (its row draws again as the field goes).
-    if (state_.FindTabByID(tabID)->customTitle != before) EditState([] {});
+    if (!state_.Location(tabID)) return;
+    EditState([&] { state_.RenameTab(tabID, name); });
 }
 
 void BrowserWindowController::RenameFolder(const std::string& folderID, const std::string& name) {
-    const auto found = state_.FolderMatching(folderID);
-    if (!found || found->folder->id != folderID) return;
-    const std::string before = found->folder->name;
-    state_.RenameFolder(folderID, name);
-    if (state_.FolderMatching(folderID)->folder->name != before) EditState([] {});
+    if (!state_.FolderByID(folderID)) return;
+    EditState([&] { state_.RenameFolder(folderID, name); });
 }
 
 bool BrowserWindowController::RenameStillShown(const SidebarView::RenameTarget& target) const {
@@ -159,12 +151,15 @@ bool BrowserWindowController::RenameStillShown(const SidebarView::RenameTarget& 
 }
 
 void BrowserWindowController::ApplyRename(const SidebarView::RenameTarget& target, const std::string& text) {
-    switch (target.kind) {
-    case SidebarRow::Kind::Header: state_.RenameSpace(target.id, text); break;
-    case SidebarRow::Kind::Tab: state_.RenameTab(target.id, text); break;
-    case SidebarRow::Kind::Folder: state_.RenameFolder(target.id, text); break;
-    default: break;
-    }
+    // Inside StateChanged's update (no StateChanged of its own), but still a step W16 records.
+    RecordEdit([&] {
+        switch (target.kind) {
+        case SidebarRow::Kind::Header: state_.RenameSpace(target.id, text); break;
+        case SidebarRow::Kind::Tab: state_.RenameTab(target.id, text); break;
+        case SidebarRow::Kind::Folder: state_.RenameFolder(target.id, text); break;
+        default: break;
+        }
+    });
 }
 
 }  // namespace kite

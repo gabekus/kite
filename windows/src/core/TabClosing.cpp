@@ -13,17 +13,12 @@ namespace kite {
 
 using pinned_tree::DropEmptyEphemeralFolders;
 using pinned_tree::FindFolder;
+using pinned_tree::IsEmptyEphemeralFolder;
 using pinned_tree::ParentFolder;
 using pinned_tree::RemoveFolder;
 using pinned_tree::RemoveTab;
 
 namespace {
-
-// A Claude folder (ephemeral) left empty (dropEmptyEphemeralFolders drops it).
-bool IsEmptyEphemeralFolder(const PinnedItem& item) {
-    const Folder* folder = std::get_if<Folder>(&item.value);
-    return folder && folder->ephemeral == true && folder->items.empty();
-}
 
 // The pinned tree without the stale tabs in Claude's folders, and without the Claude folders
 // that leaves empty. Ordinary folders and pinned tabs stay (archivingStaleEphemeralTabs).

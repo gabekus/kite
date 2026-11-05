@@ -22,6 +22,8 @@ const Folder* ParentFolder(const std::vector<PinnedItem>& items, const std::stri
 std::optional<Tab> RemoveTab(std::vector<PinnedItem>& items, const std::string& id);
 // Takes the folder (with everything in it) out of the tree, at any depth.
 std::optional<Folder> RemoveFolder(std::vector<PinnedItem>& items, const std::string& id);
+// A Claude folder (ephemeral) left empty, which DropEmptyEphemeralFolders drops.
+bool IsEmptyEphemeralFolder(const PinnedItem& item);
 // Claude's folders (ephemeral) left empty go, from the inside out.
 void DropEmptyEphemeralFolders(std::vector<PinnedItem>& items);
 // Every folder in the tree, depth first (folders(inSpace:)).
