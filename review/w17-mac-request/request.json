@@ -1,8 +1,7 @@
 {
   "id": "w17",
   "title": "W17 Mac references: the sidebar's row menus (tab, pinned tab, folder, favorite)",
-  "about": "The context menus of a Today tab, a drifted pinned tab, a folder and a favorite (SidebarListCells.swift's TabRowCell and FolderRowCell contextMenu(at:), SidebarFavorites.swift's FavoritePaneView menu(for:), all shown by showSidebarMenu) for helix/W17-context-menus. Kite for Mac from origin/main: W17 changes no Mac code. The sessions are windows/helix/states on origin/main (pages on example.com/.org/.net/.edu and the favorites' public sites). Under KITE_TEST_CONTEXT_MENU a menu is logged, not shown, so a menu's reference is its logged line (NOTES.md's 'Logged by the test hooks'), which Windows prints in the same format (Kite.exe --capture … --row-menu N / --favorite-menu N, and kitecore menu). The rest states give the sidebar each menu opens over. Every menu state is skipped: a right-click must start on a SAFE_TARGETS view, and TabRowCell, FolderRowCell and FavoritePaneView aren't in it; each skip names the click it would make, and 'widening' below is the smallest change that would allow them (not made here: it needs the script's safety review).",
-  "widening": "Add a RIGHT_CLICK_TARGETS=\"TabRowCell FolderRowCell FavoritePaneView\" list to scripts/mac-reference-captures.sh, accepted only for {\"button\": \"right\"} clicks (never left clicks, drags or modifier flags) in a state whose env has KITE_TEST_CONTEXT_MENU exactly \"1\" (log only, nothing picked, so no item runs and the store doesn't change). Read in the Mac source: TabRowCell and FolderRowCell inherit SidebarRowCell.rightMouseDown, which calls menu(for:) (acceptsPress, then contextMenu(at:): TabRowCell's tab menu, or GroupHeaderView.groupMenu above a Tidy Tabs header; FolderRowCell's folder menu, or addLiveFolderItems for a live folder) and showSidebarMenu; FavoritePaneView.rightMouseDown calls menu(for:) and showSidebarMenu. showSidebarMenu returns before NSMenu.popUpContextMenu whenever PageContextMenuItems.testMode is set (KITE_TEST_CONTEXT_MENU non-empty on a KITE_SUPPORT_PATH profile), logs the menu, and runs an item only when testPick() names one, which \"1\" never does. Building the menus touches only the store's state (TabAudioButton, LiveFoldersController.shared's isRefreshing, the spaces for Move to): no window, panel, network or pasteboard. Left clicks on these views stay refused: TabRowCell.tapped selects a tab (loads a page), FolderRowCell.tapped opens or closes a folder, a second press renames.",
+  "about": "The context menus of a Today tab, a drifted pinned tab, a folder and a favorite (SidebarListCells.swift's TabRowCell and FolderRowCell contextMenu(at:), SidebarFavorites.swift's FavoritePaneView menu(for:), all shown by showSidebarMenu) for helix/W17-context-menus. Kite for Mac from origin/main: W17 changes no Mac code. The sessions are windows/helix/states on origin/main (pages on example.com/.org/.net/.edu and the favorites' public sites). Under KITE_TEST_CONTEXT_MENU=1 a menu is logged, not shown, and nothing in it runs, so a menu's reference is its logged line (NOTES.md's 'Logged by the test hooks'), which Windows prints in the same format (Kite.exe --capture … --row-menu N / --favorite-menu N, and kitecore menu). The rest states give the sidebar each menu opens over. Each menu state is one right-click on its row, which the script's RIGHT_CLICK_TARGETS allows (merged here from ci/right-click-row-targets, #400): a plain right-click as the state's first step, with KITE_TEST_CONTEXT_MENU exactly 1 and no pick file, on a point whose views inside the row all pass it up to the row. The points are the rows' middles in the Mac trees of the same sessions (review/w14-mac's drifted and folders trees, review/w13-mac's rest tree); expect_frames flags a row that moved, and the script refuses a point that isn't on the row.",
   "base": "origin/main",
   "window_size": [1280, 820],
   "session": {"ref": "origin/main", "path": "windows/helix/states/drifted-pinned.json"},
@@ -17,15 +16,19 @@
       "name": "tab-menu",
       "holds": "the Today tab's menu (right-click on Example Domain in Today): Add to Favorites | Pin Tab | Copy Link | Copy link as Markdown | Rename… | --- | Open in Split View | Duplicate | Move to ▸ [(🏠 Personal)] | --- | Close Tab | (Archive Other Tabs) | (Archive Tabs Below) | (Archive Tabs Above), with the Mac's own enabled states for Open in Split View and Move to's spaces (Windows greys both out until split view and moving between spaces are ported)",
       "env": {"KITE_TEST_CONTEXT_MENU": "1"},
+      "steps": [{"ui": "input", "args": {"click": [120, 364.5], "button": "right"}}],
       "capture": false,
-      "skip": "needs {\"ui\": \"input\", \"args\": {\"click\": [120, 364.5], \"button\": \"right\"}} on the Today row's TabRowCell (157 + 187 + 20.5: the row's middle under the favorites' empty state), which isn't in SAFE_TARGETS; see 'widening'"
+      "expect_frames": [[8, 344, 224, 41]],
+      "unverified": "the menu itself (logged, not drawn). The point is the Today row's middle: its TabRowCell is [8,344 224×41] in review/w14-mac's drifted tree (157 + 187 + 20.5, under the favorites' empty state)"
     },
     {
       "name": "pinned-menu",
       "holds": "the drifted pinned tab's menu (right-click on Elsewhere): Add to Favorites | Unpin Tab | Back to Pinned URL | Separate From Pinned Tab | Edit Pinned Page ▸ [Edit… / Replace Pinned URL with Current] | Copy Link | Copy link as Markdown | Rename… | --- | Open in Split View | Duplicate | Move to ▸ [(🏠 Personal)] | --- | Unload Tab",
       "env": {"KITE_TEST_CONTEXT_MENU": "1"},
+      "steps": [{"ui": "input", "args": {"click": [120, 257.5], "button": "right"}}],
       "capture": false,
-      "skip": "needs {\"ui\": \"input\", \"args\": {\"click\": [120, 257.5], \"button\": \"right\"}} on Elsewhere's TabRowCell (157 + 80 + 20.5), which isn't in SAFE_TARGETS; see 'widening'"
+      "expect_frames": [[8, 237, 224, 41]],
+      "unverified": "the menu itself (logged, not drawn). The point is Elsewhere's middle: its TabRowCell is [8,237 224×41] in review/w14-mac's drifted tree (157 + 80 + 20.5)"
     },
     {
       "name": "folders-rest",
@@ -37,16 +40,20 @@
       "holds": "Reading's menu (right-click on its row): Duplicate | --- | Delete | --- | New Nested Folder… | Turn “Reading” into Space | Copy All Links | Copy All Links as Markdown | --- | Rename…, every item enabled",
       "session": {"ref": "origin/main", "path": "windows/helix/states/folders.json"},
       "env": {"KITE_TEST_CONTEXT_MENU": "1"},
+      "steps": [{"ui": "input", "args": {"click": [120, 257.5], "button": "right"}}],
       "capture": false,
-      "skip": "needs {\"ui\": \"input\", \"args\": {\"click\": [120, 257.5], \"button\": \"right\"}} on Reading's FolderRowCell (157 + 80 + 20.5), which isn't in SAFE_TARGETS; see 'widening'"
+      "expect_frames": [[8, 237, 224, 41]],
+      "unverified": "the menu itself (logged, not drawn). The point is Reading's middle: its FolderRowCell is [8,237 224×41] in review/w14-mac's folders tree (157 + 80 + 20.5)"
     },
     {
       "name": "folder-menu-closed",
       "holds": "Recipes' menu, a closed folder holding a tab: Duplicate | --- | Delete | --- | New Nested Folder… | Turn “Recipes” into Space | Copy All Links | Copy All Links as Markdown | --- | Rename…",
       "session": {"ref": "origin/main", "path": "windows/helix/states/folders.json"},
       "env": {"KITE_TEST_CONTEXT_MENU": "1"},
+      "steps": [{"ui": "input", "args": {"click": [120, 421.5], "button": "right"}}],
       "capture": false,
-      "skip": "needs {\"ui\": \"input\", \"args\": {\"click\": [120, 421.5], \"button\": \"right\"}} on Recipes' FolderRowCell (157 + 244 + 20.5), which isn't in SAFE_TARGETS; see 'widening'"
+      "expect_frames": [[8, 401, 224, 41]],
+      "unverified": "the menu itself (logged, not drawn). The point is Recipes' middle: its FolderRowCell is [8,401 224×41] in review/w14-mac's folders tree (157 + 244 + 20.5)"
     },
     {
       "name": "favorites-rest",
@@ -58,8 +65,9 @@
       "holds": "YouTube's menu (right-click on its pane): Remove from Favorites | Edit Pinned Page ▸ [Edit… / Replace Pinned URL with Current] | Copy Link | --- | Unload Tab",
       "session": {"ref": "origin/main", "path": "windows/helix/states/favorites.json"},
       "env": {"KITE_TEST_CONTEXT_MENU": "1"},
+      "steps": [{"ui": "input", "args": {"click": [42.5, 113.5], "button": "right"}}],
       "capture": false,
-      "skip": "needs {\"ui\": \"input\", \"args\": {\"click\": [42.5, 113.5], \"button\": \"right\"}} on YouTube's FavoritePaneView (8 + 69.3 / 2, 90 + 47 / 2), which isn't in SAFE_TARGETS; see 'widening'"
+      "unverified": "the menu itself (logged, not drawn). The point is YouTube's middle: its FavoritePaneView is [8,90 69.33×47] in review/w13-mac's rest tree (8 + 69.3 / 2, 90 + 47 / 2); the RowCell tree doesn't list favorites, so no expect_frames, and the script refuses the click unless it lands on the pane"
     },
     {
       "name": "control-click",
@@ -67,7 +75,7 @@
       "session": {"ref": "origin/main", "path": "windows/helix/states/folders.json"},
       "env": {"KITE_TEST_CONTEXT_MENU": "1"},
       "capture": false,
-      "skip": "needs a left click with the control modifier on a FolderRowCell: modifier flags are refused outright, and the row isn't in SAFE_TARGETS. The right-click states above cover the same menu(for:) path; this one stays unverified on the Mac (Windows' smoke test checks its Ctrl+click)"
+      "skip": "needs a left click with the control modifier on a FolderRowCell: the script's rows (RIGHT_CLICK_TARGETS) take only a plain right-click, never a left or ⌃-click. The right-click states above cover the same menu(for:) path (SidebarRowCell.mouseDown sends a ⌃-click to rightMouseDown); this one stays unverified on the Mac (Windows' smoke test checks its Ctrl+click)"
     }
   ]
 }
