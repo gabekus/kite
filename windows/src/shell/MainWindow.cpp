@@ -122,6 +122,12 @@ void MainWindow::Show(int showCommand) {
     UpdateWindow(hwnd_);
 }
 
+void MainWindow::NeverActivate() {
+    neverActivates_ = true;
+    SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, GetWindowLongPtrW(hwnd_, GWL_EXSTYLE) | WS_EX_NOACTIVATE | WS_EX_APPWINDOW);
+    SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+}
+
 void MainWindow::ShowBehindOtherWindows() {
     SetWindowPos(hwnd_, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     UpdateWindow(hwnd_);
@@ -340,12 +346,17 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_SETFOCUS:
         if (onFocus) onFocus();
         return 0;
+    case WM_MOUSEACTIVATE:
+        // A quiet run's window takes clicks without coming to the front; so do its pages,
+        // whose windows ask this one.
+        if (neverActivates_) return MA_NOACTIVATE;
+        break;
     case WM_ENDSESSION:
-        if (wParam && onClose) onClose();
+        if (wParam && onClose) onClose(true);
         return 0;
     case WM_CLOSE:
         if (mayClose && !mayClose()) return 0;
-        if (onClose) onClose();
+        if (onClose) onClose(false);
         DestroyWindow(hwnd_);
         return 0;
     case WM_NCDESTROY:

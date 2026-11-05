@@ -32,6 +32,20 @@ jobs:
           cmake -S windows -B /tmp/kite-core
           cmake --build /tmp/kite-core -j
           ctest --test-dir /tmp/kite-core --output-on-failure --timeout 120
+      - name: Core tests under ASan and UBSan (GCC, Linux)
+        # A general guard against undefined behaviour MSVC hides (a dangling view, a read past an
+        # end, signed overflow): it fails here instead of flaking. It can't catch a bad entropy
+        # source such as Zen 5's RDSEED; newUuidsAreDistinct guards that. The runner's kernel uses
+        # 32 bits of mmap randomization (vm.mmap_rnd_bits), which GCC 13's ASan can't map its
+        # shadow memory around, so it's narrowed first; the sysctl can go once the runner's GCC
+        # is 14 or newer.
+        run: |
+          sudo sysctl -q vm.mmap_rnd_bits=28
+          cmake -S windows -B /tmp/kite-asan -DCMAKE_BUILD_TYPE=Debug -DKITE_WERROR=OFF \
+            -DCMAKE_CXX_FLAGS="-O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          cmake --build /tmp/kite-asan --target KiteCoreTests -j
+          ctest --test-dir /tmp/kite-asan -R KiteCoreTests --output-on-failure --timeout 120
       - name: Golden backdrop fixture is current
         # The CPU reference must write exactly the file the Mac's Kite.metal is tested against;
         # after a deliberate shader change, regenerate it with this target.
@@ -124,6 +138,12 @@ jobs:
           # A flag without its value is a usage error (exit 1), never a normal launch.
           $code = Run-Kite @('--capture')
           if ($code -ne 1) { throw "--capture without a path: expected exit 1, got $code" }
+          # Kite's command line is never Chromium's: a switch with Windows' "/" prefix is an
+          # unknown option, and an option's value can't be another flag.
+          $code = Run-Kite @('--smoke-test', '/remote-debugging-port=9222')
+          if ($code -ne 1) { throw "/remote-debugging-port: expected exit 1, got $code" }
+          $code = Run-Kite @('--capture', '--smoke-test')
+          if ($code -ne 1) { throw "--capture with a flag as its value: expected exit 1, got $code" }
 
           # A KITE_SUPPORT_PATH that isn't a directory is refused (exit 2), never fallen back from.
           $file = Join-Path $profileDir 'not-a-dir'
@@ -137,6 +157,15 @@ jobs:
           $code = Run-Kite @('--smoke-test')
           if ($code -ne 1) { throw "--smoke-test without KITE_SUPPORT_PATH: expected exit 1, got $code" }
           $global:LASTEXITCODE = 0
+      - name: kiteperf smoke (the measurement harness builds and runs)
+        timeout-minutes: 5
+        run: |
+          # windows/tools/perf, briefly: launch, two tabs, a 5 s idle that must present and commit
+          # nothing (exit 4 if it does), a few space switches and a hover, then WM_CLOSE. WARP has
+          # no PDH GPU counters, so the GPU fields are null.
+          $out = Join-Path $env:RUNNER_TEMP 'kiteperf-smoke.json'
+          & windows/build/Release/kiteperf.exe --kite (Resolve-Path windows/build/Release/Kite.exe) --scenario smoke --runs 1 --out $out
+          if ($LASTEXITCODE -ne 0) { throw "kiteperf --scenario smoke exited with $LASTEXITCODE" }
       - name: Backdrop matches the Mac's shader (GPU vs CPU reference)
         timeout-minutes: 5
         run: |
@@ -209,6 +238,7 @@ jobs:
             !windows/build/Release/**/*.pdb
             !windows/build/Release/**/*.exp
             !windows/build/Release/KiteCoreTests.exe
+            !windows/build/Release/kiteperf.exe
           if-no-files-found: error
       - name: Upload the capture
         if: always()
@@ -216,4 +246,11 @@ jobs:
         with:
           name: kite-windows-capture
           path: ${{ runner.temp }}/kite-capture-*.png
+          if-no-files-found: ignore
+      - name: Upload the kiteperf smoke result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiteperf-smoke
+          path: ${{ runner.temp }}/kiteperf-smoke.json
           if-no-files-found: ignore

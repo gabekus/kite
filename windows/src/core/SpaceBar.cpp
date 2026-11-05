@@ -107,6 +107,71 @@ std::optional<std::string> SpaceBarRelease(const SpaceBarPress& press, const Spa
     return std::nullopt;
 }
 
+namespace {
+
+BarRect CellCentredAt(float x, float y) {
+    return {x - M::kCellWidth / 2, y - M::kCellHeight / 2, x + M::kCellWidth / 2, y + M::kCellHeight / 2};
+}
+
+}  // namespace
+
+std::optional<SpaceDrag> BeginSpaceDrag(const SpaceBarLayout& layout, const std::vector<SpaceCell>& cells, const SpaceBarPress& press) {
+    if (!press.dragged || cells.size() < 2) return std::nullopt;
+    for (size_t i = 0; i < cells.size() && i < layout.cells.size(); ++i) {
+        if (cells[i].spaceID != press.spaceID) continue;
+        const BarRect& cell = layout.cells[i];
+        SpaceDrag drag{press.spaceID, i, press.x, press.y, press.x, press.y, (cell.left + cell.right) / 2, (cell.top + cell.bottom) / 2, i};
+        return drag;
+    }
+    return std::nullopt;
+}
+
+std::optional<size_t> SpaceDropTarget(const SpaceBarLayout& layout, size_t count, float x, float y) {
+    if (!layout.room.Contains(x, y)) return std::nullopt;
+    return space_reorder::DropIndex(x, layout.stripMinX, count, M::kCellPitch, M::kCellWidth);
+}
+
+bool MoveSpaceDrag(SpaceDrag& drag, const SpaceBarLayout& layout, size_t count, float x, float y) {
+    if (drag.landing) return false;
+    drag.x = x;
+    drag.y = y;
+    const std::optional<size_t> aim = SpaceDropTarget(layout, count, x, y);
+    if (aim == drag.target) return false;
+    drag.target = aim;
+    return true;
+}
+
+size_t DropSpaceDrag(SpaceDrag& drag, const SpaceBarLayout& layout, size_t count, float x, float y) {
+    if (drag.landing) return drag.target.value_or(drag.from);
+    // Dropped off the strip: back to where it came from (unverified in Arc: a refused drop
+    // slides its image home).
+    const size_t slot = SpaceDropTarget(layout, count, x, y).value_or(drag.from);
+    drag.x = x;
+    drag.y = y;
+    drag.target = slot;
+    drag.landing = true;
+    return slot;
+}
+
+std::vector<BarRect> SpaceDragCells(const SpaceBarLayout& layout, const std::vector<std::string>& ids, const SpaceDrag& drag) {
+    const std::vector<std::optional<std::string>> slots = space_reorder::Slots(ids, drag.spaceID, drag.target);
+    std::vector<BarRect> out;
+    out.reserve(ids.size());
+    for (const std::string& id : ids) {
+        auto at = std::find(slots.begin(), slots.end(), std::optional<std::string>(id));
+        if (at == slots.end()) at = std::find(slots.begin(), slots.end(), std::nullopt);
+        const size_t slot = at != slots.end() ? static_cast<size_t>(at - slots.begin()) : (slots.empty() ? 0 : slots.size() - 1);
+        // The strip keeps every space's width while one is lifted out, so slot k is cell k's place.
+        out.push_back(slot < layout.cells.size() ? layout.cells[slot] : BarRect{});
+    }
+    return out;
+}
+
+BarRect SpaceDragGhost(const SpaceBarLayout& layout, const SpaceDrag& drag) {
+    if (drag.landing && drag.target && *drag.target < layout.cells.size()) return layout.cells[*drag.target];
+    return CellCentredAt(drag.pickedUpX + drag.x - drag.startX, drag.pickedUpY + drag.y - drag.startY);
+}
+
 LinearLit HighlightAlongSettle(size_t index, size_t selected, const std::vector<size_t>& built, double from, double to, double pageWidth) {
     const double rest = SpaceSwipe::Highlight(index, selected, built, to, pageWidth);
     if (from == to) return {rest, 0};
