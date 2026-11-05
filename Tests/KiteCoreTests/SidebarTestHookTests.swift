@@ -146,6 +146,149 @@ struct SidebarTestHookTests {
         }
     }
 
+    @Test func kitesLineComesInsideTheScriptsWait() throws {
+        // The script waits SIDEBAR_READY_SECONDS once Kite's socket answers; Kite's runner starts a second after the
+        // window is up and gives up readyTimeout later, so its ready (or failed) line must come with room to spare.
+        let script = try String(contentsOf: Self.mac.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("scripts/mac-reference-captures.sh"), encoding: .utf8)
+        let line = try #require(script.split(whereSeparator: \.isNewline).first { $0.hasPrefix("SIDEBAR_READY_SECONDS=") })
+        let seconds = try #require(Double(line.dropFirst("SIDEBAR_READY_SECONDS=".count)))
+        #expect(1 + SidebarTestHook.readyTimeout + 5 <= seconds)
+        // And it allows exactly the hook's keys, presets 1-7 and nothing else.
+        for key in SidebarTestHook.keys { #expect(script.contains("\"\(key)\": "), "\(key)") }
+        #expect(script.contains(#""KITE_TEST_NEW_SPACE_THEME": ("1", "2", "3", "4", "5", "6", "7"),"#))
+    }
+
+    // MARK: The capture script's reading of the ready line, and its planner (scripts/mac-reference-captures.sh).
+
+    private func script() throws -> String {
+        try String(contentsOf: Self.mac.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("scripts/mac-reference-captures.sh"), encoding: .utf8)
+            .replacingOccurrences(of: "\r\n", with: "\n")
+    }
+
+    /// SIDEBAR_READY_OK, the ERE bash's =~ matches the ready line against.
+    private func readyOK() throws -> String {
+        let line = try #require(try script().split(separator: "\n").first { $0.hasPrefix("SIDEBAR_READY_OK='") })
+        return String(line.dropFirst("SIDEBAR_READY_OK='".count).dropLast())
+    }
+
+    @Test func theScriptCapturesOnlyABackgroundRunsState() throws {
+        let pattern = try readyOK()
+        let regex = try NSRegularExpression(pattern: pattern)
+        func passes(_ line: String) -> Bool {
+            regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil
+        }
+        let picker = SidebarTestHook.iconPicker(space: "Personal"), page = SidebarTestHook.newSpace(name: "Reading list", preset: nil)
+        let theme = SidebarTestHook.newSpace(name: "Reading list", preset: 3)
+        let child = SidebarTestHook.Shown.Popover(key: false, level: 0, parentIsMainWindow: true)
+        // Kite in the background, the popover the main window's child at normal level (key or not), or no popover:
+        // captured.
+        #expect(passes(picker.readyLine(.init(appActive: false, popover: child))))
+        #expect(passes(theme.readyLine(.init(appActive: false, popover: .init(key: true, level: 0, parentIsMainWindow: true)))))
+        // A popover above normal level (it could be over the user's windows): refused, however it got there.
+        for level in [101, 3, 1, -1, 2_147_483_631, 10] {
+            #expect(!passes(theme.readyLine(.init(appActive: false, popover: .init(key: false, level: level, parentIsMainWindow: true)))),
+                    "\(level)")
+        }
+        #expect(passes(page.readyLine(.init(appActive: false, popover: nil))))
+        // Kite active, or a popover that isn't the main window's child: refused, whatever the rest says.
+        #expect(!passes(picker.readyLine(.init(appActive: true, popover: child))))
+        #expect(!passes(page.readyLine(.init(appActive: true, popover: nil))))
+        #expect(!passes(theme.readyLine(.init(appActive: false, popover: .init(key: false, level: 0, parentIsMainWindow: false)))))
+        // A name can't stand in for the facts: they come first.
+        let spoof = SidebarTestHook.iconPicker(space: "app active no; no popover; x")
+        #expect(!passes(spoof.readyLine(.init(appActive: true, popover: nil))))
+        // And the other lines never pass.
+        #expect(!passes(picker.armedLine) && !passes(picker.failedLine("x")) && !passes(picker.changedLine("x")))
+        #if os(macOS)
+        // Bash's own =~, as the script runs it.
+        func bash(_ line: String) throws -> Bool {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = ["-c", #"[[ "$1" =~ $2 ]]"#, "bash", line, pattern]
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        }
+        #expect(try bash(picker.readyLine(.init(appActive: false, popover: child))))
+        #expect(try bash(page.readyLine(.init(appActive: false, popover: nil))))
+        #expect(try !bash(picker.readyLine(.init(appActive: true, popover: child))))
+        #expect(try !bash(theme.readyLine(.init(appActive: false, popover: .init(key: false, level: 0, parentIsMainWindow: false)))))
+        #endif
+    }
+
+    #if os(macOS)
+    /// Runs the script's planner (its first python heredoc) on a one-state request with this env and steps, every
+    /// floor HEAD; nil when it plans it, else its refusal.
+    private func plan(_ env: [String: String], steps: [[String: Any]] = []) throws -> String? {
+        let text = try script()
+        let opening = try #require(text.range(of: "\"$SIDEBAR_FLOOR\" <<'PY'\n"))
+        let closing = try #require(text.range(of: "\nPY\n", range: opening.upperBound..<text.endIndex))
+        let planner = String(text[opening.upperBound..<closing.lowerBound])
+        let root = Self.mac.deletingLastPathComponent().deletingLastPathComponent()
+        let session = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("windows/helix/states/three-spaces.json")))
+        var state: [String: Any] = ["name": "s", "env": env]
+        if !steps.isEmpty { state["steps"] = steps }
+        let request: [String: Any] = ["id": "t", "session": ["inline": session], "states": [state]]
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sidebar-plan-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("plan"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try JSONSerialization.data(withJSONObject: request).write(to: folder.appendingPathComponent("request.json"))
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", "-I", "-", folder.appendingPathComponent("request.json").path,
+                             folder.appendingPathComponent("plan").path, root.path, "SpaceCellView NewTabRowCell"]
+            + Array(repeating: "HEAD", count: 5)   // TEXT, FIND, HIT, EXPECT and SIDEBAR floors: all in HEAD
+        let input = Pipe(), output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        input.fileHandleForWriting.write(Data(planner.utf8))
+        try input.fileHandleForWriting.close()
+        let said = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        process.waitUntilExit()
+        return process.terminationStatus == 0 ? nil : said
+    }
+
+    @Test func theScriptRefusesHostileSidebarRequests() throws {
+        // What the hooks are for: planned.
+        #expect(try plan(["KITE_TEST_ICON_PICKER": "Work"]) == nil)
+        #expect(try plan(["KITE_TEST_NEW_SPACE": "1"]) == nil)
+        #expect(try plan(["KITE_TEST_NEW_SPACE": "1", "KITE_TEST_NEW_SPACE_NAME": "Reading list", "KITE_TEST_NEW_SPACE_THEME": "4"]) == nil)
+        #expect(try plan(["KITE_TEST_NEW_SPACE": "1"], steps: [["wait": 1]]) == nil)
+        // Beside any other hook, each allowed on its own: refused.
+        let others = ["KITE_TEST_CONTEXT_MENU": "1", "KITE_TEST_OPEN_URL": "https://example.com/", "KITE_TEST_ZAP_PICKER": "1",
+                      "KITE_TEST_BOOST_MENU": "x", "KITE_TEST_REOPEN_MAIN_AFTER": "1", "KITE_TEST_ASSUME_VISIBLE": "1",
+                      "KITE_TEST_TIDY_TITLE": "x", "KITE_TEST_LITTLE_PROFILE_PICK": "x", "KITE_TEST_LITTLE_EXTENSIONS_BUTTON": "1",
+                      "KITE_TEST_EXPORT_DATA_PATH": "export.json", "KITE_TEST_FIND_OPEN": "1", "KITE_TEST_FIND": "domain"]
+        for (key, value) in others {
+            for hook in [["KITE_TEST_ICON_PICKER": "Work"], ["KITE_TEST_NEW_SPACE": "1"]] {
+                let refusal = try plan(hook.merging([key: value]) { $1 })
+                #expect(refusal?.contains("request.json refused") == true, "\(key) beside \(hook)")
+            }
+            #expect(try plan(["KITE_TEST_NEW_SPACE": "1"].merging([key: value]) { $1 })?.contains(key) == true, "\(key)")
+        }
+        // Not exact, mixed, the page's values alone, or with an input step: refused.
+        for env in [["KITE_TEST_NEW_SPACE": "0"], ["KITE_TEST_NEW_SPACE": "true"], ["KITE_TEST_NEW_SPACE": " 1"],
+                    ["KITE_TEST_NEW_SPACE": "1", "KITE_TEST_NEW_SPACE_THEME": "8"],
+                    ["KITE_TEST_NEW_SPACE": "1", "KITE_TEST_NEW_SPACE_THEME": "04"],
+                    ["KITE_TEST_NEW_SPACE": "1", "KITE_TEST_NEW_SPACE_NAME": "a\tb"],
+                    ["KITE_TEST_NEW_SPACE": "1", "KITE_TEST_NEW_SPACE_NAME": "../x"],
+                    ["KITE_TEST_NEW_SPACE": "1", "KITE_TEST_NEW_SPACE_NAME": " "],
+                    ["KITE_TEST_ICON_PICKER": String(repeating: "x", count: 41)],
+                    ["KITE_TEST_ICON_PICKER": "Work", "KITE_TEST_NEW_SPACE": "1"],
+                    ["KITE_TEST_ICON_PICKER": "Work", "KITE_TEST_NEW_SPACE_NAME": "x"],
+                    ["KITE_TEST_NEW_SPACE_NAME": "x"], ["KITE_TEST_NEW_SPACE_THEME": "4"]] {
+            #expect(try plan(env)?.contains("request.json refused") == true, "\(env)")
+        }
+        let click: [String: Any] = ["ui": "input", "args": ["click": [86, 795]]]
+        #expect(try plan(["KITE_TEST_NEW_SPACE": "1"], steps: [click])?.contains("takes no input steps") == true)
+        #expect(try plan(["KITE_TEST_ICON_PICKER": "Work"], steps: [["wait": 1], click])?.contains("takes no input steps") == true)
+    }
+    #endif
+
     @Test func anInProcessCaptureDrawsAnOpenPopover() throws {
         // The popovers are child windows: the in-process render draws them over the window, as on screen.
         let capture = try source("Diagnostics/UICapture.swift")
