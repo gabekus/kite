@@ -168,11 +168,6 @@ struct SidebarTap {
     bool expanded = false;  // SetFolderExpanded: open (true) or closed
     bool operator==(const SidebarTap&) const = default;
 };
-// The space whose menu a right-click on `hit` opens (the header cell's contextMenu(at:)): the
-// header's, its icon included (the icon button passes a right-click on to its cell), none for
-// anything else in the list.
-std::optional<std::string> HeaderMenuSpace(const std::vector<SidebarRow>& rows, const SidebarHit& hit);
-
 // Letting go of `press` at a point of the sidebar as it is now: the field, the chevron, a close
 // button, Back to Pinned URL and the header's icon (the icon picker, SpaceHeaderRowCell.openPicker)
 // act when it ends over them; a row taps when it ends inside its bounds, on a single click (the

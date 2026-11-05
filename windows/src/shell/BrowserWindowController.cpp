@@ -218,17 +218,17 @@ std::wstring BrowserWindowController::Init() {
     else OutputDebugStringW((L"Kite: no find bar: " + error + L"\n").c_str());
 
     window_.onSize = [this] { OnSize(); };
-    // The space tip is a window of its own: it goes when the window moves or is minimized,
-    // rather than stay where the cell was (or come back with the window). Chromium's start adds
-    // its own to these.
-    // So is the icon picker, which closes (NSPopover moves with its window; Kite's doesn't yet).
+    // The space tip and the icon picker are windows of their own: when the window moves or is
+    // minimized the tip goes rather than stay where the cell was (or come back with the window),
+    // and the picker closes (NSPopover moves with its window; Kite's doesn't yet). Chromium's start
+    // chains its own after these.
     window_.onMove = [this] {
         sidebar_->HideTip();
-        CloseIconPicker();
+        CloseIconPicker(false);
     };
     window_.onMinimize = [this] {
         sidebar_->HideTip();
-        CloseIconPicker();
+        CloseIconPicker(false);
     };
 
     // Change Space Icon…'s popover, a window of its own over the browser window's.
@@ -238,8 +238,8 @@ std::wstring BrowserWindowController::Init() {
     // closes the old one as it opens).
     picker.closed = [this](const std::string& spaceID) {
         if (sidebar_->IconPickerSpace() == spaceID && pendingIconPicker_ != spaceID) sidebar_->SetIconPickerSpace(std::nullopt);
-        // A request still waiting (a new picker replacing this one) keeps the keyboard.
-        if (!pendingIconPicker_) ReleaseIconPickerKeyboard();
+        // A request still waiting, or a new picker replacing this one, keeps the keyboard.
+        if (!pendingIconPicker_ && !openingIconPicker_) ReleaseIconPickerKeyboard(releaseFocusesPage_);
     };
     iconPicker_ = SpaceIconPickerView::Create(window_.Handle(), sidebar_->DWrite(), sidebar_->Painter(), std::move(picker), options_.capture, error);
     if (!iconPicker_) return L"Kite couldn't make the icon picker: " + error;
@@ -1705,8 +1705,8 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         return true;
     }(), "two of the window's WM_APP messages share an id");
     static_assert([] {
-        // Every timer on the window: the controller's, Chromium's (its stall watch, and its close
-        // deadline, 0x4B43 in Chromium.cpp) and the views'.
+        // Every timer on the window: the controller's, Chromium's (its stall watch and its pages'
+        // close deadline) and the views'.
         constexpr UINT_PTR ids[] = {kSmokeTimer,      kArchiveTimer,       kSettleTimer,      kSaveTimer,          kHistoryTimer,
                                     kArcMergeTimer,   kToggleTimer,        kDownloadsSaveTimer, kTestCloseTabTimer, kIconPickerTimer,
 #ifdef KITE_HAS_CEF
@@ -1797,19 +1797,28 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
 #endif
     // The icon picker is AppKit's transient popover: a press anywhere else in the window, or
     // another app coming forward, closes it (the press goes on to what it's over).
-    if (iconPicker_ && iconPicker_->IsOpen()) {
+    // A press closes it without handing the keyboard to the page: what was pressed decides where it
+    // goes (the find field takes it, the page's own window takes it as it's clicked). A request
+    // still waiting on its 0.15 s goes the same ways.
+    if (iconPicker_ && (iconPicker_->IsOpen() || pendingIconPicker_)) {
         switch (message) {
         case WM_LBUTTONDOWN:
             // Not on the header's icon (or its placeholder): that button opens the picker again
             // as it's let go (NSPopover's outside click, then the button's action).
-            if (!sidebar_->OverHeaderIcon(POINT{static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))})) CloseIconPicker();
+            if (!sidebar_->OverHeaderIcon(POINT{static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))})) CloseIconPicker(false);
             break;
         case WM_RBUTTONDOWN:
         case WM_MBUTTONDOWN:
         case WM_NCLBUTTONDOWN:
-        case WM_NCRBUTTONDOWN: CloseIconPicker(); break;
+        case WM_NCRBUTTONDOWN: CloseIconPicker(false); break;
+        // Another app coming forward: no hand-off (onFocus gives the page the keyboard when Kite
+        // comes back).
         case WM_ACTIVATE:
-            if (LOWORD(wParam) == WA_INACTIVE) CloseIconPicker();
+            if (LOWORD(wParam) == WA_INACTIVE) CloseIconPicker(false);
+            break;
+        // A press in the page while the menu's request waits (the page's window takes the focus).
+        case WM_KILLFOCUS:
+            if (pendingIconPicker_ && wParam && IsChild(window_.Handle(), reinterpret_cast<HWND>(wParam))) CloseIconPicker(false);
             break;
         case WM_MOUSEWHEEL:
             if (iconPicker_->HandleWheel(wParam, lParam)) {
@@ -1828,6 +1837,7 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
             ShowIconPicker(*id);
         } else if (!iconPicker_->IsOpen()) {
             sidebar_->SetIconPickerSpace(std::nullopt);
+            ReleaseIconPickerKeyboard();
         }
         return true;
     }

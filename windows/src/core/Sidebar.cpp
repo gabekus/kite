@@ -359,13 +359,6 @@ SidebarTap SidebarRelease(const SidebarPress& press, const std::vector<SidebarRo
     return {};
 }
 
-std::optional<std::string> HeaderMenuSpace(const std::vector<SidebarRow>& rows, const SidebarHit& hit) {
-    using Target = SidebarHit::Target;
-    if ((hit.target != Target::Row && hit.target != Target::HeaderIcon) || hit.row >= rows.size()) return std::nullopt;
-    if (rows[hit.row].kind != SidebarRow::Kind::Header) return std::nullopt;
-    return rows[hit.row].id;
-}
-
 std::optional<std::string> SidebarRenameOnPress(const SidebarPress& press) {
     if (press.target != SidebarHit::Target::Row || press.kind != SidebarRow::Kind::Tab || press.clicks != 2) return std::nullopt;
     return press.id;

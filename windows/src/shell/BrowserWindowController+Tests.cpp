@@ -1323,18 +1323,24 @@ std::wstring BrowserWindowController::SmokeTestIconPicker() {
 #ifdef KITE_HAS_CEF
     // The keyboard is the picker's from its request: Kite's window taking the focus then (as it
     // does in front; here its WM_SETFOCUS, with no activation) doesn't hand it on to the page
-    // (onFocus), and a page can't take it back on CEF's thread meanwhile (KeepKeyboard), from the
-    // header's icon or through the menu's 0.15 s. Escape gives it up.
+    // (onFocus), and Kite's own focus of the page is held off meanwhile (KeepKeyboard), from the
+    // header's icon or through the menu's 0.15 s, and through a reopen or a replacement (Open
+    // closes the picker before it). Escape gives it up and hands it to the page; a deactivation
+    // or a press elsewhere gives it up and hands it to nothing (what was pressed decides).
     if (chromium_) {
-        const auto keepsKeyboard = [&](const wchar_t* path, size_t handoffs) -> std::wstring {
-            const std::wstring from = std::wstring(L" the picker opened from ") + path;
+        const auto holding = [&](const std::wstring& from, size_t handoffs, size_t releases) -> std::wstring {
             RunUntil([] { return false; }, 0.3);
-            if (!open() || KeyboardOwner() != KeyboardField::IconPicker) return L"the keyboard isn't" + from + L"'s";
-            if (pageFocusHandoffs_ != handoffs) return L"Kite's window gave the page the keyboard as it opened" + from;
-            if (!chromium_->KeepsKeyboard()) return L"a page could take the keyboard back from" + from;
-            SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
-            if (iconPicker_->IsOpen() || KeyboardOwner() != KeyboardField::None || chromium_->KeepsKeyboard()) {
-                return L"Escape didn't give up the keyboard of" + from;
+            if (!open() || KeyboardOwner() != KeyboardField::IconPicker) return L"the keyboard isn't the picker's, " + from;
+            if (pageFocusHandoffs_ != handoffs) return L"the page was handed the keyboard, " + from;
+            if (pickerKeyboardReleases_ != releases || !chromium_->KeepsKeyboard()) return L"the picker's keyboard was let go, " + from;
+            return {};
+        };
+        const auto gaveUp = [&](const std::wstring& how, size_t handoffs, bool toPage) -> std::wstring {
+            if (iconPicker_->IsOpen() || pendingIconPicker_ || KeyboardOwner() != KeyboardField::None || chromium_->KeepsKeyboard()) {
+                return how + L" didn't give up the picker's keyboard";
+            }
+            if (pageFocusHandoffs_ != handoffs + (toPage ? 1 : 0)) {
+                return toPage ? how + L" didn't hand the keyboard to the page" : how + L" handed the keyboard to the page";
             }
             return {};
         };
@@ -1342,14 +1348,44 @@ std::wstring BrowserWindowController::SmokeTestIconPicker() {
         testFocus_ = true;
         RequestIconPicker(id, false);
         testFocus_ = false;
-        if (std::wstring problem = keepsKeyboard(L"the header's icon", handoffs); !problem.empty()) return problem;
+        size_t releases = pickerKeyboardReleases_;
+        if (std::wstring problem = holding(L"opened from the header's icon", handoffs, releases); !problem.empty()) return problem;
+        // Opened again from its button while open, then the menu's request over it.
+        RequestIconPicker(id, false);
+        if (std::wstring problem = holding(L"re-opened from its button", handoffs, releases); !problem.empty()) return problem;
+        RunSpaceMenuItem(id, SpaceMenuItem::Command::ChangeIcon);
+        if (KeyboardOwner() != KeyboardField::IconPicker || !chromium_->KeepsKeyboard()) return L"the menu's request over an open picker let its keyboard go";
+        if (!RunUntil([&] { return !pendingIconPicker_ && open(); }, 2)) return L"the menu's request over an open picker didn't open it";
+        if (std::wstring problem = holding(L"replaced through the menu", handoffs, releases); !problem.empty()) return problem;
+        SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+        if (std::wstring problem = gaveUp(L"Escape", handoffs, true); !problem.empty()) return problem;
+        // Through the menu's 0.15 s, with the window's focus taken as the request comes.
         handoffs = pageFocusHandoffs_;
         testFocus_ = true;
         RunSpaceMenuItem(id, SpaceMenuItem::Command::ChangeIcon);
         testFocus_ = false;
+        releases = pickerKeyboardReleases_;
         if (KeyboardOwner() != KeyboardField::IconPicker || !chromium_->KeepsKeyboard()) return L"the menu's request didn't hold the keyboard for its 0.15 s";
-        if (!RunUntil(open, 2)) return L"Change Space Icon… didn't open it";
-        if (std::wstring problem = keepsKeyboard(L"the menu", handoffs); !problem.empty()) return problem;
+        if (!RunUntil(open, 2)) return L"Change Space Icon\u2026 didn't open it";
+        if (std::wstring problem = holding(L"opened through the menu", handoffs, releases); !problem.empty()) return problem;
+        // Another app coming forward closes it and hands the keyboard to nothing.
+        SendMessageW(window_.Handle(), WM_ACTIVATE, WA_INACTIVE, 0);
+        if (std::wstring problem = gaveUp(L"a deactivation", handoffs, false); !problem.empty()) return problem;
+        // A deactivation while the menu's request waits cancels it: nothing opens on the inactive window.
+        RunSpaceMenuItem(id, SpaceMenuItem::Command::ChangeIcon);
+        SendMessageW(window_.Handle(), WM_ACTIVATE, WA_INACTIVE, 0);
+        if (std::wstring problem = gaveUp(L"a deactivation during the menu's 0.15 s", handoffs, false); !problem.empty()) return problem;
+        RunUntil([] { return false; }, 0.3);
+        if (iconPicker_->IsOpen()) return L"the picker opened after a deactivation cancelled its request";
+        // A press elsewhere (the content card) closes it and hands the keyboard to nothing.
+        RequestIconPicker(id, false);
+        {
+            const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+            const POINT card{std::lround((kSidebarWidth + 200) * scale), std::lround(300 * scale)};
+            SendMouse(window_.Handle(), WM_LBUTTONDOWN, card, MK_LBUTTON);
+            SendMouse(window_.Handle(), WM_LBUTTONUP, card, 0);
+        }
+        if (std::wstring problem = gaveUp(L"a press elsewhere", handoffs, false); !problem.empty()) return problem;
     }
 #endif
     state_.SetSpaceIcon(id, original);

@@ -526,10 +526,12 @@ private:
     void ShowIconPicker(const std::string& spaceID);
     // A cell or the bin (the picker's pick): the icon set, the picture it replaced deleted.
     void PickIcon(const std::string& spaceID, const std::string& icon);
-    void CloseIconPicker();
-    // The picker no longer holds the keyboard: a page may take it back, and gets it when nothing
-    // of Kite's has it and Kite's window does (unless another field is taking it now).
-    void ReleaseIconPickerKeyboard();
+    // `focusPage` false: a close caused by a press, a deactivation, a move or a minimize, after
+    // which the keyboard isn't handed to the page (onFocus does that when the window comes back).
+    void CloseIconPicker(bool focusPage = true);
+    // The picker no longer holds the keyboard. With `focusPage`, when nothing of Kite's has it and
+    // Kite's window is the one in front (unless another field is taking it now), the page gets it.
+    void ReleaseIconPickerKeyboard(bool focusPage = true);
     // The smoke test's icon picker: opened from the menu and the header's icon, an emoji, a
     // search, a category, a symbol and the bin picked, and the ways it closes.
     std::wstring SmokeTestIconPicker();
@@ -807,14 +809,14 @@ private:
     // GiveKeyboard is moving the keyboard to another field: the picker it closes doesn't hand
     // the keyboard to the page.
     bool givingKeyboard_ = false;
-    // Kite's window takes the focus when it's the one in front (a quiet run never is). For the
-    // smoke test's check of the order the keyboard moves in, `testFocus_` delivers the WM_SETFOCUS
-    // SetFocus would, without the activation (a quiet run never comes to the front).
-    void TakeFocusIfInFront();
-    bool testFocus_ = false;
-    // How often onFocus has handed the keyboard on to the page (the smoke test's check that it
-    // didn't while a field of Kite's was taking it).
-    size_t pageFocusHandoffs_ = 0;
+    // The picker is being opened or replaced (Open closes the one before it): its keyboard is
+    // kept throughout, with no release in between.
+    bool openingIconPicker_ = false;
+    // Whether the next release may hand the keyboard to the page: not for a close caused by a
+    // press (what was pressed decides), a deactivation, a move or a minimize.
+    bool releaseFocusesPage_ = true;
+    // The smoke test's counts: the picker's keyboard released, and handed on to the page.
+    size_t pickerKeyboardReleases_ = 0;
     std::wstring barError_;
     std::unique_ptr<FindBarView> findBar_;
     std::string findTabID_;  // the tab the find bar is open on

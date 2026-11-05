@@ -392,27 +392,6 @@ TEST(theHeadersIconOpensThePicker) {
     CHECK(SidebarHitTest(bare, 240, 800, 0, 20, 95) == (SidebarHit{T::Row, 0}));
 }
 
-// A right-click on the header's icon opens the space's menu, as one on the rest of the header
-// does: the icon button passes it on to its cell (SidebarListCells' rightMouseDown,
-// SpaceHeaderRowCell.contextMenu(at:)). Nothing else in the list has the space's menu.
-TEST(aRightClickOnTheHeadersIconOpensTheSpacesMenu) {
-    using T = SidebarHit::Target;
-    BrowserState state = TwoSpaces("\xF0\x9F\x9A\x80");
-    const std::string id = state.spaces[0].id;
-    const auto rows = SidebarRows(state, 0);
-    CHECK(HeaderMenuSpace(rows, SidebarHitTest(rows, 240, 800, 0, 20, 95)) == std::optional<std::string>(id));  // the icon
-    CHECK(HeaderMenuSpace(rows, SidebarHitTest(rows, 240, 800, 0, 100, 95)) == std::optional<std::string>(id));  // the name
-    CHECK(!HeaderMenuSpace(rows, SidebarHit{}));
-    CHECK(!HeaderMenuSpace(rows, SidebarHit{T::HeaderIcon, 7}));
-    CHECK(!HeaderMenuSpace(rows, SidebarHit{T::AddressField, 0}));
-    // A tab's row: not the space's menu.
-    state.OpenTab("https://example.com", id, false);
-    const auto withTab = SidebarRows(state, 0);
-    for (size_t i = 0; i < withTab.size(); ++i) {
-        if (withTab[i].kind == SidebarRow::Kind::Tab) CHECK(!HeaderMenuSpace(withTab, SidebarHit{T::Row, i}));
-    }
-}
-
 namespace {
 
 // The string literals in `text` from `from` on, between `open` and the next `"`.

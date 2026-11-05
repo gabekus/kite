@@ -135,7 +135,10 @@ void BrowserWindowController::RequestIconPicker(const std::string& spaceID, bool
 void BrowserWindowController::ShowIconPicker(const std::string& spaceID) {
     const auto index = state_.SpaceIndex(spaceID);
     std::optional<IconPickerState> picker = kite::OpenIconPicker(state_, spaceID);
-    if (!index || !picker || !iconPicker_) return;
+    if (!index || !picker || !iconPicker_) {
+        if (!(iconPicker_ && iconPicker_->IsOpen())) ReleaseIconPickerKeyboard();
+        return;
+    }
     sidebar_->HideTip();
     // Where the header's icon slot is (the same for an icon-less space's placeholder).
     const std::optional<D2D1_RECT_F> anchor = sidebar_->HeaderIconRect(spaceID);
@@ -146,10 +149,14 @@ void BrowserWindowController::ShowIconPicker(const std::string& spaceID) {
         }
         return;
     }
-    if (std::wstring problem = iconPicker_->Open(std::move(*picker), state_.spaces[*index].icon,
-                                                 PickerRect{anchor->left, anchor->top, anchor->right, anchor->bottom}, window_.Dpi(),
-                                                 dark_.value_or(true));
-        !problem.empty()) {
+    // Open closes the picker before it (a reopen from its button, or the menu's for another space):
+    // the keyboard stays the picker's throughout, never released in between.
+    openingIconPicker_ = true;
+    const std::wstring problem = iconPicker_->Open(std::move(*picker), state_.spaces[*index].icon,
+                                                   PickerRect{anchor->left, anchor->top, anchor->right, anchor->bottom}, window_.Dpi(),
+                                                   dark_.value_or(true));
+    openingIconPicker_ = false;
+    if (!problem.empty()) {
         sidebar_->SetIconPickerSpace(std::nullopt);
         ReleaseIconPickerKeyboard();
         OutputDebugStringW((L"Kite: the icon picker couldn't open: " + problem + L"\n").c_str());
@@ -180,30 +187,41 @@ void BrowserWindowController::PickIcon(const std::string& spaceID, const std::st
     if (iconPicker_) iconPicker_->SpaceChanged(pick->icon);
 }
 
-void BrowserWindowController::CloseIconPicker() {
+void BrowserWindowController::CloseIconPicker(bool focusPage) {
     KillTimer(window_.Handle(), kIconPickerTimer);
     // A request still waiting on its 0.15 s takes its placeholder with it.
     if (const std::optional<std::string> pending = std::exchange(pendingIconPicker_, std::nullopt);
         pending && sidebar_->IconPickerSpace() == pending && !(iconPicker_ && iconPicker_->IsOpen())) {
         sidebar_->SetIconPickerSpace(std::nullopt);
     }
-    if (iconPicker_ && iconPicker_->IsOpen()) iconPicker_->Close();  // its closed callback lets the keyboard go
-    else ReleaseIconPickerKeyboard();
+    if (iconPicker_ && iconPicker_->IsOpen()) {
+        // Its closed callback lets the keyboard go, as this close says.
+        releaseFocusesPage_ = focusPage;
+        iconPicker_->Close();
+        releaseFocusesPage_ = true;
+    } else {
+        ReleaseIconPickerKeyboard(focusPage);
+    }
 }
 
-void BrowserWindowController::TakeFocusIfInFront() {
-    if (GetForegroundWindow() == window_.Handle()) SetFocus(window_.Handle());
-    else if (testFocus_) SendMessageW(window_.Handle(), WM_SETFOCUS, 0, 0);
-}
-
-void BrowserWindowController::ReleaseIconPickerKeyboard() {
+void BrowserWindowController::ReleaseIconPickerKeyboard(bool focusPage) {
     if (!iconPickerKeyboard_) return;
     iconPickerKeyboard_ = false;
+    ++pickerKeyboardReleases_;
+    // Another field taking the keyboard (GiveKeyboard) sets the page's KeepKeyboard itself as it
+    // ends: not undone here half way (Ctrl+F's "first").
+    if (givingKeyboard_) return;
     UpdateFindHole();
 #ifdef KITE_HAS_CEF
-    // Nothing of Kite's has it now: the page, as onFocus would give it (not while another field
-    // is taking it, nor from a window that doesn't have the focus).
-    if (!givingKeyboard_ && chromium_ && KeyboardOwner() == KeyboardField::None && GetFocus() == window_.Handle()) chromium_->Focus();
+    // Nothing of Kite's has it now: the page, as onFocus would give it, only from the window in
+    // front (as HideFindBar and Chromium's Show do), so a close as the user switches apps never
+    // brings Kite back. Counted for the smoke test, which is never in front.
+    if (focusPage && chromium_ && KeyboardOwner() == KeyboardField::None) {
+        ++pageFocusHandoffs_;
+        if (!testFocus_ && GetForegroundWindow() == window_.Handle()) chromium_->Focus();
+    }
+#else
+    (void)focusPage;
 #endif
 }
 
