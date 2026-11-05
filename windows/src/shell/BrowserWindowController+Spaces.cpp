@@ -67,6 +67,8 @@ void BrowserWindowController::RenameSpace(const std::string& spaceID, const std:
 }
 
 void BrowserWindowController::DeleteSpace(std::string spaceID) {
+    // The space Create a Space is making goes as Cancel does (the Mac's deleteSpace).
+    if (creation_ && creation_->spaceID == spaceID) return CancelNewSpace();
     const SpaceDeletion deletion = DeletionOf(state_, spaceID);
     switch (deletion.kind) {
     case SpaceDeletion::Kind::Refused: MessageBeep(MB_OK); return;

@@ -1,6 +1,6 @@
 // The window controller's test runs: --smoke-test's checks and --capture's frames and the states
 // they hold (a swipe, a drag in the space bar, the space menu, the rename fields, a row hovered, a
-// command run). See BrowserWindowController.h.
+// command run, the + menu and Create a Space). See BrowserWindowController.h.
 
 #include "shell/BrowserWindowController.h"
 
@@ -9,8 +9,10 @@
 
 #include "core/Favorites.h"
 #include "core/OKLab.h"
+#include "core/Profiles.h"
 #include "core/SidebarTopRow.h"
 #include "core/SpaceBar.h"
+#include "core/SpaceCreation.h"
 #include "core/SpaceEditing.h"
 #include "core/TitleBar.h"
 #include "core/Uuid.h"
@@ -493,6 +495,8 @@ std::wstring BrowserWindowController::SmokeTestWindow() {
         // And editing them: drags in the bar, the menu, renaming, New Folder, Delete Space.
         if (std::wstring problem = SmokeTestSpaceEditing(); !problem.empty()) return problem;
     }
+    // The + menu and Create a Space: New Space, typing, a theme, Create and Cancel.
+    if (std::wstring problem = SmokeTestNewSpace(); !problem.empty()) return problem;
     // The lost-GPU path, once: the renderer, swap chain and composition target are rebuilt and
     // draw again (a real device removal can't be caused from a test).
     DropCompositor();
@@ -562,6 +566,32 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
     }
     // A row's or favorite's menu, where a right-click on it opens it (W17).
     if (problem.empty()) problem = RenderHeldRowMenu(pixels);
+    if (problem.empty() && heldSwatches_) {
+        // Choose a Theme's swatches as they show off the row, over the page.
+        if (!swatches_) return L"Kite couldn't make Choose a Theme's swatches";
+        std::vector<ThemeColor> accents;
+        for (const Theme& preset : Theme::Presets()) accents.push_back(Accent(preset));
+        Pixels popover;
+        POINT origin{};
+        problem = swatches_->Render(*heldSwatches_, window_.Dpi(), dark_.value_or(true), std::move(accents), popover, origin);
+        if (problem.empty()) ComposeOver(pixels, popover, origin);
+    }
+    if (problem.empty() && heldNewItemMenu_) {
+        // The + menu as a click on the button opens it: Windows' own menu, read back as it shows,
+        // its bottom's middle on the button's top. Its line goes to stderr.
+        if (!sidebar_->PlusCentre()) return L"the + button is hidden";
+        const std::vector<NewItemMenuItem> items = NewItemMenu(shortcuts_);
+        WriteUtf8(STD_ERROR_HANDLE, L"KITE_TEST_CONTEXT_MENU: " + Widen(NewItemMenuLine(items)) + L"\n");
+        const POINT top = sidebar_->PlusTop();
+        POINT screen = top;
+        ClientToScreen(window_.Handle(), &screen);
+        Pixels menu;
+        problem = RenderContextMenu(window_.Handle(), NewItemEntries(items), screen, dark_.value_or(true), window_.Dpi(), menu,
+                                    ContextMenuPlacement::AboveCentred);
+        if (problem.empty()) {
+            ComposeOver(pixels, menu, POINT{top.x - static_cast<LONG>(menu.width) / 2, top.y - static_cast<LONG>(menu.height)});
+        }
+    }
     if (problem.empty() && barText) {
         // The bar as Ctrl+T opens it, with the text typed in.
         if (!commandBar_) return L"Kite couldn't make the command bar";
@@ -1780,6 +1810,235 @@ std::wstring BrowserWindowController::SmokeTestFavoritesScroll() {
     if (tabs.size() != tabsBefore && failure.empty()) return L"the smoke test's tabs didn't go";
     if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
     return failure;
+}
+
+std::wstring BrowserWindowController::HoldCreateSpace(const std::string& name, const std::string& about, std::optional<size_t> preset) {
+    // + › New Space, as its menu item runs it, its space sliding in to rest.
+    RunNewItem(NewItemMenuItem::Command::NewSpace);
+    if (!sidebar_->CreationShown()) return L"New Space didn't open Create a Space";
+    if (sidebarSliding_) {
+        if (std::wstring problem = RunToRest(L"New Space"); !problem.empty()) return problem;
+    }
+    SpaceCreationView& page = sidebar_->Creation();
+    page.Type(SpaceCreationView::Field::Name, name);
+    page.Type(SpaceCreationView::Field::About, about);
+    if (preset) {
+        // Choose a Theme pressed and let go, then the swatch, in the popover's own window (a quiet
+        // run's never shows): it stays open over the page, as the Mac's popover does.
+        const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+        const D2D1_POINT_2F row = *page.CentreOf(SpaceCreationPart::ChooseTheme);
+        const POINT at{std::lround((row.x + sidebar_->Left()) * scale), std::lround(row.y * scale)};
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, at, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, at, 0);
+        if (!swatches_ || !swatches_->IsOpen()) return L"Choose a Theme didn't open its swatches";
+        const std::optional<POINT> swatch = swatches_->SwatchPoint(*preset);
+        if (!swatch) return L"there's no such preset";
+        SendMouse(swatches_->Window(), WM_LBUTTONDOWN, *swatch, MK_LBUTTON);
+        SendMouse(swatches_->Window(), WM_LBUTTONUP, *swatch, 0);
+        if (!creation_ || !creation_->themeChosen) return L"the swatch didn't pick a theme";
+        // Its crossfade run to its end.
+        if (!RunUntil([this] { return !theme_.Fading(); }, 3)) return L"the theme's crossfade never ended";
+        BarRect theme = page.Geometry().theme;
+        theme.left += sidebar_->Left();
+        theme.right += sidebar_->Left();
+        heldSwatches_ = theme;
+    }
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestNewSpace() {
+    const auto ids = [&] {
+        std::vector<std::string> now;
+        for (const Space& space : state_.spaces) now.push_back(space.id);
+        return now;
+    };
+    const std::vector<std::string> order = ids();
+    const std::string selected = state_.selectedSpaceID;
+    const size_t selectedIndex = state_.SelectedSpaceIndex();
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    SpaceCreationView& page = sidebar_->Creation();
+    using Field = SpaceCreationView::Field;
+    const auto client = [&](SpaceCreationPart part) {
+        const D2D1_POINT_2F p = *page.CentreOf(part);
+        return POINT{std::lround((p.x + sidebar_->Left()) * scale), std::lround(p.y * scale)};
+    };
+    const auto click = [&](POINT at) {
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, at, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, at, 0);
+    };
+    const auto type = [&](std::wstring_view text) {
+        for (wchar_t c : text) SendMessageW(window_.Handle(), WM_CHAR, c, 0);
+    };
+    const auto key = [&](UINT vk) { SendMessageW(window_.Handle(), WM_KEYDOWN, vk, 0); };
+    const auto drawn = [&]() -> std::wstring {
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"Create a Space couldn't draw: " + problem;
+        compositor_->Commit();
+        return {};
+    };
+    const auto settle = [&](const wchar_t* what) -> std::wstring { return sidebarSliding_ ? RunToRest(what) : L""; };
+    // However the test ends, the + menu goes back to Windows' own.
+    using ShowMenu = decltype(showNewItemMenu_);
+    struct Restore {
+        ShowMenu& slot;
+        ShowMenu saved;
+        ~Restore() { slot = std::move(saved); }
+    } restore{showNewItemMenu_, showNewItemMenu_};
+
+    // A click on the + button opens its menu with the Mac's items; New Space from it.
+    std::vector<NewItemMenuItem> shown;
+    NewItemMenuItem::Command pick = NewItemMenuItem::Command::NewSpace;
+    showNewItemMenu_ = [&](const std::vector<NewItemMenuItem>& items, POINT) -> std::optional<NewItemMenuItem::Command> {
+        shown = items;
+        return pick;
+    };
+    const std::optional<POINT> plus = sidebar_->PlusCentre();
+    if (!plus) return L"the + button has no place";
+    click(*plus);
+    if (shown != NewItemMenu(shortcuts_) || shown.size() != 5) return L"a click on the + button didn't open the + menu";
+    if (!creation_ || !sidebar_->CreationShown() || state_.spaces.size() != order.size() + 1) return L"New Space didn't open Create a Space";
+    const std::string draft = creation_->spaceID;
+    if (state_.selectedSpaceID != draft || state_.SpaceIndex(draft) != selectedIndex + 1) return L"New Space's space isn't right after the one it came from";
+    if (std::wstring problem = settle(L"New Space"); !problem.empty()) return problem;
+    // The bar keeps only the spaces; the name field has the keyboard (onAppear).
+    if (sidebar_->PlusCentre()) return L"Create a Space left the + button in the bar";
+    if (KeyboardOwner() != KeyboardField::Creation || page.KeyboardField() != Field::Name) return L"Create a Space's name field didn't take the keyboard";
+    if (std::wstring problem = drawn(); !problem.empty()) return problem;
+    // Return with no name creates nothing (Create Space is disabled).
+    key(VK_RETURN);
+    if (!creation_ || page.CanCreate()) return L"Return with no name created a space";
+    // Typing draws only the field: the first letter Create Space too (it turns on), the next not.
+    const size_t pageDraws = page.PageDraws(), fieldDraws = page.FieldDraws(), createDraws = page.CreateDraws();
+    const size_t sidebarDraws = sidebar_->PageDraws();
+    type(L"S");
+    if (page.Text(Field::Name) != "S" || page.FieldDraws() != fieldDraws + 1 || page.CreateDraws() != createDraws + 1) {
+        return L"the first letter of a name didn't draw the field and Create Space";
+    }
+    type(L"moke");
+    if (page.Text(Field::Name) != "Smoke" || page.FieldDraws() != fieldDraws + 5 || page.CreateDraws() != createDraws + 1 ||
+        page.PageDraws() != pageDraws || sidebar_->PageDraws() != sidebarDraws) {
+        return L"typing a name drew more than its field";
+    }
+    // Tab to What's it for?, which takes the keyboard.
+    key(VK_TAB);
+    if (page.KeyboardField() != Field::About) return L"Tab didn't move to the What's it for? field";
+    type(L"Smoke tests");
+    // Choose a Theme opens its swatches; one picked sets the theme (its intensity kept) and they stay open.
+    const float tint = state_.SelectedSpace().theme.tint;
+    click(client(SpaceCreationPart::ChooseTheme));
+    if (!swatches_ || !swatches_->IsOpen() || swatches_->Draws() == 0) return L"Choose a Theme didn't open its swatches";
+    const std::optional<POINT> swatch = swatches_->SwatchPoint(3);
+    if (!swatch) return L"the swatches have no fourth preset";
+    SendMouse(swatches_->Window(), WM_LBUTTONDOWN, *swatch, MK_LBUTTON);
+    SendMouse(swatches_->Window(), WM_LBUTTONUP, *swatch, 0);
+    if (PresetOf(state_.SelectedSpace().theme) != std::optional<size_t>(3) || state_.SelectedSpace().theme.tint != tint ||
+        !creation_->themeChosen || !swatches_->IsOpen()) {
+        return L"a swatch didn't set the space's theme";
+    }
+    // Escape closes the swatches and nothing else.
+    key(VK_ESCAPE);
+    if (swatches_->IsOpen() || !creation_) return L"Escape over the swatches didn't close just them";
+    // A press elsewhere in the window closes them too.
+    click(client(SpaceCreationPart::ChooseTheme));
+    click(client(SpaceCreationPart::NameField));
+    if (swatches_->IsOpen() || page.KeyboardField() != Field::Name) return L"a press in the name field didn't close the swatches and take the keyboard";
+    // The profile's pill lists the profiles (the default one at least) and sets the one picked.
+    {
+        size_t listed = 0;
+        const auto saved = showProfileMenu_;
+        showProfileMenu_ = [&](const std::vector<ContextMenuEntry>& entries, POINT) -> std::optional<size_t> {
+            listed = entries.size();
+            return 0;
+        };
+        click(client(SpaceCreationPart::ProfilePill));
+        showProfileMenu_ = saved;
+        if (listed != AllProfiles(state_).size() || listed == 0 || SpaceProfile(state_.SelectedSpace())) {
+            return L"the profile's pill didn't list the profiles and keep the default one";
+        }
+        click(client(SpaceCreationPart::NameField));
+    }
+    // Return creates it: named, described, right after the one it came from, selected, and the page gone.
+    key(VK_RETURN);
+    const auto index = state_.SpaceIndex(draft);
+    if (creation_ || sidebar_->CreationShown() || !index || state_.spaces[*index].name != "Smoke" ||
+        SpaceAbout(state_.spaces[*index]) != std::optional<std::string>("Smoke tests") || state_.selectedSpaceID != draft) {
+        return L"Return didn't create the space";
+    }
+    if (KeyboardOwner() == KeyboardField::Creation || !sidebar_->PlusCentre()) return L"creating the space left the page's keyboard or hid the + button";
+    state_.DeleteSpace(draft);
+    state_.SelectSpace(selected);
+    SelectionMoved();
+    if (std::wstring problem = settle(L"Back from the made space"); !problem.empty()) return problem;
+
+    // Escape cancels: the space goes and the one it came from shows again.
+    RunCommand("newSpace");
+    if (!creation_ || !sidebar_->CreationShown()) return L"the newSpace command didn't open Create a Space";
+    if (std::wstring problem = settle(L"New Space"); !problem.empty()) return problem;
+    type(L"Not this");
+    key(VK_ESCAPE);
+    if (creation_ || ids() != order || state_.selectedSpaceID != selected) return L"Escape didn't cancel Create a Space";
+    if (std::wstring problem = settle(L"Cancel"); !problem.empty()) return problem;
+
+    // Another space selected: the page goes (the creation stays); New Space again goes back to it,
+    // its fields empty again (the Mac's @State goes with its view). Then the Cancel button.
+    RunNewItem(NewItemMenuItem::Command::NewSpace);
+    if (std::wstring problem = settle(L"New Space"); !problem.empty()) return problem;
+    type(L"Away");
+    state_.SelectSpace(selected);
+    SelectionMoved();
+    if (sidebar_->CreationShown() || !creation_ || KeyboardOwner() == KeyboardField::Creation) return L"another space selected didn't hide Create a Space";
+    if (std::wstring problem = settle(L"Away from Create a Space"); !problem.empty()) return problem;
+    RunCommand("newSpace");
+    if (!sidebar_->CreationShown() || state_.spaces.size() != order.size() + 1 || !page.Text(Field::Name).empty()) {
+        return L"New Space with a page open didn't go back to it";
+    }
+    if (std::wstring problem = settle(L"Back to Create a Space"); !problem.empty()) return problem;
+    if (std::wstring problem = drawn(); !problem.empty()) return problem;
+    click(client(SpaceCreationPart::Cancel));
+    if (creation_ || ids() != order || state_.selectedSpaceID != selected) return L"Cancel didn't cancel Create a Space";
+    if (std::wstring problem = settle(L"Cancel"); !problem.empty()) return problem;
+
+    // Create Space, clicked, once there's a name; the command bar opening takes the keyboard first.
+    RunNewItem(NewItemMenuItem::Command::NewSpace);
+    if (std::wstring problem = settle(L"New Space"); !problem.empty()) return problem;
+    if (std::wstring problem = drawn(); !problem.empty()) return problem;
+    click(client(SpaceCreationPart::Create));
+    if (!creation_) return L"Create Space with no name created a space";
+    OpenCommandBar(CommandBarMode::NewTab);
+    if (KeyboardOwner() != KeyboardField::CommandBar || page.HasKeyboard()) return L"the command bar didn't take the keyboard from Create a Space";
+    commandBar_->Hide();
+    click(client(SpaceCreationPart::NameField));
+    if (KeyboardOwner() != KeyboardField::Creation) return L"a press in the name field didn't take the keyboard back";
+    type(L"Clicked");
+    const std::string made = creation_->spaceID;
+    click(client(SpaceCreationPart::Create));
+    if (creation_ || !state_.SpaceIndex(made) || state_.spaces[*state_.SpaceIndex(made)].name != "Clicked") return L"Create Space didn't create the space";
+    state_.DeleteSpace(made);
+    state_.SelectSpace(selected);
+    SelectionMoved();
+    if (std::wstring problem = settle(L"Back from the made space"); !problem.empty()) return problem;
+
+    // Delete Space on the space being made cancels it.
+    RunNewItem(NewItemMenuItem::Command::NewSpace);
+    if (std::wstring problem = settle(L"New Space"); !problem.empty()) return problem;
+    RunSpaceMenuItem(creation_->spaceID, SpaceMenuItem::Command::Delete);
+    if (creation_ || ids() != order || state_.selectedSpaceID != selected) return L"Delete Space on the space being made didn't cancel it";
+    if (std::wstring problem = settle(L"Delete Space"); !problem.empty()) return problem;
+
+    // The + menu's New Folder and New Tab run theirs; New Split is disabled.
+    const size_t pinned = state_.spaces[selectedIndex].pinnedItems.size();
+    pick = NewItemMenuItem::Command::NewFolder;
+    click(*sidebar_->PlusCentre());
+    if (state_.spaces[selectedIndex].pinnedItems.size() != pinned + 1) return L"the + menu's New Folder made no folder";
+    state_.spaces[selectedIndex].pinnedItems.pop_back();
+    StateChanged();
+    pick = NewItemMenuItem::Command::NewTab;
+    click(*sidebar_->PlusCentre());
+    if (!commandBar_->IsOpen()) return L"the + menu's New Tab didn't open the command bar";
+    commandBar_->Hide();
+    if (shown[3].command != NewItemMenuItem::Command::NewSplit || shown[3].enabled) return L"New Split isn't disabled";
+    if (ids() != order || state_.selectedSpaceID != selected) return L"the + menu left the spaces changed";
+    frames_.clear();
+    return {};
 }
 
 }  // namespace kite

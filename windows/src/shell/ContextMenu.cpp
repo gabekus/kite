@@ -75,7 +75,8 @@ void Append(HMENU menu, const std::vector<ContextMenuEntry>& entries, size_t& ne
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
             continue;
         }
-        const std::wstring title = ContextMenuText(entry.title);
+        // A tab right-aligns what follows it: the shortcut, in the menu's column for them.
+        const std::wstring title = ContextMenuText(entry.title) + (entry.shortcut.empty() ? L"" : L"\t" + Widen(entry.shortcut));
         const UINT state = entry.enabled ? MF_ENABLED : MF_GRAYED;
         if (entry.submenu) {
             // A submenu with nothing in it yet (one whose items come with their checkpoint) is
@@ -194,6 +195,10 @@ Pixels Scaled(const Pixels& in, double factor) {
     return out;
 }
 
+UINT AlignmentOf(ContextMenuPlacement placement) {
+    return placement == ContextMenuPlacement::AboveCentred ? TPM_CENTERALIGN | TPM_BOTTOMALIGN : TPM_LEFTALIGN | TPM_TOPALIGN;
+}
+
 }  // namespace
 
 std::wstring ContextMenuText(std::string_view title) {
@@ -205,13 +210,14 @@ std::wstring ContextMenuText(std::string_view title) {
     return text;
 }
 
-std::optional<size_t> ShowContextMenu(HWND window, const std::vector<ContextMenuEntry>& entries, POINT screen, bool dark) {
+std::optional<size_t> ShowContextMenu(HWND window, const std::vector<ContextMenuEntry>& entries, POINT screen, bool dark,
+                                      ContextMenuPlacement placement) {
     HMENU menu = MakeMenu(entries);
     if (!menu) return std::nullopt;
     const MenuAppearance appearance(dark);
     // A menu shown for a window in front closes when the pointer clicks elsewhere (KB135788).
     SetForegroundWindow(window);
-    const UINT id = static_cast<UINT>(TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_NONOTIFY,
+    const UINT id = static_cast<UINT>(TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | AlignmentOf(placement) | TPM_NONOTIFY,
                                                        screen.x, screen.y, window, nullptr));
     PostMessageW(window, WM_NULL, 0, 0);
     DestroyMenu(menu);  // with its submenus
@@ -222,7 +228,8 @@ std::optional<size_t> ShowContextMenu(HWND window, const std::vector<ContextMenu
     return id - 1;
 }
 
-std::wstring RenderContextMenu(HWND window, const std::vector<ContextMenuEntry>& entries, POINT screen, bool dark, UINT dpi, Pixels& out) {
+std::wstring RenderContextMenu(HWND window, const std::vector<ContextMenuEntry>& entries, POINT screen, bool dark, UINT dpi, Pixels& out,
+                               ContextMenuPlacement placement) {
     HMENU menu = MakeMenu(entries);
     if (!menu) return L"CreatePopupMenu failed";
     const MenuAppearance appearance(dark);
@@ -231,7 +238,7 @@ std::wstring RenderContextMenu(HWND window, const std::vector<ContextMenuEntry>&
     grab = &state;
     const UINT_PTR timer = SetTimer(nullptr, 0, 20, GrabMenu);
     // Shown without coming forward (a quiet capture never activates Kite), closed by the timer.
-    TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_NONOTIFY | TPM_NOANIMATION, screen.x, screen.y, window, nullptr);
+    TrackPopupMenuEx(menu, TPM_RETURNCMD | AlignmentOf(placement) | TPM_NONOTIFY | TPM_NOANIMATION, screen.x, screen.y, window, nullptr);
     if (timer) KillTimer(nullptr, timer);
     grab = nullptr;
     DestroyMenu(menu);

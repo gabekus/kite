@@ -63,6 +63,7 @@ add_library(KiteCoreWin STATIC
   src/core/SessionWriter.cpp
   src/core/StoreFile.cpp
   src/core/SpaceBar.cpp
+  src/core/SpaceCreation.cpp
   src/core/SpaceEditing.cpp
   src/core/SpaceIcon.cpp
   src/core/SymbolShape.cpp
@@ -147,6 +148,7 @@ if(WIN32)
     src/shell/BackdropTest.cpp
     src/shell/BrowserWindowController.cpp
     src/shell/BrowserWindowController+Chromium.cpp
+    src/shell/BrowserWindowController+NewSpace.cpp
     src/shell/BrowserWindowController+Spaces.cpp
     src/shell/BrowserWindowController+SidebarMenus.cpp
     src/shell/BrowserWindowController+Tabs.cpp
@@ -173,11 +175,13 @@ if(WIN32)
     src/shell/SidebarTopRowView.cpp
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
+    src/shell/SpaceCreationView.cpp
     src/shell/SpaceIconPainter.cpp
     src/shell/SpaceMenu.cpp
     src/shell/ContextMenu.cpp
     src/shell/SidebarMenus.cpp
     src/shell/SpaceTipView.cpp
+    src/shell/ThemeSwatchesView.cpp
     src/shell/TextEditing.cpp
     src/shell/TextField.cpp
     src/shell/TextLine.cpp
@@ -358,6 +362,7 @@ add_executable(KiteCoreTests
   tests/SidebarTests.cpp
   tests/SidebarTopRowTests.cpp
   tests/SpaceBarTests.cpp
+  tests/SpaceCreationTests.cpp
   tests/SpaceEditingTests.cpp
   tests/SpaceIconTests.cpp
   tests/PictureLoadsTests.cpp

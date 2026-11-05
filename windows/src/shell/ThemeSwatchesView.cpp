@@ -1,0 +1,326 @@
+// See ThemeSwatchesView.h. Ports ThemeEditor.swift's presets row (ThemeEditor.presets) and
+// ThemeEditor.present(pointing: true)'s placement.
+
+#include "shell/ThemeSwatchesView.h"
+
+#include <windowsx.h>
+
+#include <algorithm>
+#include <cmath>
+
+#include "shell/Errors.h"
+
+using Microsoft::WRL::ComPtr;
+
+namespace kite {
+
+namespace {
+
+namespace T = theme_swatches_metrics;
+
+constexpr wchar_t kClassName[] = L"KiteThemeSwatches";
+// chevron.left and chevron.right in Segoe Fluent Icons and Segoe MDL2 Assets.
+constexpr wchar_t kChevronLeft = 0xE76B, kChevronRight = 0xE76C;
+// labelColor's 85%, which the chevrons' 30% fades.
+constexpr float kLabelAlpha = 0.85f;
+// Room around the body for its edge, in points.
+constexpr float kMargin = 1;
+
+D2D1_COLOR_F Srgb(int r, int g, int b, float a = 1) { return D2D1_COLOR_F{r / 255.0f, g / 255.0f, b / 255.0f, a}; }
+// Arc's PopoverBackground, as the find bar's popover colours, and its edge.
+D2D1_COLOR_F Fill(bool dark) { return dark ? Srgb(0x15, 0x1C, 0x30) : Srgb(0xFA, 0xFB, 0xFF); }
+D2D1_COLOR_F Edge(bool dark) { return dark ? D2D1_COLOR_F{1, 1, 1, 0.12f} : D2D1_COLOR_F{0, 0, 0, 0.12f}; }
+
+bool RegisterOnce(HINSTANCE instance, WNDPROC proc) {
+    static const bool registered = [&] {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = proc;
+        wc.hInstance = instance;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.lpszClassName = kClassName;
+        return RegisterClassExW(&wc) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+    }();
+    return registered;
+}
+
+}  // namespace
+
+std::unique_ptr<ThemeSwatchesView> ThemeSwatchesView::Create(HWND owner, Callbacks callbacks, bool offscreen, std::wstring& error) {
+    std::unique_ptr<ThemeSwatchesView> view(new ThemeSwatchesView(owner, std::move(callbacks), offscreen));
+    ComPtr<IDWriteFactory> dwrite;
+    HRESULT hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(dwrite.GetAddressOf()));
+    if (FAILED(hr)) {
+        error = HResultMessage(L"DWriteCreateFactory", hr);
+        return nullptr;
+    }
+    ComPtr<IDWriteFontCollection> fonts;
+    dwrite->GetSystemFontCollection(fonts.GetAddressOf());
+    UINT32 index = 0;
+    BOOL fluent = FALSE;
+    if (fonts) fonts->FindFamilyName(L"Segoe Fluent Icons", &index, &fluent);
+    hr = dwrite->CreateTextFormat(fluent ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets", nullptr, DWRITE_FONT_WEIGHT_MEDIUM,
+                                          DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, T::kChevronSize, L"",
+                                          view->chevronFormat_.GetAddressOf());
+    if (FAILED(hr)) {
+        error = HResultMessage(L"CreateTextFormat", hr);
+        return nullptr;
+    }
+    view->chevronFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    view->chevronFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    const HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(owner, GWLP_HINSTANCE));
+    if (!RegisterOnce(instance, &ThemeSwatchesView::WindowProc)) {
+        error = L"registering the theme swatches' window class failed";
+        return nullptr;
+    }
+    // Never activated (the browser window keeps the keyboard), never in the taskbar or Alt+Tab;
+    // DirectComposition draws all of it.
+    view->window_ = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kClassName, L"", WS_POPUP, 0, 0, 1, 1,
+                                    owner, nullptr, instance, view.get());
+    if (!view->window_) {
+        error = L"creating the theme swatches' window failed";
+        return nullptr;
+    }
+    return view;
+}
+
+ThemeSwatchesView::~ThemeSwatchesView() {
+    UseCompositor(nullptr);
+    if (window_) DestroyWindow(window_);
+}
+
+LRESULT CALLBACK ThemeSwatchesView::WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message == WM_NCCREATE) {
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams));
+    }
+    auto* view = reinterpret_cast<ThemeSwatchesView*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    // Windows destroys an owned window with its owner: the view forgets it.
+    if (message == WM_NCDESTROY && view) {
+        view->window_ = nullptr;
+        view->open_ = false;
+    }
+    if (view && message != WM_NCCREATE && message != WM_NCDESTROY) return view->Handle(message, wParam, lParam);
+    return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+LRESULT ThemeSwatchesView::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+    case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
+    // Windows shows an owned window again with its restored owner: it shows only when opened.
+    case WM_SHOWWINDOW:
+        if (wParam && lParam == SW_PARENTOPENING) return 0;
+        break;
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDBLCLK:
+        pressed_ = SwatchAt(lParam);
+        if (pressed_) SetCapture(window_);
+        return 0;
+    case WM_LBUTTONUP: {
+        const std::optional<size_t> pressed = pressed_;
+        pressed_.reset();
+        if (GetCapture() == window_) ReleaseCapture();
+        // A plain Button: on release over what was pressed.
+        if (pressed && SwatchAt(lParam) == pressed && callbacks_.pick) callbacks_.pick(*pressed);
+        return 0;
+    }
+    case WM_CAPTURECHANGED: pressed_.reset(); return 0;
+    default: break;
+    }
+    return DefWindowProcW(window_, message, wParam, lParam);
+}
+
+void ThemeSwatchesView::UseCompositor(Compositor* compositor) {
+    if (compositor == compositor_) return;
+    Close();
+    target_.Reset();
+    visual_.Reset();
+    surface_.Reset();
+    brush_.Reset();
+    compositor_ = compositor;
+    deviceLost_ = false;
+}
+
+ThemeSwatchesView::Frame ThemeSwatchesView::FrameFor(const BarRect& row, float scale) const {
+    Frame f;
+    f.placement = PlaceThemeSwatches(row, layout_);
+    f.margin = kMargin;
+    // The window: the arrow's room, then the body, the margin around both.
+    const float left = f.placement.left - T::kArrowDepth - kMargin, top = f.placement.top - kMargin;
+    f.origin = POINT{std::lround(left * scale), std::lround(top * scale)};
+    f.width = static_cast<UINT>(std::ceil((T::kArrowDepth + layout_.width + 2 * kMargin) * scale));
+    f.height = static_cast<UINT>(std::ceil((layout_.height + 2 * kMargin) * scale));
+    return f;
+}
+
+std::optional<size_t> ThemeSwatchesView::SwatchAt(LPARAM client) const {
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    const float x = static_cast<float>(GET_X_LPARAM(client)) / scale - kMargin - T::kArrowDepth;
+    const float y = static_cast<float>(GET_Y_LPARAM(client)) / scale - kMargin;
+    return ThemeSwatchAt(layout_, x, y);
+}
+
+std::optional<POINT> ThemeSwatchesView::SwatchPoint(size_t index) const {
+    if (!open_ || index >= layout_.swatches.size()) return std::nullopt;
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    const BarRect& s = layout_.swatches[index];
+    return POINT{std::lround(((s.left + s.right) / 2 + kMargin + T::kArrowDepth) * scale), std::lround(((s.top + s.bottom) / 2 + kMargin) * scale)};
+}
+
+void ThemeSwatchesView::Paint(ID2D1DeviceContext* context, const Frame& frame) {
+    const float bodyLeft = frame.margin + T::kArrowDepth, bodyTop = frame.margin;
+    const float w = layout_.width, h = layout_.height;
+    // The body and its arrow as one shape, so the edge runs round both.
+    ComPtr<ID2D1Factory> factory;
+    context->GetFactory(factory.GetAddressOf());
+    ComPtr<ID2D1RoundedRectangleGeometry> body;
+    ComPtr<ID2D1PathGeometry> arrow, shape;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (!factory ||
+        FAILED(factory->CreateRoundedRectangleGeometry(
+            D2D1::RoundedRect(D2D1::RectF(bodyLeft, bodyTop, bodyLeft + w, bodyTop + h), T::kCornerRadius, T::kCornerRadius), body.GetAddressOf())) ||
+        FAILED(factory->CreatePathGeometry(arrow.GetAddressOf())) || FAILED(arrow->Open(sink.GetAddressOf()))) {
+        return;
+    }
+    const float tipY = bodyTop + frame.placement.arrowY;
+    sink->BeginFigure(D2D1::Point2F(bodyLeft + 1, tipY - T::kArrowWidth / 2), D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddLine(D2D1::Point2F(frame.margin, tipY));
+    sink->AddLine(D2D1::Point2F(bodyLeft + 1, tipY + T::kArrowWidth / 2));
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    sink->Close();
+    sink.Reset();
+    if (FAILED(factory->CreatePathGeometry(shape.GetAddressOf())) || FAILED(shape->Open(sink.GetAddressOf()))) return;
+    body->CombineWithGeometry(arrow.Get(), D2D1_COMBINE_MODE_UNION, nullptr, sink.Get());
+    sink->Close();
+    brush_->SetColor(Fill(dark_));
+    context->FillGeometry(shape.Get(), brush_.Get());
+    brush_->SetColor(Edge(dark_));
+    context->DrawGeometry(shape.Get(), brush_.Get(), 1.0f / (static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI));
+
+    D2D1_MATRIX_3X2_F base{};
+    context->GetTransform(&base);
+    context->SetTransform(D2D1::Matrix3x2F::Translation(bodyLeft, bodyTop) * base);
+    // The chevrons, both off (Kite's presets fit on one page).
+    const float c = dark_ ? 1.0f : 0.0f;
+    brush_->SetColor(D2D1_COLOR_F{c, c, c, kLabelAlpha * T::kChevronOpacity});
+    context->DrawText(&kChevronLeft, 1, chevronFormat_.Get(),
+                      D2D1::RectF(layout_.previous.left, layout_.previous.top, layout_.previous.right, layout_.previous.bottom), brush_.Get());
+    context->DrawText(&kChevronRight, 1, chevronFormat_.Get(), D2D1::RectF(layout_.next.left, layout_.next.top, layout_.next.right, layout_.next.bottom),
+                      brush_.Get());
+    // Each preset's accent, with a white ring inside its edge.
+    for (size_t i = 0; i < layout_.swatches.size() && i < accents_.size(); ++i) {
+        const BarRect& s = layout_.swatches[i];
+        const float r = s.Width() / 2;
+        const D2D1_POINT_2F centre{s.left + r, s.top + r};
+        brush_->SetColor(D2D1_COLOR_F{accents_[i].r, accents_[i].g, accents_[i].b, 1});
+        context->FillEllipse(D2D1::Ellipse(centre, r, r), brush_.Get());
+        brush_->SetColor(D2D1_COLOR_F{1, 1, 1, T::kSwatchRingOpacity});
+        const float ring = r - T::kSwatchRing / 2;
+        context->DrawEllipse(D2D1::Ellipse(centre, ring, ring), brush_.Get(), T::kSwatchRing);
+    }
+    context->SetTransform(base);
+}
+
+std::wstring ThemeSwatchesView::DrawInto(IDCompositionVirtualSurface* surface, const Frame& frame, Pixels* readBack, HRESULT& hr) {
+    if (!brush_ && FAILED(hr = compositor_->D2D()->CreateSolidColorBrush(D2D1_COLOR_F{0, 0, 0, 1}, brush_.GetAddressOf()))) {
+        return HResultMessage(L"creating the theme swatches' brush", hr);
+    }
+    ++draws_;
+    return compositor_->DrawSurface(
+        perf::View::Sidebar, surface, frame.width, frame.height, dpi_, [&](ID2D1DeviceContext* context) { Paint(context, frame); }, readBack, hr);
+}
+
+std::wstring ThemeSwatchesView::Open(const BarRect& row, UINT dpi, bool dark, std::vector<ThemeColor> accents) {
+    if (!compositor_) return L"no compositor";
+    if (!window_) return L"the theme swatches' window is gone";
+    row_ = row;
+    dpi_ = dpi;
+    dark_ = dark;
+    accents_ = std::move(accents);
+    layout_ = LayOutThemeSwatches(accents_.size());
+    const float scale = static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
+    frame_ = FrameFor(row, scale);
+    HRESULT hr = S_OK;
+    auto fail = [&](const wchar_t* what) {
+        deviceLost_ = IsDeviceLost(hr);
+        Close();
+        return HResultMessage(what, hr);
+    };
+    IDCompositionDevice* device = compositor_->Device();
+    if (!target_) {
+        if (FAILED(hr = device->CreateTargetForHwnd(window_, TRUE, target_.GetAddressOf())) ||
+            FAILED(hr = device->CreateVisual(visual_.GetAddressOf())) || FAILED(hr = target_->SetRoot(visual_.Get()))) {
+            target_.Reset();
+            visual_.Reset();
+            return fail(L"building the theme swatches' composition");
+        }
+    }
+    if (!surface_) {
+        if (FAILED(hr = device->CreateVirtualSurface(frame_.width, frame_.height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED,
+                                                     surface_.GetAddressOf())) ||
+            FAILED(hr = visual_->SetContent(surface_.Get()))) {
+            surface_.Reset();
+            return fail(L"creating the theme swatches' surface");
+        }
+    } else if (FAILED(hr = surface_->Resize(frame_.width, frame_.height))) {
+        return fail(L"resizing the theme swatches' surface");
+    }
+    if (std::wstring error = DrawInto(surface_.Get(), frame_, nullptr, hr); !error.empty()) {
+        deviceLost_ = IsDeviceLost(hr);
+        Close();
+        return error;
+    }
+    if (FAILED(hr = compositor_->Commit())) return fail(L"showing the theme swatches");
+    POINT topLeft = frame_.origin;
+    ClientToScreen(owner_, &topLeft);
+    // Just over its owner (an owned window always is), never over another app's window; a quiet
+    // run's stays hidden, its size and place set all the same.
+    SetWindowPos(window_, nullptr, topLeft.x, topLeft.y, static_cast<int>(frame_.width), static_cast<int>(frame_.height),
+                 SWP_NOACTIVATE | (offscreen_ ? 0 : SWP_SHOWWINDOW) | SWP_NOZORDER | SWP_NOOWNERZORDER);
+    open_ = true;
+    return {};
+}
+
+void ThemeSwatchesView::SetDark(bool dark) {
+    if (dark == dark_) return;
+    dark_ = dark;
+    if (!open_ || !surface_ || !compositor_) return;
+    HRESULT hr = S_OK;
+    if (std::wstring error = DrawInto(surface_.Get(), frame_, nullptr, hr); !error.empty()) {
+        deviceLost_ = IsDeviceLost(hr);
+        Close();
+        return;
+    }
+    compositor_->Commit();
+}
+
+void ThemeSwatchesView::Close() {
+    pressed_.reset();
+    if (!open_) return;
+    open_ = false;
+    if (window_) {
+        if (GetCapture() == window_) ReleaseCapture();
+        ShowWindow(window_, SW_HIDE);
+    }
+    // Its surface goes until it opens again (the next commit carries it).
+    if (visual_) visual_->SetContent(nullptr);
+    surface_.Reset();
+}
+
+std::wstring ThemeSwatchesView::Render(const BarRect& row, UINT dpi, bool dark, std::vector<ThemeColor> accents, Pixels& out, POINT& origin) {
+    if (!compositor_) return L"no compositor";
+    dpi_ = dpi;
+    dark_ = dark;
+    accents_ = std::move(accents);
+    layout_ = LayOutThemeSwatches(accents_.size());
+    const Frame frame = FrameFor(row, static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI);
+    origin = frame.origin;
+    HRESULT hr = S_OK;
+    ComPtr<IDCompositionVirtualSurface> surface;
+    if (FAILED(hr = compositor_->Device()->CreateVirtualSurface(frame.width, frame.height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED,
+                                                                 surface.GetAddressOf()))) {
+        return HResultMessage(L"creating the theme swatches' surface", hr);
+    }
+    return DrawInto(surface.Get(), frame, &out, hr);
+}
+
+}  // namespace kite

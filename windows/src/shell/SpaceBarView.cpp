@@ -158,7 +158,12 @@ void SpaceBarView::ReleaseGpu() {
     flatCaps_.Reset();
 }
 
-void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark) {
+void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark, bool creating) {
+    // Create a Space leaves only the spaces in the bar: the end buttons go (and come back).
+    if (creating != creating_) {
+        creating_ = creating;
+        dirty_ = true;
+    }
     if (cells == cells_ && dark == dark_) return;
     const bool reshaped = cells.size() != cells_.size();
     // The same spaces in another order (a drop, a move) also stops a slide's relighting, whose
@@ -487,6 +492,9 @@ D2D1_COLOR_F SpaceBarView::Primary(float alpha) const {
 }
 
 void SpaceBarView::DrawBar(ID2D1DeviceContext* context) {
+    // On Create a Space Arc leaves only the spaces in the bar (SpaceBarView.apply: the Library
+    // button's alpha 0, the + button hidden).
+    if (creating_) return;
     // Arc's Library button and + menu: labelColor at SymbolButton's 70%, each symbol faded as a
     // whole (an image's alphaValue), so where its strokes meet the ink doesn't double.
     brush_->SetColor(Primary(1));

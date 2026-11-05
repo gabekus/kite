@@ -270,7 +270,29 @@ std::wstring BrowserWindowController::Init() {
         }
         sidebar_->SetFavoritesEmptyStateDismissed(true);
     };
+    // The bar's + menu and Create a Space (+NewSpace.cpp).
+    actions.newItemMenu = [this](POINT screen) { ShowNewItemMenu(screen); };
+    actions.createSpace = [this](const std::string& name, const std::string& about) { FinishNewSpace(name, about); };
+    actions.cancelCreation = [this] { CancelNewSpace(); };
+    actions.chooseTheme = [this](const BarRect& row) { ShowThemeSwatches(row); };
+    actions.creationProfileMenu = [this](POINT screen) { ShowCreationProfileMenu(screen); };
+    actions.creationTakesKeyboard = [this] { GiveKeyboard(KeyboardField::Creation); };
     sidebar_->SetActions(std::move(actions));
+    // Choose a Theme's swatches: a window of their own, over the page.
+    ThemeSwatchesView::Callbacks swatches;
+    swatches.pick = [this](size_t preset) { PickSpaceTheme(preset); };
+    swatches_ = ThemeSwatchesView::Create(window_.Handle(), std::move(swatches), options_.quiet, error);
+    if (!swatches_) return L"Kite couldn't make Choose a Theme's swatches: " + error;
+    swatches_->UseCompositor(compositor_.get());
+    showNewItemMenu_ = [this](const std::vector<NewItemMenuItem>& items, POINT screen) -> std::optional<NewItemMenuItem::Command> {
+        const std::optional<size_t> chosen =
+            ShowContextMenu(window_.Handle(), NewItemEntries(items), screen, dark_.value_or(true), ContextMenuPlacement::AboveCentred);
+        if (!chosen || *chosen >= items.size()) return std::nullopt;
+        return items[*chosen].command;
+    };
+    showProfileMenu_ = [this](const std::vector<ContextMenuEntry>& entries, POINT screen) {
+        return ShowContextMenu(window_.Handle(), entries, screen, dark_.value_or(true));
+    };
     if (options_.quiet) askToDelete_ = [](const SpaceDeletion&) { return false; };
     else askToDelete_ = [this](const SpaceDeletion& deletion) { return AskToDeleteSpace(window_.Handle(), deletion); };
     if (options_.quiet) askToDeleteFolder_ = [](const FolderDeletion&) { return false; };
@@ -963,10 +985,16 @@ void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save)
         }
     }
     if (save) SessionChanged(*save);
+    // Create a Space follows the session (its space deleted elsewhere, it's over) before the
+    // sidebar shows it.
+    kite::CreationFollowsState(state_, creation_);
+    sidebar_->SetCreation(creation_);
     SyncSpace();
     // The selected tab's page's status first, so the top row's update shows both together.
     ShowPageStatus();
     sidebar_->Update(state_, pagesAnchor_);
+    // Its page appearing takes the keyboard for the name field; going, gives it back.
+    FollowCreation();
     // A slide begins at once: the new page and the caption buttons' appearance drawn and the
     // strip's animation committed now, not on the next pass (the crossfade's first frame comes
     // with the clock).
@@ -1111,6 +1139,7 @@ BrowserWindowController::KeyboardField BrowserWindowController::KeyboardOwner() 
     if (commandBar_ && commandBar_->IsOpen()) return KeyboardField::CommandBar;
     if (sidebar_->Renaming()) return KeyboardField::Rename;
     if (findBar_ && findBar_->HasKeyboard()) return KeyboardField::Find;
+    if (sidebar_->Creation().HasKeyboard()) return KeyboardField::Creation;
     return KeyboardField::None;
 }
 
@@ -1123,9 +1152,18 @@ void BrowserWindowController::GiveKeyboard(KeyboardField to, bool focusFindField
 #endif
         if (commandBar_ && commandBar_->IsOpen()) commandBar_->Hide();
     }
+    if (to == KeyboardField::Creation) {
+        // As for the find field: no navigation hands the keyboard to the page meanwhile, and the
+        // command bar goes.
+#ifdef KITE_HAS_CEF
+        if (chromium_) chromium_->KeepKeyboard(true);
+#endif
+        if (commandBar_ && commandBar_->IsOpen()) commandBar_->Hide();
+    }
     // The others, so their system carets go before `to` makes its own.
     if (to != KeyboardField::Find && findBar_) findBar_->LoseKeyboard();
     if (to != KeyboardField::Rename) sidebar_->EndRenaming(true);
+    if (to != KeyboardField::Creation) sidebar_->CreationLosesKeyboard();
     if (to == KeyboardField::Find && findBar_ && focusFindField) findBar_->Focus();
     // A press in the field takes it itself, after this (focusFindField false): Kite keeps it.
     if (to == KeyboardField::Find && !focusFindField) return;
@@ -1176,7 +1214,8 @@ void BrowserWindowController::UpdateFindHole() {
     if (!chromium_) return;
     const bool open = findBar_ && findBar_->IsOpen();
     chromium_->SetOverlayHole(open ? findBar_->Frame() : RECT{}, open ? static_cast<int>(std::lround(findBar_->CornerRadiusPx())) : 0);
-    chromium_->KeepKeyboard(open && findBar_->HasKeyboard());
+    // The find field's keyboard, or Create a Space's, stays in Kite's window through a navigation.
+    chromium_->KeepKeyboard((open && findBar_->HasKeyboard()) || sidebar_->Creation().HasKeyboard());
 #endif
 }
 
@@ -1228,8 +1267,14 @@ void BrowserWindowController::ToggleSidebar() { SetSidebarShown(!sidebarShown_);
 
 void BrowserWindowController::SetSidebarShown(bool shown) {
     if (shown == sidebarShown_) return;
-    // Hiding ends a rename, keeping what was typed, as the field editor leaving a hidden view does.
-    if (!shown) sidebar_->EndRenaming(true);
+    // Hiding ends a rename, keeping what was typed, as the field editor leaving a hidden view does,
+    // and Create a Space's field lets the keyboard go, its swatches closing.
+    if (!shown) {
+        sidebar_->EndRenaming(true);
+        sidebar_->CreationLosesKeyboard();
+        CloseThemeSwatches();
+        UpdateFindHole();
+    }
     sidebarShown_ = shown;
     KillTimer(window_.Handle(), kToggleTimer);
     // Like Arc: the final frames set once, the compositor drawing the frames between (no slide
@@ -1304,6 +1349,8 @@ void BrowserWindowController::MakeCommands() {
              if (!tab || !tab->url || !CopyText(window_.Handle(), Widen(*tab->url))) MessageBeep(MB_OK);
          }},
         {"toggleSidebar", [this] { ToggleSidebar(); }},
+        // Spaces › New Space… (the Mac's newSpace: beginNewSpace), which the + menu runs too.
+        {"newSpace", [this] { BeginNewSpace(); }},
         {"collapsePinnedSection",
          [this] {
              TogglePinnedSection(state_, state_.SelectedSpace().id);
@@ -1481,6 +1528,7 @@ void BrowserWindowController::DropCompositor() {
     caption_->UseCompositor(nullptr);
     if (commandBar_) commandBar_->UseCompositor(nullptr);
     if (findBar_) findBar_->UseCompositor(nullptr);
+    if (swatches_) swatches_->UseCompositor(nullptr);
     compositor_.reset();
 }
 
@@ -1495,6 +1543,7 @@ std::wstring BrowserWindowController::Rebuild() {
         caption_->UseCompositor(compositor_.get());
         if (commandBar_) commandBar_->UseCompositor(compositor_.get());
         if (findBar_) findBar_->UseCompositor(compositor_.get());
+        if (swatches_) swatches_->UseCompositor(compositor_.get());
     }
     return problem;
 }
@@ -1534,8 +1583,10 @@ std::wstring BrowserWindowController::DrawAt(double time, Pixels* readBack) {
 }
 
 void BrowserWindowController::OnSize() {
-    // The space tip is a window of its own: it goes rather than stay where the cell was.
+    // The space tip and Choose a Theme's swatches are windows of their own: they go rather than
+    // stay where the cell or the row was.
     sidebar_->HideTip();
+    CloseThemeSwatches();
 #ifdef KITE_HAS_CEF
     // The page first, so CEF's thread moves it while Kite draws.
     if (chromium_) chromium_->SetBounds(ContentBounds());
@@ -1596,6 +1647,20 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     if (message == WM_MOUSELEAVE && perfPointer_) {
         result = 0;
         return true;
+    }
+    // Choose a Theme's swatches close as a transient popover does: a press anywhere in the window
+    // (which goes on), the window losing the keyboard or moving, and Escape (which is theirs).
+    if (swatches_ && swatches_->IsOpen()) {
+        if (message == WM_KEYDOWN && wParam == VK_ESCAPE) {
+            CloseThemeSwatches();
+            result = 0;
+            return true;
+        }
+        if (message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN || message == WM_MBUTTONDOWN || message == WM_NCLBUTTONDOWN ||
+            message == WM_NCRBUTTONDOWN || message == WM_KILLFOCUS || message == WM_MOVE || (message == WM_ACTIVATE && LOWORD(wParam) == WA_INACTIVE) ||
+            (message == WM_ACTIVATEAPP && !wParam)) {
+            CloseThemeSwatches();
+        }
     }
     // The caption buttons' presses, whatever else is open.
     if (caption_->HandleMessage(message, wParam, lParam, result)) return true;

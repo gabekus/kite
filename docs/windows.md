@@ -799,15 +799,57 @@ light. The question before Delete Space is a task dialog (Common Controls 6, whi
 manifest now asks for), always light, where the Mac has a sheet. Disabled until their
 checkpoints: Change Space Icon… (the icon picker, W9e), What's This Space For?… and Edit Theme
 Color… (their dialogs, and the theme editor), Set Profile and Live Folders (Windows can't move
-a space's pages to another profile or keep live folders yet). Not yet: the + button's menu and
-Arc's Create a Space page, which New Space opens (W9f; `kitecore space new` makes the space
-they'd leave), Undo, and the rename's caret in `--capture` (its own visual, as the command
-bar's). `--capture FILE --space-drag N,X` holds space N's cell dragged to X points along the
+a space's pages to another profile or keep live folders yet). Not yet: Undo, and the rename's
+caret in `--capture` (its own visual, as the command bar's). `--capture FILE --space-drag N,X` holds space N's cell dragged to X points along the
 bar, `--space-drop N,X` lets it go there and settle, `--space-menu N` reads back space N's menu
 (PrintWindow of this machine's own Windows menu, so it differs by Windows version, theme and
 monitor scale, without DWM's rounded corners and shadow, resampled from its monitor's scale
 to the capture's) and puts its bottom-left on the cell's centre, and `--rename-space N` opens
 space N's name field drawn as with the keyboard (a quiet capture's window never has it).
+
+The bar's + button and Create a Space (W9f) are the Mac's NewItemMenu, SpaceCreationView and
+BrowserStore's beginNewSpace, finishNewSpace and cancelNewSpace (`core/SpaceCreation.h`). A click
+on + (on release over it, the click that brings the window forward too) opens its menu over the
+button: New Space, New Folder, a line, New Split and New Tab with their shortcuts as the profile's
+keys run them (Ctrl+T; New Split's the Mac's ⌘L made Ctrl+L, disabled until split views, W36).
+It's Windows' own menu through `shell/ContextMenu`, where the Mac's is a SwiftUI popover with
+icons. New Space, from the menu or the `newSpace` command (Spaces › New Space… on the Mac, with
+no default key; a keybindings.json can give it one), shows the sidebar and inserts a nameless
+space with no icon right after the current one (W9d's `InsertSpace`), selected, with its theme
+and profile, so the pages slide to it and its theme shows live; it's saved soon, as the Mac's
+draft is. While its space is selected, Arc's Create a Space page (`shell/SpaceCreationView`)
+takes the place of the address field, the favorites and the pages under the top row, and the
+bar keeps only the spaces. The page: three cards fanned out, "Create a Space" and its line, the
+name field ("Space name…") and Kite's "What's it for? (for Claude)", the profile with its pill,
+Choose a Theme, then Create Space (#2C4AFC, at half strength until there's a name) and Cancel,
+laid out from ArcMetrics.SpaceCreation (the name field's top on Arc's y 237 in a 820pt window).
+The name field takes the keyboard as the page appears (`KeyboardField::Creation`, through
+GiveKeyboard: the find field and a rename let it go first, and the command bar closes); Tab moves
+between the fields, Return in either creates when there's a name (the space named and its
+`about` cleaned as Space.cleanAbout does), Escape and Cancel delete the draft and select the space
+it came from. Another space selected hides the page (its fields go with it, as the Mac's @State
+does); New Space again goes back to it. Delete Space on the draft cancels it. The profile pill
+lists the profiles and sets the draft's, while it has no tabs (Windows can't move a space's pages
+yet). Choose a Theme opens the theme editor's preset row (`shell/ThemeSwatchesView`): a popover of
+its own window off the row's trailing edge, with the editor's chevrons and its seven 24pt
+swatches; a swatch sets the space's colours and grain, its intensity kept, and the popover stays
+open, closing as a transient popover does (Escape, a press anywhere else, the window losing the
+keyboard or moving). The page is its own visuals in the sidebar's root: the page's surface (drawn
+as it opens, and again only for a new size, scale, appearance or profile), each field's (a
+keystroke draws only its field) and Create Space's (drawn again only as it turns on or off); the
+carets are TextField's visuals, so nothing runs while it's idle but the focused field's blink.
+`kitecore click` on the + button prints its menu, `space plus-menu` prints it, `space create
+[--about TEXT] [--theme N] [--cancel] NAME` runs the page step by step, `space new [--about TEXT]
+[--theme N] NAME` fills it in and creates, and `space create-page [HEIGHT]` prints the page's
+layout, the bar while it's open and the swatches. `--capture FILE --new-item-menu` reads back the
++ menu over its button, and `--create-space NAME [--create-space-about TEXT] [--create-space-theme
+N]` holds the page with its fields typed in and, with N, the swatches open and preset N clicked.
+
+Known differences for W9f: the + menu is a Win32 menu without the popover's icons; Choose a
+Theme's popover holds only the theme editor's presets (its colour grid, intensity and grain come
+with the theme editor), in Arc's PopoverBackground colours with a thin edge and no shadow; the
+help tags (the about field's and the profile's info button) aren't shown yet; and Undo New Space
+waits for undo (W16).
 
 ## Saving the session
 
