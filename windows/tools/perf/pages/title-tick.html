@@ -1,0 +1,16 @@
+<!doctype html>
+<!-- kiteperf's title page: the title changes once a second, so the sidebar's row redraws once
+     a second and nothing else should. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tick 0</title>
+</head>
+<body style="font: 16px system-ui, sans-serif; margin: 40px">
+<p>The title counts seconds.</p>
+<script>
+  let n = 0;
+  setInterval(() => { document.title = 'Tick ' + (++n); }, 1000);
+</script>
+</body>
+</html>
