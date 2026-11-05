@@ -136,7 +136,12 @@ private:
     // (BrowserWindowController's Layout.defaultSidebarWidth, and ArcMetrics.Content.inset in core's
     // sidebar_toggle::kContentInset).
     static constexpr int kSidebarWidth = 240;
-    // The window's timers and posted messages.
+    // The window's timers and posted messages. The timers' ids on this window, shared out across
+    // the checkpoints so two never collide (the ones not in this branch yet are reserved):
+    //   1 smoke, 2 archive, 3 settle, 4 session save (W11), 5 history (W25a), 6 Arc merge (W33a),
+    //   7 sidebar toggle (W12), 8 downloads save (W20a).
+    // 0x4B42 and up are the views' (the command bar's caret, Chromium's close deadline, the
+    // sidebar's tip and drop, the rename field's caret).
     static constexpr UINT_PTR kSmokeTimer = 1;
     // The auto-archive's pass, every 15 minutes as on the Mac (AppDelegate's archiveTimer).
     static constexpr UINT_PTR kArchiveTimer = 2;
@@ -144,7 +149,7 @@ private:
     // When the pages' slide on the compositor has ended (its duration and a frame, rounded up).
     static constexpr UINT_PTR kSettleTimer = 3;
     // When the sidebar's hide or show has ended on the compositor (the same allowance).
-    static constexpr UINT_PTR kToggleTimer = 4;
+    static constexpr UINT_PTR kToggleTimer = 7;
     // View › Hide Sidebar in the window's system menu (Alt+Space, a right-click on the band above the
     // card) until Windows has a menu of Kite's own: a WM_SYSCOMMAND id, under 0xF000.
     static constexpr UINT kToggleSidebarMenuID = 0x0A20;
