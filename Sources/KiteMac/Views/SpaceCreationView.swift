@@ -96,7 +96,11 @@ struct SpaceCreationView: View {
                 .accessibilityIdentifier("spaceCreationCancelButton")
         }
         .padding(.horizontal, M.inset - ArcMetrics.Sidebar.padding)
-        .onAppear { nameFocused = true }
+        .onAppear {
+            nameFocused = true
+            // A test-safe run's KITE_TEST_NEW_SPACE_NAME, as the field's own value (SidebarTestHook).
+            if let typed = SidebarTestHookRunner.typedName(for: creation.spaceID) { name = typed }
+        }
         .onExitCommand { store.cancelNewSpace() }
     }
 
@@ -167,6 +171,8 @@ private struct ChooseThemeRow: View {
     private typealias M = ArcMetrics.SpaceCreation
     let store: BrowserStore
     let spaceID: UUID
+    /// The row's own view, for a test-safe run's KITE_TEST_NEW_SPACE_THEME to open the editor from (SidebarTestHook).
+    @State private var hookAnchor: NSView?
 
     var body: some View {
         AnchoredButton { view in
@@ -185,6 +191,17 @@ private struct ChooseThemeRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: M.cornerRadius, style: .continuous).fill(.white.opacity(M.rowFill)))
             .contentShape(Rectangle())
+        }
+        .background(AnchorView(view: $hookAnchor))
+        .onChange(of: hookAnchor) {
+            guard let hookAnchor, SidebarTestHookRunner.opensThemeEditor(for: spaceID) else { return }
+            // As a press on the row opens it, once the row has laid out.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak hookAnchor] in
+                MainActor.assumeIsolated {
+                    guard let hookAnchor, hookAnchor.window != nil else { return }
+                    ThemeEditor.present(store: store, spaceID: spaceID, from: hookAnchor, pointing: true)
+                }
+            }
         }
     }
 }

@@ -80,7 +80,7 @@ extension BrowserWindowController {
         })
         capturePopover = popover
         // Below the selection; AppKit flips it above when there's no room.
-        popover.show(relativeTo: anchor, of: view, preferredEdge: view.isFlipped ? .maxY : .minY)
+        WindowPresenter.show(popover, relativeTo: anchor, of: view, preferredEdge: view.isFlipped ? .maxY : .minY)
     }
 
     /// Arc's save sheet for a capture: PNG only, titled "Save Capture Image".

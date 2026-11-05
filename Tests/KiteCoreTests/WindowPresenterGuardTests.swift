@@ -29,4 +29,27 @@ struct WindowPresenterGuardTests {
             """
         #expect(WindowPresenterGuard.violations(in: source) == ["4: .level =  in window.level = .floating"])
     }
+
+    @Test func aTestSafeRunSkipsTheShareMenu() throws {
+        // NSSharingServicePicker lists other apps' services, which open windows of their own: skipped and logged, as
+        // a modal is.
+        let presenter = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/KiteMac/WindowPresenter.swift"), encoding: .utf8)
+            .replacingOccurrences(of: "\r\n", with: "\n")
+        #expect(presenter.contains("""
+                static func showSharingPicker(items: [Any], relativeTo rect: NSRect, of view: NSView, preferredEdge edge: NSRectEdge) {
+                    guard !testSafe else { return logSkipped(
+            """))
+    }
+
+    @Test func aPopoverShowsThroughWindowPresenter() {
+        // NSPopover's show is a window of its own: only WindowPresenter.show(_:relativeTo:of:preferredEdge:) calls it.
+        let source = """
+            WindowPresenter.show(popover, relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+            popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+            """
+        #expect(WindowPresenterGuard.violations(in: source)
+            == ["2: .show(relativeTo in popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)"])
+    }
 }

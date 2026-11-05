@@ -9,7 +9,7 @@ extension BrowserWindowController {
         guard let url = store.state.selectedTab?.url, let root = window?.contentView else { return NSSound.beep() }
         // Anchor near the top of the sidebar, where Arc's address pill sits.
         let anchor = NSRect(x: 20, y: root.bounds.height - 60, width: 160, height: 24)
-        NSSharingServicePicker(items: [url]).show(relativeTo: anchor, of: root, preferredEdge: .maxY)
+        WindowPresenter.showSharingPicker(items: [url], relativeTo: anchor, of: root, preferredEdge: .maxY)
     }
 
     @objc func savePageAs(_ sender: Any?) {
