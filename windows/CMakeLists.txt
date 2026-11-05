@@ -169,7 +169,7 @@ if(WIN32)
     target_compile_definitions(Kite PRIVATE KITE_RUNTIME_SHADERS)
     target_link_libraries(Kite PRIVATE d3dcompiler)
   endif()
-  target_link_libraries(kitecore PRIVATE shell32 ole32)
+  target_link_libraries(kitecore PRIVATE shell32)
   # Both get Kite.manifest: per-monitor DPI v2, the UTF-8 code page, long paths.
   if(MSVC)
     target_sources(Kite PRIVATE resources/Kite.manifest)

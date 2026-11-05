@@ -30,7 +30,11 @@
 //                            it made (when, and its cost on the UI thread) and the writer's
 //                            statistics to FILE as JSON: the live check of saving as it changes.
 //                            KITE_TEST_SLOW_BACKUP_MS=N makes each backup take N ms more
-//                            (the live check of a relaunch while Kite quits). It logs the
+//                            (the live check of a relaunch while Kite quits), and
+//                            KITE_TEST_CLOSE_TAB_MS=N closes the selected tab N ms after the
+//                            window shows (the live check of a page kept for its downloads), and
+//                            KITE_TEST_AUTOMATIC_DOWNLOADS=1 lets a page start many downloads
+//                            with no click (the live check of a burst). It logs the
 //                            downloads too (Chromium's reports, what each cost the UI thread,
 //                            downloads.json's writes): the live check of the download engine.
 //
@@ -379,6 +383,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
     options.downloadFolder = kite::DefaultDownloadFolder(
         testDownloads, kite::IsTestProfile(supportDirectory, kite::EnvironmentPath("LOCALAPPDATA")), quiet, supportDirectory, UserDownloads());
+    // The live check of a page kept for its downloads: a --save-log run (a test profile) with
+    // KITE_TEST_CLOSE_TAB_MS set closes its selected tab that long after the window shows.
+    if (const DWORD closeMs = saveLogOption.present ? GetEnvironmentVariableW(L"KITE_TEST_CLOSE_TAB_MS", nullptr, 0) : 0; closeMs) {
+        std::wstring value(closeMs, L'\0');
+        value.resize(GetEnvironmentVariableW(L"KITE_TEST_CLOSE_TAB_MS", value.data(), closeMs));
+        if (auto ms = ParseInt(value); ms && *ms <= 600'000) options.testCloseTabMs = static_cast<unsigned>(*ms);
+    }
+    // And KITE_TEST_AUTOMATIC_DOWNLOADS=1 lets a page start many downloads with no click (the
+    // live check of a burst of same-name downloads).
+    if (wchar_t flag[4] = {}; saveLogOption.present && GetEnvironmentVariableW(L"KITE_TEST_AUTOMATIC_DOWNLOADS", flag, 4) == 1 && flag[0] == L'1') {
+        options.testAutomaticDownloads = true;
+    }
     auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer,
                                                             downloadsWriter ? &*downloadsWriter : nullptr, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);

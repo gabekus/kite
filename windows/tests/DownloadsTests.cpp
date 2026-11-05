@@ -9,6 +9,7 @@
 #include <iterator>
 #include <set>
 #include <thread>
+#include <atomic>
 
 #ifdef _WIN32
 #include <share.h>
@@ -534,7 +535,13 @@ TEST(downloadNamesAreSafeOnWindows) {
     CHECK(SafeDownloadName("nul.txt") == "_nul.txt");
     CHECK(SafeDownloadName("Com1.tar.gz") == "_Com1.tar.gz");
     CHECK(SafeDownloadName("lpt9") == "_lpt9");
-    CHECK(SafeDownloadName("console.txt") == "console.txt" && SafeDownloadName("com10") == "com10" && SafeDownloadName("COM0") == "COM0");
+    CHECK(SafeDownloadName("console.txt") == "console.txt" && SafeDownloadName("com10") == "com10" && SafeDownloadName("comx") == "comx");
+    // COM0 and LPT0 are reserved too, and so are COM and LPT with ¹ ² ³ (Microsoft's naming rules).
+    CHECK(SafeDownloadName("COM0") == "_COM0" && SafeDownloadName("lpt0.log") == "_lpt0.log");
+    CHECK(SafeDownloadName("COM\xC2\xB9") == "_COM\xC2\xB9" && SafeDownloadName("lpt\xC2\xB3.txt") == "_lpt\xC2\xB3.txt");
+    CHECK(SafeDownloadName("COM\xC2\xB4") == "COM\xC2\xB4");
+    // Spaces before the dot don't hide one: Windows reads "CON .txt" as CON.
+    CHECK(SafeDownloadName("CON .txt") == "_CON .txt" && SafeDownloadName("nul  .tar.gz") == "_nul  .tar.gz");
     // At most 255 UTF-16 units, the extension kept; a number added after still fits.
     const std::string longName = std::string(300, 'a') + ".pdf";
     CHECK(SafeDownloadName(longName) == std::string(251, 'a') + ".pdf");
@@ -545,6 +552,59 @@ TEST(downloadNamesAreSafeOnWindows) {
     const fs::path folder = "D:/Downloads";
     auto numbered = UniqueDownloadPath(longName, folder, [&](const fs::path& p) { return p == folder / (std::string(251, 'a') + ".pdf"); });
     CHECK(numbered && numbered->filename().u8string().size() == 255 && numbered->extension() == ".pdf");
+    // In a deep folder the name shortens to keep the path within MAX_PATH (259 units), as Chrome does.
+    const fs::path deep = fs::path("D:/") / std::string(200, 'd');
+    auto fitted = UniqueDownloadPath(std::string(100, 'n') + ".pdf", deep, [](const fs::path&) { return false; }, 259);
+    CHECK(fitted && fitted->u8string().size() == 259 && fitted->extension() == ".pdf");
+    auto fittedCopy = UniqueDownloadPath(std::string(100, 'n') + ".pdf", deep, [&](const fs::path& p) { return p == *fitted; }, 259);
+    CHECK(fittedCopy && fittedCopy->u8string().size() == 259 && fittedCopy->stem().u8string().ends_with(u8" 2"));
+    // Without a limit the name stays whole.
+    auto whole = UniqueDownloadPath(std::string(100, 'n') + ".pdf", deep, [](const fs::path&) { return false; });
+    CHECK(whole && whole->filename().u8string().size() == 104);
+}
+
+TEST(aBurstOfSameNameDownloadsGetsAPathEach) {
+    // Ten downloads of one name at once, each finding its name on its own thread (CEF's file
+    // thread pool) while none has a file on disk yet: every one gets a path of its own.
+    TempFolder folder;
+    DownloadReservations reservations;
+    std::vector<std::optional<fs::path>> paths(10);
+    std::vector<std::thread> threads;
+    std::atomic<int> ready{0};
+    for (size_t i = 0; i < paths.size(); ++i) {
+        threads.emplace_back([&, i] {
+            ++ready;
+            while (ready < 10) std::this_thread::yield();
+            paths[i] = reservations.Reserve("download-" + std::to_string(i), "same.bin", folder.dir, [](const fs::path& candidate) {
+                std::error_code error;
+                return fs::exists(candidate, error);
+            });
+        });
+    }
+    for (auto& thread : threads) thread.join();
+    std::set<std::u32string> unique;
+    for (const auto& path : paths) {
+        CHECK(path.has_value());
+        if (path) unique.insert(unicode::Folded(std::string(reinterpret_cast<const char*>(path->u8string().c_str()))));
+    }
+    CHECK(unique.size() == 10 && reservations.Count() == 10);
+    CHECK(reservations.Held(folder.dir / "same.bin") && reservations.Held(folder.dir / "same 10.bin"));
+    // Case doesn't make a second file on Windows: a held name is held in any case.
+    CHECK(reservations.Held(folder.dir / "SAME 3.BIN"));
+    CHECK(!reservations.Held(folder.dir / "same.bin", "download-" + std::to_string(std::distance(paths.begin(),
+        std::find(paths.begin(), paths.end(), std::optional<fs::path>(folder.dir / "same.bin"))))));
+    // A finished one gives its name back; asking again for the same download keeps nothing of its old one.
+    const std::string first = "download-0";
+    const fs::path firstPath = *paths[0];
+    reservations.Release(first);
+    CHECK(!reservations.Held(firstPath) && reservations.Count() == 9);
+    auto again = reservations.Reserve(first, "same.bin", folder.dir, [](const fs::path&) { return false; });
+    CHECK(again && *again == firstPath);
+    auto restarted = reservations.Reserve(first, "same.bin", folder.dir, [](const fs::path&) { return false; });
+    CHECK(restarted && *restarted == firstPath && reservations.Count() == 10);
+    // A name the disk has is never handed out, and the Save As path is held as the real one.
+    reservations.Hold(first, folder.dir / "elsewhere.bin");
+    CHECK(reservations.Held(folder.dir / "elsewhere.bin") && !reservations.Held(firstPath));
 }
 
 TEST(theDownloadFolderNeverLeavesATestProfile) {

@@ -396,10 +396,14 @@ under the name Chromium suggests made safe for Windows (`core/Downloads.h`'s
 `SafeDownloadName`: its last part, no drive or stream, no device names, no
 trailing dots or spaces, 255 UTF-16 units at most), numbered "name 2.ext" when
 the folder has one or another download holds it (names compared without
-case, 1000 tries at most); a profile set to Ask gets Chromium's Save As dialog
+case, 1000 tries at most), and shortened, as Chrome does, so the whole path
+stays within `MAX_PATH`; a profile set to Ask gets Chromium's Save As dialog
 there. The folder and the free name are found on CEF's file thread (a chosen
-folder can be a slow network share), then reserved and handed to Chromium on its
-UI thread; no lock is held while the disk is asked. A Chrome Web Store package
+folder can be a slow network share), where `core/Downloads.h`'s
+`DownloadReservations` finds and holds a name in one step, so a burst of
+same-name downloads gets a path each (ten at once, checked on the PC with
+`KITE_TEST_AUTOMATIC_DOWNLOADS`, since without a click Chromium allows a page
+one); no lock is held while the disk is asked. A Chrome Web Store package
 (its MIME type or a .crx name, from Google's extension hosts over https; the
 Mac takes the MIME type from any host) is cancelled and never listed: nothing on
 Windows installs extensions yet (W27a), where the Mac hands it to Chromium's
@@ -410,9 +414,14 @@ gone Chromium may stop reporting its downloads (it hands them to another page
 of the profile only if one is there as it goes: a page that starts a download
 and closes itself, run on the PC, went both ways). So a page with a download
 running isn't closed until it's done: the page cap and memory pressure skip it,
-a page Kite closes (its tab closed, unloaded, or another profile now) stays
-alive hidden, and a page that closes itself keeps its window, hidden, past
-`DoClose`; its tab goes as before. Closing the window closes them all. Chromium's reports reach
+and a page Kite closes (its tab closed, unloaded, or another profile now) or
+that closes itself (its window kept past `DoClose`) is parked: hidden, muted,
+moved to about:blank (its camera, microphone, sound and scripts go with the
+page; the download, the profile's, goes on: checked on the PC with
+`KITE_TEST_CLOSE_TAB_MS`, which closes a `--save-log` run's tab), and opening no
+popups or tabs. Its tab goes as before. It closes once its downloads are done,
+or have made no progress for 10 minutes (then they're cancelled); closing the
+window closes them all. Chromium's reports reach
 Kite's thread folded together, one per download per wake however often Chromium
 reports (about twice a second), and go through `core/DownloadsModel.h`'s rules:
 a finished download is final, an ended incognito session takes no more, and
@@ -443,7 +452,9 @@ never the user's. A finished download flashes the taskbar button while Kite is
 behind, the Mac's Dock bounce. `kitecore downloads` lists the file, `downloads
 apply` replays the engine's reports through the same rules, and `downloads
 location` shows and sets each profile's folder and Ask; kitecore never writes
-over a downloads.json item it can't read. Known differences: logging off or
+over a downloads.json item it can't read. Known differences: parking (the Mac
+removes a closed page's view and keeps no page for its downloads); a name that would make the path longer than
+`MAX_PATH` is shortened even where Windows' long paths are on; logging off or
 shutting down doesn't ask (Windows ends Kite there; its downloads read as
 interrupted next launch, as a download cut off by quitting does on the Mac; a
 follow-up: answer `WM_QUERYENDSESSION` with `ShutdownBlockReasonCreate`'s

@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -207,16 +209,45 @@ bool IsExtensionPackage(std::string_view mimeType, std::string_view suggestedNam
 // A file name that's safe in a Windows folder, from what a site suggests: its last path part
 // (no separators, no drive: "C:x" is "x"), each character Windows refuses in a name (< > : " |
 // ? * and controls, so no alternate data stream) as "_", without trailing dots and spaces, a
-// device name (CON, NUL, COM1, LPT9..., with an extension or not, any case) prefixed with "_",
-// and at most 255 UTF-16 units, the extension kept. "download" when nothing is left.
+// device name prefixed with "_" (CON, PRN, AUX, NUL, COM0-9, LPT0-9 and COM/LPT with ¹ ² ³, any
+// case, with an extension or not, spaces before the dot or not: "CON .txt" is CON), and at most
+// 255 UTF-16 units, the extension kept. "download" when nothing is left.
 std::string SafeDownloadName(std::string_view name);
 
 // KCBrowser.mm's UniqueDownloadURL: SafeDownloadName(name) in `directory`, or "name 2.ext",
 // "name 3.ext"... while `taken` says a path is used (a file there, or reserved by a download
 // still running, since Chromium creates the file only once data arrives). None after
-// kUniqueNameTries names (the Mac tries for ever).
+// kUniqueNameTries names (the Mac tries for ever). `maxPath`: the whole path's limit in UTF-16
+// units (Windows' MAX_PATH less its terminator, 259, where long paths aren't on), which a long
+// name in a deep folder is shortened to fit, as Chrome does; 0 for none.
 inline constexpr int kUniqueNameTries = 1000;
 std::optional<std::filesystem::path> UniqueDownloadPath(std::string_view name, const std::filesystem::path& directory,
-                                                        const std::function<bool(const std::filesystem::path&)>& taken);
+                                                        const std::function<bool(const std::filesystem::path&)>& taken,
+                                                        size_t maxPath = 0);
+
+// The paths given to downloads still running, so no two get one (KCBrowser.mm's LiveDownloads'
+// paths): Chromium creates a download's file only once data arrives, so a burst of same-name
+// downloads would all find the same name free on the disk. Reserve finds and holds a path in one
+// step, so two at once never get the same one. Paths compare as Windows' names do, without case
+// (Unicode case folding). Any thread.
+class DownloadReservations {
+public:
+    // A free path for `owner` (a download), held until Release: `name` made unique in `directory`
+    // against the disk (`exists`, asked without the lock held) and every path held. Its own
+    // earlier one doesn't count (Chromium asking again for a restarted download). None when no
+    // name is free (UniqueDownloadPath's bound).
+    std::optional<std::filesystem::path> Reserve(const std::string& owner, std::string_view name, const std::filesystem::path& directory,
+                                                 const std::function<bool(const std::filesystem::path&)>& exists, size_t maxPath = 0);
+    // Holds the path the download really uses (the Save As dialog may have moved it).
+    void Hold(const std::string& owner, const std::filesystem::path& path);
+    void Release(const std::string& owner);
+    // Whether someone other than `except` holds `path`.
+    bool Held(const std::filesystem::path& path, const std::string& except = {}) const;
+    size_t Count() const;
+
+private:
+    mutable std::mutex mutex_;
+    std::map<std::string, std::filesystem::path> held_;
+};
 
 }  // namespace kite

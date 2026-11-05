@@ -46,7 +46,8 @@
 // through the app's rules (core/DownloadsModel.h) onto that list, writes it, and prints what each
 // report did and when the app would save. `clear` drops the finished ones, `remove` one item.
 // `downloads location` prints a profile's download settings (default: every profile's) and the
-// folder its downloads go to; with a FOLDER it saves there, `ask` asks every time, `folder` stops
+// folder its downloads go to (`usesDownloadsFolder` for the user's Downloads, which Kite.exe looks
+// up); with a FOLDER (stored absolute) it saves there, `ask` asks every time, `folder` stops
 // asking, `downloads` goes back to the Downloads folder (Settings › Profiles › Download location).
 
 #include <algorithm>
@@ -83,9 +84,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#include <knownfolders.h>
 #include <shellapi.h>
-#include <shlobj.h>
 #endif
 
 using namespace kite;
@@ -271,22 +270,6 @@ json::Value BackupsSummary(const SessionBackups& backups) {
         rows.push_back(json::Value(std::move(o)));
     }
     return json::Value(json::Object{{"directory", PathUtf8(backups.Directory())}, {"backups", json::Value(std::move(rows))}});
-}
-
-// The user's Downloads folder, as Kite.exe finds it: FOLDERID_Downloads (wherever they moved
-// it), else %USERPROFILE%\Downloads; ~/Downloads off Windows.
-std::filesystem::path UserDownloads() {
-#ifdef _WIN32
-    PWSTR path = nullptr;
-    std::filesystem::path folder;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Downloads, KF_FLAG_DEFAULT, nullptr, &path)) && path) folder = path;
-    CoTaskMemFree(path);
-    if (!folder.empty()) return folder;
-    if (auto home = EnvironmentPath("USERPROFILE"); home && !home->empty()) return *home / "Downloads";
-#else
-    if (auto home = EnvironmentPath("HOME"); home && !home->empty()) return *home / "Downloads";
-#endif
-    return {};
 }
 
 json::Value DownloadsSummary(const DownloadList& list) {
@@ -516,10 +499,11 @@ int main(int argc, char** argv) {
     bool changed = false;
 
     if (command == "downloads" && args.size() >= 2 && args.size() <= 4) {
-        // Where a profile's downloads go, as a normal launch of Kite.exe on it resolves them: the
-        // same test-profile rule, the same Downloads folder.
+        // Where a profile's downloads go, as a normal launch of Kite.exe on it resolves them (the
+        // same test-profile rule). The user's Downloads folder itself is Kite.exe's to look up
+        // (the shell's known folders, outside kitecore's layer): it's named, not resolved, here.
         const std::filesystem::path defaultFolder = DefaultDownloadFolder(
-            EnvironmentPath("KITE_TEST_DOWNLOADS_PATH"), IsTestProfile(support, EnvironmentPath("LOCALAPPDATA")), false, support, UserDownloads());
+            EnvironmentPath("KITE_TEST_DOWNLOADS_PATH"), IsTestProfile(support, EnvironmentPath("LOCALAPPDATA")), false, support, {});
         std::vector<std::string> profiles{BrowserState::kDefaultProfile};
         if (auto list = state.extra.find("profiles"); list != state.extra.end() && list->second.AsArray()) {
             for (const auto& entry : *list->second.AsArray()) {
@@ -547,7 +531,7 @@ int main(int argc, char** argv) {
                     const std::filesystem::path chosen =
                         std::filesystem::absolute(std::filesystem::path(std::u8string(choice.begin(), choice.end())), error).lexically_normal();
                     std::error_code same;
-                    if (std::filesystem::equivalent(chosen, defaultFolder, same) && !same) settings.downloadDirectory.reset();
+                    if (!defaultFolder.empty() && std::filesystem::equivalent(chosen, defaultFolder, same) && !same) settings.downloadDirectory.reset();
                     else settings.downloadDirectory = PathUtf8(chosen);
                     settings.promptsForDownload = false;
                 }
@@ -565,8 +549,10 @@ int main(int argc, char** argv) {
             json::Object row{{"profile", directory},
                              {"name", state.ProfileName(directory)},
                              {"promptsForDownload", settings.promptsForDownload},
-                             {"includesSearchSuggestions", settings.includesSearchSuggestions},
-                             {"folder", PathUtf8(folder)}};
+                             {"includesSearchSuggestions", settings.includesSearchSuggestions}};
+            // A folder chosen or a test's own; else the user's Downloads folder, by name.
+            if (folder.empty()) row.emplace("usesDownloadsFolder", true);
+            else row.emplace("folder", PathUtf8(folder));
             if (settings.downloadDirectory) row.emplace("downloadDirectory", *settings.downloadDirectory);
             rows.push_back(json::Value(std::move(row)));
         }

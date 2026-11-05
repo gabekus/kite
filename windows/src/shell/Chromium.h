@@ -162,6 +162,13 @@ public:
     // Chromium's download reports so far, and how many reached Kite's thread (the rest were
     // folded into a later one): for the save log.
     std::pair<uint64_t, uint64_t> DownloadReports() const;
+    // Each page that was kept for its downloads after its tab closed, as it went: its address
+    // and whether it was muted (it's put on about:blank, muted, when it's kept). For the save log.
+    std::vector<std::pair<std::string, bool>> ParkedPages() const;
+    // A test profile's live check of a burst of downloads (--save-log with
+    // KITE_TEST_AUTOMATIC_DOWNLOADS): the default profile lets a page start many downloads with
+    // no click, which Chromium otherwise stops after the first.
+    void AllowAutomaticDownloads();
     // Runs what CEF's thread handed over. MainWindow::kWakeMessage calls it.
     void RunPending();
     // False when a page's Chromium widget window wasn't where Kite looks for it, so hidden

@@ -582,10 +582,15 @@ size_t Utf16Length(std::u32string_view points) {
     return n;
 }
 
+// Microsoft's reserved names (Naming Files, Paths, and Namespaces): CON, PRN, AUX, NUL, COM0-9,
+// LPT0-9, and COM and LPT with a superscript 1, 2 or 3.
 bool IsDeviceName(std::string_view base) {
     const std::string lower = AsciiLower(base);
     if (lower == "con" || lower == "prn" || lower == "aux" || lower == "nul" || lower == "conin$" || lower == "conout$") return true;
-    return lower.size() == 4 && (lower.starts_with("com") || lower.starts_with("lpt")) && lower[3] >= '1' && lower[3] <= '9';
+    if (!lower.starts_with("com") && !lower.starts_with("lpt")) return false;
+    const std::string_view number = std::string_view(lower).substr(3);
+    if (number.size() == 1) return number[0] >= '0' && number[0] <= '9';
+    return number == "\xC2\xB9" || number == "\xC2\xB2" || number == "\xC2\xB3";
 }
 
 }  // namespace
@@ -607,8 +612,11 @@ std::string SafeDownloadName(std::string_view name) {
     std::u32string text(points.begin(), points.end());
     if (text.empty() || text == U"..") return "download";
     // CON, NUL.txt, com1.tar.gz: the part before the first dot names a device.
+    // Windows reads the device in the part before the first dot, spaces at its end aside.
     const size_t firstDot = text.find(U'.');
-    const std::string stem = unicode::Encode(std::u32string_view(text).substr(0, firstDot));
+    std::u32string_view stemPoints = std::u32string_view(text).substr(0, firstDot);
+    while (!stemPoints.empty() && stemPoints.back() == U' ') stemPoints.remove_suffix(1);
+    const std::string stem = unicode::Encode(stemPoints);
     if (IsDeviceName(stem)) text.insert(text.begin(), U'_');
     // At most 255 UTF-16 units, the extension kept (or cut too when it's the long part).
     if (Utf16Length(text) > 255) {
@@ -624,23 +632,91 @@ std::string SafeDownloadName(std::string_view name) {
 }
 
 std::optional<std::filesystem::path> UniqueDownloadPath(std::string_view name, const std::filesystem::path& directory,
-                                                        const std::function<bool(const std::filesystem::path&)>& taken) {
+                                                        const std::function<bool(const std::filesystem::path&)>& taken, size_t maxPath) {
     const std::string file = SafeDownloadName(name);
     const auto [base, extension] = SplitExtension(file);
     const auto utf8 = [](const std::string& text) { return std::filesystem::path(std::u8string(text.begin(), text.end())); };
-    std::filesystem::path candidate = directory / utf8(file);
     const std::vector<char32_t> basePoints = unicode::Decode(base);
     const std::vector<char32_t> extensionPoints = unicode::Decode(extension);
     const std::u32string tail = extension.empty() ? std::u32string() : U"." + std::u32string(extensionPoints.begin(), extensionPoints.end());
+    // The name's room: 255 units, less what a deep folder leaves of maxPath (its separator too).
+    size_t room = 255;
+    if (maxPath > 0) {
+        const auto folder = directory.u8string();
+        const std::vector<char32_t> folderPoints = unicode::Decode(std::string_view(reinterpret_cast<const char*>(folder.data()), folder.size()));
+        const size_t folderUnits = Utf16Length(std::u32string_view(folderPoints.data(), folderPoints.size()));
+        room = folderUnits + 1 < maxPath ? std::min<size_t>(room, maxPath - folderUnits - 1) : 1;
+    }
+    // The base gives way to the number and the extension, keeping at least one character.
+    const auto fit = [&](const std::string& number) {
+        std::u32string kept(basePoints.begin(), basePoints.end());
+        while (kept.size() > 1 && Utf16Length(kept) + number.size() + Utf16Length(tail) > room) kept.pop_back();
+        while (kept.size() > 1 && (kept.back() == U' ' || kept.back() == U'.')) kept.pop_back();
+        return directory / utf8(unicode::Encode(kept) + number + unicode::Encode(tail));
+    };
+    std::filesystem::path candidate = fit("");
     for (int n = 2; taken(candidate); ++n) {
         if (n > kUniqueNameTries) return std::nullopt;
-        // The number goes before the extension; the base gives way so the name stays within 255 units.
-        const std::string number = " " + std::to_string(n);
-        std::u32string numbered(basePoints.begin(), basePoints.end());
-        while (!numbered.empty() && Utf16Length(numbered) + number.size() + Utf16Length(tail) > 255) numbered.pop_back();
-        candidate = directory / utf8(unicode::Encode(numbered) + number + unicode::Encode(tail));
+        // The number goes before the extension.
+        candidate = fit(" " + std::to_string(n));
     }
     return candidate;
+}
+
+namespace {
+
+// Windows' names don't care about case: compared by their Unicode case folding.
+std::u32string FoldedPath(const std::filesystem::path& path) {
+    const auto text = path.lexically_normal().u8string();
+    return unicode::Folded(std::string_view(reinterpret_cast<const char*>(text.data()), text.size()));
+}
+
+}  // namespace
+
+std::optional<std::filesystem::path> DownloadReservations::Reserve(const std::string& owner, std::string_view name,
+                                                                   const std::filesystem::path& directory,
+                                                                   const std::function<bool(const std::filesystem::path&)>& exists,
+                                                                   size_t maxPath) {
+    Release(owner);
+    // Each candidate: the disk first, without the lock; then, under it, held by someone else, or
+    // free and taken now. The first free one is the answer, and already held.
+    return UniqueDownloadPath(
+        name, directory,
+        [&](const std::filesystem::path& candidate) {
+            if (exists(candidate)) return true;
+            const std::u32string folded = FoldedPath(candidate);
+            std::lock_guard lock(mutex_);
+            for (const auto& [other, path] : held_) {
+                if (other != owner && FoldedPath(path) == folded) return true;
+            }
+            held_[owner] = candidate;
+            return false;
+        },
+        maxPath);
+}
+
+void DownloadReservations::Hold(const std::string& owner, const std::filesystem::path& path) {
+    std::lock_guard lock(mutex_);
+    held_[owner] = path;
+}
+
+void DownloadReservations::Release(const std::string& owner) {
+    std::lock_guard lock(mutex_);
+    held_.erase(owner);
+}
+
+bool DownloadReservations::Held(const std::filesystem::path& path, const std::string& except) const {
+    const std::u32string folded = FoldedPath(path);
+    std::lock_guard lock(mutex_);
+    for (const auto& [owner, held] : held_) {
+        if (owner != except && FoldedPath(held) == folded) return true;
+    }
+    return false;
+}
+
+size_t DownloadReservations::Count() const {
+    std::lock_guard lock(mutex_);
+    return held_.size();
 }
 
 }  // namespace kite
