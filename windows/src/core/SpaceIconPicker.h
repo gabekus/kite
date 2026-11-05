@@ -42,11 +42,14 @@ constexpr float kIconGridTop = 12;
 constexpr float kDividerThickness = 1;
 // AppKit's own controls and the popover's frame, which the Mac doesn't size itself: AppKit's
 // regular segmented control and rounded-border field, SF's trash at 14pt, NSPopover's arrow and
-// corners. Estimates until the UI gate measures the Mac's (review/w9e-mac-request).
+// corners. The UI gate (review/w9e-mac) measured the arrow: NSPopover's window is its content
+// plus 13pt on every side (298x294 for the Emoji tab's 272x268), its top at the arrow's tip, and
+// the tabs 25pt under it. The arrow's width and the corners aren't in the in-process capture.
 constexpr float kTabsHeight = 22;
 constexpr float kSearchHeight = 22;
+constexpr float kSearchBezelInset = 1;  // the rounded-border field draws its bezel 1pt in from its frame
 constexpr float kRemoveWidth = 15;
-constexpr float kArrowHeight = 11, kArrowWidth = 22;
+constexpr float kArrowHeight = 13, kArrowWidth = 22;
 constexpr float kCornerRadius = 10;
 // How far from the screen's edge AppKit keeps a popover.
 constexpr float kScreenMargin = 4;

@@ -582,7 +582,7 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
         for (const Theme& preset : Theme::Presets()) accents.push_back(Accent(preset));
         Pixels popover;
         POINT origin{};
-        problem = swatches_->Render(*heldSwatches_, window_.Dpi(), dark_.value_or(true), std::move(accents), popover, origin);
+        problem = swatches_->Render(*heldSwatches_, window_.Dpi(), PopoverDark(), std::move(accents), popover, origin);
         if (problem.empty()) ComposeOver(pixels, popover, origin);
     }
     if (problem.empty() && heldNewItemMenu_) {

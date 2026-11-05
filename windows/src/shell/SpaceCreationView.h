@@ -160,7 +160,7 @@ private:
     void DrawCreate(ID2D1DeviceContext* context);
     void DrawIllustration(ID2D1DeviceContext* context);
     void DrawDashedPlus(ID2D1DeviceContext* context, D2D1_POINT_2F centre, D2D1_COLOR_F color);
-    void Glyph(ID2D1DeviceContext* context, wchar_t glyph, float size, D2D1_POINT_2F centre, D2D1_COLOR_F color);
+    void Glyph(ID2D1DeviceContext* context, wchar_t glyph, float size, D2D1_POINT_2F centre, D2D1_COLOR_F color, bool bold = false);
     // `text` in `format` with its SwiftUI line box of `lineHeight` from `top` (several lines that far
     // apart), its baseline where SF Pro's is, left-aligned from `left` or centred in `box`.
     void DrawLabel(ID2D1DeviceContext* context, std::string_view text, IDWriteTextFormat* format, float lineHeight, const BarRect& box,
@@ -175,7 +175,7 @@ private:
     IDCompositionVisual* parent_ = nullptr;
 
     Microsoft::WRL::ComPtr<IDWriteTextFormat> titleFormat_, subtitleFormat_, rowFormat_, rowBoldFormat_, pillFormat_, cancelFormat_,
-        iconFormat_;
+        iconFormat_, iconBoldFormat_;
     std::wstring textFamily_;
 
     // GPU.

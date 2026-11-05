@@ -26,10 +26,13 @@ constexpr float kLabelAlpha = 0.85f;
 constexpr float kPressedOpacity = 0.5f;
 // The tabs' titles and Search: AppKit's regular controls' 13pt system font.
 constexpr float kTextSize = 13;
-// The grid's 22pt emoji as the space bar sets its 12.5pt one (SpaceBarView): Apple Color Emoji
-// inks 14.5pt where Segoe UI Emoji inks 12.75pt at 12.5, so it's set that much larger, and
-// centred on its ink.
-constexpr float kEmojiSize = P::kEmojiFontSize * 14.5f / 12.75f;
+// The grid's 22pt emoji: Apple Color Emoji inks 21pt there (the UI gate, review/w9e-mac: 21x21
+// against Segoe UI Emoji's 25x25 at the bar's factor), and Segoe UI Emoji inks its size, so it's
+// set at 21, centred on its ink.
+constexpr float kEmojiSize = P::kEmojiFontSize * 21.0f / 22.0f;
+// The category bar's and the bin's regular 14pt SF symbols ink 0.78 of what the painter's
+// briefcase factor (semibold) gives Segoe's (the UI gate: the lightbulb, heart, flag and trash).
+constexpr float kBarGlyphScale = 0.78f;
 // AppKit's controls as drawn here, until the UI gate measures the Mac's: the segmented control's
 // track and its selected segment's knob, the rounded-border field (its text 5pt in), and the
 // popover's own fill and edge, in each appearance.
@@ -407,8 +410,8 @@ void SpaceIconPickerView::PaintFrame(ID2D1DeviceContext* context) {
     if (layout_.remove) {
         const bool held = pressed_ && pressedInside_ && pressed_->target == IconPickerHit::Target::Remove;
         const PickerRect& bin = *layout_.remove;
-        PaintGlyph(context, RemoveIconGlyph(), D2D1::Point2F((bin.left + bin.right) / 2, (bin.top + bin.bottom) / 2), P::kBarSymbolSize,
-                   held ? kPressedOpacity : 1);
+        PaintGlyph(context, RemoveIconGlyph(), D2D1::Point2F((bin.left + bin.right) / 2, (bin.top + bin.bottom) / 2),
+                   P::kBarSymbolSize * kBarGlyphScale, held ? kPressedOpacity : 1);
     }
     if (state_->tab == IconPickerTab::Emoji) {
         PaintSearch(context);
@@ -451,7 +454,10 @@ void SpaceIconPickerView::PaintTabs(ID2D1DeviceContext* context) {
 
 void SpaceIconPickerView::PaintSearch(ID2D1DeviceContext* context) {
     const PickerRect& field = *layout_.search;
-    const D2D1_RECT_F box = ToD2D(field);
+    // The bezel 1pt in from the field's frame, as AppKit draws a rounded-border field.
+    const D2D1_RECT_F frame = ToD2D(field);
+    const D2D1_RECT_F box{frame.left + P::kSearchBezelInset, frame.top + P::kSearchBezelInset, frame.right - P::kSearchBezelInset,
+                          frame.bottom - P::kSearchBezelInset};
     const float shade = dark_ ? kDarkTextBackground : 1.0f;
     brush_->SetColor(D2D1_COLOR_F{shade, shade, shade, 1});
     context->FillRoundedRectangle(D2D1::RoundedRect(box, kFieldRadius, kFieldRadius), brush_.Get());
@@ -485,7 +491,7 @@ void SpaceIconPickerView::PaintCategories(ID2D1DeviceContext* context) {
         const bool held = pressed_ && pressedInside_ && pressed_->target == IconPickerHit::Target::Category && pressed_->index == i;
         const float alpha = (state_->category == i ? 1 : P::kCategoryDimmed) * (held ? kPressedOpacity : 1);
         PaintGlyph(context, categories[i].glyph, D2D1::Point2F((button.left + button.right) / 2, (button.top + button.bottom) / 2),
-                   P::kBarSymbolSize, alpha);
+                   P::kBarSymbolSize * kBarGlyphScale, alpha);
     }
 }
 
@@ -727,6 +733,10 @@ void SpaceIconPickerView::UpdateCaret() {
 
 std::wstring SpaceIconPickerView::Render(Pixels& out, POINT& origin) {
     if (!state_ || !compositor_) return L"the icon picker isn't open";
+    // At the owner's scale (a capture's), not the scale of the monitor the window went to, which
+    // Open reads after placing it: a 2x capture on a 1x monitor drew the picker at half size.
+    const UINT shownDpi = dpi_;
+    dpi_ = ownerDpi_;
     const float scale = Scale();
     const IconPickerPlacement placement = Placement(true);
     POINT client{0, 0};
@@ -747,6 +757,7 @@ std::wstring SpaceIconPickerView::Render(Pixels& out, POINT& origin) {
         error = compositor_->DrawSurface(perf::View::IconPicker, surface.Get(), width, height, dpi_, [this](ID2D1DeviceContext* context) { PaintAll(context); }, &out, hr);
     }
     placement_ = shown;
+    dpi_ = shownDpi;
     return error;
 }
 

@@ -354,7 +354,8 @@ TEST(thePopoverHangsUnderTheIcon) {
     const PickerRect screen{0, 0, 1920, 1040};
     // The header's icon in a window at (500, 50): its button 513...539 across, 137...163 down.
     IconPickerPlacement p = PlaceIconPicker(PickerRect{513, 137, 539, 163}, 272, 268, screen);
-    CHECK(p == (IconPickerPlacement{390, 163, 272, 279, 136}));
+    // Its height: the content and NSPopover's 13pt arrow (the UI gate).
+    CHECK(p == (IconPickerPlacement{390, 163, 272, 281, 136}));
     // Near the screen's left edge it moves right; the arrow stays on the icon.
     p = PlaceIconPicker(PickerRect{113, 137, 139, 163}, 272, 268, screen);
     CHECK(p.left == 4 && p.arrowX == 122);
@@ -362,7 +363,7 @@ TEST(thePopoverHangsUnderTheIcon) {
     CHECK(p.left == 4 && p.arrowX == 21);
     // And at the right edge, left.
     p = PlaceIconPicker(PickerRect{1897, 137, 1923, 163}, 272, 289, screen);
-    CHECK(p.left == 1644 && p.arrowX == 251 && p.height == 300);
+    CHECK(p.left == 1644 && p.arrowX == 251 && p.height == 302);
 }
 
 // The header's icon is a button (SidebarPassthroughButton): a press and release over it opens

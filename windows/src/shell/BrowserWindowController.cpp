@@ -1220,6 +1220,13 @@ void BrowserWindowController::Commit(const CommandSuggestion& row, CommandBarMod
 
 // MARK: Find in page
 
+bool BrowserWindowController::PopoverDark() const {
+    // NSPopover takes NSApp's appearance (Kite's Appearance setting, else the system's), not the
+    // sidebar's per-theme one: the UI gate's Mac picker and theme editor are dark over a light
+    // theme. The find bar's rule.
+    return FindBarDark();
+}
+
 bool BrowserWindowController::FindBarDark() const {
     const json::Value* appearance = nullptr;
     if (auto it = state_.extra.find("pageAppearance"); it != state_.extra.end()) appearance = &it->second;

@@ -21,8 +21,14 @@ namespace M = space_creation_metrics;
 
 // NSColor.labelColor: black or white at 85%; SwiftUI's .primary, which the page's text takes.
 constexpr float kLabelAlpha = 0.85f;
-// placeholderTextColor, as the rename field's.
+// placeholderTextColor, as the rename field's: the focused field's placeholder. A field without
+// the keyboard draws its placeholder at half the label's (the UI gate, review/w9f-mac: What's it
+// for? at 0.43 of white over its row, Space name… at 0.25 beside it while it's focused).
 constexpr float kPlaceholderOpacity = 0.25f;
+constexpr float kUnfocusedPlaceholderOpacity = 0.5f * 0.85f;
+// A disabled plain button: SwiftUI dims all of it to half again (the UI gate: Create Space's fill
+// at 0.25 of #2C4AFC and its title at about a quarter of white, not 0.5 and 0.45).
+constexpr float kDisabledButtonOpacity = 0.5f;
 // SF Pro's ascender and descender, of the size: where SwiftUI puts a line's baseline in its box.
 constexpr float kAscender = 0.952f, kDescender = 0.241f;
 // The caret and the selection, as the find field's (the Mac's insertion point and
@@ -90,7 +96,8 @@ std::unique_ptr<SpaceCreationView> SpaceCreationView::Create(HWND window, IDWrit
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kRowFontSize, view->rowBoldFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kPillFontSize, view->pillFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_MEDIUM, M::kCancelFontSize, view->cancelFormat_)) ||
-        FAILED(hr = format(icons, DWRITE_FONT_WEIGHT_REGULAR, kIconEm, view->iconFormat_))) {
+        FAILED(hr = format(icons, DWRITE_FONT_WEIGHT_REGULAR, kIconEm, view->iconFormat_)) ||
+        FAILED(hr = format(icons, DWRITE_FONT_WEIGHT_BOLD, kIconEm, view->iconBoldFormat_))) {
         error = HResultMessage(L"CreateTextFormat", hr);
         return nullptr;
     }
@@ -100,8 +107,10 @@ std::unique_ptr<SpaceCreationView> SpaceCreationView::Create(HWND window, IDWrit
         ComPtr<IDWriteTextFormat3> variable;
         if (SUCCEEDED(view->cancelFormat_->QueryInterface(IID_PPV_ARGS(variable.GetAddressOf())))) variable->SetFontAxisValues(&medium, 1);
     }
-    view->iconFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    view->iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    for (IDWriteTextFormat* icon : {view->iconFormat_.Get(), view->iconBoldFormat_.Get()}) {
+        icon->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        icon->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
     view->name_.SetFormat(dwrite, view->rowFormat_.Get(), Widen(M::kNamePlaceholder));
     view->about_.SetFormat(dwrite, view->rowFormat_.Get(), Widen(M::kAboutPlaceholder));
     view->Measure();
@@ -534,13 +543,13 @@ void SpaceCreationView::DrawLabel(ID2D1DeviceContext* context, std::string_view 
     context->DrawTextLayout(D2D1::Point2F(box.left, box.top), layout.Get(), brush_.Get(), D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
 }
 
-void SpaceCreationView::Glyph(ID2D1DeviceContext* context, wchar_t glyph, float size, D2D1_POINT_2F centre, D2D1_COLOR_F color) {
+void SpaceCreationView::Glyph(ID2D1DeviceContext* context, wchar_t glyph, float size, D2D1_POINT_2F centre, D2D1_COLOR_F color, bool bold) {
     D2D1_MATRIX_3X2_F base{};
     context->GetTransform(&base);
     const float scale = size / (kIconEm * kGlyphInk);
     context->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale) * D2D1::Matrix3x2F::Translation(centre.x, centre.y) * base);
     brush_->SetColor(color);
-    context->DrawText(&glyph, 1, iconFormat_.Get(), D2D1::RectF(-kIconEm, -kIconEm, kIconEm, kIconEm), brush_.Get(),
+    context->DrawText(&glyph, 1, (bold ? iconBoldFormat_ : iconFormat_).Get(), D2D1::RectF(-kIconEm, -kIconEm, kIconEm, kIconEm), brush_.Get(),
                       D2D1_DRAW_TEXT_OPTIONS_NONE);
     context->SetTransform(base);
 }
@@ -637,7 +646,9 @@ void SpaceCreationView::DrawPage(ID2D1DeviceContext* context) {
           Primary(kLabelAlpha * pillAlpha));
     Glyph(context, kInfoCircle, 14, D2D1::Point2F(profile.right - M::kRowTrailing - 7, mid(profile)), Primary(kLabelAlpha * 0.7f));
     // Choose a Theme.
-    Glyph(context, kPaintbrush, 14, D2D1::Point2F(iconX, mid(layout_.theme)), Primary(kLabelAlpha * 0.7f));
+    // SF's paintbrush.pointed.fill is filled; Segoe's brush is an outline, drawn bold (DirectWrite's
+    // simulation) for its weight (the UI gate: 23 against the Mac's 30-34).
+    Glyph(context, kPaintbrush, 14, D2D1::Point2F(iconX, mid(layout_.theme)), Primary(kLabelAlpha * 0.7f), true);
     DrawLabel(context, M::kThemeTitle, rowBoldFormat_.Get(), kRowLine, rowText(layout_.theme), false, Primary(kLabelAlpha));
     // Cancel, under Create Space (which draws in its own surface).
     DrawLabel(context, M::kCancelTitle, cancelFormat_.Get(), M::kCancelLineHeight, layout_.cancel, true,
@@ -648,12 +659,20 @@ void SpaceCreationView::DrawCreate(ID2D1DeviceContext* context) {
     // #2C4AFC, at half strength until there's a name; "Create Space" white, at 45% then.
     const float w = layout_.create.Width(), h = layout_.create.Height();
     const bool on = CanCreate();
+    // Disabled, the whole button at half again (SwiftUI's disabled plain button), as one layer.
+    ComPtr<ID2D1Layer> dimmed;
+    if (!on && SUCCEEDED(context->CreateLayer(nullptr, dimmed.GetAddressOf()))) {
+        context->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(),
+                                                 kDisabledButtonOpacity),
+                           dimmed.Get());
+    }
     brush_->SetColor(Srgb(M::kCreateColor, on ? 1 : M::kCreateDisabledOpacity));
     context->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(0, 0, w, h), M::kCornerRadius, M::kCornerRadius), brush_.Get());
     constexpr float kLine = 18;
     context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
     DrawLabel(context, M::kCreateTitle, rowBoldFormat_.Get(), kLine, BarRect{0, (h - kLine) / 2, w, (h + kLine) / 2}, true,
               D2D1_COLOR_F{1, 1, 1, on ? 1 : M::kCreateDisabledTextOpacity});
+    if (dimmed) context->PopLayer();
 }
 
 std::wstring SpaceCreationView::DrawField(Field field, Pixels* readBack) {
@@ -686,7 +705,10 @@ std::wstring SpaceCreationView::DrawField(Field field, Pixels* readBack) {
         const D2D1_COLOR_F selection = text.Focused() ? (model_.dark ? kDarkSelection : kLightSelection) : Primary(0.15f);
         std::wstring error = compositor_->DrawSurface(
             perf::View::Sidebar, gpu.surface.Get(), width, height, dpi_,
-            [&](ID2D1DeviceContext* context) { text.Draw(context, brush_.Get(), Primary(kLabelAlpha), Primary(kPlaceholderOpacity), selection); },
+            [&](ID2D1DeviceContext* context) {
+                text.Draw(context, brush_.Get(), Primary(kLabelAlpha), Primary(text.Focused() ? kPlaceholderOpacity : kUnfocusedPlaceholderOpacity),
+                          selection);
+            },
             readBack, hr);
         if (!error.empty()) {
             deviceLost_ = IsDeviceLost(hr);

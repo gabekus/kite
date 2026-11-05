@@ -842,6 +842,11 @@ draws nothing; nothing runs while it's idle but Search's caret blink, which Wind
 timeout ends; each emoji's text layout is made once, by the emoji, so a search reuses them. Its
 redraws' failures report a lost GPU, which rebuilds everything as the caption buttons' do. It
 lays out at its own monitor's scale (WM_DPICHANGED, and its window's DPI checked as it opens) and stays on the anchor's monitor.
+A capture draws it at the window's scale, whatever its monitor's. Like Choose a Theme's, it's in Kite's appearance (the
+Appearance setting, else Windows' apps' mode), as NSPopover takes NSApp's, not the space's theme's: the UI gate's Mac
+picker is dark over a light theme on a dark Mac. Its emoji ink 21pt in their 33.5pt cells, as Apple Color Emoji's 22pt
+do, the category bar's and the bin's symbols 0.78 of the bar's factor, and NSPopover's arrow is 13pt deep (all three
+measured in the UI gate, review/w9e-mac).
 Replacing a picture deletes its file on the UI thread, as the Mac does: one DeleteFile of a name
 core checked, an exception to the no-file-I/O rule (docs/windows-architecture.md) that only a
 Mac profile's picture icon can reach. Emoji are Segoe UI Emoji's colour glyphs at 22pt scaled as the bar's (Apple's
@@ -857,8 +862,10 @@ Known differences: the Image tab (a picture of your own: choose a file, drop one
 there, disabled, and a picture icon opens on Emoji: Windows has the pieces (the file dialog,
 WIC, the clipboard, OLE drops) but writing the picture belongs on a worker and a drop target on
 the window meets Chromium's, which want their own checkpoint. AppKit's segmented control, the
-rounded-border field, the popover's fill, edge, corners and arrow are drawn to estimates (no
-shadow, a straight-sided arrow) until the UI gate measures the Mac's; a held button dims to
+rounded-border field (its bezel 1pt in from its frame, as the gate measured), the popover's fill, edge, corners and
+the arrow's width are drawn to estimates (no shadow, a straight-sided arrow; the Mac's in-process capture draws its
+popover's material as a plain rectangle, so the gate couldn't measure them); the Icon tab's Segoe stand-ins ink
+within about 15% of SF's, glyph by glyph (no single factor fits); a held button dims to
 50% (SwiftUI's plain style dims; not measured); the categories' and the bin's tooltips aren't
 shown; there's no scroller (macOS shows an overlay one while scrolling); a press outside goes
 on to what it's over; the popover closes when the window moves, where NSPopover moves with it;
@@ -921,7 +928,8 @@ Known differences for W9f:
 - The + menu is a Win32 menu without the popover's icons.
 - Choose a Theme's popover holds only the theme editor's presets (its colour grid, intensity and
   grain come with the theme editor), in Arc's PopoverBackground colours with a thin edge and no
-  shadow, kept inside the monitor's work area. As it opens Kite's window takes the keyboard, so a
+  shadow, kept inside the monitor's work area, in Kite's appearance (not the space's, as NSPopover),
+  with NSPopover's 13pt arrow. Its swatches match the Mac's theme editor's row (the UI gate). As it opens Kite's window takes the keyboard, so a
   press in the page (its own window) closes it.
 - The profile pill changes the draft's profile only while the draft has no tabs (a tab opened in it
   with Ctrl+T); the Mac's moves the pages, which Windows can't yet, as the space menu's Set Profile.
@@ -933,6 +941,13 @@ Known differences for W9f:
   picker on a header no one sees).
 - The help tags (the about field's and the profile's info button) and the + button's tooltip
   aren't shown yet, and Undo New Space waits for undo (W16).
+- The UI gate (review/w9f-mac) set what the page measured: a disabled Create Space at half again
+  (SwiftUI's disabled plain button), a field without the keyboard showing its placeholder at half
+  the label's (the focused one's stays placeholderTextColor's), and Choose a Theme's brush bold for
+  the weight of SF's filled one. Still different: in a dark space the Mac's capture inks Profile's
+  face.smiling filled (its code asks for the outline, which it inks in a light space), and Windows'
+  stays the outline; Segoe UI's text runs about 5% narrower than SF Pro's at the same size (the
+  profile pill 6pt narrower with it), baselines where SF's are.
 
 ## Saving the session
 
