@@ -291,7 +291,8 @@ TEST(savedSessionHasTheMacEnvelope) {
     const json::Value& root = std::get<json::Value>(parsed);
     CHECK(root.Find("version") && root.Find("version")->AsInt() == 1);
     CHECK(root.Find("state") && root.Find("state")->Find("spaces"));
-    CHECK(!fs::exists(dir / "session.json.tmp"));
+    // No temp file is left beside it.
+    for (const auto& entry : fs::directory_iterator(dir)) CHECK(entry.path().extension() != ".tmp");
     fs::remove_all(dir);
 }
 

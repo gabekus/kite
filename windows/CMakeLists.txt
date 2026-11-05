@@ -41,7 +41,11 @@ add_library(KiteCoreWin STATIC
   src/core/KeyBindings.cpp
   src/core/Models.cpp
   src/core/OKLab.cpp
+  src/core/SessionBackups.cpp
+  src/core/SessionSaveDelay.cpp
   src/core/SessionStore.cpp
+  src/core/SessionWriter.cpp
+  src/core/StoreFile.cpp
   src/core/SpaceBar.cpp
   src/core/SpaceEditing.cpp
   src/core/SpaceIcon.cpp
@@ -63,6 +67,9 @@ add_library(KiteCoreWin STATIC
   src/core/Uuid.cpp
 )
 target_include_directories(KiteCoreWin PUBLIC src)
+# SessionWriter's worker is a std::thread (pthreads off Windows).
+find_package(Threads REQUIRED)
+target_link_libraries(KiteCoreWin PUBLIC Threads::Threads)
 
 # Headless model CLI (the behaviour gate in docs/helix.md).
 add_executable(kitecore src/cli/main.cpp)
@@ -121,6 +128,7 @@ if(WIN32)
     src/shell/FrameClock.cpp
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
+    src/shell/MemoryPressure.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarTopRowView.cpp
     src/shell/SidebarView.cpp
@@ -198,6 +206,7 @@ add_executable(KiteCoreTests
   tests/KeyBindingsTests.cpp
   tests/ModelTests.cpp
   tests/LiveTabPolicyTests.cpp
+  tests/SessionSaveTests.cpp
   tests/SidebarTests.cpp
   tests/SidebarTopRowTests.cpp
   tests/SpaceBarTests.cpp

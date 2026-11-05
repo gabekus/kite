@@ -60,21 +60,27 @@ Tab* BrowserWindowController::TabNamed(const std::string& id) {
 
 Chromium::StartResult BrowserWindowController::StartChromium(const std::filesystem::path& root, std::wstring& error) {
     PageEvents events;
+    // The Mac's mutatePage: a navigation saves as soon as a sidebar change, a title or favicon
+    // later (SessionSaveDelay::PageEvent); a report that changes nothing saves nothing.
     events.addressChanged = [this](const std::string& id, const std::string& url) {
-        if (Tab* tab = TabNamed(id); tab && !url.empty()) tab->url = url;
-        StateChanged();
+        Tab* tab = TabNamed(id);
+        const bool changed = tab && !url.empty() && tab->url != url;
+        if (changed) tab->url = url;
+        StateChanged(changed ? std::optional(SessionSaveDelay::Soon) : std::nullopt);
     };
     events.titleChanged = [this](const std::string& id, const std::string& title) {
         // An empty title keeps the last one, as the Mac's BrowserStore does.
-        if (Tab* tab = TabNamed(id); tab && !title.empty()) tab->title = title;
-        StateChanged();
+        Tab* tab = TabNamed(id);
+        const bool changed = tab && !title.empty() && tab->title != title;
+        if (changed) tab->title = title;
+        StateChanged(changed ? std::optional(SessionSaveDelay::PageEvent) : std::nullopt);
     };
     events.faviconChanged = [this](const std::string& id, const std::string& url) {
         Tab* tab = TabNamed(id);
         const std::optional<std::string> icon = url.empty() ? std::nullopt : std::optional<std::string>(url);
         if (!tab || tab->faviconURL == icon) return;
         tab->faviconURL = icon;
-        StateChanged();
+        StateChanged(SessionSaveDelay::PageEvent);
     };
     events.loadingChanged = [this](const std::string& id, bool loading, bool canGoBack, bool canGoForward) {
         // The Mac's navigationState: the top row shows the selected tab's.

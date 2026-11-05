@@ -184,9 +184,17 @@ As on the Mac, at most six pages stay alive (W5b): past that, showing a tab
 closes the least recently shown page, unless it's tied to a popup, using the
 camera or microphone, or playing sound (asked of the page with the Mac's
 script through DevTools' `Runtime.evaluate`). Its tab stays and loads again
-when it's next shown. Ctrl-click and middle-click open a link in a background tab,
-Ctrl+Shift-click in a foreground one (a `target=_blank` link opens as a popup
-tab either way, as on the Mac). The first page is made once the window is on
+when it's next shown. When memory runs low (W11, the Mac's
+`watchMemoryPressure`) every page but the shown one goes the same way:
+Windows' low-memory resource notification, waited on by the thread pool with
+no thread or timer of Kite's, reports it once per spell of low memory
+(`shell/MemoryPressure.h`). It comes late, by default at about 32 MB free per
+4 GB of memory (64 MB at most), where the Mac's warning level comes well
+before, and Windows has no earlier signal to wait on. The window checks it again
+as it handles the report, so a dip that's already over closes nothing. Ctrl-click and
+middle-click open a link in a background tab, Ctrl+Shift-click in a
+foreground one (a `target=_blank` link opens as a popup tab either way, as on
+the Mac). The first page is made once the window is on
 screen and not minimized. `--smoke-test` loads
 `windows/helix/pages/smoke.html` in CI and fails unless one `WM_CLOSE`
 closes every browser in time. Not yet: the card's 6pt corners (a child window can't be clipped
@@ -549,6 +557,39 @@ to the capture's) and puts its bottom-left on the cell's centre, and `--rename-s
 space N's name field drawn as with the keyboard (a quiet capture's window never has it).
 
 
+
+## Saving the session
+
+As on the Mac (`BrowserStore.scheduleSave`, `SessionSaveDelay`), the session is
+saved as it changes (W11): a second after the last sidebar change or
+navigation, ten seconds after a page's title or favicon (which never push a
+waiting save back), and at once when the window closes or Windows ends the
+session. Each change arms one one-shot timer; when it fires, Kite's UI thread
+copies the session (`kitecore save-bench`: a 58–93 μs median for 200 tabs) and
+hands the copy to `core/SessionWriter`, whose thread encodes it, skips the
+write if the bytes are what it last wrote, and writes it atomically
+(`core/StoreFile`: a sibling `.tmp` flushed to the disk, then renamed over the
+file; each write has a temp of its own, so two writers never share one). Kite
+waits for the last write once the window is gone, before Chromium shuts down
+(so a launch meanwhile hands over to it rather than read a file about to be
+replaced; with the window gone, that launch is dropped, and the user launches
+again), 10 s at most; logoff and shutdown wait in the window, 3 s at most.
+Giving up is safe, since the file is then the old one or the new one; a write
+still stuck then ends the process (`TerminateProcess`, exit 4) rather than let
+the C++ library tear down under the writer's thread. The writer also keeps
+the Mac's rolling backups in `Backups\` (`core/SessionBackups`, the same names
+and budgets): the session as found at each launch (not a second launch that
+hands over to the running Kite), and at most one an hour while Kite runs,
+offered after every save as on the Mac, and on each 15-minute auto-archive
+pass, which on the Mac always saves. An unreadable `session.json` is moved aside
+and the newest backup that reads takes its place; the Mac says so in a toast,
+Windows (no toasts yet) only to the debugger and a quiet run's stderr.
+`kitecore backups` lists them; `kitecore save-schedule` replays changes
+through the timer's rules; `kitecore save-bench` measures a save, in a temp
+folder of its own. `Kite.exe --save-log` is the live check: a quiet window that
+logs each save and its UI-thread cost. Not yet: the Mac's `syncPinnedURLs` in
+its page-event path (a pinned tab that had no page adopting the first address
+it reports), which comes with pinning.
 
 ## Refresh rate
 

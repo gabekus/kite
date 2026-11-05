@@ -133,6 +133,10 @@ public:
     // Whether the window may close now. The first call starts closing every browser and
     // returns false (unless there are none); WM_CLOSE comes again as each one is ready.
     bool MayCloseWindow();
+    // Memory is low (the Mac's watchMemoryPressure): every page but the shown one closes,
+    // unless it's playing sound, using the camera or microphone, tied to a popup, or shown
+    // again before it answers. Their tabs stay and load again when next shown (pageDiscarded).
+    void DiscardHiddenPages();
     // Runs what CEF's thread handed over. MainWindow::kWakeMessage calls it.
     void RunPending();
     // False when a page's Chromium widget window wasn't where Kite looks for it, so hidden
