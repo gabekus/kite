@@ -174,7 +174,10 @@ void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark) {
         placed_ = false;
     }
     // A slide that's under way keeps its animation unless the spaces changed under it.
-    if (reshaped) slide_.reset();
+    if (reshaped) {
+        slide_.reset();
+        follow_.reset();
+    }
     if (relit) opacitiesApplied_ = false;
 }
 
@@ -196,6 +199,7 @@ void SpaceBarView::Layout(float width, UINT dpi) {
 void SpaceBarView::Slide(const std::vector<CubicSegment>& segments, double duration, double from, double to, double pageWidth,
                          const std::vector<size_t>& built, size_t selected) {
     slide_ = Relight{segments, duration, from, to, pageWidth, built, selected};
+    follow_.reset();
     if (segments.empty() || duration <= 0) slide_.reset();
     opacitiesApplied_ = false;
     // The cells' new light comes with the strip's commit.
@@ -208,9 +212,31 @@ void SpaceBarView::InvalidatePictures(const std::set<std::string>& names) {
     }
 }
 
-void SpaceBarView::Land() {
-    if (!slide_) return;
+void SpaceBarView::Follow(double offset, double pageWidth, const std::vector<size_t>& built, size_t selected) {
+    if (offset == 0) return Land();
+    if (!slide_ && follow_ && follow_->offset == offset && follow_->pageWidth == pageWidth && follow_->selected == selected &&
+        follow_->built == built) {
+        return;
+    }
     slide_.reset();
+    // In place: a swipe's frames reuse the indices' storage.
+    if (!follow_) follow_.emplace();
+    follow_->offset = offset;
+    follow_->pageWidth = pageWidth;
+    follow_->built.assign(built.begin(), built.end());
+    follow_->selected = selected;
+    opacitiesApplied_ = false;
+}
+
+double SpaceBarView::LitAtRest(size_t index) const {
+    if (!follow_) return cells_[index].lit;
+    return SpaceSwipe::Highlight(index, follow_->selected, follow_->built, follow_->offset, follow_->pageWidth);
+}
+
+void SpaceBarView::Land() {
+    if (!slide_ && !follow_) return;
+    slide_.reset();
+    follow_.reset();
     // Applied by the next draw, so a commit carries it.
     opacitiesApplied_ = false;
 }
@@ -512,7 +538,7 @@ void SpaceBarView::ApplyOpacities() {
             }
         }
         if (!animated) {
-            const CellOpacity rest = CellOpacityAt(cell.Dot(), cell.lit);
+            const CellOpacity rest = CellOpacityAt(cell.Dot(), LitAtRest(i));
             gpu.lit.effect->SetOpacity(static_cast<float>(rest.lit));
             if (gpu.grey.effect) gpu.grey.effect->SetOpacity(static_cast<float>(rest.grey));
         }
@@ -587,8 +613,8 @@ std::wstring SpaceBarView::Draw(UINT clientHeight, Pixels* readBack) {
     if (!opacitiesApplied_) ApplyOpacities();
 
     if (readBack) {
-        // At rest, as the screen shows it: the bar, then the backing and each cell's layers at
-        // their opacity inside the strip's viewport.
+        // At rest (or held by a swipe), as the screen shows it: the bar, then the backing and
+        // each cell's layers at their opacity inside the strip's viewport.
         *readBack = barPixels_;
         const BarRect& view = layout_.viewport;
         const RECT clip{std::lround(view.left * scale), std::lround(view.top * scale), std::lround(view.right * scale),
@@ -604,7 +630,7 @@ std::wstring SpaceBarView::Draw(UINT clientHeight, Pixels* readBack) {
         }
         for (size_t i = 0; i < cellGpu_.size() && i < cells_.size(); ++i) {
             const POINT at{std::lround(layout_.cells[i].left * scale), std::lround(layout_.cells[i].top * scale)};
-            const CellOpacity opacity = CellOpacityAt(cells_[i].Dot(), cells_[i].lit);
+            const CellOpacity opacity = CellOpacityAt(cells_[i].Dot(), LitAtRest(i));
             if (!cells_[i].Dot()) ComposeOver(*readBack, cellGpu_[i].grey.pixels, at, static_cast<float>(opacity.grey), &clip);
             ComposeOver(*readBack, cellGpu_[i].lit.pixels, at, static_cast<float>(opacity.lit), &clip);
         }
