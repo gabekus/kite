@@ -93,8 +93,9 @@ private:
     ShapePoint current_;
 };
 
-// For tests: the bounds of the added layers' figures (a cut that trims an edge isn't counted),
-// whether (x, y) is inked, and the inked area in square points (exact along rows `step` apart).
+// The bounds of the added layers' figures (a cut that trims an edge isn't counted), which the
+// header's placement centres. For tests: whether (x, y) is inked, and the inked area in square
+// points (exact along rows `step` apart).
 ShapeBounds BoundsOf(const SymbolShape& shape);
 bool Covers(const SymbolShape& shape, float x, float y);
 float InkedArea(const SymbolShape& shape, float step = 0.02f);
@@ -116,9 +117,10 @@ inline constexpr float kHeaderSymbolSize = 15.0f;
 // Mac's header renders (as the Mac's own SymbolOrigins are): its ink box's middle goes there.
 // Any other size scales the bar's placement.
 struct ShapePlacement {
+    const SymbolShape* shape = nullptr;
     float scale = 1, dx = 0, dy = 0;
 };
-// None for a name that isn't drawn.
+// The shape and where it goes; none for a name that isn't drawn.
 std::optional<ShapePlacement> PlaceDrawnSymbol(std::string_view name, float size);
 
 }  // namespace kite

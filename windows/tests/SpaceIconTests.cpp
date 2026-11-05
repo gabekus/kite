@@ -91,7 +91,7 @@ TEST(everySymbolTheIconTabOffersHasAPrivateUseGlyphForBothFonts) {
     }
     CHECK(drawn == DrawnSymbols());
     CHECK(SymbolGlyphFor("pawprint.fill") == (SymbolGlyph{0, 0, true}));
-    CHECK(SymbolGlyphFor("briefcase") == (SymbolGlyph{u'', u'', true}));
+    CHECK(SymbolGlyphFor("briefcase") == (SymbolGlyph{u'\uE821', u'\uE821', true}));
     CHECK(SymbolGlyphFor("star.fill") == (SymbolGlyph{u'\uE735', u'\uE735'}));
 }
 

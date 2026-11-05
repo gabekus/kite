@@ -333,9 +333,10 @@ box in the bar, centred within 0.15pt. Known differences: details differ (the
 bed's headboard, the bandage's pad marked by two cuts and four holes, the
 baseball's seams and stitches, the masks' faces); the header's shapes are the
 bar's scaled, where the Mac's symbol is redrawn at 15pt, so four (paw, dumbbell,
-baseball, masks) ink a header box half a point wider or taller than the Mac's; and the masks reach past the header's 26pt slot as
-the Mac's do (only their width was measured from the bar, the slot's capture
-clips them, so their header place across is the bar's scaled). If a shape's
+baseball, masks) ink a header box half a point wider or taller than the Mac's;
+and the masks reach past the header's 26pt slot as the Mac's do (only their
+width was measured from the bar, the slot's capture clips them, so their header
+place across is the bar's scaled). If a shape's
 geometry can't be made, Kite logs it and draws nothing for that symbol, except
 the briefcase, which falls back to its glyph.
 

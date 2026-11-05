@@ -288,8 +288,10 @@ foreach(icon "image:x.png" "image:a/b.png" "symbol:not.a.symbol" "symbol:star.fi
     set(wantHead "symbol")
     string(JSON cellGlyph GET "${out}" spaceBar cells 1 glyph fluent)
     string(JSON headGlyph GET "${out}" rows 0 glyph fluent)
+    string(JSON cellMdl2 GET "${out}" spaceBar cells 1 glyph mdl2)
     string(JSON headMdl2 GET "${out}" rows 0 glyph mdl2)
-    if(NOT cellGlyph STREQUAL "E735" OR NOT headGlyph STREQUAL "E735" OR NOT headMdl2 STREQUAL "E735")
+    if(NOT cellGlyph STREQUAL "E735" OR NOT headGlyph STREQUAL "E735" OR NOT cellMdl2 STREQUAL "E735"
+       OR NOT headMdl2 STREQUAL "E735")
       message(FATAL_ERROR "Work's glyph symbol gave ${out}")
     endif()
   else()

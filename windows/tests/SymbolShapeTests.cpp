@@ -160,7 +160,8 @@ TEST(eachDrawnSymbolInksTheMacsBoxInTheHeader) {
         const auto place = PlaceDrawnSymbol(m.name, kHeaderSymbolSize);
         CHECK(place && Near(place->scale, 1.2f, 1e-6f));
         if (!place) continue;
-        const ShapeBounds b = BoundsOf(*SymbolShapeFor(m.name));
+        CHECK(place->shape == SymbolShapeFor(m.name));
+        const ShapeBounds b = BoundsOf(*place->shape);
         const float left = b.left * place->scale + place->dx, right = b.right * place->scale + place->dx;
         const float top = b.top * place->scale + place->dy, bottom = b.bottom * place->scale + place->dy;
         const bool across = m.left == m.right || (Near(left, m.left, 0.35f) && Near(right, m.right, 0.35f));

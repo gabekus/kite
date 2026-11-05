@@ -528,12 +528,13 @@ SymbolShape TheaterMasks() {
 SymbolShape Briefcase() {
     // The test sessions' Work icon: a case in outline with a handle, a straight band across its
     // middle and a tab on the band, every part one 1.35 stroke (the Mac's weight): box
-    // -7.5..7.0 x -6.0..6.5, centred on the box's middle (-0.25).
+    // -7.5..7.0 x -6.0..6.5 (the Mac's), so its middle is 0.25 left of the cell's centre and the
+    // handle and the tab are centred on that.
     constexpr float kStroke = 1.35f, left = -7.5f, right = 7.0f, top = -3.5f, bottom = 6.5f;
-    constexpr float mid = (left + right) / 2;
+    constexpr float handleTop = -6.0f, mid = (left + right) / 2;
     ShapeBuilder b;
-    b.RoundRect(mid - 3.0f, -6.0f, mid + 3.0f, top + kStroke, 1.5f);
-    b.Cut().RoundRect(mid - 3.0f + kStroke, -6.0f + kStroke, mid + 3.0f - kStroke, top + 2 * kStroke, 0.15f);
+    b.RoundRect(mid - 3.0f, handleTop, mid + 3.0f, top + kStroke, 1.5f);
+    b.Cut().RoundRect(mid - 3.0f + kStroke, handleTop + kStroke, mid + 3.0f - kStroke, top + 2 * kStroke, 0.15f);
     b.Add().RoundRect(left, top, right, bottom, 1.75f);
     b.Cut().RoundRect(left + kStroke, top + kStroke, right - kStroke, bottom - kStroke, 1.75f - kStroke);
     b.Add().RoundRect(left, 0, right, kStroke, 0);
@@ -571,7 +572,7 @@ const SymbolShape* SymbolShapeFor(std::string_view name) {
 std::optional<ShapePlacement> PlaceDrawnSymbol(std::string_view name, float size) {
     for (const DrawnSymbol& d : Drawn()) {
         if (d.name != name) continue;
-        ShapePlacement placement{size / kSymbolShapeSize, 0, 0};
+        ShapePlacement placement{&d.shape, size / kSymbolShapeSize, 0, 0};
         if (size == kHeaderSymbolSize) {
             const ShapeBounds& b = d.bounds;
             placement.dx = d.header.x - placement.scale * (b.left + b.right) / 2;

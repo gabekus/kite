@@ -455,9 +455,8 @@ void SpaceIconPainter::Draw(ID2D1DeviceContext* context, ID2D1SolidColorBrush* b
     if (look.kind == SpaceIconLook::Kind::Symbol) {
         if (look.glyph && look.glyph->drawn) {
             // Kite's own shape, placed for `size` about `centre` (core's PlaceDrawnSymbol).
-            const SymbolShape* shape = SymbolShapeFor(look.text);
             const auto placement = PlaceDrawnSymbol(look.text, size);
-            if (ID2D1Geometry* geometry = shape && placement ? ShapeGeometry(*shape) : nullptr) {
+            if (ID2D1Geometry* geometry = placement ? ShapeGeometry(*placement->shape) : nullptr) {
                 D2D1_MATRIX_3X2_F transform{};
                 context->GetTransform(&transform);
                 context->SetTransform(D2D1::Matrix3x2F::Scale(placement->scale, placement->scale) *
