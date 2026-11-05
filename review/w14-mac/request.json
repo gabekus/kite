@@ -1,0 +1,48 @@
+{
+  "id": "w14",
+  "title": "W14 Mac references: folders, renamed tabs, a drifted pinned tab, unpinning",
+  "about": "Pinned tabs, folders and renaming in the sidebar (SidebarListCells.swift's TabRowCell, FolderRowCell and RenameField) for helix/W14-pin-rename. Kite for Mac from origin/main: W14 changes no Mac code. The sessions are windows/helix/states on origin/helix/W14-pin-rename; every page is on example.com/.org/.net/.edu, which serve no favicon, so every row shows the globe on both sides (Windows captures without --favicons). The selected tab's page loads on the Mac; its title is Example Domain, as the session says. States that need a row in rename or a hovered row can't be reached with the allowed steps: each lists the hook it would need.",
+  "base": "origin/main",
+  "window_size": [1280, 820],
+  "session": {"ref": "origin/helix/W14-pin-rename", "path": "windows/helix/states/folders.json"},
+  "tree_match": "RowCell",
+  "expect_frames": [],
+  "states": [
+    {
+      "name": "folders",
+      "holds": "pinned: Example Domain, then Reading open (folder icon, semibold name) holding Example Domain and Elsewhere one level in and Old articles closed (folder.fill), then Recipes closed; the divider, New Tab, and the selected Example Domain in Today. Folders show their chevron only on hover, so none here"
+    },
+    {
+      "name": "renamed-tab",
+      "holds": "pinned Team inbox (example.org renamed; its page title Example Domain doesn't show) and Example Domain; Today: Docs (example.com renamed, selected: its page loads and titles itself Example Domain, and the row still says Docs) and Elsewhere",
+      "session": {"ref": "origin/helix/W14-pin-rename", "path": "windows/helix/states/renamed-tab.json"}
+    },
+    {
+      "name": "drifted",
+      "holds": "pinned: Example Domain (example.org, selected) and Elsewhere (pinned at example.com/, now on example.com/elsewhere); at rest a drifted pinned tab looks like any other (Back to Pinned URL shows only on hover); Today: Example Domain",
+      "session": {"ref": "origin/helix/W14-pin-rename", "path": "windows/helix/states/drifted-pinned.json"}
+    },
+    {
+      "name": "unpinned",
+      "holds": "drifted-pinned.json after Pin Tab (⌘D) on its selected pinned tab: Elsewhere alone in pinned; Today: Example Domain (example.org, selected, now on top of Today) then Example Domain (example.net). The same session Windows makes with --run-command pinTab (kitecore tab pin writes exactly this file)",
+      "session": {"ref": "origin/helix/W14-pin-rename", "path": "windows/helix/states/drifted-unpinned.json"}
+    },
+    {
+      "name": "drifted-hover",
+      "holds": "drifted-pinned.json with the pointer resting on Elsewhere's row: the hover pill, the close button (xmark) at the pill's end and Back to Pinned URL (arrow.uturn.backward) left of it",
+      "session": {"ref": "origin/helix/W14-pin-rename", "path": "windows/helix/states/drifted-pinned.json"},
+      "skip": "needs the pointer resting on a TabRowCell, and kite ui input has no plain move (a click or drag start must land on SAFE_TARGETS, which has no row). Smallest Mac hook: a {\"move\": [x, y]} input in kite ui input (UIInputSender posting one mouseMoved to the test window, no click, no real pointer), allowed by this script; the move would be [120, 257.5] (the row's middle under the favorites' empty state)"
+    },
+    {
+      "name": "tab-rename",
+      "holds": "renamed-tab.json with Docs being renamed (Rename Current Tab…, or a double-click on its row): the RenameField over the title, Docs all selected, in the field editor over textBackgroundColor, no close button",
+      "session": {"ref": "origin/helix/W14-pin-rename", "path": "windows/helix/states/renamed-tab.json"},
+      "skip": "needs a double-click on a TabRowCell (count 2 is refused, and the row isn't in SAFE_TARGETS) or Rename Current Tab… from the command bar (Return can't be sent). Smallest Mac hook: KITE_TEST_RENAME=<tab or folder id>, read once the window is up, calling store.beginRenaming(tab:) or beginRenaming(folder:) for that id (no menu, no key, no pointer), classified flag-like (an id) in HOOKS"
+    },
+    {
+      "name": "folder-rename",
+      "holds": "folders.json with Reading being renamed (its menu's Rename…): the RenameField in the folder's 14pt semibold, Reading all selected, no placeholder",
+      "skip": "needs the folder's context menu (FolderRowCell isn't in SAFE_TARGETS, even with KITE_TEST_CONTEXT_MENU). The same KITE_TEST_RENAME hook as tab-rename would reach it, with Reading's id A1B2C3D4-0002-4A00-8000-00000000F001"
+    }
+  ]
+}
