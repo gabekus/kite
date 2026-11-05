@@ -197,10 +197,16 @@ std::wstring BrowserWindowController::Init() {
     // Change Space Icon…'s popover, a window of its own over the browser window's.
     SpaceIconPickerView::Callbacks picker;
     picker.pick = [this](const std::string& spaceID, const std::string& icon) { PickIcon(spaceID, icon); };
-    picker.closed = [this](const std::string&) { sidebar_->SetIconPickerSpace(std::nullopt); };
+    // The header's placeholder goes with it, unless it's already another picker's (a new one
+    // closes the old one as it opens).
+    picker.closed = [this](const std::string& spaceID) {
+        if (sidebar_->IconPickerSpace() == spaceID && pendingIconPicker_ != spaceID) sidebar_->SetIconPickerSpace(std::nullopt);
+    };
     iconPicker_ = SpaceIconPickerView::Create(window_.Handle(), sidebar_->DWrite(), sidebar_->Painter(), std::move(picker), options_.capture, error);
     if (!iconPicker_) return L"Kite couldn't make the icon picker: " + error;
     iconPicker_->UseCompositor(compositor_.get());
+    // One of its own redraws found the GPU gone: rebuild and draw everything (it closes).
+    iconPicker_->onDeviceLost = [this] { Draw(); };
     // A hover's redraw found the GPU gone: rebuild and draw everything.
     caption_->onDeviceLost = [this] { Draw(); };
 
@@ -592,8 +598,8 @@ void BrowserWindowController::SaveNow() {
 void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save) {
     // The icon picker hangs from its space's header: it closes once that space isn't the one
     // shown (another selected, or it was deleted), as the header it hangs from goes.
-    if (const std::optional<std::string> picking = iconPicker_ ? iconPicker_->SpaceID() : std::nullopt;
-        picking && *picking != state_.selectedSpaceID) {
+    if (const std::optional<std::string> picking = iconPicker_ ? iconPicker_->SpaceID() : pendingIconPicker_;
+        (picking && *picking != state_.selectedSpaceID) || (pendingIconPicker_ && *pendingIconPicker_ != state_.selectedSpaceID)) {
         CloseIconPicker();
     }
     // A rename ends once its space isn't the one shown (another selected, or it was deleted),
@@ -953,7 +959,8 @@ std::wstring BrowserWindowController::DrawAt(double time, Pixels* readBack) {
     const UINT width = static_cast<UINT>(client.right), height = static_cast<UINT>(client.bottom);
     std::wstring problem;
     for (int attempt = 0; attempt < 2; ++attempt) {
-        if (!compositor_ || compositor_->DeviceLost() || sidebar_->DeviceLost() || caption_->DeviceLost()) {
+        if (!compositor_ || compositor_->DeviceLost() || sidebar_->DeviceLost() || caption_->DeviceLost() ||
+            (iconPicker_ && iconPicker_->DeviceLost())) {
             if (problem = Rebuild(); !problem.empty()) break;
         }
         problem = compositor_->Draw(
@@ -1068,6 +1075,8 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         // Still the space shown (the Mac's iconPickerRequest == spaceID).
         if (const std::optional<std::string> id = std::exchange(pendingIconPicker_, std::nullopt); id && *id == state_.selectedSpaceID) {
             ShowIconPicker(*id);
+        } else if (!iconPicker_->IsOpen()) {
+            sidebar_->SetIconPickerSpace(std::nullopt);
         }
         return true;
     }

@@ -11,6 +11,10 @@
 // file with Python's unicodedata (Unicode 14.0) and a split of the catalog's strings by hand.
 
 #include <algorithm>
+#include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <sstream>
 #include <optional>
 #include <string>
 #include <vector>
@@ -298,15 +302,16 @@ TEST(aCategoryScrollsToItsFirstEmoji) {
 // The wheel scrolls the emoji grid within its rows; Search keeps the scroll where it still fits.
 TEST(theEmojiGridScrollsWithinItsRows) {
     IconPickerState state;
-    ScrollIconPicker(state, -10);
+    ScrollIconPicker(state, -10, 1101);
     CHECK(state.scroll == 0);
-    ScrollIconPicker(state, 100);
+    ScrollIconPicker(state, 100, 1101);
     CHECK(state.scroll == 100);
-    ScrollIconPicker(state, 100000);
+    ScrollIconPicker(state, 100000, 1101);
     CHECK(state.scroll == IconPickerMaxScroll(1101));
-    SetIconPickerQuery(state, "flag");  // 12: two rows, no scroll
+    // Search gives the grid's cells back: 12 flags, two rows, no scroll.
+    CHECK(SetIconPickerQuery(state, "flag").size() == 12);
     CHECK(state.scroll == 0 && state.query == "flag");
-    SetIconPickerQuery(state, "");
+    CHECK(SetIconPickerQuery(state, "").size() == 1101);
     CHECK(state.scroll == 0);
     state.scroll = 300;
     SetIconPickerQuery(state, "a");
@@ -314,7 +319,7 @@ TEST(theEmojiGridScrollsWithinItsRows) {
     // The Icon tab doesn't scroll.
     state.tab = IconPickerTab::Icon;
     state.scroll = 0;
-    ScrollIconPicker(state, 50);
+    ScrollIconPicker(state, 50, 56);
     CHECK(state.scroll == 0);
 }
 
@@ -385,4 +390,83 @@ TEST(theHeadersIconOpensThePicker) {
     // No icon: the slot is the name's, and the header's body.
     const auto bare = SidebarRows(state, 1);
     CHECK(SidebarHitTest(bare, 240, 800, 0, 20, 95) == (SidebarHit{T::Row, 0}));
+}
+
+// A right-click on the header's icon opens the space's menu, as one on the rest of the header
+// does: the icon button passes it on to its cell (SidebarListCells' rightMouseDown,
+// SpaceHeaderRowCell.contextMenu(at:)). Nothing else in the list has the space's menu.
+TEST(aRightClickOnTheHeadersIconOpensTheSpacesMenu) {
+    using T = SidebarHit::Target;
+    BrowserState state = TwoSpaces("\xF0\x9F\x9A\x80");
+    const std::string id = state.spaces[0].id;
+    const auto rows = SidebarRows(state, 0);
+    CHECK(HeaderMenuSpace(rows, SidebarHitTest(rows, 240, 800, 0, 20, 95)) == std::optional<std::string>(id));  // the icon
+    CHECK(HeaderMenuSpace(rows, SidebarHitTest(rows, 240, 800, 0, 100, 95)) == std::optional<std::string>(id));  // the name
+    CHECK(!HeaderMenuSpace(rows, SidebarHit{}));
+    CHECK(!HeaderMenuSpace(rows, SidebarHit{T::HeaderIcon, 7}));
+    CHECK(!HeaderMenuSpace(rows, SidebarHit{T::AddressField, 0}));
+    // A tab's row: not the space's menu.
+    state.OpenTab("https://example.com", id, false);
+    const auto withTab = SidebarRows(state, 0);
+    for (size_t i = 0; i < withTab.size(); ++i) {
+        if (withTab[i].kind == SidebarRow::Kind::Tab) CHECK(!HeaderMenuSpace(withTab, SidebarHit{T::Row, i}));
+    }
+}
+
+namespace {
+
+// The string literals in `text` from `from` on, between `open` and the next `"`.
+std::string Between(const std::string& text, size_t& at, const std::string& open) {
+    const size_t start = text.find(open, at);
+    if (start == std::string::npos) {
+        at = std::string::npos;
+        return {};
+    }
+    const size_t end = text.find('"', start + open.size());
+    at = end;
+    return text.substr(start + open.size(), end - start - open.size());
+}
+
+}  // namespace
+
+// The catalog is generated from the Mac's file (windows/scripts/gen-emoji-catalog.py); this reads
+// that file again, so a change on the Mac without the generator run again fails here, on any OS.
+// And the Icon tab's symbols, which core keeps by hand, against EmojiCatalog.symbols.
+TEST(theCatalogMatchesTheMacsSourceFile) {
+    std::ifstream file(KITE_MAC_PICKER_SOURCE, std::ios::binary);
+    CHECK(file.good());
+    if (!file) return;
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    const std::string swift = buffer.str();
+    size_t at = 0;
+    size_t i = 0;
+    while (true) {
+        const std::string name = Between(swift, at, "Category(name: \"");
+        if (at == std::string::npos) break;
+        const std::string symbol = Between(swift, at, "symbol: \"");
+        const std::string emoji = Between(swift, at, "emoji: chars(\"");
+        CHECK(i < EmojiCategories().size());
+        if (i >= EmojiCategories().size()) break;
+        const EmojiCategory& category = EmojiCategories()[i++];
+        CHECK(category.name == name);
+        CHECK(category.symbol == symbol);
+        std::string joined;
+        for (const std::string& e : category.emoji) joined += e;
+        CHECK(joined == emoji);
+    }
+    CHECK(i == EmojiCategories().size());
+    // static let symbols: [String] = [ "star.fill", ... ]
+    size_t list = swift.find("static let symbols: [String] = [");
+    CHECK(list != std::string::npos);
+    if (list == std::string::npos) return;
+    const size_t close = swift.find(']', swift.find('[', list + 30) + 1);
+    std::vector<std::string> names;
+    for (size_t q = swift.find('"', list); q != std::string::npos && q < close; q = swift.find('"', q + 1)) {
+        const size_t e = swift.find('"', q + 1);
+        names.push_back(swift.substr(q + 1, e - q - 1));
+        q = e;
+    }
+    std::vector<std::string> ours(IconTabSymbols().begin(), IconTabSymbols().end());
+    CHECK(names == ours);
 }

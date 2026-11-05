@@ -181,12 +181,25 @@ LRESULT SpaceIconPickerView::Handle(UINT message, WPARAM wParam, LPARAM lParam) 
         // The press goes without acting (the mouse was taken away).
         selecting_ = false;
         if (pressed_) {
-            pressed_.reset();
+            // Drawn undimmed again (its part, while the press still says which), then dropped.
+            pressedInside_ = false;
             PressChanged();
+            pressed_.reset();
         }
         return 0;
     case WM_MOUSEWHEEL:
         HandleWheel(wParam, lParam);
+        return 0;
+    case WM_DPICHANGED:
+        // Shown on a monitor of another scale: laid out, drawn and placed again at its scale.
+        if (state_ && HIWORD(wParam) != dpi_) {
+            dpi_ = HIWORD(wParam);
+            Relayout();
+            frameDirty_ = true;
+            rowsDrawn_.clear();
+            RedrawOrReport();
+            if (state_) PlaceWindow();
+        }
         return 0;
     default: break;
     }
@@ -207,6 +220,7 @@ void SpaceIconPickerView::UseCompositor(Compositor* compositor) {
     brush_.Reset();
     frameWidth_ = frameHeight_ = gridWidth_ = gridHeight_ = 0;
     rowsDrawn_.clear();
+    gridAttached_ = false;
     compositor_ = compositor;
     deviceLost_ = false;
 }
@@ -214,6 +228,13 @@ void SpaceIconPickerView::UseCompositor(Compositor* compositor) {
 std::wstring SpaceIconPickerView::Fail(const wchar_t* what, HRESULT hr) {
     deviceLost_ = IsDeviceLost(hr);
     return HResultMessage(what, hr);
+}
+
+void SpaceIconPickerView::RedrawOrReport() {
+    const std::wstring problem = Redraw();
+    if (problem.empty()) return;
+    OutputDebugStringW((L"Kite: the icon picker couldn't draw: " + problem + L"\n").c_str());
+    if (deviceLost_ && onDeviceLost) onDeviceLost();
 }
 
 bool SpaceIconPickerView::MakeTree(HRESULT& hr) {
@@ -244,7 +265,7 @@ std::wstring SpaceIconPickerView::Open(IconPickerState state, const std::string&
     state_ = std::move(state);
     icon_ = icon;
     anchor_ = anchor;
-    dpi_ = dpi;
+    ownerDpi_ = dpi_ = dpi;
     dark_ = dark;
     search_.Edit().SetText(Widen(state_->query), Widen(state_->query).size(), Widen(state_->query).size());
     search_.Relayout();
@@ -281,6 +302,7 @@ void SpaceIconPickerView::Close() {
     gridSurface_.Reset();
     frameWidth_ = frameHeight_ = gridWidth_ = gridHeight_ = 0;
     rowsDrawn_.clear();
+    cellTexts_.clear();
     if (callbacks_.closed) callbacks_.closed(spaceID);
 }
 
@@ -292,7 +314,7 @@ void SpaceIconPickerView::SpaceChanged(const std::string& icon) {
     // The bin came or went: the tabs' row lays out again.
     Relayout();
     frameDirty_ = true;
-    if (std::wstring problem = Redraw(); !problem.empty()) OutputDebugStringW((L"Kite: the icon picker couldn't draw: " + problem + L"\n").c_str());
+    RedrawOrReport();
 }
 
 void SpaceIconPickerView::Relayout() {
@@ -301,26 +323,36 @@ void SpaceIconPickerView::Relayout() {
     layout_ = LayOutIconPicker(state_->tab, !icon_.empty());
     cells_ = IconPickerCells(*state_);
     // Other cells: the grid's rows draw again (its surface is made again at its new height).
-    if (cells_ != before) rowsDrawn_.clear();
+    if (cells_ != before) {
+        rowsDrawn_.clear();
+        cellTexts_.assign(cells_.size(), std::nullopt);
+    }
     placement_ = Placement(keepInOwner_);
     if (layout_.search) search_.SetVisibleWidth(layout_.search->Width() - 2 * kFieldTextInset);
     search_.KeepCaretVisible();
 }
 
 IconPickerPlacement SpaceIconPickerView::Placement(bool inOwner) const {
-    const float scale = Scale();
+    // The anchor in screen px (the owner's points at its scale), then everything in this
+    // window's points (its monitor's scale, which WM_DPICHANGED keeps).
+    const float scale = Scale(), ownerScale = static_cast<float>(ownerDpi_) / USER_DEFAULT_SCREEN_DPI;
     POINT origin{0, 0};
     ClientToScreen(owner_, &origin);
-    const float ox = static_cast<float>(origin.x) / scale, oy = static_cast<float>(origin.y) / scale;
-    const PickerRect anchor{anchor_.left + ox, anchor_.top + oy, anchor_.right + ox, anchor_.bottom + oy};
+    const auto screenX = [&](float x) { return (static_cast<float>(origin.x) + x * ownerScale) / scale; };
+    const auto screenY = [&](float y) { return (static_cast<float>(origin.y) + y * ownerScale) / scale; };
+    const PickerRect anchor{screenX(anchor_.left), screenY(anchor_.top), screenX(anchor_.right), screenY(anchor_.bottom)};
     PickerRect bounds;
     if (inOwner) {
         RECT client{};
         GetClientRect(owner_, &client);
-        bounds = PickerRect{ox, oy, ox + static_cast<float>(client.right) / scale, oy + static_cast<float>(client.bottom) / scale};
+        bounds = PickerRect{static_cast<float>(origin.x) / scale, static_cast<float>(origin.y) / scale,
+                            static_cast<float>(origin.x + client.right) / scale, static_cast<float>(origin.y + client.bottom) / scale};
     } else {
+        // The screen the anchor is on (AppKit keeps a popover on its positioning view's screen).
         MONITORINFO monitor{sizeof(monitor)};
-        GetMonitorInfoW(MonitorFromWindow(owner_, MONITOR_DEFAULTTONEAREST), &monitor);
+        const POINT at{std::lround(static_cast<float>(origin.x) + (anchor_.left + anchor_.right) / 2 * ownerScale),
+                       std::lround(static_cast<float>(origin.y) + anchor_.bottom * ownerScale)};
+        GetMonitorInfoW(MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST), &monitor);
         const RECT& work = monitor.rcWork;
         bounds = PickerRect{static_cast<float>(work.left) / scale, static_cast<float>(work.top) / scale, static_cast<float>(work.right) / scale,
                             static_cast<float>(work.bottom) / scale};
@@ -349,8 +381,8 @@ std::optional<POINT> SpaceIconPickerView::CellCentre(size_t index) {
         // Scrolled so its row shows, as far as it has to.
         const float top = static_cast<float>(index / layout_.columns) * P::kRowPitch;
         const float scroll = state_->scroll;
-        if (top < scroll) ScrollIconPicker(*state_, top - scroll);
-        else if (top + P::kRowPitch > scroll + layout_.grid.Height()) ScrollIconPicker(*state_, top + P::kRowPitch - layout_.grid.Height() - scroll);
+        if (top < scroll) ScrollIconPicker(*state_, top - scroll, cells_.size());
+        else if (top + P::kRowPitch > scroll + layout_.grid.Height()) ScrollIconPicker(*state_, top + P::kRowPitch - layout_.grid.Height() - scroll, cells_.size());
         if (state_->scroll != scroll) Scrolled();
     }
     const PickerRect frame = IconPickerCellFrame(layout_, index, state_->tab == IconPickerTab::Emoji ? state_->scroll : 0);
@@ -515,25 +547,35 @@ void SpaceIconPickerView::PaintEmoji(ID2D1DeviceContext* context, size_t first, 
             const size_t index = row * layout_.columns + column;
             if (index >= cells_.size()) return;
             const PickerRect frame = IconPickerCellFrame(layout_, index, layout_.grid.top);  // the grid's own points
-            const std::wstring emoji = Widen(cells_[index]);
-            ComPtr<IDWriteTextLayout> layout;
-            if (FAILED(dwrite_->CreateTextLayout(emoji.c_str(), static_cast<UINT32>(emoji.size()), emojiFormat_.Get(), frame.Width(), frame.Height(),
-                                                 layout.GetAddressOf()))) {
-                continue;
+            if (cellTexts_.size() != cells_.size()) cellTexts_.assign(cells_.size(), std::nullopt);
+            std::optional<CellText>& text = cellTexts_[index];
+            if (!text) {
+                const std::wstring emoji = Widen(cells_[index]);
+                CellText made;
+                if (FAILED(dwrite_->CreateTextLayout(emoji.c_str(), static_cast<UINT32>(emoji.size()), emojiFormat_.Get(), frame.Width(),
+                                                     frame.Height(), made.layout.GetAddressOf()))) {
+                    continue;
+                }
+                // Its ink in the middle of the cell, as the bar centres its emoji.
+                DWRITE_OVERHANG_METRICS overhang{};
+                if (SUCCEEDED(made.layout->GetOverhangMetrics(&overhang))) {
+                    made.x = frame.Width() / 2 - (frame.Width() + overhang.right - overhang.left) / 2;
+                    made.y = frame.Height() / 2 - (frame.Height() + overhang.bottom - overhang.top) / 2;
+                }
+                text = std::move(made);
             }
-            // Its ink in the middle of the cell, as the bar centres its emoji.
-            DWRITE_OVERHANG_METRICS overhang{};
-            float x = frame.left, y = frame.top;
-            if (SUCCEEDED(layout->GetOverhangMetrics(&overhang))) {
-                x += frame.Width() / 2 - (frame.Width() + overhang.right - overhang.left) / 2;
-                y += frame.Height() / 2 - (frame.Height() + overhang.bottom - overhang.top) / 2;
-            }
+            IDWriteTextLayout* layout = text->layout.Get();
+            const float x = frame.left + text->x, y = frame.top + text->y;
             const bool held = pressed_ && pressedInside_ && pressed_->target == IconPickerHit::Target::Cell && pressed_->index == index;
             // A colour glyph ignores the brush's alpha: a held one fades in a layer.
             if (held) context->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
                                                                 D2D1::IdentityMatrix(), kPressedOpacity),
                                          nullptr);
-            context->DrawTextLayout(D2D1::Point2F(x, y), layout.Get(), brush_.Get(), D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+            // Clipped to its frame: a glyph wider than the cell (a flag Segoe draws as its two
+            // letters) never reaches into its neighbours.
+            context->PushAxisAlignedClip(D2D1::RectF(frame.left, frame.top, frame.right, frame.bottom), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            context->DrawTextLayout(D2D1::Point2F(x, y), layout, brush_.Get(), D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+            context->PopAxisAlignedClip();
             if (held) context->PopLayer();
         }
     }
@@ -610,7 +652,8 @@ std::wstring SpaceIconPickerView::Redraw() {
 std::wstring SpaceIconPickerView::DrawGridRows(HRESULT& hr) {
     hr = S_OK;
     if (state_->tab != IconPickerTab::Emoji) {
-        if (gridClip_) root_->RemoveVisual(gridClip_.Get());
+        if (gridAttached_) root_->RemoveVisual(gridClip_.Get());
+        gridAttached_ = false;
         gridPart_.reset();
         return {};
     }
@@ -694,9 +737,8 @@ void SpaceIconPickerView::PlaceGrid() {
     gridClip_->SetOffsetY(top);
     gridClip_->SetClip(D2D1::RectF(0, 0, static_cast<float>(frameWidth_), std::round(layout_.grid.Height() * scale)));
     grid_->SetOffsetY(-std::round(state_->scroll * scale));
-    // Over the frame, under the caret.
-    root_->RemoveVisual(gridClip_.Get());
-    root_->AddVisual(gridClip_.Get(), TRUE, frame_.Get());
+    // Over the frame, under the caret, once.
+    if (!gridAttached_) gridAttached_ = SUCCEEDED(root_->AddVisual(gridClip_.Get(), TRUE, frame_.Get()));
 }
 
 void SpaceIconPickerView::UpdateCaret() {
@@ -802,7 +844,7 @@ void SpaceIconPickerView::Release(D2D1_POINT_2F p) {
 
 void SpaceIconPickerView::PressChanged() {
     if (!state_ || !pressed_) {
-        if (state_) Redraw();
+        if (state_) RedrawOrReport();
         return;
     }
     const float scale = Scale();
@@ -821,7 +863,7 @@ void SpaceIconPickerView::PressChanged() {
     case IconPickerHit::Target::Search:
     case IconPickerHit::Target::None: break;
     }
-    if (std::wstring problem = Redraw(); !problem.empty()) OutputDebugStringW((L"Kite: the icon picker couldn't draw: " + problem + L"\n").c_str());
+    RedrawOrReport();
 }
 
 void SpaceIconPickerView::SetTab(IconPickerTab tab) {
@@ -830,7 +872,7 @@ void SpaceIconPickerView::SetTab(IconPickerTab tab) {
     search_.RestartBlink(focused_ && state_->tab == IconPickerTab::Emoji);
     Relayout();
     frameDirty_ = true;
-    if (std::wstring problem = Redraw(); !problem.empty()) OutputDebugStringW((L"Kite: the icon picker couldn't draw: " + problem + L"\n").c_str());
+    RedrawOrReport();
 }
 
 void SpaceIconPickerView::SetCategory(size_t category) {
@@ -844,7 +886,7 @@ void SpaceIconPickerView::SetCategory(size_t category) {
     }
     Relayout();
     frameDirty_ = true;  // the bar's light and the field
-    if (std::wstring problem = Redraw(); !problem.empty()) OutputDebugStringW((L"Kite: the icon picker couldn't draw: " + problem + L"\n").c_str());
+    RedrawOrReport();
 }
 
 void SpaceIconPickerView::QueryEdited(TextEditing::Change change) {
@@ -864,26 +906,17 @@ void SpaceIconPickerView::QueryEdited(TextEditing::Change change) {
         frameParts_.push_back(RECT{std::lround(std::floor(r.left * scale)), std::lround(std::floor((r.top + P::kArrowHeight) * scale)),
                                    std::lround(std::ceil(r.right * scale)), std::lround(std::ceil((r.bottom + P::kArrowHeight) * scale))});
     }
-    if (std::wstring problem = Redraw(); !problem.empty()) OutputDebugStringW((L"Kite: the icon picker couldn't draw: " + problem + L"\n").c_str());
+    RedrawOrReport();
 }
 
 void SpaceIconPickerView::Scrolled() {
-    if (std::wstring problem = Redraw(); !problem.empty()) OutputDebugStringW((L"Kite: the icon picker couldn't draw: " + problem + L"\n").c_str());
+    RedrawOrReport();
 }
 
 void SpaceIconPickerView::Pick(const std::string& icon) {
     if (!state_ || !callbacks_.pick) return;
     const std::string spaceID = state_->spaceID;
     callbacks_.pick(spaceID, icon);
-}
-
-void SpaceIconPickerView::Type(std::string_view text) {
-    if (!state_ || state_->tab != IconPickerTab::Emoji) return;
-    TextEditing::Change change = TextEditing::Change::None;
-    for (const wchar_t c : Widen(text)) {
-        if (search_.Edit().Character(c) == TextEditing::Change::Text) change = TextEditing::Change::Text;
-    }
-    QueryEdited(change);
 }
 
 bool SpaceIconPickerView::HandleKey(UINT message, WPARAM wParam, LPARAM) {
@@ -943,7 +976,8 @@ bool SpaceIconPickerView::HandleKey(UINT message, WPARAM wParam, LPARAM) {
 bool SpaceIconPickerView::HandleTimer(WPARAM timer) {
     if (!search_.HandleTimer(timer)) return false;
     UpdateCaret();
-    if (compositor_) compositor_->Commit();
+    if (compositor_ && IsDeviceLost(compositor_->Commit())) deviceLost_ = true;
+    if (deviceLost_ && onDeviceLost) onDeviceLost();
     return true;
 }
 
@@ -960,7 +994,7 @@ bool SpaceIconPickerView::HandleWheel(WPARAM wParam, LPARAM lParam) {
         SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
         const float notches = -static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
         const float before = state_->scroll;
-        ScrollIconPicker(*state_, notches * kWheelLine * static_cast<float>(lines == WHEEL_PAGESCROLL ? 3 : lines));
+        ScrollIconPicker(*state_, notches * kWheelLine * static_cast<float>(lines == WHEEL_PAGESCROLL ? 3 : lines), cells_.size());
         if (state_->scroll != before) Scrolled();
     }
     return true;  // over the picker, whatever it hit: not the sidebar's

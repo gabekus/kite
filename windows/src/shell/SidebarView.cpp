@@ -1466,9 +1466,8 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         std::optional<std::string> space;
         if (const auto b = BarPoint(p)) {
             space = bar_->SpaceAt(b->x, b->y);
-        } else if (const SidebarHit hit = HitAt(p); hit.target == SidebarHit::Target::Row && hit.row < model_.rows.size() &&
-                                                  model_.rows[hit.row].kind == SidebarRow::Kind::Header) {
-            space = model_.rows[hit.row].id;
+        } else {
+            space = HeaderMenuSpace(model_.rows, HitAt(p));
         }
         if (!space || !actions_.spaceMenu) return true;
         HideTip();

@@ -153,6 +153,7 @@ public:
     // The icon picker open for a space (SpaceHeaderRowCell's pickerOpen): its header keeps the
     // icon's slot, a dashed square where an icon-less space has none, for the picker to hang from.
     void SetIconPickerSpace(const std::optional<std::string>& spaceID);
+    const std::optional<std::string>& IconPickerSpace() const { return pickerSpace_; }
     // Where the selected space's header icon is, in the window's client points (at rest: the
     // strip's offset left out), when `spaceID` is that space; kept below the address field when
     // the list is scrolled past it.

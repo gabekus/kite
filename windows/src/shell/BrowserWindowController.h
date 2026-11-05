@@ -144,9 +144,10 @@ public:
     // (a quiet capture's window never has it).
     std::wstring HoldRename(size_t index, const std::optional<std::string>& text, bool focused = false);
     // For a capture: Change Space Icon…'s picker open for space `index` (from 0, selected first)
-    // on `tab`, chosen with a click on its segment; with `cell`, that cell clicked (its icon
-    // set) and the picker closed with Escape.
-    std::wstring HoldIconPicker(size_t index, IconPickerTab tab, std::optional<size_t> cell = std::nullopt);
+    // on `tab`, chosen with a click on its segment, and on the Emoji tab `category` chosen in the
+    // bar; with `cell`, that cell clicked (its icon set) and the picker closed with Escape.
+    std::wstring HoldIconPicker(size_t index, IconPickerTab tab, std::optional<size_t> cell = std::nullopt,
+                                std::optional<size_t> category = std::nullopt);
     // For a capture: what Capture composes over the frame next, space `index`'s menu opened
     // over its cell in the bar (Windows' own menu, read back as it shows).
     void HoldSpaceMenu(size_t index) { heldMenu_ = index; }

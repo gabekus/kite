@@ -80,8 +80,6 @@ public:
     bool HandleTimer(WPARAM timer);
     // The wheel over it, as the owner got it (screen coordinates): true when it was over the picker.
     bool HandleWheel(WPARAM wParam, LPARAM lParam);
-    // Types into Search as the keyboard would (the smoke test, a capture).
-    void Type(std::string_view text);
 
     // For the tests: the popover's window, where content point (x, y) is in its client px,
     // the grid's cell `index` there (scrolled into view first), and its surfaces' draws so far.
@@ -97,6 +95,9 @@ public:
     std::wstring Render(Pixels& out, POINT& origin);
 
     bool DeviceLost() const { return deviceLost_; }
+    // A redraw of its own (a press, a key, the wheel, the caret) found the GPU gone: the owner
+    // rebuilds (and the picker closes with the old device).
+    std::function<void()> onDeviceLost;
     // The caret's blink (the owner's timer, a view's: 0x4B42–0x4B48 are taken).
     static constexpr UINT_PTR kCaretTimer = 0x4B49;
 
@@ -123,6 +124,8 @@ private:
     void PlaceGrid();
     void UpdateCaret();
     std::wstring Fail(const wchar_t* what, HRESULT hr);
+    // Redraws, and reports a failure: logged, and a lost GPU to onDeviceLost.
+    void RedrawOrReport();
 
     // The drawing, in the window's points (the frame's top-left at the origin).
     void PaintFrame(ID2D1DeviceContext* context);
@@ -167,13 +170,22 @@ private:
     CaretVisual caret_;
     UINT frameWidth_ = 0, frameHeight_ = 0, gridWidth_ = 0, gridHeight_ = 0;
     std::vector<bool> rowsDrawn_;
+    bool gridAttached_ = false;  // the grid's clip is in the tree (the Emoji tab)
     bool deviceLost_ = false;
+    // Each emoji cell's layout and where it draws in its frame (its ink centred), made once per
+    // cell while the cells stay the same.
+    struct CellText {
+        Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+        float x = 0, y = 0;
+    };
+    std::vector<std::optional<CellText>> cellTexts_;
 
     // What's open.
     std::optional<IconPickerState> state_;
     std::string icon_;
-    PickerRect anchor_;
-    UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
+    PickerRect anchor_;  // the owner's client points, at ownerDpi_
+    UINT ownerDpi_ = USER_DEFAULT_SCREEN_DPI;
+    UINT dpi_ = USER_DEFAULT_SCREEN_DPI;  // its own monitor's (WM_DPICHANGED)
     bool dark_ = true;
     IconPickerLayout layout_;
     IconPickerPlacement placement_;

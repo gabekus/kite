@@ -1,3 +1,5 @@
+// See SpaceIconPicker.h.
+
 #include "core/SpaceIconPicker.h"
 
 #include <algorithm>
@@ -271,9 +273,11 @@ void SelectIconPickerTab(IconPickerState& state, IconPickerTab tab) {
     state.scroll = 0;
 }
 
-void SetIconPickerQuery(IconPickerState& state, std::string query) {
+std::vector<std::string> SetIconPickerQuery(IconPickerState& state, std::string query) {
     state.query = std::move(query);
-    state.scroll = std::clamp(state.scroll, 0.0f, IconPickerMaxScroll(EmojiMatching(state.query).size()));
+    std::vector<std::string> cells = EmojiMatching(state.query);
+    state.scroll = std::clamp(state.scroll, 0.0f, IconPickerMaxScroll(cells.size()));
+    return cells;
 }
 
 void SelectIconPickerCategory(IconPickerState& state, size_t category) {
@@ -292,9 +296,9 @@ void SelectIconPickerCategory(IconPickerState& state, size_t category) {
     state.scroll = std::clamp(state.scroll, 0.0f, IconPickerMaxScroll(all.size()));
 }
 
-void ScrollIconPicker(IconPickerState& state, float distance) {
+void ScrollIconPicker(IconPickerState& state, float distance, size_t cells) {
     if (state.tab != IconPickerTab::Emoji) return;
-    state.scroll = std::clamp(state.scroll + distance, 0.0f, IconPickerMaxScroll(EmojiMatching(state.query).size()));
+    state.scroll = std::clamp(state.scroll + distance, 0.0f, IconPickerMaxScroll(cells));
 }
 
 std::optional<std::string> PictureToDiscard(const std::string& oldIcon, const std::vector<Space>& spaces) {

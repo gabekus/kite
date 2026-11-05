@@ -245,7 +245,8 @@ add_executable(gen-theme-golden EXCLUDE_FROM_ALL tests/GenThemeGolden.cpp)
 target_link_libraries(gen-theme-golden PRIVATE KiteCoreWin)
 # The session fixture shared with the Mac test suite.
 target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../Tests/Fixtures"
-                                               KITE_STATES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/helix/states")
+                                               KITE_STATES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/helix/states"
+                                               KITE_MAC_PICKER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../Sources/KiteMac/Views/SpaceIconPicker.swift")
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)
 add_test(NAME chromium-ignores-kites-command-line
   COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/shell/Chromium.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ChromiumSettingsCheck.cmake)

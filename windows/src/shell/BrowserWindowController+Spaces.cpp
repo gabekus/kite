@@ -107,6 +107,9 @@ void BrowserWindowController::RequestIconPicker(const std::string& spaceID, bool
     sidebar_->EndRenaming(true);
     KillTimer(window_.Handle(), kIconPickerTimer);
     pendingIconPicker_.reset();
+    // The header holds its icon's slot from the request on (the Mac's pickerOpen, set as
+    // openPicker is asked), before the selection closes any picker open for another space.
+    sidebar_->SetIconPickerSpace(spaceID);
     // requestIconPicker: its space selected (the sidebar is always shown on Windows yet).
     if (state_.selectedSpaceID != spaceID) {
         state_.SelectSpace(spaceID);
@@ -125,12 +128,10 @@ void BrowserWindowController::ShowIconPicker(const std::string& spaceID) {
     std::optional<IconPickerState> picker = kite::OpenIconPicker(state_, spaceID);
     if (!index || !picker || !iconPicker_) return;
     sidebar_->HideTip();
-    // The header keeps its icon's slot while it's open (a dashed square for none), so the
-    // picker hangs from where the icon is.
-    sidebar_->SetIconPickerSpace(spaceID);
+    // Where the header's icon slot is (the same for an icon-less space's placeholder).
     const std::optional<D2D1_RECT_F> anchor = sidebar_->HeaderIconRect(spaceID);
     if (!anchor) {
-        sidebar_->SetIconPickerSpace(std::nullopt);
+        if (!iconPicker_->IsOpen()) sidebar_->SetIconPickerSpace(std::nullopt);
         return;
     }
     if (std::wstring problem = iconPicker_->Open(std::move(*picker), state_.spaces[*index].icon,
@@ -140,14 +141,20 @@ void BrowserWindowController::ShowIconPicker(const std::string& spaceID) {
         sidebar_->SetIconPickerSpace(std::nullopt);
         OutputDebugStringW((L"Kite: the icon picker couldn't open: " + problem + L"\n").c_str());
         if (iconPicker_->DeviceLost()) Draw();
+        return;
     }
+    // The header keeps its icon's slot while it's open (a dashed square for none): set after the
+    // open, whose closing of the picker before it clears the old one's.
+    sidebar_->SetIconPickerSpace(spaceID);
 }
 
 void BrowserWindowController::PickIcon(const std::string& spaceID, const std::string& icon) {
     const std::optional<IconPick> pick = PickSpaceIcon(state_, spaceID, icon);
     if (!pick) return;
-    // SpaceIconImages.discard: the picture it replaced, once no space shows it (a file's
-    // removal, not a read or a write).
+    // SpaceIconImages.discard: the picture it replaced, once no space shows it. On the UI thread,
+    // as the Mac's is: an exception to docs/windows-architecture.md's no-file-I/O rule, as it's
+    // one DeleteFile of a name core checked (a directory entry, no data read or written), and
+    // only for a picture icon, which a Windows Kite can't make yet (a Mac profile's can).
     if (pick->discard && !options_.spaceIcons.empty()) {
         std::error_code ignored;
         std::filesystem::remove(options_.spaceIcons / std::filesystem::path(std::u8string(pick->discard->begin(), pick->discard->end())), ignored);
@@ -159,7 +166,11 @@ void BrowserWindowController::PickIcon(const std::string& spaceID, const std::st
 
 void BrowserWindowController::CloseIconPicker() {
     KillTimer(window_.Handle(), kIconPickerTimer);
-    pendingIconPicker_.reset();
+    // A request still waiting on its 0.15 s takes its placeholder with it.
+    if (const std::optional<std::string> pending = std::exchange(pendingIconPicker_, std::nullopt);
+        pending && sidebar_->IconPickerSpace() == pending && !(iconPicker_ && iconPicker_->IsOpen())) {
+        sidebar_->SetIconPickerSpace(std::nullopt);
+    }
     if (iconPicker_) iconPicker_->Close();
 }
 

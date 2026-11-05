@@ -152,13 +152,15 @@ IconPickerHit IconPickerHitTest(const IconPickerLayout& layout, const IconPicker
 // The picker's actions, as its controls change its state.
 // A segment: that tab. The emoji grid that comes back is a new scroll view, at its top.
 void SelectIconPickerTab(IconPickerState& state, IconPickerTab tab);
-// What's in Search changed: the grid is the matching emoji, its scroll kept where it fits.
-void SetIconPickerQuery(IconPickerState& state, std::string query);
+// What's in Search changed: the grid is the matching emoji (returned: the cells), its scroll
+// kept where it fits.
+std::vector<std::string> SetIconPickerQuery(IconPickerState& state, std::string query);
 // A category's button: Search cleared and that category chosen; when the choice changed (the
 // Mac's onChange), the grid scrolls its first emoji to the top, as far as it goes.
 void SelectIconPickerCategory(IconPickerState& state, size_t category);
-// The wheel over the emoji grid, `distance` points down (negative: up), within its rows.
-void ScrollIconPicker(IconPickerState& state, float distance);
+// The wheel over the emoji grid, `distance` points down (negative: up), within the rows of its
+// `cells` (IconPickerCells' count, which the caller has).
+void ScrollIconPicker(IconPickerState& state, float distance, size_t cells);
 
 // A pick (the Mac's pick): space `spaceID` gets `icon` (BrowserState::SetSpaceIcon), and the
 // picture the old icon showed, if it was one and no space shows it now, is the file to delete

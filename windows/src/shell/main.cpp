@@ -35,9 +35,10 @@
 //   Kite.exe --capture FILE.png --rename-space N
 //                            the same with space N's header renaming it (Rename Space…), its name
 //                            all selected.
-//   Kite.exe --capture FILE.png --icon-picker N,emoji|icon
+//   Kite.exe --capture FILE.png --icon-picker N,emoji|icon[,CATEGORY]
 //                            the same with Change Space Icon…'s picker open for space N (selected
-//                            first) on that tab, hanging from its header's icon.
+//                            first) on that tab, hanging from its header's icon; on the Emoji tab,
+//                            with category CATEGORY's button (from 0) clicked.
 //   Kite.exe --capture FILE.png --pick-icon N,emoji|icon,CELL
 //                            the same after a click on that tab's cell CELL (from 0) set space N's
 //                            icon, and Escape closed the picker.
@@ -340,6 +341,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         size_t index;
         kite::IconPickerTab tab;
         std::optional<size_t> cell;
+        std::optional<size_t> category;
     };
     std::optional<HeldPicker> heldPicker;
     for (const wchar_t* flag : {L"--icon-picker", L"--pick-icon"}) {
@@ -356,16 +358,22 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         }
         const std::optional<size_t> index = parts.empty() ? std::nullopt : place(parts[0]);
         const bool tabOk = parts.size() >= 2 && (parts[1] == L"emoji" || parts[1] == L"icon");
-        std::optional<size_t> cell;
-        if (pick && parts.size() == 3 && !parts[2].empty() && parts[2].size() <= 4 &&
+        // The third part: a pick's cell, or the picker's category (the Emoji tab's).
+        std::optional<size_t> third;
+        if (parts.size() == 3 && !parts[2].empty() && parts[2].size() <= 4 &&
             std::all_of(parts[2].begin(), parts[2].end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; })) {
-            cell = static_cast<size_t>(std::stoi(parts[2]));
+            third = static_cast<size_t>(std::stoi(parts[2]));
         }
-        if (!index || !tabOk || parts.size() != (pick ? 3u : 2u) || (pick && !cell) || heldPicker) {
-            return Fail(quiet, std::wstring(flag) + (pick ? L" takes N,emoji|icon,CELL" : L" takes N,emoji|icon") + L" (one of --icon-picker and --pick-icon)", kUsage);
+        const bool emojiTab = tabOk && parts[1] == L"emoji";
+        const bool shapeOk = pick ? parts.size() == 3 && third : parts.size() == 2 || (parts.size() == 3 && third && emojiTab);
+        if (!index || !tabOk || !shapeOk || heldPicker) {
+            return Fail(quiet, std::wstring(flag) + (pick ? L" takes N,emoji|icon,CELL" : L" takes N,emoji|icon or N,emoji,CATEGORY") +
+                                   L" (one of --icon-picker and --pick-icon)",
+                        kUsage);
         }
         if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
-        heldPicker = HeldPicker{*index, parts[1] == L"emoji" ? kite::IconPickerTab::Emoji : kite::IconPickerTab::Icon, cell};
+        heldPicker = HeldPicker{*index, emojiTab ? kite::IconPickerTab::Emoji : kite::IconPickerTab::Icon, pick ? third : std::nullopt,
+                                pick ? std::nullopt : third};
     }
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
@@ -658,7 +666,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (swipe) captureError = controller->HoldSwipe(*swipe);
         if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
         if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
-        if (captureError.empty() && heldPicker) captureError = controller->HoldIconPicker(heldPicker->index, heldPicker->tab, heldPicker->cell);
+        if (captureError.empty() && heldPicker) captureError = controller->HoldIconPicker(heldPicker->index, heldPicker->tab, heldPicker->cell, heldPicker->category);
         if (heldMenu) controller->HoldSpaceMenu(*heldMenu);
         if (captureError.empty()) captureError = controller->Capture(pixels, barText, tipIndex);
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);

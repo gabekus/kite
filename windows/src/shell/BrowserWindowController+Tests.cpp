@@ -682,7 +682,7 @@ void ClickPicker(HWND picker, POINT at) {
 
 }  // namespace
 
-std::wstring BrowserWindowController::HoldIconPicker(size_t index, IconPickerTab tab, std::optional<size_t> cell) {
+std::wstring BrowserWindowController::HoldIconPicker(size_t index, IconPickerTab tab, std::optional<size_t> cell, std::optional<size_t> category) {
     if (index >= state_.spaces.size()) return L"there's no such space";
     const std::string id = state_.spaces[index].id;
     const bool switches = state_.selectedSpaceID != id;
@@ -700,6 +700,14 @@ std::wstring BrowserWindowController::HoldIconPicker(size_t index, IconPickerTab
         const PickerRect& r = layout.segments[segment];
         ClickPicker(iconPicker_->Window(), iconPicker_->ContentToClient((r.left + r.right) / 2, (r.top + r.bottom) / 2));
         if (iconPicker_->State()->tab != tab) return L"a click on the picker's tab didn't show it";
+    }
+    if (category) {
+        // A category's button in the bar along the bottom.
+        const IconPickerLayout layout = LayOutIconPicker(IconPickerTab::Emoji, !state_.spaces[index].icon.empty());
+        if (tab != IconPickerTab::Emoji || *category >= layout.categories.size()) return L"there's no such category";
+        const PickerRect& r = layout.categories[*category];
+        ClickPicker(iconPicker_->Window(), iconPicker_->ContentToClient((r.left + r.right) / 2, (r.top + r.bottom) / 2));
+        if (iconPicker_->State()->category != *category) return L"a click on the category didn't choose it";
     }
     if (!cell) return {};
     const std::optional<POINT> at = iconPicker_->CellCentre(*cell);
@@ -723,6 +731,7 @@ std::wstring BrowserWindowController::SmokeTestIconPicker() {
     StateChanged();
     RunSpaceMenuItem(id, SpaceMenuItem::Command::ChangeIcon);
     if (iconPicker_->IsOpen()) return L"it opened before the menu's 0.15 s";
+    if (sidebar_->IconPickerSpace() != id) return L"the header's placeholder didn't come with the menu's request";
     if (!RunUntil(open, 2)) return L"Change Space Icon\u2026 didn't open it";
     if (iconPicker_->State()->tab != IconPickerTab::Emoji) return L"it didn't open on the Emoji tab";
     if (!IsWindowVisible(iconPicker_->Window())) return L"its window isn't shown";
@@ -778,9 +787,23 @@ std::wstring BrowserWindowController::SmokeTestIconPicker() {
     const IconPickerLayout symbols = LayOutIconPicker(IconPickerTab::Icon, true);
     ClickPicker(picker, iconPicker_->ContentToClient((symbols.remove->left + symbols.remove->right) / 2, (symbols.remove->top + symbols.remove->bottom) / 2));
     if (!icon().empty() || !open()) return L"the bin didn't take the icon off";
+    // Opened again while open (the header's icon): the placeholder stays the new one's.
+    RequestIconPicker(id, false);
+    if (!open() || sidebar_->IconPickerSpace() != id) return L"opening it again lost the header's placeholder";
     // Escape closes it.
     SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
     if (iconPicker_->IsOpen()) return L"Escape didn't close it";
+    if (sidebar_->IconPickerSpace()) return L"its placeholder stayed after Escape";
+    // A held cell let go elsewhere, then the mouse taken away: it goes back undimmed (its part drawn).
+    RequestIconPicker(id, false);
+    {
+        const POINT held = *iconPicker_->CellCentre(1);
+        SendMessageW(iconPicker_->Window(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(held.x, held.y));
+        const size_t drawn = iconPicker_->Draws();
+        ReleaseCapture();
+        if (iconPicker_->Draws() != drawn + 1) return L"a press the mouse was taken from didn't draw its cell undimmed";
+    }
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
     // From the header's icon, at once, on the tab of the icon it has.
     state_.SetSpaceIcon(id, "symbol:leaf.fill");
     StateChanged();
@@ -790,12 +813,17 @@ std::wstring BrowserWindowController::SmokeTestIconPicker() {
     SendMouse(window_.Handle(), WM_LBUTTONDOWN, *header, MK_LBUTTON);
     SendMouse(window_.Handle(), WM_LBUTTONUP, *header, 0);
     if (!open() || iconPicker_->State()->tab != IconPickerTab::Icon) return L"a click on the header's icon didn't open it on the Icon tab";
-    // A press elsewhere in the window closes it.
-    if (const std::optional<POINT> name = sidebar_->HeaderNameCentre()) {
-        SendMouse(window_.Handle(), WM_LBUTTONDOWN, POINT{name->x, name->y + 300}, MK_LBUTTON);
-        SendMouse(window_.Handle(), WM_LBUTTONUP, POINT{name->x, name->y + 300}, 0);
+    // A press elsewhere in the window (on the content card, where nothing takes it) closes it.
+    {
+        const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+        const POINT card{std::lround((kSidebarWidth + 200) * scale), std::lround(300 * scale)};
+        const std::string tab = state_.SelectedSpace().selectedTabID.value_or("");
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, card, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, card, 0);
+        if (iconPicker_->IsOpen()) return L"a press elsewhere didn't close it";
+        if (state_.SelectedSpace().selectedTabID.value_or("") != tab) return L"the press that closed it selected a tab";
     }
-    if (iconPicker_->IsOpen()) return L"a press elsewhere didn't close it";
+    if (sidebar_->IconPickerSpace()) return L"its placeholder stayed after it closed";
     // Another space shown closes it (the header it hangs from goes).
     if (state_.spaces.size() > 1) {
         RequestIconPicker(id, false);
