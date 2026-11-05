@@ -290,6 +290,10 @@ std::wstring BrowserWindowController::Init() {
         memoryWatch_.reset();
         RunPending();
         SaveNow();
+        // An Arc import whose session is written but whose history isn't merged yet: all of it
+        // now, before history's last save.
+        KillTimer(window_.Handle(), kArcMergeTimer);
+        FinishArcImport();
         // History too, as the Mac's flush at quit; main.cpp waits for its writes.
         if (history_) {
             KillTimer(window_.Handle(), kHistoryTimer);
@@ -632,14 +636,19 @@ void BrowserWindowController::SessionChanged(SessionSaveDelay delay) {
     }
 }
 
-void BrowserWindowController::SaveNow() {
+void BrowserWindowController::SaveNow(std::function<void(const std::string& error)> then) {
     KillTimer(window_.Handle(), kSaveTimer);
     saveSchedule_.Saved();
-    if (!writer_ || !writer_->MaySave()) return;
+    if (!writer_ || !writer_->MaySave()) {
+        // Nothing is written, and whoever waits on this write hears so.
+        if (then) then("Kite doesn't save this session (it couldn't be read)");
+        return;
+    }
     // A copy for the writer's thread (the session is the UI thread's to change): the only cost
     // here. Encoding and the disk are the writer's.
     const auto start = std::chrono::steady_clock::now();
-    writer_->Save(state_);
+    if (then) writer_->SaveThen(state_, std::move(then));
+    else writer_->Save(state_);
     const double micros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
     ++saveCost_.saves;
     saveCost_.maxMicros = std::max(saveCost_.maxMicros, micros);
@@ -1111,7 +1120,7 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     static_assert([] {
         constexpr UINT ids[] = {MainWindow::kWakeMessage, CommandBarView::kRedrawMessage, SidebarView::kRedrawMessage, kFaviconsMessage,
                                 kFrameMessage, kSpaceIconsMessage, kMemoryPressureMessage, kHistoryMessage, kArcReadMessage,
-                                kPerfRequestMessage};
+                                kArcSavedMessage, kPerfRequestMessage};
         for (size_t i = 0; i < std::size(ids); ++i) {
             for (size_t j = i + 1; j < std::size(ids); ++j) {
                 if (ids[i] == ids[j]) return false;
@@ -1326,8 +1335,19 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         sidebar_->PicturesArrived();
         return true;
     }
+    // Each of the window's own messages has its own id (W15 and W11 once took the same two).
+    static_assert(kArcReadMessage > kHistoryMessage && kArcSavedMessage > kArcReadMessage, "the window's message ids overlap");
     if (message == kArcReadMessage) {
         ArcRead();
+        return true;
+    }
+    if (message == kArcSavedMessage) {
+        ArcSaved();
+        return true;
+    }
+    if (message == WM_TIMER && wParam == kArcMergeTimer) {
+        KillTimer(window_.Handle(), kArcMergeTimer);
+        ArcSaved();
         return true;
     }
     if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == kImportFromArcMenuID) {

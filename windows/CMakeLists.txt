@@ -36,6 +36,7 @@ endif()
 # The model (the Windows counterpart of KiteCore): standard C++ only, unit-tested headless.
 add_library(KiteCoreWin STATIC
   src/core/AirTrafficControl.cpp
+  src/core/ArcHistoryImport.cpp
   src/core/ArcImport.cpp
   src/core/ArcImportController.cpp
   src/core/ArcImportFiles.cpp
@@ -315,6 +316,7 @@ endif()
 enable_testing()
 add_executable(KiteCoreTests
   tests/main.cpp
+  tests/ArcHistoryImportTests.cpp
   tests/ArcImportTests.cpp
   tests/ArcImportFilesTests.cpp
   tests/CommandBarTests.cpp
@@ -351,7 +353,8 @@ if(NOT MSVC)
   target_compile_options(KiteCoreTests PRIVATE -Wno-maybe-uninitialized)
 endif()
 # The hand-made Arc for Windows folder Import from Arc's tests read (scripts/make-web-data.py
-# writes its Web Data), at the place Arc's package keeps it under %LOCALAPPDATA%.
+# writes its Web Data, scripts/make-history.py its History files), at the place Arc's package
+# keeps it under %LOCALAPPDATA%.
 set(KITE_ARC_FIXTURE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/arc-windows/Packages/TheBrowserCompany.Arc_kitetest0001/LocalCache/Local/Arc")
 # What history costs (tests/HistoryBench.cpp): its own executable, since it counts every
 # allocation with its own operator new. CTest runs a small one so it keeps building and running.

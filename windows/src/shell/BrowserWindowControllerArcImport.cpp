@@ -1,8 +1,11 @@
 // Import from Arc in the window, the Windows side of core/ArcImportController.h, as KiteMac's
 // ArcImportController.swift is the Mac's: the "importFromArc" command (also in the window's
 // system menu, Alt+Space) reads Arc's folder on a worker thread, asks for Arc's folder with the
-// system's folder picker when it can't, confirms what it found, imports into the session and
-// saves it, then writes the shortcut changes and routes.
+// system's folder picker when it can't, confirms what it found and imports into the session. The
+// session goes to the writer, whose thread then writes the shortcut changes and routes (never
+// before the session that names their spaces, and never on the UI thread) and posts
+// kArcSavedMessage; Arc's history is merged into the profiles' history stores then, once the
+// session is saved.
 //
 // Arc's own import screens aren't ported: the confirmation is a message box with the Mac's
 // text, and its "Include unnamed spaces" checkbox is the box's Yes/No. Arc shuts down on
@@ -13,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <mutex>
 #include <set>
 
 #include "core/ArcImportController.h"
@@ -31,6 +35,17 @@ struct BrowserWindowController::ArcJob {
     std::atomic<bool> cancel{false};
     std::promise<void> done;
     std::shared_future<void> finished = done.get_future().share();
+};
+
+// An import after the confirmation, shared with the writer's thread: it writes the profile files
+// into `imported` (under `mutex`) once the session is written, sets `done` and posts
+// kArcSavedMessage.
+struct BrowserWindowController::ArcSave {
+    std::mutex mutex;
+    arc_import::Imported imported;
+    std::string sessionError;  // the session's write; empty when written
+    std::string filesError;    // writing the other files failed outright (out of memory)
+    bool done = false;
 };
 
 namespace {
@@ -81,7 +96,7 @@ std::optional<std::filesystem::path> PickArcFolder(HWND owner) {
 void BrowserWindowController::ImportFromArc() {
     // Never a dialog in a test run; and reading Arc's files takes a moment, so a second press
     // meanwhile does nothing.
-    if (options_.quiet || arcReading_ || closing_) return;
+    if (options_.quiet || arcReading_ || arcSave_ || closing_) return;
     if (!writer_ || !writer_->MaySave()) {
         // The session didn't read and is never saved: an import would be lost.
         MessageBoxW(window_.Handle(), L"Kite couldn't read its session, so it doesn't save it, and an import would be lost. Restart Kite and try again.",
@@ -98,11 +113,21 @@ void BrowserWindowController::ReadArc(std::optional<std::filesystem::path> picke
     job->picked = picked.has_value();
     arcJob_ = job;
     const HWND window = window_.Handle();
-    arcThread_ = std::thread([job, picked = std::move(picked), window] {
+    // No history to put Arc's in (the Mac's incognito windows): its History files aren't read.
+    const bool history = history_ != nullptr;
+    arcThread_ = std::thread([job, picked = std::move(picked), window, history] {
         const auto folder = ArcFolder();
         arc_import::ReadOptions options;
         options.cancel = &job->cancel;
-        job->result = picked ? arc_import::ReadPicked(*picked, folder, options) : arc_import::ReadAuto(folder, options);
+        options.history = history;
+        // Nothing may leave the thread (std::terminate): a failure is reported like any other.
+        try {
+            job->result = picked ? arc_import::ReadPicked(*picked, folder, options) : arc_import::ReadAuto(folder, options);
+        } catch (const std::exception& e) {
+            job->result = arc_import::ReadFailed(e.what());
+        } catch (...) {
+            job->result = arc_import::ReadFailed(nullptr);
+        }
         if (!job->cancel) PostMessageW(window, kArcReadMessage, 0, 0);
         job->done.set_value();
     });
@@ -129,10 +154,11 @@ void BrowserWindowController::ArcRead() {
     // may have begun closing (logoff), its session already saved. Nothing more then.
     auto stillOpen = [&] { return !closing_ && IsWindow(owner); };
     if (auto* error = std::get_if<arc_import::LoadError>(&*job->result)) {
-        // Too large: no folder picked could change that, so it's said as it is.
-        if (error->tooLarge) {
+        // Too large, or the read failed: no folder picked could change that, so it's said as it is.
+        if (error->tooLarge || error->internal) {
             arcReading_ = false;
-            MessageBoxW(owner, Widen(error->message).c_str(), L"Import from Arc", MB_OK | MB_ICONWARNING);
+            MessageBoxW(owner, Widen(error->message + (error->detail.empty() ? std::string() : "\n\n" + error->detail)).c_str(), L"Import from Arc",
+                        MB_OK | MB_ICONWARNING);
             return;
         }
         // Kite couldn't read Arc's data where it keeps it: ask for the folder.
@@ -171,26 +197,87 @@ void BrowserWindowController::ArcRead() {
     }
     arc_import::ImportOptions options;
     if (untitledSpaces > 0) options.includeUntitled = answer == IDYES;
-    arc_import::Imported imported = arc_import::Import(state_, plan, options);
-    // The session first, so the shortcut changes and routes never come without the spaces: it
-    // goes to the writer at once, and this waits for that write (a moment, at most
-    // kArcImportFlush), the one wait on the disk here, after the user's answer.
-    SaveNow();
-    if (std::string error = writer_->Flush(kArcImportFlush); !error.empty()) {
-        MessageBoxW(owner, (L"The spaces are in this window, but Kite couldn't save them yet: " + Widen(error) +
-                            L"\n\nKite tries again when the window closes. The shortcut changes and routes weren't written.")
-                               .c_str(),
-                    L"Import from Arc", MB_OK | MB_ICONWARNING);
-    } else {
-        arc_import::WriteProfileFiles(imported, options_.supportDirectory);
-    }
-    if (!stillOpen()) return;
-    OutputDebugStringW((L"Kite: Arc import: " + Widen(json::Write(arc_import::Summary(imported))) + L"\n").c_str());
+    auto save = std::make_shared<ArcSave>();
+    save->imported = arc_import::Import(state_, plan, options);
+    // The session to the writer, and after it, on the writer's thread, the shortcut changes and
+    // routes, so they never come without the spaces they name. The result comes back as
+    // kArcSavedMessage; nothing here waits on the disk.
+    arcSave_ = save;
+    const std::filesystem::path profile = options_.supportDirectory;
+    SaveNow([save, profile, owner](const std::string& error) {
+        {
+            std::lock_guard lock(save->mutex);
+            save->sessionError = error;
+            if (error.empty()) {
+                try {
+                    arc_import::WriteProfileFiles(save->imported, profile);
+                } catch (const std::exception& e) {
+                    save->filesError = e.what();
+                } catch (...) {
+                    save->filesError = "couldn't write them";
+                }
+            }
+            save->done = true;
+        }
+        PostMessageW(owner, kArcSavedMessage, 0, 0);
+    });
     // A space imported again replaces its old self: pages of tabs it no longer has go.
     for (const std::string& id : before) {
         if (!state_.FindTabByID(id)) PageGone(id);
     }
     SelectionMoved();
+}
+
+void BrowserWindowController::ArcSaved() {
+    // The window is closing: FinishArcImport has taken it.
+    if (closing_ || !arcSave_) return;
+    std::shared_ptr<ArcSave> save = arcSave_;
+    std::unique_lock lock(save->mutex);
+    if (!save->done) return;  // not this import's message
+    const HWND owner = window_.Handle();
+    if (!save->sessionError.empty()) {
+        arcSave_.reset();
+        // Nothing else of the import was written: shortcut changes, routes and history all wait
+        // on the session that names their spaces and profiles.
+        lock.unlock();
+        MessageBoxW(owner, (L"The spaces are in this window, but Kite couldn't save them yet: " + Widen(save->sessionError) +
+                            L"\n\nKite tries again when the window closes. The shortcut changes, routes and history weren't imported; "
+                            L"import again once the session saves.")
+                               .c_str(),
+                    L"Import from Arc", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    // Each Arc profile's history into the Kite profile it went to, as the Mac's perform, one
+    // profile a pass, so the UI thread is held for one profile's merge at a time (about 50 ms for
+    // 20,000 pages); the stores save each at once, on their worker. The next pass is a one-shot
+    // timer, not a posted message: posted messages come before input and paint, so a chain of
+    // them would keep the window from answering until the last profile.
+    if (history_ && !save->imported.histories.empty()) {
+        arc_import::MergeHistories(save->imported, *history_, std::chrono::milliseconds::zero(), 1);
+        ArmHistorySave();
+        if (!save->imported.histories.empty()) {
+            SetTimer(owner, kArcMergeTimer, USER_TIMER_MINIMUM, nullptr);
+            return;
+        }
+    }
+    KillTimer(owner, kArcMergeTimer);
+    arcSave_.reset();
+    OutputDebugStringW((L"Kite: Arc import: " + Widen(json::Write(arc_import::Summary(save->imported))) + L"\n").c_str());
+    if (!save->filesError.empty()) {
+        lock.unlock();
+        MessageBoxW(owner, (L"The spaces and history came over, but Kite couldn't write the shortcut changes and routes: " + Widen(save->filesError)).c_str(),
+                    L"Import from Arc", MB_OK | MB_ICONWARNING);
+    }
+}
+
+void BrowserWindowController::FinishArcImport() {
+    std::shared_ptr<ArcSave> save = std::move(arcSave_);
+    if (!save || !history_) return;
+    // Held by the writer's thread while it writes the side files: not reported yet, and closing
+    // doesn't wait on that disk work.
+    std::unique_lock lock(save->mutex, std::try_to_lock);
+    if (!lock.owns_lock() || !save->done || !save->sessionError.empty()) return;
+    arc_import::MergeHistories(save->imported, *history_);
 }
 
 }  // namespace kite

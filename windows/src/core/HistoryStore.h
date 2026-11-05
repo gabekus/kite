@@ -62,9 +62,9 @@ public:
     std::vector<HistoryEntry> Search(std::string_view query, size_t limit, Timestamp now) const {
         return history_.Search(query, limit, now);
     }
-    // Import from Arc (W33a): saved at once. Returns how many pages were new (to what's loaded:
-    // wait for IsLoaded).
-    size_t Merge(const std::vector<HistoryEntry>& entries);
+    // Import from Arc (W33a): saved at once. Returns how many pages were new. Before the file has
+    // been read the pages are only queued, to merge over it once it is (0 then).
+    size_t Merge(std::vector<HistoryEntry> entries);
 
     struct Slot;  // what the worker shares with this store (HistoryStore.cpp)
 

@@ -58,6 +58,14 @@ public:
 
     // Hands `snapshot` to the worker and returns at once.
     void Save(BrowserState snapshot);
+    // The same, then `then` on the worker's thread once the write that has this snapshot (or a
+    // newer one, which has everything this one has) is done, with its error (empty: written, or
+    // the file already held it). For files that must never be written without the session that
+    // names their spaces (Import from Arc's keybindings.json and LinkRouting.json): in order with
+    // every other write, and nothing on the caller's thread waits on the disk. `then` runs off the
+    // caller's thread, so it posts anything for the UI back to it; it's called even when this
+    // writer may not save (with why), and an exception from it is caught and dropped.
+    void SaveThen(BrowserState snapshot, std::function<void(const std::string& error)> then);
     // The session as found at launch, kept as a launch backup (the Mac's init backs up `found`).
     void BackUpLaunch(BrowserState found);
     // Waits, for `timeout` at most, until everything handed over is written. The last write's

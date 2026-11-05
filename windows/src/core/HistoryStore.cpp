@@ -96,9 +96,15 @@ bool HistoryStore::UpdateTitle(std::string_view url, std::string_view title) {
     return true;
 }
 
-size_t HistoryStore::Merge(const std::vector<HistoryEntry>& entries) {
+size_t HistoryStore::Merge(std::vector<HistoryEntry> entries) {
+    // Not into this run's visits as well before the file is read: 20,000 pages twice on the UI
+    // thread, for a search that sees only this run's visits until then anyway.
+    if (!adopted_) {
+        pending_.emplace_back([entries = std::move(entries)](History& h) { h.Merge(entries); });
+        ChangedNow();
+        return 0;
+    }
     const size_t added = history_.Merge(entries);
-    if (!adopted_) pending_.emplace_back([entries](History& h) { h.Merge(entries); });
     ChangedNow();
     return added;
 }
