@@ -329,7 +329,7 @@ private:
     ParseError error_;
 };
 
-void WriteString(std::string& out, const std::string& s) {
+void WriteString(std::string& out, std::string_view s) {
     static const char kHex[] = "0123456789abcdef";
     out += '"';
     for (size_t i = 0; i < s.size(); ++i) {
@@ -340,7 +340,7 @@ void WriteString(std::string& out, const std::string& s) {
             if (length == 0) {
                 out += "\xEF\xBF\xBD";
             } else {
-                out.append(s, i, length);
+                out.append(s.substr(i, length));
                 i += length - 1;
             }
             continue;
@@ -417,5 +417,9 @@ std::string Write(const Value& value) {
     WriteValue(out, value);
     return out;
 }
+
+void Append(std::string& out, const Value& value) { WriteValue(out, value); }
+
+void AppendString(std::string& out, std::string_view text) { WriteString(out, text); }
 
 }  // namespace kite::json

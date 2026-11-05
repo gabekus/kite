@@ -4,6 +4,8 @@
 
 #include <fstream>
 
+#include "core/StoreFile.h"
+
 namespace kite {
 
 namespace fs = std::filesystem;
@@ -58,22 +60,7 @@ std::string WriteFileAtomically(const fs::path& file, const std::string& text) {
     std::error_code error;
     fs::create_directories(file.parent_path(), error);
     if (error) return "couldn't create " + PathText(file.parent_path()) + ": " + error.message();
-    fs::path temp = file;
-    temp += ".tmp";
-    {
-        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
-        if (!out) return "couldn't write " + PathText(temp);
-        out.write(text.data(), static_cast<std::streamsize>(text.size()));
-        out.flush();
-        if (!out) return "couldn't write " + PathText(temp);
-    }
-    fs::rename(temp, file, error);
-    if (error) {
-        std::error_code ignored;
-        fs::remove(temp, ignored);
-        return "couldn't replace " + PathText(file) + ": " + error.message();
-    }
-    return {};
+    return store_file::WriteAtomically(file, text);
 }
 
 }  // namespace kite

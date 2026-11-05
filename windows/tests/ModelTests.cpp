@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "Check.h"
+#include "core/History.h"
 #include "core/Models.h"
 #include "core/SessionStore.h"
 #include "core/Uuid.h"
@@ -185,11 +186,16 @@ TEST(selectsATabInANestedFolder) {
     CHECK(state.FindTabByID(outerTab.id) && state.FindTabByID(outerTab.id)->lastActiveAt == 0);
 }
 
-// Every UI-gate state is a session both apps read.
+// Every UI-gate state is a session both apps read, and every NAME.history.json beside one is
+// a history.json they read.
 TEST(helixStatesDecode) {
     int count = 0;
     for (const auto& entry : fs::directory_iterator(fs::path(KITE_STATES_DIR))) {
         if (entry.path().extension() != ".json") continue;
+        if (entry.path().stem().extension() == ".history") {
+            CHECK(std::holds_alternative<History>(History::DecodeFile(ReadFile(entry.path()))));
+            continue;
+        }
         auto parsed = json::Parse(ReadFile(entry.path()));
         CHECK(std::holds_alternative<json::Value>(parsed));
         const json::Value* state = std::holds_alternative<json::Value>(parsed) ? std::get<json::Value>(parsed).Find("state") : nullptr;
@@ -291,7 +297,8 @@ TEST(savedSessionHasTheMacEnvelope) {
     const json::Value& root = std::get<json::Value>(parsed);
     CHECK(root.Find("version") && root.Find("version")->AsInt() == 1);
     CHECK(root.Find("state") && root.Find("state")->Find("spaces"));
-    CHECK(!fs::exists(dir / "session.json.tmp"));
+    // No temp file is left beside it.
+    for (const auto& entry : fs::directory_iterator(dir)) CHECK(entry.path().extension() != ".tmp");
     fs::remove_all(dir);
 }
 

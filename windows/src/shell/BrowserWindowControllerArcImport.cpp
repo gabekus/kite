@@ -81,8 +81,8 @@ std::optional<std::filesystem::path> PickArcFolder(HWND owner) {
 void BrowserWindowController::ImportFromArc() {
     // Never a dialog in a test run; and reading Arc's files takes a moment, so a second press
     // meanwhile does nothing.
-    if (options_.smokeTest || options_.capture || arcReading_ || closing_) return;
-    if (!options_.sessionSaves || !options_.saveSession) {
+    if (options_.quiet || arcReading_ || closing_) return;
+    if (!writer_ || !writer_->MaySave()) {
         // The session didn't read and is never saved: an import would be lost.
         MessageBoxW(window_.Handle(), L"Kite couldn't read its session, so it doesn't save it, and an import would be lost. Restart Kite and try again.",
                     L"Import from Arc", MB_OK | MB_ICONWARNING);
@@ -172,8 +172,11 @@ void BrowserWindowController::ArcRead() {
     arc_import::ImportOptions options;
     if (untitledSpaces > 0) options.includeUntitled = answer == IDYES;
     arc_import::Imported imported = arc_import::Import(state_, plan, options);
-    // The session first, so the shortcut changes and routes never come without the spaces.
-    if (std::string error = options_.saveSession(); !error.empty()) {
+    // The session first, so the shortcut changes and routes never come without the spaces: it
+    // goes to the writer at once, and this waits for that write (a moment, at most
+    // kArcImportFlush), the one wait on the disk here, after the user's answer.
+    SaveNow();
+    if (std::string error = writer_->Flush(kArcImportFlush); !error.empty()) {
         MessageBoxW(owner, (L"The spaces are in this window, but Kite couldn't save them yet: " + Widen(error) +
                             L"\n\nKite tries again when the window closes. The shortcut changes and routes weren't written.")
                                .c_str(),

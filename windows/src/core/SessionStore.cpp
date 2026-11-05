@@ -4,9 +4,9 @@
 
 #include <chrono>
 #include <fstream>
-#include <sstream>
 
 #include "core/Files.h"
+#include "core/StoreFile.h"
 
 namespace kite {
 
@@ -17,7 +17,26 @@ bool SessionStore::MaySave(const LoadResult& result) {
     return true;
 }
 
-SessionStore::LoadResult SessionStore::Load(Unreadable unreadable) const {
+std::optional<BrowserState> SessionStore::DecodeFile(std::string_view text, std::string& problem) {
+    auto parsed = json::Parse(text);
+    if (auto* parseError = std::get_if<json::ParseError>(&parsed)) {
+        problem = "invalid JSON at byte " + std::to_string(parseError->offset) + ": " + parseError->message;
+        return std::nullopt;
+    }
+    const json::Value& root = std::get<json::Value>(parsed);
+    const json::Value* state = root.Find("state");
+    if (auto decoded = state ? DecodeBrowserState(*state) : std::nullopt) return decoded;
+    problem = "not a Kite session";
+    return std::nullopt;
+}
+
+SessionStore::LoadResult SessionStore::Load(Unreadable unreadable, std::optional<SessionBackups::Backup>* recoveredFrom) const {
+    // The app's load, at launch: temps a crash left beside the session and its backups go
+    // (none is that old while a write uses it).
+    if (unreadable == Unreadable::MoveAside) {
+        store_file::RemoveStaleTemps(file_.parent_path(), std::chrono::hours(1));
+        store_file::RemoveStaleTemps(backups_->Directory(), std::chrono::hours(1));
+    }
     std::error_code error;
     bool exists = fs::exists(file_, error);
     if (error) return Error{"couldn't check " + PathText(file_) + ": " + error.message(), std::nullopt};
@@ -36,15 +55,7 @@ SessionStore::LoadResult SessionStore::Load(Unreadable unreadable) const {
     }
 
     std::string problem;
-    auto parsed = json::Parse(text);
-    if (auto* parseError = std::get_if<json::ParseError>(&parsed)) {
-        problem = "invalid JSON at byte " + std::to_string(parseError->offset) + ": " + parseError->message;
-    } else {
-        const json::Value& root = std::get<json::Value>(parsed);
-        const json::Value* state = root.Find("state");
-        if (auto decoded = state ? DecodeBrowserState(*state) : std::nullopt) return std::move(*decoded);
-        problem = "not a Kite session";
-    }
+    if (auto decoded = DecodeFile(text, problem)) return std::move(*decoded);
 
     if (unreadable == Unreadable::Leave) return Error{problem, std::nullopt};
     // Move it aside, like the Mac, so the next save doesn't overwrite it.
@@ -59,12 +70,26 @@ SessionStore::LoadResult SessionStore::Load(Unreadable unreadable) const {
     }
     if (fs::exists(backup, error)) return Error{problem, std::nullopt};
     fs::rename(file_, backup, error);
-    return Error{problem, error ? std::nullopt : std::optional<fs::path>(backup)};
+    if (error) return Error{problem, std::nullopt};
+    // Out of the way, so the newest backup that reads can stand in for it.
+    if (auto found = backups_->NewestValid(SessionBackups::Now())) {
+        if (recoveredFrom) *recoveredFrom = found->first;
+        return std::move(found->second);
+    }
+    return Error{problem, backup};
 }
 
-std::string SessionStore::Save(const BrowserState& state) const {
-    json::Value root(json::Object{{"state", Encode(state)}, {"version", kCurrentVersion}});
-    return WriteFileAtomically(file_, json::Write(root));
+std::string SessionStore::EncodeFile(const BrowserState& state) {
+    return json::Write(json::Value(json::Object{{"state", Encode(state)}, {"version", kCurrentVersion}}));
 }
+
+std::string SessionStore::WriteFile(std::string_view bytes) const {
+    std::error_code error;
+    fs::create_directories(file_.parent_path(), error);
+    if (error) return "couldn't create " + PathText(file_.parent_path()) + ": " + error.message();
+    return store_file::WriteAtomically(file_, bytes);
+}
+
+std::string SessionStore::Save(const BrowserState& state) const { return WriteFile(EncodeFile(state)); }
 
 }  // namespace kite

@@ -35,8 +35,9 @@ std::optional<std::string> ReadFile(const std::filesystem::path& file, size_t ma
 // be read.
 std::optional<std::string> ReadFilePrefix(const std::filesystem::path& file, size_t bytes);
 
-// Writes a sibling temp file and renames it over `file` (MoveFileExW with replace on Windows),
-// making the folder first. Empty on success, otherwise what went wrong.
+// Makes the folder, then writes `file` atomically (core/StoreFile.h's WriteAtomically: a
+// sibling temp file flushed to the disk, renamed over it). Empty on success, otherwise what went
+// wrong.
 std::string WriteFileAtomically(const std::filesystem::path& file, const std::string& text);
 
 }  // namespace kite
