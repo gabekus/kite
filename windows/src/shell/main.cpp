@@ -24,6 +24,16 @@
 //                            the same with two fingers on a touchpad holding the sidebar's
 //                            content dragged DX points sideways (positive towards the previous
 //                            space): the pages, the bar's light and the theme as they follow.
+//   Kite.exe --capture FILE.png --space-drag N,X | --space-drop N,X
+//                            the same with space N's cell in the bar (from 1) pressed and dragged
+//                            to X points along the bar and held there (the ghost and the open
+//                            slot), or let go there and settled (the space moved).
+//   Kite.exe --capture FILE.png --space-menu N
+//                            the same with space N's menu open over its cell, as a right-click
+//                            there opens it (Windows' own menu, read back from its window).
+//   Kite.exe --capture FILE.png --rename-space N
+//                            the same with space N's header renaming it (Rename Space…), its name
+//                            all selected.
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
@@ -191,7 +201,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // value (core/CommandLine.h).
     kite::command_line::Spec spec;
     spec.flags = {"--smoke-test", "--backdrop-test"};
-    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space"};
     if (const auto problem = kite::command_line::Check(utf8, spec)) return Fail(true, Widen(*problem), kUsage);
     if (HasFlag(args, L"--backdrop-test")) {
         // Touches no profile, so it needs no KITE_SUPPORT_PATH.
@@ -252,6 +262,44 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         swipe = dx;
     }
     if (swipeOption.present && !captureOption.present) return Fail(quiet, L"--swipe only goes with --capture", kUsage);
+    // The space bar's and the header's editing states: a space's place (from 1), and for a drag
+    // the points along the bar it's dragged to.
+    const auto place = [](const std::wstring& text) -> std::optional<size_t> {
+        if (text.empty() || text.size() > 3 || !std::all_of(text.begin(), text.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; })) {
+            return std::nullopt;
+        }
+        const int n = std::stoi(text);
+        return n >= 1 ? std::optional<size_t>(static_cast<size_t>(n - 1)) : std::nullopt;
+    };
+    struct HeldDrag {
+        size_t index;
+        float x;
+        bool drop;
+    };
+    std::optional<HeldDrag> heldDrag;
+    for (const wchar_t* flag : {L"--space-drag", L"--space-drop"}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        const std::string text = option.value ? Narrow(*option.value) : std::string();
+        const size_t comma = text.find(',');
+        float x = 0;
+        const char* begin = comma == std::string::npos ? nullptr : text.data() + comma + 1;
+        const auto [end, failed] = begin ? std::from_chars(begin, text.data() + text.size(), x) : std::from_chars_result{nullptr, std::errc::invalid_argument};
+        const std::optional<size_t> index = comma == std::string::npos ? std::nullopt : place(Widen(text.substr(0, comma)));
+        if (!index || failed != std::errc() || end != text.data() + text.size() || !(std::abs(x) <= 10000) || heldDrag) {
+            return Fail(quiet, std::wstring(flag) + L" takes a space's place from 1 and the points along the bar, N,X (one of --space-drag and --space-drop)", kUsage);
+        }
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+        heldDrag = HeldDrag{*index, x, std::wstring(flag) == L"--space-drop"};
+    }
+    std::optional<size_t> heldMenu, heldRename;
+    for (const auto& [flag, out] : {std::pair<const wchar_t*, std::optional<size_t>*>{L"--space-menu", &heldMenu}, {L"--rename-space", &heldRename}}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        *out = option.value ? place(*option.value) : std::nullopt;
+        if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a space's place, from 1", kUsage);
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+    }
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
 
@@ -389,6 +437,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         const std::optional<std::string> barText =
             commandBarOption.present ? std::optional<std::string>(Narrow(*commandBarOption.value)) : std::nullopt;
         if (swipe) captureError = controller->HoldSwipe(*swipe);
+        if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
+        if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
+        if (heldMenu) controller->HoldSpaceMenu(*heldMenu);
         if (captureError.empty()) captureError = controller->Capture(pixels, barText, tipIndex);
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);
         PostMessageW(window.Handle(), WM_CLOSE, 0, 0);

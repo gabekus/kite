@@ -1,5 +1,5 @@
-// The sidebar's bottom bar (core/SpaceBar.h): the Mac's SpaceReorderTests case for case, but
-// for dropMovesTheSpaceKeepingTheCurrentOne, which needs BrowserState's moveSpace (W9d's), plus
+// The sidebar's bottom bar (core/SpaceBar.h): the Mac's SpaceReorderTests case for case (but
+// dropMovesTheSpaceKeepingTheCurrentOne, with moveSpace in SpaceEditingTests.cpp), plus
 // SpaceBarView's layout, presses, the cells, their light along a page settle and the tip.
 
 #include <algorithm>

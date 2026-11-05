@@ -57,6 +57,10 @@ public:
     bool Swiping() const { return swipe_.has_value(); }
     // The last release's landing, relative to the selected space: -1, 0 or +1 (0 when cancelled).
     int Landing() const { return landing_; }
+    // The spaces changed under the swipe (SpaceSwipeController.cancel): it's dropped, and the rest
+    // of its gesture is swallowed rather than starting a new swipe from whatever space is
+    // selected now, until a new gesture begins.
+    void Abandon();
 
 private:
     std::optional<SpaceSwipe> swipe_;
@@ -64,6 +68,7 @@ private:
     bool swallowingMomentum_ = false;
     // A gesture that started vertically scrolls the tab list for its whole length.
     bool vertical_ = false;
+    bool abandoned_ = false;  // the rest of an abandoned gesture is the swipe's, showing nothing
     int landing_ = 0;
 };
 
