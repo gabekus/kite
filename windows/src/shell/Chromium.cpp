@@ -67,16 +67,20 @@ constexpr char kRendererPIDMessage[] = "kite.rendererPID";
 // acts only on a page it has hidden (Shared::PageVisibility): Chromium can show a page whose
 // windows Kite hid before it drew (a page made while Kite can't be seen), and only Kite hiding
 // them again hides it. Only a speed-up: a page can lose the listener (document.open() drops
-// every listener), so the re-hides after each load (kRehideAfterLoadMs) trust nothing of it.
+// every listener), so the scheduled re-hides (kRehideScheduleMs) trust nothing of it.
 constexpr char kVisibilityMessage[] = "kite.pageVisibility";
 // Hiding a page again shows its windows for an instant, which the page reports as visible and
 // then hidden: a report this soon after is looked at again once this has passed, not acted on.
 constexpr ULONGLONG kRehideSettleMs = 250;
-// After each main-frame load end of a page Kite has hidden, it's hidden again at these times,
-// whatever the page says: Chromium showed such pages 0.4 to 1.3 s after a load end (measured).
-constexpr int64_t kRehideAfterLoadMs[] = {500, 1000, 1500, 3000, 6000};
-// At most this many re-hides of a page in any 10 s, whatever its renderer says.
-constexpr size_t kMaxRehidesPer10s = 8;
+// After anything the browser sees that might make Chromium show a page (its browser made, its
+// placement going hidden, a main-frame load starting or ending), a page Kite has hidden is
+// hidden again at these times, whatever the page says (Shared::Anchor). None of them is what
+// makes Chromium show it; it was seen 0.4 to 1.3 s after them (measured), with or without a
+// load end.
+constexpr int64_t kRehideScheduleMs[] = {500, 1000, 1500, 3000, 6000};
+// At most this many re-hides of a page in any 10 s, whatever its renderer says: two
+// navigations' schedules (start and end each restart it) and their reports.
+constexpr size_t kMaxRehidesPer10s = 16;
 constexpr ULONGLONG kRehideWindowMs = 10'000;
 
 CefRect ToCefRect(const RECT& r) { return CefRect(r.left, r.top, r.right - r.left, r.bottom - r.top); }
@@ -185,6 +189,7 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
         // (the last 10 s, kMaxRehidesPer10s), and whether a look after the last one is due.
         bool saysVisible = false;
         std::deque<ULONGLONG> rehides;
+        uint64_t schedule = 0;  // Anchor's latest; an older schedule's steps do nothing
         bool recheckDue = false;
         // Find asked for before the browser existed (Ctrl+F straight after a new tab): run once
         // it's made, the last one asked for.
@@ -492,8 +497,11 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
             wanted.visible = id == shown && !minimized && !occluded;
             wanted.rect = wanted.visible ? card : page.placed.rect;
             if (!(wanted == page.placed)) {
+                const bool hiding = page.placed.visible && !wanted.visible;
                 page.placed = wanted;
                 change.placement = wanted;
+                // Hidden now: Chromium may still show it, if it hadn't drawn yet.
+                if (hiding) Anchor(id, page);
             }
             Hole hole;
             if (wanted.visible && !IsRectEmpty(&overlayHole.rect)) {
@@ -581,21 +589,28 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
         page->saysVisible = visible;
         RehideIfShowing(tabID, *page);
     }
-    // A main-frame load ended: a page Kite has hidden is hidden again at kRehideAfterLoadMs,
-    // asking nothing of the page, which may have dropped the listener (document.open) or be
-    // compromised. Chromium shows a page made hidden some time after its load ends, so a fixed
-    // look then; later than the last of them, a page whose listener is gone could still draw
-    // (docs/windows.md, P2's Known gaps).
-    void PageLoaded(const std::string& tabID, const CefRefPtr<CefBrowser>& browser) {
-        Page* page = PageFor(tabID, browser);
-        if (!page || !page->hwnd || page->placed.visible) return;
-        for (const int64_t delay : kRehideAfterLoadMs) {
-            CefPostDelayedTask(TID_UI, new FunctionTask([shared = shared_from_this(), tabID, browser] {
-                shared->Post([shared, tabID, browser] {
-                    if (Page* p = shared->PageFor(tabID, browser); p && p->hwnd && !p->placed.visible) shared->Rehide(*p);
-                });
-            }), delay);
-        }
+    // Something happened that might make Chromium show the page (kRehideScheduleMs): from now,
+    // a page Kite has hidden then is hidden again at each step, asking nothing of the page, which
+    // may have dropped the listener (document.open) or be compromised. A new anchor restarts the
+    // schedule, never adds one: one step is pending per page at a time. Past the last step, a
+    // page whose listener is gone could still draw (docs/windows.md, P2's Known gaps).
+    void Anchor(const std::string& tabID, Page& page) {
+        if (!page.browser) return;
+        ScheduleStep(tabID, page.browser, ++page.schedule, 0);
+    }
+    void Anchored(const std::string& tabID, const CefRefPtr<CefBrowser>& browser) {
+        if (Page* page = PageFor(tabID, browser)) Anchor(tabID, *page);
+    }
+    void ScheduleStep(const std::string& tabID, const CefRefPtr<CefBrowser>& browser, uint64_t schedule, size_t step) {
+        const int64_t delay = kRehideScheduleMs[step] - (step ? kRehideScheduleMs[step - 1] : 0);
+        CefPostDelayedTask(TID_UI, new FunctionTask([shared = shared_from_this(), tabID, browser, schedule, step] {
+            shared->Post([shared, tabID, browser, schedule, step] {
+                Page* p = shared->PageFor(tabID, browser);
+                if (!p || p->schedule != schedule) return;  // closed, or restarted since
+                if (p->hwnd && !p->placed.visible) Rehide(*p);
+                if (step + 1 < std::size(kRehideScheduleMs)) shared->ScheduleStep(tabID, browser, schedule, step + 1);
+            });
+        }), delay);
     }
     void RehideIfShowing(const std::string& tabID, Page& page) {
         if (!page.saysVisible || !page.hwnd || page.placed.visible) return;
@@ -747,6 +762,7 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
         // Never matches, so the first Layout always places it: the window may have been
         // resized or maximized since the browser was asked for.
         page.placed = {true, RECT{-1, -1, -1, -1}};
+        Anchor(tabID, page);
         if (closing) {
             if (!closed) browser->GetHost()->CloseBrowser(true);  // closing started since
             return;
@@ -1555,10 +1571,18 @@ public:
 
     // CefLoadHandler
 
+    // A main frame's load starting (its navigation committed) or ending anchors the re-hide
+    // schedule (Shared::Anchor); a subframe's never does, so an iframe can't keep Kite at it.
+    void OnLoadStart(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, TransitionType) override {
+        if (frame && frame->IsMain()) shared_->Post([shared = shared_, id = tabID_, browser] { shared->Anchored(id, browser); });
+    }
+    void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int) override {
+        if (frame && frame->IsMain()) shared_->Post([shared = shared_, id = tabID_, browser] { shared->Anchored(id, browser); });
+    }
+
     void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading, bool canGoBack, bool canGoForward) override {
         perf::Mark(isLoading ? "load-begin" : "load-end", tabID_);
         shared_->Post([shared = shared_, id = tabID_, browser, isLoading, canGoBack, canGoForward] {
-            if (!isLoading) shared->PageLoaded(id, browser);
             if (shared->PageFor(id, browser) && shared->events.loadingChanged) {
                 shared->events.loadingChanged(id, isLoading, canGoBack, canGoForward);
             }

@@ -1443,10 +1443,14 @@ Windows that means:
       `Document.prototype`'s own getter on the document, both kept from then, so redefining
       `visibilityState` changes nothing it reads. But `document.open()` drops every listener
       on the document and the window, Kite's too, and a compromised renderer can say anything.
-    - **So Kite also re-hides on its own.** After each main-frame load end of a page Kite has
-      hidden, it re-hides it at 0.5, 1, 1.5, 3 and 6 s, asking nothing of the page: Chromium
-      showed such pages 0.4 to 1.3 s after a load end (measured, `document.open()` pages
-      too).
+    - **So Kite also re-hides on its own.** After anything the browser sees that might make
+      Chromium show a page (its browser made, its placement going hidden, a main frame's load
+      starting or ending; never a subframe's), a page Kite has hidden then is re-hidden at
+      0.5, 1, 1.5, 3 and 6 s, asking nothing of the page. A new one of these restarts the
+      schedule rather than adding to it, so a page has one step pending at a time. They're
+      anchors, not causes: what makes Chromium show such a page isn't known. It was seen 0.4 to
+      1.3 s after one of them, `document.open()` pages and a page whose load never ends
+      included.
     - **The re-hide.** For a page Kite has hidden, Kite shows its host and widget windows
       without activating them and hides them again at once, on CEF's thread (a few ms):
       hiding an already hidden window tells Chromium nothing, and this hide it reads like any
@@ -1458,13 +1462,14 @@ Windows that means:
       gave 50,310 red samples, none with an empty region on its host, all of them again
       after.
     - **Throttled.** The instant shows its own `visible` (a frame or two of rAF), so a report
-      within 0.25 s of a re-hide is looked at again after it, and a page gets at most eight
-      re-hides in any 10 s, whatever its renderer says.
+      within 0.25 s of a re-hide is looked at again after it, and a page gets at most 16
+      re-hides in any 10 s, whatever its renderer says (two navigations' schedules and their
+      reports fit; a second navigation's late steps were seen to run).
     - **Checked.** `windows/tests/CoveredLaunchCheck.ps1` (CI runs it under a cover of its
-      own, plain and with each of four attacks: a capture listener stopping
-      `visibilitychange`, a spoofed `visibilityState`, and `document.open()` after load, alone
-      and with that listener): a Kite opened covered ends with its page `hidden` and rAF
-      stopped.
+      own, plain and with each of six attacks: a capture listener stopping
+      `visibilitychange`, a spoofed `visibilityState`, `document.open()` after load (alone,
+      with that listener, and in a page whose load never ends), and an iframe pointed somewhere
+      new every 150 ms): a Kite opened covered ends with its page `hidden` and rAF stopped.
   - **Off for test runs.** `--smoke-test` and `--frame-log` run without
     occlusion, so their checks of the slide and the crossfade can't pass
     unseen, and so does `--perf-control` until kiteperf asks for it in its
@@ -1482,10 +1487,13 @@ Windows that means:
     captured as a window by an app not on the recorder list (a meeting app
     sharing it while covered) shows its card. While a recorder runs, a covered
     Kite draws (the verdict is visible, so there's no heartbeat); the watcher
-    waits on the recorder's process, and its exit runs a pass. A page Kite hid that Chromium
-    shows more than 6 s after its last load end, with Kite's listener gone (`document.open()`)
-    or its renderer lying, draws until the next load end, placement change or verdict change;
-    none was seen.
+    waits on the recorder's process, and its exit runs a pass. The re-hide schedule's anchors
+    aren't what makes Chromium show a page Kite hid, and that cause isn't known: a page it
+    shows more than 6 s after the last anchor (a browser made, a placement going hidden, a
+    main-frame load starting or ending), with Kite's listener gone (`document.open()`) or its
+    renderer lying, draws until the next anchor or verdict change. None was seen; every show
+    measured came 0.4 to 1.3 s after an anchor. A page that keeps making anchors (navigating
+    every half second) keeps putting the steps off, and past 16 re-hides in 10 s waits.
 
 ## Measuring performance
 

@@ -3,7 +3,7 @@
 # requestAnimationFrame stops, and stays that way while Kite stays covered.
 #
 #   pwsh windows/tests/CoveredLaunchCheck.ps1 -Kite windows\build\Release\Kite.exe [-Cover] [-Seconds 15]
-#        [-Attack none|stopPropagation|spoofState]
+#        [-Attack none|stopPropagation|spoofState|docOpen|docOpenStop|endlessOpen|iframeStorm]
 #
 # Kite runs as a quiet --perf-log run on a fresh %TEMP% test profile, so it opens at the bottom of
 # the z-order and never activates; its occlusion is on from the start (no --perf-control). -Cover
@@ -15,16 +15,19 @@
 # in a capture listener on window, spoofState makes document.visibilityState always read
 # "hidden". docOpen loads a stub that, once loaded, rewrites itself with document.open/write/close,
 # which drops every listener on the document and the window (an old document.write page does the
-# same); docOpenStop also adds stopPropagation's listener to the new document. The page's own log
-# reads Document.prototype's getter, so it sees through the spoof.
-# The run is 15 s so its last 6 s come after Kite's last re-hide after the load (6 s after it):
+# same); docOpenStop also adds stopPropagation's listener to the new document. endlessOpen keeps
+# an image loading for ever (from a listener in this script on 127.0.0.1 that never finishes a
+# response), so the page never ends loading, and rewrites itself with document.open at once.
+# iframeStorm points an iframe somewhere new every 150 ms. The page's own log reads
+# Document.prototype's getter, so it sees through the spoof.
+# The run is 15 s so its last 6 s come after Kite's last re-hide after a load (6 s after it):
 # each one shows the page for a few ms, a frame or two. Never run -Cover on a PC in use: it
 # blacks out every monitor for the run.
 param(
   [Parameter(Mandatory)] [string] $Kite,
   [switch] $Cover,
   [int] $Seconds = 15,
-  [ValidateSet('none', 'stopPropagation', 'spoofState', 'docOpen', 'docOpenStop')] [string] $Attack = 'none'
+  [ValidateSet('none', 'stopPropagation', 'spoofState', 'docOpen', 'docOpenStop', 'endlessOpen', 'iframeStorm')] [string] $Attack = 'none'
 )
 $ErrorActionPreference = 'Stop'
 Add-Type @"
@@ -77,6 +80,28 @@ public static class KiteCheck {
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
   public static string Describe(IntPtr h) { RECT r; GetWindowRect(h, out r); return r.l + "," + r.t + "," + r.r + "," + r.b; }
   public static void Pump() { MSG m; while (PeekMessageW(out m, IntPtr.Zero, 0, 0, 1)) DispatchMessageW(ref m); }
+  // A response that never ends, on 127.0.0.1 (a free port, returned): a header, a few bytes of a
+  // much longer body, and nothing more, the connection held until this process ends. In this
+  // process, on a background thread, so nothing else needs starting or stopping.
+  public static int ServeEndless() {
+    var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+    listener.Start();
+    var held = new System.Collections.Generic.List<System.Net.Sockets.TcpClient>();
+    var thread = new System.Threading.Thread(() => {
+      for (;;) {
+        var client = listener.AcceptTcpClient();
+        held.Add(client);
+        var stream = client.GetStream();
+        var buffer = new byte[4096];
+        try { stream.Read(buffer, 0, buffer.Length); } catch { continue; }
+        byte[] head = Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 1000000\r\nCache-Control: no-store\r\n\r\n");
+        try { stream.Write(head, 0, head.Length); stream.Write(new byte[16], 0, 16); stream.Flush(); } catch { }
+      }
+    });
+    thread.IsBackground = true;
+    thread.Start();
+    return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+  }
   public static IntPtr FindKite(int pid) {
     IntPtr found = IntPtr.Zero;
     EnumWindows((h, l) => {
@@ -129,12 +154,18 @@ document.addEventListener('visibilitychange', vis); vis();
 setInterval(() => { vis(); log += 'F' + Date.now() + ':' + frames + ' '; document.title = 'vis:' + log; }, 1000);
 </script>
 '@
+  $decode = { param($text) "new TextDecoder().decode(Uint8Array.from(atob('$([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($text)))'), c => c.charCodeAt(0)))" }
   if ($Attack -like 'docOpen*') {
     # The stub, rewritten with the page once it has loaded.
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($html))
     $html = '<!doctype html><meta charset="utf-8"><title>vis:</title><script>addEventListener("load", () => setTimeout(() => {' +
-            "document.open(); document.write(new TextDecoder().decode(Uint8Array.from(atob('$encoded'), c => c.charCodeAt(0)))); document.close();" +
-            '}, 0));</script>'
+            "document.open(); document.write($(& $decode $html)); document.close();" + '}, 0));</script>'
+  } elseif ($Attack -eq 'endlessOpen') {
+    # Never done loading: an image that never finishes, before and after the rewrite.
+    $image = "<img src=`"http://127.0.0.1:$([KiteCheck]::ServeEndless())/never.png`" width=1 height=1>"
+    $html = '<!doctype html><meta charset="utf-8"><title>vis:</title>' + $image +
+            "<script>setTimeout(() => { document.open(); document.write($(& $decode ($html + $image))); }, 0);</script>"
+  } elseif ($Attack -eq 'iframeStorm') {
+    $html += "<iframe id=`"f`" width=10 height=10></iframe><script>let n = 0; setInterval(() => { document.getElementById('f').src = 'data:text/html,' + (++n); }, 150);</script>"
   }
   [IO.File]::WriteAllText($page, $html)
   $kitecore = Join-Path (Split-Path -Parent (Resolve-Path $Kite)) 'kitecore.exe'

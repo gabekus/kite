@@ -150,7 +150,7 @@ jobs:
           # A Kite that opens where no one can see it (under the check's own cover, which never
           # activates) ends with its page hidden and requestAnimationFrame stopped (P2), also when
           # the page tries to keep itself drawing.
-          foreach ($attack in 'none', 'stopPropagation', 'spoofState', 'docOpen', 'docOpenStop') {
+          foreach ($attack in 'none', 'stopPropagation', 'spoofState', 'docOpen', 'docOpenStop', 'endlessOpen', 'iframeStorm') {
             & windows/tests/CoveredLaunchCheck.ps1 -Kite windows/build/Release/Kite.exe -Cover -Attack $attack
             if (-not $?) { throw "the covered-launch check ($attack) failed" }
           }
