@@ -212,11 +212,15 @@ private:
     void MakeCommands();
     // Import from Arc (BrowserWindowControllerArcImport.cpp, the Mac's ArcImportController):
     // Arc's files are read on a worker, which posts kArcReadMessage when they're in.
-    static constexpr UINT kArcReadMessage = WM_APP + 7;
+    // After the file's own (WM_APP + 4...8: favicons, frames, space icons, memory, history).
+    static constexpr UINT kArcReadMessage = WM_APP + 9;
     // The window's system menu item for it (Alt+Space): a WM_SYSCOMMAND id, under 0xF000.
     static constexpr UINT kImportFromArcMenuID = 0x0A10;
     // The writer's thread has written an import's session and its other files.
-    static constexpr UINT kArcSavedMessage = WM_APP + 8;
+    static constexpr UINT kArcSavedMessage = WM_APP + 10;
+    // The next profile's history merge: a one-shot timer, since WM_TIMER comes only once input,
+    // paint and posted messages are done, so the window answers between profiles.
+    static constexpr UINT_PTR kArcMergeTimer = 6;
     struct ArcJob;
     struct ArcSave;
     void ImportFromArc();

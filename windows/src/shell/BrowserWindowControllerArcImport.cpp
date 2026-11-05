@@ -248,16 +248,19 @@ void BrowserWindowController::ArcSaved() {
         return;
     }
     // Each Arc profile's history into the Kite profile it went to, as the Mac's perform, one
-    // profile a message, so the UI thread is held for one profile's merge at a time (about 50 ms
-    // for 20,000 pages); the stores save each at once, on their worker.
+    // profile a pass, so the UI thread is held for one profile's merge at a time (about 50 ms for
+    // 20,000 pages); the stores save each at once, on their worker. The next pass is a one-shot
+    // timer, not a posted message: posted messages come before input and paint, so a chain of
+    // them would keep the window from answering until the last profile.
     if (history_ && !save->imported.histories.empty()) {
         arc_import::MergeHistories(save->imported, *history_, std::chrono::milliseconds::zero(), 1);
         ArmHistorySave();
         if (!save->imported.histories.empty()) {
-            PostMessageW(owner, kArcSavedMessage, 0, 0);
+            SetTimer(owner, kArcMergeTimer, USER_TIMER_MINIMUM, nullptr);
             return;
         }
     }
+    KillTimer(owner, kArcMergeTimer);
     arcSave_.reset();
     OutputDebugStringW((L"Kite: Arc import: " + Widen(json::Write(arc_import::Summary(save->imported))) + L"\n").c_str());
     if (!save->filesError.empty()) {
@@ -270,8 +273,10 @@ void BrowserWindowController::ArcSaved() {
 void BrowserWindowController::FinishArcImport() {
     std::shared_ptr<ArcSave> save = std::move(arcSave_);
     if (!save || !history_) return;
-    std::lock_guard lock(save->mutex);
-    if (!save->done || !save->sessionError.empty()) return;
+    // Held by the writer's thread while it writes the side files: not reported yet, and closing
+    // doesn't wait on that disk work.
+    std::unique_lock lock(save->mutex, std::try_to_lock);
+    if (!lock.owns_lock() || !save->done || !save->sessionError.empty()) return;
     arc_import::MergeHistories(save->imported, *history_);
 }
 

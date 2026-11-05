@@ -122,7 +122,6 @@ SessionWriter::Statistics SessionWriter::Stats() const {
     return shared_->stats;
 }
 
-// One pass: the launch backup, the newest snapshot and an offered backup, all that's waiting.
 namespace {
 
 // SaveThen's continuations taken for one pass. Each runs exactly once: with the write's result as

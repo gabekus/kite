@@ -48,6 +48,7 @@ constexpr UINT kMemoryPressureMessage = WM_APP + 7;
 constexpr UINT kHistoryMessage = WM_APP + 8;
 // History's save (HistoryStores::NextSaveIn), armed by a change and gone once it fires.
 constexpr UINT_PTR kHistoryTimer = 5;
+// 6 is kArcMergeTimer (BrowserWindowController.h).
 
 // Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
 bool CopyText(HWND owner, const std::wstring& text) {
@@ -266,6 +267,7 @@ std::wstring BrowserWindowController::Init() {
         SaveNow();
         // An Arc import whose session is written but whose history isn't merged yet: all of it
         // now, before history's last save.
+        KillTimer(window_.Handle(), kArcMergeTimer);
         FinishArcImport();
         // History too, as the Mac's flush at quit; main.cpp waits for its writes.
         if (history_) {
@@ -951,11 +953,18 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         sidebar_->PicturesArrived();
         return true;
     }
+    // Each of the window's own messages has its own id (W15 and W11 once took the same two).
+    static_assert(kArcReadMessage > kHistoryMessage && kArcSavedMessage > kArcReadMessage, "the window's message ids overlap");
     if (message == kArcReadMessage) {
         ArcRead();
         return true;
     }
     if (message == kArcSavedMessage) {
+        ArcSaved();
+        return true;
+    }
+    if (message == WM_TIMER && wParam == kArcMergeTimer) {
+        KillTimer(window_.Handle(), kArcMergeTimer);
         ArcSaved();
         return true;
     }
