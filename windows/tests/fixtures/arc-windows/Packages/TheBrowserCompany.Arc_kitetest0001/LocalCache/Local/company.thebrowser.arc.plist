@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>TopBarColorCache</key>
+	<dict>
+		<key>00000000-0000-4000-8000-000000000001</key>
+		<data>AAEC</data>
+	</dict>
+	<key>autoArchiveTimeThresholdsPerProfile</key>
+	<string>{&quot;thresholds&quot;:[{&quot;default&quot;:{}},{&quot;sevenDays&quot;:{}}]}</string>
+	<key>hasLaunchedBefore</key>
+	<true/>
+	<key>launchCount</key>
+	<integer>12</integer>
+	<key>lastCheck</key>
+	<date>2026-10-01T12:00:00Z</date>
+	<key>recentThings</key>
+	<array>
+		<string>one &amp; two</string>
+		<real>1.5</real>
+	</array>
+	<key>shouldWarnBeforeQuitting</key>
+	<true/>
+	<key>tidyTabsEnabled</key>
+	<false/>
+</dict>
+</plist>

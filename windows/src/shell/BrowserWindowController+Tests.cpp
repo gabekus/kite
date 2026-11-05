@@ -7,10 +7,16 @@
 #include <algorithm>
 #include <cmath>
 
+#include "core/Favorites.h"
+#include "core/OKLab.h"
+#include "core/SidebarTopRow.h"
 #include "core/SpaceBar.h"
 #include "core/SpaceEditing.h"
+#include "core/TitleBar.h"
+#include "core/Uuid.h"
 #include "shell/Capture.h"
 #include "shell/SpaceMenu.h"
+#include "shell/Text.h"
 
 namespace kite {
 
@@ -27,13 +33,20 @@ bool Inked(const Pixels& pixels, UINT fromRow = 0) {
 
 bool BrowserWindowController::RunUntil(const std::function<bool()>& done, double seconds) {
     // Only the clock's frames and the window's timers: the rest waits for the message loop, so
-    // a page that loads meanwhile can't close the window mid-test.
+    // a page that loads meanwhile can't close the window mid-test. A manual clock's frames are
+    // stepped here at 60 Hz while it runs, as its thread would post them (SmokeTest). Timers come
+    // first: a 500 Hz clock nearly always has a frame waiting, and the slide's end (a timer)
+    // would wait behind them.
     const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(seconds * 1000);
+    double nextFrame = 0;
     MSG message;
     while (!done() && GetTickCount64() < deadline) {
-        if (PeekMessageW(&message, window_.Handle(), kFrameMessage, kFrameMessage, PM_REMOVE) ||
-            PeekMessageW(&message, window_.Handle(), WM_TIMER, WM_TIMER, PM_REMOVE)) {
+        if (PeekMessageW(&message, window_.Handle(), WM_TIMER, WM_TIMER, PM_REMOVE) ||
+            PeekMessageW(&message, window_.Handle(), kFrameMessage, kFrameMessage, PM_REMOVE)) {
             DispatchMessageW(&message);
+        } else if (clock_->Manual() && clock_->Running() && FrameClock::Now() >= nextFrame) {
+            nextFrame = FrameClock::Now() + 1.0 / 60;
+            Frame(FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr), 0);  // rate unknown (0), as Filter's without --perf-log
         } else {
             Sleep(1);
         }
@@ -41,17 +54,28 @@ bool BrowserWindowController::RunUntil(const std::function<bool()>& done, double
     return done();
 }
 
+bool BrowserWindowController::BoostsBalance() const {
+    // Kite's count of boosts held is exactly this window's holders that are on: the clock's, the
+    // pages' slide's and the sidebar toggle's.
+    return FrameClock::ProcessBoosts() == int{clock_->Boosted()} + int{slideBoost_.On()} + int{toggleBoost_.On()};
+}
+
 std::wstring BrowserWindowController::RunToRest(const wchar_t* what) {
     const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
     const bool fades = theme_.Fading();
     if (visible && !sidebarSliding_) return std::wstring(what) + L" didn't slide the pages";
     if (!visible && (sidebarSliding_ || fades)) return std::wstring(what) + L" animated a hidden window";
-    // The clock's frames until the fade ends and the slide's timer fires (2 s at most).
+    // The display at its highest rate while the pages slide, whether or not the theme fades.
+    if (sidebarSliding_ && !(slideBoost_.On() && BoostsBalance())) return std::wstring(what) + L": the pages' slide didn't boost the display";
+    // The clock's frames until the fade ends and the slide's timer fires (2 s at most): the fade
+    // asks for frames and draws on them, the frame after its end stops the clock, and the slide
+    // ends on its timer, its boost with it.
     const size_t framesBefore = frameCount_;
     RunUntil([this] { return !clock_->Running() && !sidebarSliding_; }, 2);
     if (clock_->Running()) return std::wstring(what) + L": the frame clock never stopped";
     if (sidebarSliding_) return std::wstring(what) + L": the pages' slide never ended";
     if (fades && frameCount_ == framesBefore) return std::wstring(what) + L": the crossfade got no frames";
+    if (slideBoost_.On() || !BoostsBalance()) return std::wstring(what) + L": the display stayed boosted at rest";
     if (sidebar_->PageOffset() != 0 || pagesAnchor_ || pendingLanding_) return std::wstring(what) + L": the pages didn't come to rest";
     if (theme_.Fading() || theme_.Interactive() || theme_.from != state_.SelectedSpace().theme) {
         return std::wstring(what) + L": the theme didn't come to rest";
@@ -84,6 +108,8 @@ std::wstring BrowserWindowController::SmokeTestSwipe() {
     // The pointer over the list, and over the page beside the sidebar.
     const POINT list{std::lround(120 * scale), std::lround(200 * scale)};
     const POINT page{std::lround((kSidebarWidth + 200) * scale), std::lround(200 * scale)};
+    // And over the top row, on the sidebar but above the list.
+    const POINT header{std::lround(80 * scale), std::lround(20 * scale)};
     double stamp = FrameClock::Now();
     const auto sendAt = [&](POINT at, Phase phase, double dx, double dy, double after = 1.0 / 60) {
         stamp += after;
@@ -111,6 +137,49 @@ std::wstring BrowserWindowController::SmokeTestSwipe() {
         return L"a gesture moving over the page swiped";
     }
     sendAt(page, Phase::Ended, 0, 0);
+    // With rows enough to scroll (taken away again): a vertical gesture decided over the list is
+    // the list's to its end, its momentum included, wherever the pointer goes (the Mac asks where
+    // it is only until the gesture is decided); one whose pointer is over the page before it's
+    // decided scrolls nothing, nor does the rest of it. Only the undecided one lets the contact go
+    // (counted: the smoke test has no contact to release), and so does one decided vertical over
+    // the top row, where nothing scrolls with it. The rows are taken away by hand, not closed, so
+    // they leave nothing in Recently Closed or the archive.
+    {
+        std::vector<std::string> rows;
+        for (int i = 0; i < 40; ++i) rows.push_back(state_.OpenTab("about:blank", before, false));
+        StateChanged();
+        const float top = sidebar_->ListScroll();
+        const size_t releases = touchpad_->ReleasesAsked();
+        send(Phase::Began, 0, 0);
+        send(Phase::Changed, 0, -30);
+        const float decided = sidebar_->ListScroll();
+        const bool latched = sendAt(page, Phase::Changed, 0, -30) == Step::Pass && sendAt(page, Phase::Ended, 0, 0) == Step::Pass &&
+                             sendAt(page, Phase::Momentum, 0, -20) == Step::Pass && decided == top + 30 &&
+                             sidebar_->ListScroll() == decided + 50 && touchpad_->ReleasesAsked() == releases;
+        sendAt(page, Phase::MomentumEnded, 0, 0);
+        const float scrolled = sidebar_->ListScroll();
+        send(Phase::Began, 0, 0);
+        sendAt(page, Phase::Changed, 0, -30);
+        const bool undecidedReleased = touchpad_->ReleasesAsked() == releases + 1;
+        sendAt(page, Phase::Ended, 0, 0);
+        sendAt(page, Phase::Momentum, 0, -20);
+        const bool released = undecidedReleased && sidebar_->ListScroll() == scrolled && touchpad_->ReleasesAsked() == releases + 1;
+        sendAt(page, Phase::MomentumEnded, 0, 0);
+        // Over the top row (the sidebar, but not the list): held while undecided, released as it's
+        // decided vertical.
+        sendAt(header, Phase::Began, 0, 0);
+        const bool headerHeld = touchpad_->ReleasesAsked() == releases + 1;
+        sendAt(header, Phase::Changed, 0, -30);
+        const bool headerReleased = headerHeld && touchpad_->ReleasesAsked() == releases + 2 && sidebar_->ListScroll() == scrolled;
+        sendAt(header, Phase::Ended, 0, 0);
+        sidebar_->ScrollListBy(top - sidebar_->ListScroll());
+        Space& space = state_.spaces[index];
+        std::erase_if(space.tabs, [&](const Tab& tab) { return std::find(rows.begin(), rows.end(), tab.id) != rows.end(); });
+        StateChanged();
+        if (!latched) return L"a vertical gesture's rest over the page didn't scroll the list";
+        if (!released) return L"a gesture over the page before it was decided wasn't released, or scrolled the list";
+        if (!headerReleased) return L"a vertical gesture decided over the top row kept its contact";
+    }
 
     // Sideways: the pages and the theme follow the fingers, and a frame draws it.
     send(Phase::Began, 0, 0);
@@ -254,18 +323,21 @@ std::wstring BrowserWindowController::SmokeTestSwipeThreeSpaces() {
         if (state_.SelectedSpaceIndex() != 0) return L"a swipe past the first space moved the selection";
 
         // A fade's boost ends with it, though the clock runs on for fingers resting on the
-        // touchpad (made here by asking the touchpad for frames, as a contact taken does).
+        // touchpad (made here by asking the touchpad for frames, as a contact taken does, for
+        // longer than the check can take: it ends them itself), and stops at the next frame once
+        // they're done.
         if (state_.spaces[0].theme != state_.spaces[1].theme && touchpad_) {
             RunCommand("nextSpace");
-            touchpad_->PollFor(1.5);
+            touchpad_->PollFor(60);
             if (!theme_.Fading() || !clock_->Boosted()) return L"a space switch's crossfade didn't boost the display";
             if (!RunUntil([this] { return !theme_.Fading(); }, 2)) return L"a space switch's crossfade never ended";
             // A frame after it, for the clock to hear.
             const size_t frames = frameCount_;
-            RunUntil([&] { return frameCount_ > frames; }, 0.5);
+            if (!RunUntil([&] { return frameCount_ > frames; }, 0.5)) return L"the clock gave no frame after a crossfade under the touchpad's";
             if (!clock_->Running()) return L"the clock stopped while the touchpad wanted frames";
             if (clock_->Boosted()) return L"fingers resting on the touchpad kept a crossfade's boost";
-            if (!RunUntil([this] { return !clock_->Running() && !sidebarSliding_; }, 3)) return L"the touchpad's frames never stopped";
+            touchpad_->PollFor(0);
+            if (!RunUntil([this] { return !clock_->Running() && !sidebarSliding_; }, 2)) return L"the touchpad's frames never stopped";
             if (sidebar_->PageOffset() != 0 || pagesAnchor_) return L"the pages didn't come to rest under the touchpad's frames";
             if (std::wstring problem = selectFirst(); !problem.empty()) return problem;
         }
@@ -341,6 +413,44 @@ std::wstring BrowserWindowController::HoldSwipe(double dx) {
 }
 
 std::wstring BrowserWindowController::SmokeTest() {
+    // The clock's own thread gives frame after frame while something wants them (the compositor
+    // clock's, or DwmFlush's when its wait fails, as with the display off: 500 Hz there), here
+    // the touchpad's polling; once nothing does, its next frame stops the clock, unboosted. The
+    // 5 s allow for DwmFlush's stalls of a few hundred ms; a thread that stops ticking fails.
+    const size_t framesBefore = frameCount_;
+    if (touchpad_) {
+        touchpad_->PollFor(5);
+        clock_->Start(false);
+        const bool ticked = RunUntil([&] { return frameCount_ >= framesBefore + 3; }, 5);
+        touchpad_->PollFor(0);
+        if (!ticked) {
+            clock_->Stop();
+            return L"the frame clock gave fewer than 3 frames in 5 s";
+        }
+        if (!clock_->Running()) return L"the frame clock stopped while the touchpad wanted frames";
+    } else {
+        clock_->Start(false);
+    }
+    const size_t polled = frameCount_;
+    if (!RunUntil([&] { return frameCount_ > polled; }, 5)) {
+        clock_->Stop();
+        return L"the frame clock gave no frame in 5 s";
+    }
+    if (clock_->Running() || clock_->Boosted()) return L"a frame with nothing to animate didn't stop the frame clock";
+    // The rest steps the clock's frames in RunUntil, at 60 Hz while it runs: what's checked is
+    // when the window starts, boosts and stops it, and what it does with its frames, never
+    // whether the display is ticking. Back to the thread's frames however the checks end.
+    struct ManualClock {
+        FrameClock& clock;
+        explicit ManualClock(FrameClock& c) : clock(c) { clock.SetManual(true); }
+        ~ManualClock() { clock.SetManual(false); }
+        ManualClock(const ManualClock&) = delete;
+        ManualClock& operator=(const ManualClock&) = delete;
+    } manual(*clock_);
+    return SmokeTestWindow();
+}
+
+std::wstring BrowserWindowController::SmokeTestWindow() {
     // The command bar opens over the window, draws with text in it, and closes.
     if (!commandBar_) return L"Kite couldn't make the command bar";
     commandBar_->Show(CommandBarMode::NewTab, "", BarLook());
@@ -357,6 +467,10 @@ std::wstring BrowserWindowController::SmokeTest() {
     if (barTop < 0 || barTop >= static_cast<long>(chrome.height) || !Inked(chrome, static_cast<UINT>(barTop))) {
         return L"the space bar drew nothing";
     }
+    // The top row: its buttons, the page's states, hiding and showing the sidebar.
+    if (std::wstring problem = SmokeTestTopRow(); !problem.empty()) return problem;
+    // The favorites: a grid over the page, whose hover and selection draw nothing.
+    if (std::wstring problem = SmokeTestFavorites(); !problem.empty()) return problem;
     // And the caption buttons their glyphs.
     Pixels buttons;
     if (std::wstring problem = caption_->Draw(&buttons); !problem.empty()) return L"the caption buttons couldn't draw: " + problem;
@@ -390,10 +504,11 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
     // The window's own frame, read back as it's presented: at the window's scale.
     std::wstring problem = Draw(&pixels);
     if (problem.empty()) {
-        // The sidebar's surface over the backdrop, at the window's top-left.
+        // The sidebar's surface over the backdrop, at the window's top-left (off the window while
+        // it's hidden).
         Pixels chrome;
         problem = sidebar_->Draw(&chrome);
-        if (problem.empty()) ComposeOver(pixels, chrome, POINT{0, 0});
+        if (problem.empty() && sidebarShown_) ComposeOver(pixels, chrome, POINT{0, 0});
     }
     if (problem.empty()) {
         Pixels buttons;
@@ -424,6 +539,12 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
     if (problem.empty() && barText) {
         // The bar as Ctrl+T opens it, with the text typed in.
         if (!commandBar_) return L"Kite couldn't make the command bar";
+        // Its history rows are the profile's file's: read on history's worker, waited for here
+        // (a test run, before the first frame it saves).
+        if (history_) {
+            history_->ForProfile(state_.SelectedProfileDirectory());
+            if (!history_->WaitForLoads(std::chrono::seconds(10))) return L"history wasn't read within 10 s";
+        }
         commandBar_->Show(CommandBarMode::NewTab, "", BarLook());
         commandBar_->Type(*barText);
         Pixels bar;
@@ -480,6 +601,148 @@ std::wstring BrowserWindowController::HoldRename(size_t index, const std::option
     if (text) sidebar_->TypeInRename(*text);
     if (focused) sidebar_->FocusRenameForCapture();
     return {};
+}
+
+void BrowserWindowController::HoldPageStatus(const PageStatus& page) {
+    if (const Tab* tab = state_.SelectedTab()) pageStatus_[tab->id] = page;
+    ShowPageStatus();
+}
+
+std::wstring BrowserWindowController::HoldSidebarToggles(int times) {
+    for (int i = 0; i < times; ++i) {
+        RunCommand("toggleSidebar");
+        if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
+    }
+    return {};
+}
+
+std::wstring BrowserWindowController::HoldTopRowHover(TopRowButton button) {
+    const std::optional<POINT> at = sidebar_->TopRowCentre(button);
+    if (!at) return L"the top row has no such button";
+    SendMouse(window_.Handle(), WM_MOUSEMOVE, *at, 0);
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestTopRow() {
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    // Drawn first, so what follows shows what each change draws.
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the sidebar couldn't draw: " + problem;
+    const std::vector<TopRowItem>& items = sidebar_->TopRowItems();
+    if (items.size() != 4 || items.front().button != TopRowButton::ToggleSidebar || items.back().button != TopRowButton::Reload) {
+        return L"the top row isn't the toggle, back, forward and reload";
+    }
+    const Tab* tab = state_.SelectedTab();
+    if (!tab) return {};  // the smoke page's session always has one
+    const std::string tabID = tab->id;
+    const std::optional<PageStatus> before =
+        pageStatus_.contains(tabID) ? std::optional<PageStatus>(pageStatus_.at(tabID)) : std::nullopt;
+    const auto restore = [&] {
+        if (before) pageStatus_[tabID] = *before;
+        else pageStatus_.erase(tabID);
+        ShowPageStatus();
+    };
+    const auto item = [&](TopRowButton button) {
+        for (const TopRowItem& i : sidebar_->TopRowItems()) {
+            if (i.button == button) return i;
+        }
+        return TopRowItem{};
+    };
+    const std::wstring failure = [&]() -> std::wstring {
+        // Back turning on is an opacity: the sidebar's next pass commits it, drawing nothing.
+        size_t draws = sidebar_->TopRowSurfaceDraws();
+        const size_t commits = sidebar_->Commits();
+        HoldPageStatus(PageStatus{false, true, false});
+        if (!item(TopRowButton::Back).enabled || item(TopRowButton::Forward).enabled) return L"the page's history didn't reach the top row";
+        if (!sidebar_->CommitPending()) return L"a button turning on wasn't to be committed";
+        sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0);
+        if (sidebar_->Commits() != commits + 1 || sidebar_->CommitPending()) return L"a button turning on wasn't committed";
+        if (sidebar_->TopRowSurfaceDraws() != draws) return L"a button turning on drew its surface";
+        // Loading: reload is the X, which draws that one button.
+        HoldPageStatus(PageStatus{true, true, false});
+        if (item(TopRowButton::Reload).symbol != "xmark") return L"a loading page didn't show the X";
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the top row couldn't draw: " + problem;
+        if (sidebar_->TopRowSurfaceDraws() != draws + 1) return L"the X drew more than its button";
+        // A hover over a button draws nothing (the Mac's SymbolButton shows none; Windows' tooltip comes).
+        draws = sidebar_->TopRowSurfaceDraws();
+        if (std::wstring problem = HoldTopRowHover(TopRowButton::Back); !problem.empty()) return problem;
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the sidebar couldn't draw: " + problem;
+        if (sidebar_->TopRowSurfaceDraws() != draws) return L"hovering a top-row button drew";
+        // The first hover over a button makes the tooltips (comctl32 loads then, not at launch).
+        if (!sidebar_->TopRowHasTooltips()) return L"hovering a top-row button made no tooltip";
+        // The buttons take their presses (not the window's drag); the row between them drags.
+        const auto areaAt = [&](POINT at) {
+            RECT client{};
+            GetClientRect(window_.Handle(), &client);
+            return TitleBarAreaAt(static_cast<float>(client.right) / scale, SidebarShownWidth(), static_cast<float>(at.x) / scale,
+                                  static_cast<float>(at.y) / scale, scale);
+        };
+        const POINT toggle = *sidebar_->TopRowCentre(TopRowButton::ToggleSidebar);
+        if (areaAt(toggle) != TitleBarArea::Client || areaAt(POINT{std::lround(100 * scale), toggle.y}) != TitleBarArea::Drag) {
+            return L"the top row's buttons aren't cut out of the window's drag";
+        }
+        // A press on a disabled button (forward) does nothing.
+        const POINT forward = *sidebar_->TopRowCentre(TopRowButton::Forward);
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, forward, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, forward, 0);
+        if (!sidebarShown_ || GetCapture() == window_.Handle()) return L"a press on a disabled button did something";
+        // The toggle hides the sidebar: it slides off, the card's edge moves to the inset, and the
+        // sidebar takes no pointer.
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, toggle, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, toggle, 0);
+        if (sidebarShown_ || !toggling_) return L"the toggle didn't hide the sidebar";
+        if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
+        if (sidebar_->Left() != -static_cast<float>(kSidebarWidth)) return L"the hidden sidebar isn't off the window";
+#ifdef KITE_HAS_CEF
+        if (chromium_ && ContentBounds().left != MulDiv(static_cast<int>(sidebar_toggle::kContentInset), static_cast<int>(window_.Dpi()),
+                                                        USER_DEFAULT_SCREEN_DPI)) {
+            return L"the card didn't grow to the window's inset";
+        }
+#endif
+        if (areaAt(toggle) != TitleBarArea::Drag || OverSidebar(POINT{std::lround(120 * scale), std::lround(200 * scale)})) {
+            return L"the hidden sidebar still takes the pointer";
+        }
+        if (sidebar_->HandleMouse(WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(toggle.x, toggle.y))) return L"the hidden sidebar took a press";
+        // The system menu's item says Show Sidebar now, and shows it.
+        const auto menuTitle = [&] {
+            wchar_t title[64] = {};
+            if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) GetMenuStringW(menu, kToggleSidebarMenuID, title, 64, MF_BYCOMMAND);
+            return std::wstring(title);
+        };
+        if (!menuTitle().starts_with(L"Show Sidebar\t") || menuTitle() != ToggleSidebarMenuText()) {
+            return L"the system menu doesn't offer Show Sidebar with its shortcut";
+        }
+        // Hidden at rest it draws and commits nothing: reload's arrow coming back (the page stopped
+        // loading) and back turning off wait for the show, which draws reload alone.
+        const size_t hiddenCommits = sidebar_->Commits(), hiddenDraws = sidebar_->TopRowSurfaceDraws();
+        HoldPageStatus(PageStatus{false, false, true});
+        sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0);
+        if (std::wstring problem = Draw(); !problem.empty()) return L"the window couldn't draw: " + problem;
+        if (sidebar_->Commits() != hiddenCommits || sidebar_->TopRowSurfaceDraws() != hiddenDraws) return L"the hidden sidebar drew";
+        SendMessageW(window_.Handle(), WM_SYSCOMMAND, kToggleSidebarMenuID, 0);
+        if (!sidebarShown_ || !toggling_) return L"the system menu's Show Sidebar didn't show the sidebar";
+        if (sidebar_->TopRowSurfaceDraws() != hiddenDraws + 1 || item(TopRowButton::Reload).symbol != "arrow.clockwise") {
+            return L"the sidebar didn't draw what changed while it was hidden as it showed";
+        }
+        if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
+        if (!menuTitle().starts_with(L"Hide Sidebar\t") || menuTitle() != ToggleSidebarMenuText()) {
+            return L"the system menu doesn't offer Hide Sidebar with its shortcut";
+        }
+        // Ctrl+S's command hides it, and one caught 30 ms into the slide turns back from where it is.
+        RunCommand("toggleSidebar");
+        if (sidebarShown_ || !toggling_) return L"Toggle Sidebar didn't hide the sidebar";
+        RunUntil([] { return false; }, 0.03);
+        const float turned = sidebar_->Left();
+        RunCommand("toggleSidebar");
+        if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
+        if (!sidebarShown_ || sidebar_->Left() != 0 || !(turned < 0 && turned > -static_cast<float>(kSidebarWidth))) {
+            return L"a toggle caught mid-slide didn't turn back";
+        }
+        if (areaAt(toggle) != TitleBarArea::Client) return L"the shown sidebar's toggle isn't a button";
+        return {};
+    }();
+    restore();
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the top row couldn't draw: " + problem;
+    return failure;
 }
 
 std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
@@ -661,6 +924,234 @@ std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
     }
     frames_.clear();
     return {};
+}
+
+std::wstring BrowserWindowController::HoldFavoriteHover(size_t index) {
+    const std::optional<POINT> at = sidebar_->FavoriteCentre(index);
+    if (!at) return L"there's no such favorite";
+    SendMouse(window_.Handle(), WM_MOUSEMOVE, *at, 0);
+    return {};
+}
+
+std::wstring BrowserWindowController::HoldEmptyFavoritesHover() {
+    const FavoritesTray& tray = sidebar_->Favorites();
+    if (!tray.emptyState) return L"the favorites' empty state isn't showing";
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    // The pointer resting on the box, clear of its close button (the button's tooltip waits).
+    SendMouse(window_.Handle(), WM_MOUSEMOVE,
+              POINT{std::lround((tray.emptyFrame.left + 24) * scale), std::lround((tray.emptyFrame.top + 30) * scale)}, 0);
+    return sidebar_->FavoritesCloseShown() ? L"" : L"the empty state's close button didn't show";
+}
+
+std::wstring BrowserWindowController::ClickFavorite(size_t index) {
+    const std::optional<POINT> at = sidebar_->FavoriteCentre(index);
+    if (!at) return L"there's no such favorite";
+    std::string tabID;
+    size_t n = 0;
+    for (const FavoriteTile& tile : sidebar_->Favorites().tiles) {
+        for (const FavoritePane& pane : tile.panes) {
+            if (n++ == index) tabID = pane.tabID;
+        }
+    }
+    SendMouse(window_.Handle(), WM_MOUSEMOVE, *at, 0);
+    SendMouse(window_.Handle(), WM_LBUTTONDOWN, *at, MK_LBUTTON);
+    SendMouse(window_.Handle(), WM_LBUTTONUP, *at, 0);
+    if (!state_.SelectedTab() || state_.SelectedTab()->id != tabID) return L"the click didn't select the favorite";
+    // The pointer leaves the window, so the capture shows the selection at rest, as a session
+    // with it selected does.
+    SendMouse(window_.Handle(), WM_MOUSELEAVE, POINT{}, 0);
+    return {};
+}
+
+std::wstring BrowserWindowController::WaitForFavicons(double seconds, std::vector<std::string>& failed) {
+    if (!favicons_) return L"the capture has no favicons";
+    const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(seconds * 1000);
+    for (;;) {
+        // A draw asks for what it shows; what arrives draws again, and may ask for more (an icon at
+        // another size, a favorite's 16px icon for its colour), until a draw asks for nothing new.
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the sidebar couldn't draw: " + problem;
+        while (!favicons_->Idle() && GetTickCount64() < deadline) Sleep(5);
+        if (!favicons_->Idle()) return L"the favicons didn't arrive in time";
+        if (!favicons_->TakeResults()) break;
+        sidebar_->InvalidatePages();
+    }
+    for (const FavoriteTile& tile : sidebar_->Favorites().tiles) {
+        for (const FavoritePane& pane : tile.panes) {
+            if (pane.favicon.url && favicons_->Failed(*pane.favicon.url)) failed.push_back(*pane.favicon.url);
+        }
+    }
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestEmptyFavorites() {
+    // A fresh profile with no favorites: the empty state, until its close button dismisses it (the
+    // one-shot flag, written to the test profile), then back as it was.
+    if (!state_.Favorites().empty() || oneShotFlags_.Get(OneShotFlags::kFavoritesEmptyStateDismissed)) return {};
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the favorites couldn't draw: " + problem;
+    const FavoritesTray tray = sidebar_->Favorites();
+    if (!tray.emptyState || sidebar_->ListTop() != SidebarListTop(tray) || sidebar_->ListTop() <= sidebar_metrics::kHeaderAreaHeight) {
+        return L"a profile with no favorites doesn't show the empty state";
+    }
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    const auto client = [&](float x, float y) { return POINT{std::lround(x * scale), std::lround(y * scale)}; };
+    const std::wstring failure = [&]() -> std::wstring {
+        // The pointer over the box shows the close button: an opacity, nothing drawn.
+        const size_t draws = sidebar_->FavoriteSurfaceDraws();
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, client(tray.emptyFrame.left + 20, tray.emptyFrame.top + 20), 0);
+        if (!sidebar_->FavoritesCloseShown() || !sidebar_->CommitPending()) return L"hovering the empty state didn't show its close button";
+        sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0);
+        if (sidebar_->FavoriteSurfaceDraws() != draws) return L"hovering the empty state drew";
+        // Its close button acts only when let go over it: pressed and let go on the box, nothing.
+        const POINT close = client((tray.closeFrame.left + tray.closeFrame.right) / 2, (tray.closeFrame.top + tray.closeFrame.bottom) / 2);
+        const POINT box = client(tray.emptyFrame.left + 20, tray.emptyFrame.top + 20);
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, close, 0);
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, close, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, box, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, box, 0);
+        if (oneShotFlags_.Get(OneShotFlags::kFavoritesEmptyStateDismissed) || !sidebar_->Favorites().emptyState || GetCapture() == window_.Handle()) {
+            return L"letting go of the close button off it dismissed the empty state";
+        }
+        // Let go over it, it dismisses it: the page moves up under the address field.
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, close, 0);
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, close, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, close, 0);
+        if (!oneShotFlags_.Get(OneShotFlags::kFavoritesEmptyStateDismissed) || sidebar_->Favorites().height != 0 ||
+            sidebar_->ListTop() != sidebar_metrics::kHeaderAreaHeight) {
+            return L"the empty state's close button didn't dismiss it";
+        }
+        if (!OneShotFlags::Load(options_.supportDirectory).Get(OneShotFlags::kFavoritesEmptyStateDismissed)) return L"the dismissal wasn't saved";
+        return {};
+    }();
+    sidebar_->ClearHover();
+    const std::string restored = oneShotFlags_.Set(OneShotFlags::kFavoritesEmptyStateDismissed, false);
+    sidebar_->SetFavoritesEmptyStateDismissed(false);
+    if (!restored.empty() && failure.empty()) return L"the empty state's flag couldn't be set back: " + Widen(restored);
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
+    return failure;
+}
+
+std::wstring BrowserWindowController::SmokeTestFavorites() {
+    if (std::wstring problem = SmokeTestEmptyFavorites(); !problem.empty()) return problem;
+    // Two favorites with no favicon (no network), added to the current profile's grid, then the
+    // session as it was.
+    const std::vector<Tab> before = state_.Favorites();
+    const size_t space = state_.SelectedSpaceIndex();
+    const std::optional<std::string> selected = state_.spaces[space].selectedTabID;
+    std::vector<Tab> grid = before;
+    for (const char* title : {"Kite smoke favorite", "Kite smoke favorite 2"}) {
+        Tab tab;
+        tab.id = NewUuid();
+        tab.url = "about:blank";
+        tab.title = title;
+        grid.push_back(std::move(tab));
+    }
+    const std::string first = grid[grid.size() - 2].id;
+    const size_t index = grid.size() - 2;
+    state_.SetFavorites(grid);
+    sidebar_->Update(state_, pagesAnchor_);
+    const std::wstring failure = [&]() -> std::wstring {
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the favorites couldn't draw: " + problem;
+        const FavoritesTray& tray = sidebar_->Favorites();
+        if (tray.tiles.size() != grid.size()) return L"the favorites didn't show";
+        if (sidebar_->ListTop() != SidebarListTop(tray) || sidebar_->ListTop() <= sidebar_metrics::kHeaderAreaHeight) {
+            return L"the space's page didn't start under the favorites";
+        }
+        const auto redraw = [&] { sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0); };
+        redraw();
+        // A hover is opacities, which the sidebar's next pass commits, drawing nothing.
+        const size_t draws = sidebar_->FavoriteSurfaceDraws();
+        size_t commits = sidebar_->Commits();
+        const std::vector<FavoriteLook> rest = sidebar_->FavoriteLooks();
+        const std::optional<POINT> at = sidebar_->FavoriteCentre(index);
+        if (!at) return L"the favorite has no pane";
+        if (std::wstring problem = HoldFavoriteHover(index); !problem.empty()) return problem;
+        if (!sidebar_->CommitPending()) return L"hovering a favorite wasn't to be committed";
+        redraw();
+        if (sidebar_->Commits() != commits + 1 || sidebar_->CommitPending()) return L"hovering a favorite wasn't committed";
+        if (sidebar_->FavoriteSurfaceDraws() != draws) return L"hovering a favorite drew";
+        if (!(sidebar_->FavoriteLooks()[index].fill > rest[index].fill) || sidebar_->FavoriteLooks()[index + 1] != rest[index + 1]) {
+            return L"hovering a favorite didn't brighten just its pane";
+        }
+        // The first hover over a pane makes the tooltips (comctl32 loads then, not at launch).
+        if (!sidebar_->FavoritesHaveTooltips()) return L"hovering a favorite made no tooltip";
+        // Selecting it is opacities too.
+        commits = sidebar_->Commits();
+        state_.Select(first);
+        sidebar_->Update(state_, pagesAnchor_);
+        redraw();
+        if (sidebar_->Commits() != commits + 1) return L"selecting a favorite wasn't committed";
+        if (sidebar_->FavoriteSurfaceDraws() != draws) return L"selecting a favorite drew";
+        const bool dark = !PrefersDarkForeground(state_.SelectedSpace().theme);
+        if (sidebar_->FavoriteLooks()[index] != FavoriteLookOf(true, true, dark, false)) return L"the selected favorite isn't filled white";
+        // A press between the panes is the grid's: no window drag, no row, nothing selected.
+        const FavoriteTile& tile = sidebar_->Favorites().tiles[index];
+        const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+        const POINT gap{std::lround((tile.frame.right + 2) * scale), std::lround((tile.frame.top + tile.frame.bottom) / 2 * scale)};
+        if (!sidebar_->HandleMouse(WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(gap.x, gap.y))) return L"the favorites' gap didn't take its press";
+        sidebar_->HandleMouse(WM_LBUTTONUP, 0, MAKELPARAM(gap.x, gap.y));
+        if (!state_.SelectedTab() || state_.SelectedTab()->id != first || GetCapture() == window_.Handle()) return L"a press between favorites did something";
+        return {};
+    }();
+    sidebar_->ClearHover();
+    state_.SetFavorites(before);
+    state_.spaces[space].selectedTabID = selected;
+    sidebar_->Update(state_, pagesAnchor_);
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
+    // From some favorites to none: the page back where the tray as it is now ends it, and (not
+    // dismissed) the empty state's layers made.
+    if (failure.empty() && before.empty()) {
+        const FavoritesTray& now = sidebar_->Favorites();
+        if (sidebar_->ListTop() != SidebarListTop(now) || !now.tiles.empty()) return L"the page didn't come back up when the favorites went";
+        if (now.emptyState && !sidebar_->FavoritesEmptyStateDrawn()) return L"the empty state didn't draw when the favorites went";
+    }
+    if (!failure.empty()) return failure;
+    return SmokeTestFavoritesScroll();
+}
+
+std::wstring BrowserWindowController::SmokeTestFavoritesScroll() {
+    // The list scrolled to its end under a tall grid (nine favorites, three rows), then the grid
+    // gone: the page starts higher, so it has less to scroll, and the scroll comes within it. Then
+    // the session as it was.
+    const std::vector<Tab> before = state_.Favorites();
+    const size_t space = state_.SelectedSpaceIndex();
+    const size_t tabsBefore = state_.spaces[space].tabs.size();
+    std::vector<Tab> grid = before;
+    for (int i = 0; i < 9; ++i) {
+        Tab tab;
+        tab.id = NewUuid();
+        tab.url = "about:blank";
+        tab.title = "Kite smoke favorite " + std::to_string(i + 1);
+        grid.push_back(std::move(tab));
+    }
+    // Enough of today's tabs that the list scrolls (never selected: no pages for them).
+    std::vector<std::string> added;
+    for (int i = 0; i < 30; ++i) added.push_back(state_.OpenTab("about:blank", state_.spaces[space].id, false));
+    state_.SetFavorites(grid);
+    sidebar_->Update(state_, pagesAnchor_);
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    RECT client{};
+    GetClientRect(window_.Handle(), &client);
+    const float height = static_cast<float>(client.bottom) / scale;
+    const auto maxScroll = [&] { return SidebarMaxScroll(SidebarRows(state_, space), height, scale, sidebar_->ListTop()); };
+    const std::wstring failure = [&]() -> std::wstring {
+        const POINT overList{std::lround(100 * scale), std::lround((sidebar_->ListTop() + 40) * scale)};
+        if (!sidebar_->ScrollList(overList, 100000)) return L"the list under the favorites took no scroll";
+        const float tall = sidebar_->ListScroll();
+        if (tall <= 0 || tall != maxScroll()) return L"the list under the favorites didn't scroll to its end";
+        // The grid goes (to the empty state or none): less to scroll, and the scroll within it.
+        state_.SetFavorites(before);
+        sidebar_->Update(state_, pagesAnchor_);
+        if (!(maxScroll() < tall)) return L"the page had no less to scroll without the grid";
+        if (sidebar_->ListScroll() > maxScroll()) return L"the list's scroll stayed past its end when the favorites went";
+        return {};
+    }();
+    state_.SetFavorites(before);
+    auto& tabs = state_.spaces[space].tabs;
+    std::erase_if(tabs, [&](const Tab& tab) { return std::find(added.begin(), added.end(), tab.id) != added.end(); });
+    sidebar_->Update(state_, pagesAnchor_);
+    if (tabs.size() != tabsBefore && failure.empty()) return L"the smoke test's tabs didn't go";
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
+    return failure;
 }
 
 }  // namespace kite

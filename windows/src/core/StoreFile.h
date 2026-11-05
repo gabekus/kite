@@ -22,6 +22,8 @@
 #include <string>
 #include <string_view>
 
+#include "core/Files.h"
+
 namespace kite::store_file {
 
 // Empty on success, otherwise what went wrong (the target is then untouched).
@@ -39,10 +41,15 @@ bool IsTempName(std::string_view name);
 // crash, since no write takes that long. Returns how many went.
 size_t RemoveStaleTemps(const std::filesystem::path& directory, std::chrono::seconds age);
 
-// The whole file, or none when it can't be read.
+// The whole file, or none when it can't be read. With `maxBytes`, a file longer than that isn't
+// read past it: none, and `tooLarge` set. History reads history.json with kMaxHistoryReadBytes;
+// this becomes W15's core/Files.h kMaxReadBytes when both have landed.
 std::optional<std::string> Read(const std::filesystem::path& file);
+std::optional<std::string> Read(const std::filesystem::path& file, size_t maxBytes, bool* tooLarge = nullptr);
+// 64 MB: fifteen times the biggest history.json the Mac's 20,000-page cap makes.
+inline constexpr size_t kMaxHistoryReadBytes = size_t{64} << 20;
 
-// UTF-8 for messages; path::string() throws on Windows for names outside the ANSI code page.
-std::string PathText(const std::filesystem::path& path);
+// UTF-8 for messages (core/Files.h's).
+using kite::PathText;
 
 }  // namespace kite::store_file

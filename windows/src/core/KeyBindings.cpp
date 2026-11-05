@@ -302,6 +302,7 @@ const std::vector<ShortcutCommand>& ShortcutCommands() {
         std::vector<ShortcutCommand> c{
             {"newTab", "New Tab…", Ctrl("t")},
             {"reopenClosedTab", "Restore Last Closed Tab", CtrlShift("t"), {}},
+            {"importFromArc", "Import from Arc…", std::nullopt},
             {"openLocation", "Open Location…", std::nullopt},
             {"archiveTab", "Archive Tab", Ctrl("w"), {Ctrl("f4")}},  // closes the bar first
             {"closeWindow", "Close Window", CtrlShift("w"), {}},
@@ -310,6 +311,8 @@ const std::vector<ShortcutCommand>& ShortcutCommands() {
             // print dialog is dismissed, CEF 156 never prints again and Chromium's shutdown hangs.
             {"copyCurrentURL", "Copy URL", CtrlShift("c")},
             {"collapsePinnedSection", "Collapse Pinned Tabs", std::nullopt},
+            // The Mac's View › Hide Sidebar (Show Sidebar while it's hidden).
+            {"toggleSidebar", "Hide Sidebar", Ctrl("s")},
             {"stopLoading", "Stop Loading", Ctrl(".")},
             {"reloadPage", "Refresh the Page", Ctrl("r"), {Bare("f5")}},
             {"forceReloadPage", "Force Refresh the Page", CtrlShift("r"), {Ctrl("f5"), KeyShortcut("f5", {Modifier::Shift})}},
@@ -343,6 +346,16 @@ std::optional<KeyShortcut> WindowsShortcut(const KeyShortcut& shortcut) {
     std::vector<Modifier> modifiers;
     for (Modifier m : shortcut.modifiers) modifiers.push_back(m == Modifier::Command ? Modifier::Control : m);
     return KeyShortcut(shortcut.key, std::move(modifiers));
+}
+
+std::optional<KeyShortcut> MenuShortcut(const ShortcutMap& table, std::string_view command) {
+    std::optional<KeyShortcut> first;
+    for (const auto& [shortcut, target] : table) {
+        if (!target.command || target.command->id != command) continue;
+        if (target.command->shortcut == shortcut) return shortcut;
+        if (!first) first = shortcut;
+    }
+    return first;
 }
 
 ShortcutMap ShortcutTable(const KeyBindings& bindings) {

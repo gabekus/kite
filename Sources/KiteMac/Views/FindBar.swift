@@ -390,6 +390,17 @@ final class FindBar: NSView, NSTextFieldDelegate {
         search()
     }
 
+    /// The text in the field with no search, so nothing is found or reported and the counter stays empty: a test
+    /// hook's fallback when the page never loaded (`FindTestHook.Step.setTextOnly`). A programmatic string value
+    /// doesn't send controlTextDidChange.
+    func setTextWithoutSearching(_ text: String) {
+        field.stringValue = text
+        lastQuery = ""
+        matches = nil
+        countLabel.stringValue = ""
+        updateAskButton()
+    }
+
     var isAskMode: Bool {
         AskOnPage.isAskMode(enabled: askEnabled, query: query, matches: matches, inConversation: inConversation)
     }

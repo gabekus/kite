@@ -36,10 +36,12 @@ extension BrowserWindowController {
     /// `FindTestHook`, test-safe runs only (FindTestHookRunner calls it once the shown page has loaded): ⌘F's own
     /// `showFind` (with Ask on Page off, whatever the saved defaults say: `FindTestHook.asksOnPage`), then the query
     /// set the way the field takes a keystroke, through `FindBar.setQuery` (the field's string value, then the search
-    /// `controlTextDidChange` runs). No key events, so no input method; no menu.
-    func applyFindTestHook(_ hook: FindTestHook) {
-        guard WindowPresenter.testSafe, shownPage != nil else { return }
-        for step in hook.steps {
+    /// `controlTextDidChange` runs). No key events, so no input method; no menu. `fallback`: the page never loaded
+    /// (FindTestHookRunner's timeout), so the runner writes the ready line, not this. Returns whether the bar is open.
+    @discardableResult
+    func applyFindTestHook(_ hook: FindTestHook, fallback: Bool = false) -> Bool {
+        guard WindowPresenter.testSafe, shownPage != nil else { return false }
+        for step in hook.steps(fallback: fallback) {
             switch step {
             case .showFind(let askOnPage):
                 openFind(askEnabled: askOnPage)
@@ -54,7 +56,7 @@ extension BrowserWindowController {
                     if #available(macOS 15.0, *) { editor.writingToolsBehavior = .none }
                 }
             case .setQuery(let text):
-                guard let bar = findBar else { return }
+                guard let bar = findBar else { return false }
                 bar.onResult = { result, counter in
                     FindTestHookRunner.log(FindTestHook.resultLine(query: text, found: result.found, matches: result.matches,
                                                                    activeMatch: result.activeMatch, counter: counter))
@@ -64,9 +66,19 @@ extension BrowserWindowController {
                 if let editor = bar.field.currentEditor() as? NSTextView {
                     editor.setSelectedRange(NSRange(location: (bar.field.stringValue as NSString).length, length: 0))
                 }
+            case .setTextOnly(let text):
+                // The fallback: the page never loaded, so no search and no result callback; the runner's fallback
+                // line is the only ready line.
+                guard let bar = findBar else { return false }
+                bar.setTextWithoutSearching(text)
+                if let editor = bar.field.currentEditor() as? NSTextView {
+                    editor.setSelectedRange(NSRange(location: (bar.field.stringValue as NSString).length, length: 0))
+                }
             }
         }
-        if hook == .open, findBar?.isHidden == false { FindTestHookRunner.log(FindTestHook.openLine) }
+        let open = findBar?.isHidden == false
+        if hook == .open, open, !fallback { FindTestHookRunner.log(FindTestHook.openLine) }
+        return open
     }
 
     @objc func findNext(_ sender: Any?) { stepFind(forward: true) }

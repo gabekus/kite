@@ -322,8 +322,9 @@ ComPtr<ID2D1PathGeometry> LayerPath(ID2D1Factory* d2d, const ShapeLayer& layer) 
 // pixel at the header's 15pt (1.2x the shape) on a 4x screen, inside Direct2D's default quarter.
 constexpr float kShapeTolerance = 0.04f;
 
-// The shape's layers joined and cut in order; null if Direct2D fails at any step.
-ComPtr<ID2D1Geometry> JoinedLayers(ID2D1Factory* d2d, const SymbolShape& shape) {
+}  // namespace
+
+ComPtr<ID2D1Geometry> MakeShapeGeometry(ID2D1Factory* d2d, const SymbolShape& shape) {
     ComPtr<ID2D1Geometry> joined;
     for (const ShapeLayer& layer : shape.layers) {
         ComPtr<ID2D1PathGeometry> path = LayerPath(d2d, layer);
@@ -345,14 +346,12 @@ ComPtr<ID2D1Geometry> JoinedLayers(ID2D1Factory* d2d, const SymbolShape& shape) 
     return joined;
 }
 
-}  // namespace
-
 ID2D1Geometry* SpaceIconPainter::ShapeGeometry(const SymbolShape& shape) {
     if (auto it = shapes_.find(&shape); it != shapes_.end()) return it->second.Get();
     if (!d2d_) return nullptr;
     // Kept even when it fails, so a failure isn't retried every frame (the next factory tries).
     ComPtr<ID2D1Geometry>& made = shapes_[&shape];
-    made = JoinedLayers(d2d_.Get(), shape);
+    made = MakeShapeGeometry(d2d_.Get(), shape);
     // Said once per factory, as the failure is kept; the caller draws the symbol's glyph instead
     // where it has one.
     if (!made) OutputDebugStringW(L"Kite: a drawn space symbol's geometry couldn't be made\n");

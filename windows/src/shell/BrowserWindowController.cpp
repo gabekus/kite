@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <utility>
 
 #include "core/CommandBar.h"
@@ -20,10 +21,12 @@
 #include "shell/Capture.h"
 #ifdef KITE_HAS_CEF
 #include "shell/Chromium.h"
+#include "shell/Sandbox.h"
 #endif
 #include "shell/Errors.h"
 #include "shell/Keys.h"
 #include "shell/PerfLog.h"
+#include "shell/QuitDialog.h"
 #include "shell/SpaceMenu.h"
 #include "shell/Text.h"
 
@@ -31,13 +34,16 @@ namespace kite {
 
 namespace {
 
-// A frame log's touchpad records at most (a few MB; a resting finger polls once a frame).
+// A frame log's touchpad records at most: about 20 MB held (a record's string is 40 to 90
+// characters, some 100 bytes with its allocation) and 8 to 18 MB written. A resting finger
+// polls once a frame, so a 500 Hz display fills it in under 7 minutes of resting.
 constexpr size_t kMaxTouchpadLog = 200000;
 
 }  // namespace
 
 std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts,
                                                                           Options options, SessionWriter* writer,
+                                                                          HistoryStores* history, DownloadsWriter* downloads,
                                                                           std::wstring& error) {
     // The GPU first: everything is set up before the window shows, so it never appears empty
     // or with the wrong title bar.
@@ -51,7 +57,7 @@ std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTAN
         return nullptr;
     }
     std::unique_ptr<BrowserWindowController> controller(
-        new BrowserWindowController(instance, state, std::move(shortcuts), options, writer, std::move(renderer)));
+        new BrowserWindowController(instance, state, std::move(shortcuts), options, writer, history, downloads, std::move(renderer)));
     if (!controller->window_.IsValid()) {
         error = L"CreateWindowExW failed";
         return nullptr;
@@ -61,12 +67,15 @@ std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTAN
 }
 
 BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
-                                                 SessionWriter* writer, std::unique_ptr<Renderer> renderer)
+                                                 SessionWriter* writer, HistoryStores* history, DownloadsWriter* downloads,
+                                                 std::unique_ptr<Renderer> renderer)
     : instance_(instance),
       state_(state),
       shortcuts_(std::move(shortcuts)),
       options_(options),
       writer_(writer),
+      downloadsWriter_(downloads),
+      history_(history),
       renderer_(std::move(renderer)),
       window_(instance),
       theme_(state.SelectedSpace().theme),
@@ -75,6 +84,10 @@ BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserStat
 }
 
 BrowserWindowController::~BrowserWindowController() {
+    downloadsRead_->target = nullptr;  // a read still on the worker posts nowhere
+    StopArcRead();
+    // History's worker outlives the window: it stops posting to it.
+    if (history_) history_->SetWake(nullptr);
     // The views and the compositor go before the window: it stops calling into them first.
     window_.onClose = nullptr;
     window_.onSize = nullptr;
@@ -101,17 +114,27 @@ std::wstring BrowserWindowController::Init() {
         memoryWatch_ = std::make_unique<MemoryPressureWatch>(window_.Handle(), kMemoryPressureMessage);
         watchingMemory_ = memoryWatch_->IsWatching();
     }
+    if (history_) {
+        // Each profile's file is read on history's worker; its wake comes here. One read before
+        // the window existed is taken in now.
+        HWND hwnd = window_.Handle();
+        history_->SetWake([hwnd] { PostMessageW(hwnd, kHistoryMessage, 0, 0); });
+        history_->Adopt();
+    }
     compositor_ = Compositor::Create(window_.Handle(), *renderer_, error);
     if (!compositor_) return L"Kite couldn't start DirectComposition: " + error;
     if (perf::On()) perf::SetWindow(window_.Handle());
 
     // The sidebar, over the backdrop: what the session lists, with favicons fetched off the UI
-    // thread (none in a capture, which mustn't depend on the network).
-    if (!options_.capture) favicons_ = Favicons::Create(window_.Handle(), kFaviconsMessage);
+    // thread (none in a capture, which mustn't depend on the network, unless it's asked for them).
+    if (!options_.capture || options_.captureFavicons) favicons_ = Favicons::Create(window_.Handle(), kFaviconsMessage);
     sidebar_ = SidebarView::Create(window_.Handle(), favicons_.get(),
                                    SpaceIconPainter::Pictures{options_.spaceIcons, kSpaceIconsMessage, options_.capture}, error);
     if (!sidebar_) return L"Kite couldn't make the sidebar: " + error;
     sidebar_->UseCompositor(compositor_.get());
+    // Its empty favorites tray shows until it's dismissed (a small file, read before the window shows).
+    oneShotFlags_ = OneShotFlags::Load(options_.supportDirectory);
+    sidebar_->SetFavoritesEmptyStateDismissed(oneShotFlags_.Get(OneShotFlags::kFavoritesEmptyStateDismissed));
     sidebar_->Layout(static_cast<float>(kSidebarWidth), window_.Dpi());
     sidebar_->Update(state_);
 
@@ -156,12 +179,16 @@ std::wstring BrowserWindowController::Init() {
         RECT client{};
         GetClientRect(window_.Handle(), &client);
         const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
-        return TitleBarAreaAt(static_cast<float>(client.right) / scale, static_cast<float>(kSidebarWidth), x, y, scale);
+        return TitleBarAreaAt(static_cast<float>(client.right) / scale, SidebarShownWidth(), x, y, scale);
     };
 
     // The command bar (Ctrl+T), over everything in the window.
     CommandBarView::Callbacks bar;
-    bar.suggestions = [this](std::string_view text, CommandBarMode mode) { return CommandBarSuggestions(text, state_, mode); };
+    bar.suggestions = [this](std::string_view text, CommandBarMode mode) {
+        // The current space's profile's history (the Mac's store.history).
+        const History* history = history_ ? &history_->ForProfile(state_.SelectedProfileDirectory()).Get() : nullptr;
+        return CommandBarSuggestions(text, state_, mode, history, Now());
+    };
     bar.commit = [this](const CommandSuggestion& row, CommandBarMode mode) { Commit(row, mode); };
     bar.opened = [this] {
         BlockPages(true);
@@ -215,11 +242,28 @@ std::wstring BrowserWindowController::Init() {
     actions.spaceMenu = [this](const std::string& spaceID, POINT screen) { ShowSpaceMenu(spaceID, screen); };
     actions.renameSpace = [this](const std::string& spaceID, const std::string& name) { RenameSpace(spaceID, name); };
     actions.beginRenaming = [this](const std::string& spaceID) { BeginRenaming(spaceID); };
+    // The top row's buttons run the commands of the same names (the Mac's SidebarActions).
+    actions.topRow = [this](TopRowButton button) { RunCommand(TopRowCommand(button)); };
+    // The empty favorites tray's Dismiss (the Mac's OneShotFlags.set): a write of a few bytes.
+    actions.dismissFavoritesEmptyState = [this] {
+        if (const std::string problem = oneShotFlags_.Set(OneShotFlags::kFavoritesEmptyStateDismissed, true); !problem.empty()) {
+            OutputDebugStringW((L"Kite: " + Widen(problem) + L"\n").c_str());
+        }
+        sidebar_->SetFavoritesEmptyStateDismissed(true);
+    };
     sidebar_->SetActions(std::move(actions));
     if (options_.quiet) askToDelete_ = [](const SpaceDeletion&) { return false; };
     else askToDelete_ = [this](const SpaceDeletion& deletion) { return AskToDeleteSpace(window_.Handle(), deletion); };
 
     MakeCommands();
+    // View › Hide Sidebar and the Mac's File › Import from Arc…: in the window's system menu
+    // (Alt+Space) until Windows has a menu of Kite's own, so a pointer can bring a hidden sidebar
+    // back (its toggle leaves with it, and there's no hover reveal yet).
+    if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kToggleSidebarMenuID, ToggleSidebarMenuText().c_str());
+        AppendMenuW(menu, MF_STRING, kImportFromArcMenuID, L"Import from Arc…");
+    }
     // Every command the table can name does something: a test run fails on one that doesn't.
     if (options_.quiet) {
         for (const ShortcutCommand& command : ShortcutCommands()) {
@@ -230,20 +274,45 @@ std::wstring BrowserWindowController::Init() {
         return Filter(message, wParam, lParam, result);
     };
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE): what the pages
-    // reported runs first (titles, addresses), then the session is saved at once. Closing
-    // doesn't wait for the write (main.cpp does, once the window is gone); logoff and shutdown
-    // can end the process as soon as WM_ENDSESSION returns, so that waits, for a bounded time.
+    // reported runs first (titles, addresses), then the session and history are saved at once.
+    // Closing doesn't wait for the writes (main.cpp does, once the window is gone); logoff and
+    // shutdown can end the process as soon as WM_ENDSESSION returns, so that waits for both,
+    // kEndSessionFlush at most between them.
     window_.onClose = [this](bool endingSession) {
+        // First, so an Import from Arc whose dialog is still up does nothing more.
+        closing_ = true;
         clock_->Stop();
+        // A slide still running lets the display's rate go now, not when the controller goes.
+        slideBoost_.Set(false);
+        toggleBoost_.Set(false);
         // DirectManipulation lets the window go while it's still a window.
         touchpad_.reset();
         memoryWatch_.reset();
         RunPending();
-        closing_ = true;
         SaveNow();
-        if (endingSession && writer_) {
-            if (std::string problem = writer_->Flush(kEndSessionFlush); !problem.empty()) {
-                OutputDebugStringW((L"Kite: " + Widen(problem) + L"\n").c_str());
+        // An Arc import whose session is written but whose history isn't merged yet: all of it
+        // now, before history's last save.
+        KillTimer(window_.Handle(), kArcMergeTimer);
+        FinishArcImport();
+        // History too, as the Mac's flush at quit; main.cpp waits for its writes.
+        if (history_) {
+            KillTimer(window_.Handle(), kHistoryTimer);
+            history_->SaveNow();
+        }
+        // The read is in (else FinishDownloads joins it once the window is gone): the list's
+        // last state, as the Mac's applicationWillTerminate saves it.
+        if (downloads_.Restored()) SaveDownloadsNow();
+        // The window is going: the worker's read posts nowhere now (FinishDownloads takes it).
+        downloadsRead_->target = nullptr;
+        // Logoff and shutdown: one deadline for the session, history and downloads.json.
+        if (endingSession) {
+            const Deadline deadline = DeadlineAfter(kEndSessionFlush);
+            std::string problems[3];
+            if (writer_) problems[0] = writer_->Flush(deadline);
+            if (history_) problems[1] = history_->Flush(deadline);
+            if (downloadsWriter_) problems[2] = downloadsWriter_->Flush(Left(deadline));
+            for (const std::string& problem : problems) {
+                if (!problem.empty()) OutputDebugStringW((L"Kite: " + Widen(problem) + L"\n").c_str());
             }
         }
     };
@@ -289,15 +358,15 @@ void BrowserWindowController::SpaceChanged(size_t old, size_t now) {
     KillTimer(window_.Handle(), kSettleTimer);
     pagesAnchor_ = state_.spaces[old].id;
     const float from = (now > old ? 1.0f : -1.0f) * static_cast<float>(kSidebarWidth);
-    // No sidebar on screen to slide: just land.
+    // No sidebar on screen to slide (the window or the sidebar hidden): just land.
     const double duration =
-        IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle()) ? sidebar_->SlidePages(from, 0) : 0;
+        IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle()) && sidebarShown_ ? sidebar_->SlidePages(from, 0) : 0;
     if (duration <= 0) {
-        sidebarSliding_ = false;
+        SetSliding(false);
         return FinishSettling();
     }
     // The compositor runs it; Kite only hears when it has ended.
-    sidebarSliding_ = true;
+    SetSliding(true);
     slideStarted_ = true;
     // The compositor starts it at the commit's frame, up to a frame after now: the timer allows
     // for one at 60 Hz.
@@ -306,7 +375,7 @@ void BrowserWindowController::SpaceChanged(size_t old, size_t now) {
 
 void BrowserWindowController::FinishSettling() {
     KillTimer(window_.Handle(), kSettleTimer);
-    sidebarSliding_ = false;
+    SetSliding(false);
     slideStarted_ = false;
     // A swipe's landing: its space is selected now the pages are at rest, its page where the
     // neighbour's was.
@@ -318,32 +387,51 @@ void BrowserWindowController::FinishSettling() {
     sidebar_->Update(state_);
 }
 
+void BrowserWindowController::SetSliding(bool sliding) {
+    sidebarSliding_ = sliding;
+    // The display at its highest rate while the pages slide on the compositor, as the Mac's
+    // settle boosts on its clock: a switch with no crossfade (the same theme) too.
+    slideBoost_.Set(sliding);
+}
+
 bool BrowserWindowController::OverSidebar(POINT at) const {
     RECT client{};
     GetClientRect(window_.Handle(), &client);
     const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
-    return !(commandBar_ && commandBar_->IsOpen()) && at.x >= 0 && at.y >= 0 && at.y < client.bottom &&
+    return sidebarShown_ && !(commandBar_ && commandBar_->IsOpen()) && at.x >= 0 && at.y >= 0 && at.y < client.bottom &&
            static_cast<float>(at.x) < static_cast<float>(kSidebarWidth) * scale;
 }
 
 SpaceSwipeGesture::Step BrowserWindowController::SwipeInputArrived(const SwipeInput& input, POINT at) {
-    // Asked of each event until a swipe begins, as the Mac's isOverSidebar: the pointer may have
-    // left the sidebar since the fingers came down, or the command bar opened over it.
+    // Asked of a gesture's began and its movement until it's decided, as the Mac's
+    // isOverSidebar: the pointer may have left the sidebar since the fingers came down, or the
+    // command bar opened over it.
     const bool overSidebar = OverSidebar(at);
     const SpaceSwipeGesture::Step step = swipe_.Handle(input, overSidebar, [this] { return BeginSwipe(); });
     switch (step) {
     case SpaceSwipeGesture::Step::Pass:
-        if (overSidebar) {
-            // A vertical gesture is the list's scroll (and its momentum) under the pointer:
-            // content dragged down goes back up the list.
-            if (input.dy != 0) sidebar_->ScrollList(at, static_cast<float>(-input.dy));
-        } else if (touchpad_) {
-            // Not the sidebar's: the rest of it is the system's wheel messages, for whatever is
-            // under the pointer (the Mac passes the event on to it).
-            touchpad_->ReleaseContact();
+        if (!swipe_.AskedWhere()) {
+            // Decided: the rest of a vertical gesture, momentum included, is the list's wherever
+            // the pointer goes, when it was decided over the list.
+            if (listScrolling_) sidebar_->ScrollListBy(static_cast<float>(-input.dy));
+        } else if (overSidebar) {
+            // A vertical gesture is the list's scroll under the pointer: content dragged down goes
+            // back up the list.
+            listScrolling_ = sidebar_->ScrollList(at, static_cast<float>(-input.dy));
+            // Decided vertical anywhere else on the sidebar (the header, the top row, the space
+            // bar): nothing of Kite's scrolls with it, so the contact goes back to the system and
+            // the clock stops polling for it.
+            if (swipe_.Vertical() && !listScrolling_ && touchpad_) touchpad_->ReleaseContact();
+        } else {
+            // Off the sidebar before it's decided: not the sidebar's. The rest of it is the
+            // system's wheel messages, for whatever is under the pointer (the Mac passes the
+            // event on to it).
+            listScrolling_ = false;
+            if (touchpad_) touchpad_->ReleaseContact();
         }
         break;
     case SpaceSwipeGesture::Step::Move:
+        listScrolling_ = false;
         ShowSwipe();
         break;
     case SpaceSwipeGesture::Step::Release:
@@ -360,7 +448,7 @@ SwipeStart BrowserWindowController::BeginSwipe() {
     // neighbours, a landing still to come selected first.
     float offset = sidebar_->PageOffset();
     KillTimer(window_.Handle(), kSettleTimer);
-    sidebarSliding_ = false;
+    SetSliding(false);
     slideStarted_ = false;
     offset += static_cast<float>(CommitLanding() * kSidebarWidth);
     if (pagesAnchor_) {
@@ -410,7 +498,7 @@ void BrowserWindowController::FinishSwipe(int landing) {
         sidebar_->SetPageOffset(to);
         return FinishSettling();
     }
-    sidebarSliding_ = true;
+    SetSliding(true);
     // The bar's light slides with them (SlidePages leaves that to the sidebar's next Update),
     // and the slide starts now, as a keyboard switch's: PageOffset reads it from now, so a swipe
     // catching it mid-way carries on from where the pages really are.
@@ -523,6 +611,65 @@ std::wstring BrowserWindowController::SaveSaveLog(const std::filesystem::path& f
                      {"frames", frameCount_},
                      {"uiMicros", json::Object{{"max", saveCost_.maxMicros}, {"mean", mean}}},
                      {"memoryPressure", json::Object{{"watching", watchingMemory_}, {"reports", json::Value(std::move(reports))}}}};
+    json::Object downloads{{"reports", downloadCost_.reports},
+                           {"uiMicros", json::Object{{"max", downloadCost_.maxMicros},
+                                                     {"mean", downloadCost_.reports ? downloadCost_.totalMicros / static_cast<double>(downloadCost_.reports) : 0.0}}},
+                           {"saves", downloadCost_.saves},
+                           {"saveMaxMicros", downloadCost_.saveMaxMicros},
+                           {"items", downloads_.List().Items().size()},
+                           {"active", downloads_.List().Active().size()}};
+#ifdef KITE_HAS_CEF
+    if (chromium_) {
+        const auto [fromChromium, delivered] = chromium_->DownloadReports();
+        downloads.emplace("fromChromium", fromChromium);
+        downloads.emplace("deliveredToKite", delivered);
+        // Each page kept for its downloads after its tab closed, as it went.
+        json::Array parked;
+        for (const auto& [url, muted] : chromium_->ParkedPages()) parked.push_back(json::Object{{"url", url}, {"muted", muted}});
+        downloads.emplace("parked", json::Value(std::move(parked)));
+        downloads.emplace("parkedLeavePagesAnswered", chromium_->ParkedLeavePagesAnswered());
+        // Whether the stall check's timer was still running at the end (it must stop with the last parked page).
+        downloads.emplace("stallCheckRunning", chromium_->StallCheckRunning());
+        downloads.emplace("stallCheckTicks", chromium_->StallCheckTicks());
+    }
+#endif
+    if (downloadsWriter_) {
+        const DownloadsWriter::Statistics stats = downloadsWriter_->Stats();
+        downloads.emplace("writer", json::Object{{"handedOver", stats.handedOver},
+                                                 {"written", stats.written},
+                                                 {"unchanged", stats.unchanged},
+                                                 {"superseded", stats.superseded},
+                                                 {"refused", stats.refused},
+                                                 {"loaded", stats.loaded},
+                                                 {"canSave", stats.canSave},
+                                                 {"loadMicros", stats.loadMicros},
+                                                 {"lastBytes", stats.lastBytes},
+                                                 {"lastEncodeMicros", stats.lastEncodeMicros},
+                                                 {"lastWriteMicros", stats.lastWriteMicros},
+                                                 {"lastError", stats.lastError}});
+    }
+    // Each finished file's mark of the web, as Windows reads it (its Zone.Identifier stream,
+    // which Chromium's quarantine writes): the live check that a download is marked as from the
+    // internet. Read here, after the window has gone.
+    json::Array completed;
+    for (const DownloadItem& item : downloads_.List().Items()) {
+        if (item.state != DownloadState::Complete || item.path.empty()) continue;
+        std::filesystem::path stream(std::u8string(item.path.begin(), item.path.end()));
+        stream += L":Zone.Identifier";
+        json::Object entry{{"path", item.path}};
+        std::ifstream in(stream, std::ios::binary);
+        std::string line;
+        while (in && std::getline(in, line)) {
+            // Chromium ends the stream with a NUL.
+            while (!line.empty() && (line.back() == '\r' || line.back() == '\0' || line.back() == ' ')) line.pop_back();
+            if (line.starts_with("ZoneId=")) entry.emplace("zoneId", line.substr(7));
+            if (line.starts_with("HostUrl=")) entry.emplace("hostUrl", line.substr(8));
+            if (line.starts_with("ReferrerUrl=")) entry.emplace("referrerUrl", line.substr(12));
+        }
+        completed.push_back(json::Value(std::move(entry)));
+    }
+    downloads.emplace("completed", json::Value(std::move(completed)));
+    log.emplace("downloads", json::Value(std::move(downloads)));
     if (writer_) {
         const SessionWriter::Statistics stats = writer_->Stats();
         log.emplace("writer", json::Object{{"handedOver", stats.handedOver},
@@ -535,6 +682,24 @@ std::wstring BrowserWindowController::SaveSaveLog(const std::filesystem::path& f
                                            {"lastWriteMicros", stats.lastWriteMicros},
                                            {"lastError", stats.lastError},
                                            {"lastBackupError", stats.lastBackupError}});
+    }
+    if (history_) {
+        const HistoryStores::Statistics stats = history_->Stats();
+        const double visitMean = historyCost_.visits ? historyCost_.totalMicros / static_cast<double>(historyCost_.visits) : 0.0;
+        const HistoryStore& store = history_->ForProfile(BrowserState::kDefaultProfile);
+        log.emplace("history", json::Object{{"visits", historyCost_.visits},
+                                            {"visitMicros", json::Object{{"max", historyCost_.maxMicros}, {"mean", visitMean}}},
+                                            {"entries", store.Get().Count()},
+                                            {"loaded", store.IsLoaded()},
+                                            {"loadError", store.LoadError()},
+                                            {"loads", stats.loads},
+                                            {"writes", stats.writes},
+                                            {"failedWrites", stats.failedWrites},
+                                            {"lastBytes", stats.lastBytes},
+                                            {"lastLoadMicros", stats.lastLoadMicros},
+                                            {"lastEncodeMicros", stats.lastEncodeMicros},
+                                            {"lastWriteMicros", stats.lastWriteMicros},
+                                            {"lastError", stats.lastError}});
     }
     std::ofstream out(file, std::ios::binary | std::ios::trunc);
     if (!out) return L"couldn't open " + file.wstring();
@@ -556,19 +721,204 @@ void BrowserWindowController::SessionChanged(SessionSaveDelay delay) {
     }
 }
 
-void BrowserWindowController::SaveNow() {
+void BrowserWindowController::SaveNow(std::function<void(const std::string& error)> then) {
     KillTimer(window_.Handle(), kSaveTimer);
     saveSchedule_.Saved();
-    if (!writer_ || !writer_->MaySave()) return;
+    if (!writer_ || !writer_->MaySave()) {
+        // Nothing is written, and whoever waits on this write hears so.
+        if (then) then("Kite doesn't save this session (it couldn't be read)");
+        return;
+    }
     // A copy for the writer's thread (the session is the UI thread's to change): the only cost
     // here. Encoding and the disk are the writer's.
     const auto start = std::chrono::steady_clock::now();
-    writer_->Save(state_);
+    if (then) writer_->SaveThen(state_, std::move(then));
+    else writer_->Save(state_);
     const double micros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
     ++saveCost_.saves;
     saveCost_.maxMicros = std::max(saveCost_.maxMicros, micros);
     saveCost_.totalMicros += micros;
     if (options_.saveLog) saves_.push_back(LoggedSave{FrameClock::Now() - createdAt_, micros, closing_});
+}
+
+void BrowserWindowController::ArmHistorySave() {
+    if (!history_) return;
+    // One timer for every profile's store: the soonest save; none when nothing waits.
+    if (auto seconds = history_->NextSaveIn()) {
+        SetTimer(window_.Handle(), kHistoryTimer, static_cast<UINT>(std::ceil(*seconds * 1000)), nullptr);
+    } else {
+        KillTimer(window_.Handle(), kHistoryTimer);
+    }
+}
+
+HistoryStore* BrowserWindowController::HistoryForTab(const std::string& tabID) {
+    if (!history_) return nullptr;
+    // Profiles.swift's profileDirectory(ofTab:): the tab's space's profile, a favorite's grid's,
+    // else the selected space's.
+    std::string directory = state_.SelectedProfileDirectory();
+    if (auto location = state_.Location(tabID)) {
+        if (location->space) {
+            directory = state_.ProfileDirectory(*location->space);
+        } else {
+            for (const auto& [profile, tabs] : state_.favoritesByProfile) {
+                if (std::any_of(tabs.begin(), tabs.end(), [&](const Tab& tab) { return tab.id == tabID; })) directory = profile;
+            }
+        }
+    }
+    return &history_->ForProfile(directory);
+}
+
+void BrowserWindowController::RecordAddress(const std::string& tabID, const std::string& url) {
+    // The Mac's pageURLChanged, before its tab check (a typed URL is already on the tab when the
+    // page reports it). A tab showing one of Kite's own pages keeps it out of history.
+    if (url.empty() || !history_) return;
+    if (const Tab* tab = state_.FindTabByID(tabID); tab && tab->url && tab->url->starts_with("kite:") && !History::Records(url)) return;
+    auto [it, inserted] = recordedURLs_.try_emplace(tabID, url);
+    if (!inserted && it->second == url) return;
+    it->second = url;
+    HistoryStore* store = HistoryForTab(tabID);
+    if (!store) return;
+    const auto start = std::chrono::steady_clock::now();
+    const bool changed = store->RecordVisit(url, "", Now());
+    historyCost_.Add(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count());
+    if (changed) ArmHistorySave();
+}
+
+void BrowserWindowController::RecordTitle(const std::string& tabID, const std::string& title) {
+    // The Mac's pageTitleChanged: for the address the tab last recorded; a repeat saves nothing.
+    if (title.empty() || !history_) return;
+    if (const Tab* tab = state_.FindTabByID(tabID); tab && tab->url && tab->url->starts_with("kite:")) return;
+    auto it = recordedURLs_.find(tabID);
+    if (it == recordedURLs_.end()) return;
+    if (HistoryStore* store = HistoryForTab(tabID); store && store->UpdateTitle(it->second, title)) ArmHistorySave();
+}
+
+// MARK: Downloads
+
+void BrowserWindowController::DownloadUpdated(const DownloadUpdate& update) {
+    const auto start = std::chrono::steady_clock::now();
+    const DownloadsModel::Outcome outcome = downloads_.Apply(update, FrameClock::Now());
+    if (outcome.save) DownloadsChanged(outcome.save);
+    // The Mac's requestUserAttention(.informational) as a download completes: the taskbar
+    // button flashes, unless Kite is in front (or the run is quiet).
+    if (outcome.applied && outcome.stateChanged && outcome.item.state == DownloadState::Complete && !options_.quiet &&
+        GetForegroundWindow() != window_.Handle()) {
+        FLASHWINFO flash{sizeof flash, window_.Handle(), FLASHW_TRAY, 2, 0};
+        FlashWindowEx(&flash);
+    }
+    const double micros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+    ++downloadCost_.reports;
+    downloadCost_.maxMicros = std::max(downloadCost_.maxMicros, micros);
+    downloadCost_.totalMicros += micros;
+}
+
+void BrowserWindowController::DownloadsChanged(std::optional<double> seconds) {
+    if (!seconds || !downloadsWriter_) return;
+    SetTimer(window_.Handle(), kDownloadsSaveTimer, static_cast<UINT>(std::ceil(*seconds * 1000)), nullptr);
+}
+
+void BrowserWindowController::SaveDownloadsNow() {
+    KillTimer(window_.Handle(), kDownloadsSaveTimer);
+    downloads_.Schedule().Saved();
+    if (!downloadsWriter_ || !downloads_.MaySave()) return;
+    const auto start = std::chrono::steady_clock::now();
+    downloadsWriter_->Save(downloads_.List());
+    const double micros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+    ++downloadCost_.saves;
+    downloadCost_.saveMaxMicros = std::max(downloadCost_.saveMaxMicros, micros);
+}
+
+std::chrono::milliseconds BrowserWindowController::Left(std::chrono::steady_clock::time_point deadline) {
+    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+    return std::max(left, std::chrono::milliseconds(0));
+}
+
+void BrowserWindowController::ReadDownloads() {
+    if (!downloadsWriter_ || downloadsReadAsked_) return;
+    downloadsReadAsked_ = true;
+    downloadsRead_->target = window_.Handle();
+    downloadsWriter_->Load([slot = downloadsRead_](std::optional<downloads_file::Loaded> loaded) {
+        {
+            std::lock_guard lock(slot->mutex);
+            slot->result = std::move(loaded);
+        }
+        if (const HWND target = slot->target.load()) PostMessageW(target, kDownloadsReadMessage, 0, 0);
+    });
+}
+
+void BrowserWindowController::DownloadsRead() {
+    std::optional<std::optional<downloads_file::Loaded>> result;
+    {
+        std::lock_guard lock(downloadsRead_->mutex);
+        result = std::exchange(downloadsRead_->result, std::nullopt);
+    }
+    if (!result || downloads_.Restored()) return;
+    const std::optional<downloads_file::Loaded>& loaded = *result;
+    // DownloadsModel.start's notes, to the debugger and a quiet run's stderr.
+    std::wstring note;
+    const std::wstring file = downloadsWriter_->File().wstring();
+    if (!loaded) {
+        note = L"couldn't read or move downloads; not saving over " + file + L" this launch";
+    } else {
+        if (loaded->movedAside) note = L"couldn't read downloads, moved them to " + loaded->movedAside->wstring();
+        if (loaded->copiedAside) {
+            note = L"couldn't read " + std::to_wstring(loaded->dropped) + L" of the downloads, kept the original at " +
+                   loaded->copiedAside->wstring();
+        }
+        if (!loaded->canSave) note = L"not saving downloads over " + file + L" this launch";
+    }
+    if (!note.empty()) {
+        OutputDebugStringW((L"Kite: " + note + L"\n").c_str());
+        if (options_.quiet) WriteUtf8(STD_ERROR_HANDLE, L"Kite: " + note + L"\n");
+    }
+    DownloadsChanged(downloads_.Restore(loaded ? loaded->list : DownloadList(), loaded && loaded->canSave, FrameClock::Now()));
+}
+
+void BrowserWindowController::FinishDownloads(std::chrono::steady_clock::time_point deadline) {
+    if (!downloadsWriter_ || downloads_.Restored() || !downloadsReadAsked_) return;
+    // The window is gone, so the worker's post went nowhere: wait for the read itself.
+    downloadsWriter_->Flush(Left(deadline));
+    DownloadsRead();
+    if (downloads_.Restored()) SaveDownloadsNow();
+}
+
+std::map<std::string, ProfileSettings> BrowserWindowController::DownloadLocations() const {
+    std::map<std::string, ProfileSettings> byProfile{{BrowserState::kDefaultProfile, state_.Settings(std::string(BrowserState::kDefaultProfile))}};
+    if (auto profiles = state_.extra.find("profiles"); profiles != state_.extra.end() && profiles->second.AsArray()) {
+        for (const json::Value& profile : *profiles->second.AsArray()) {
+            const json::Value* directory = profile.Find("directory");
+            if (directory && directory->AsString()) byProfile.emplace(*directory->AsString(), state_.Settings(*directory->AsString()));
+        }
+    }
+    return byProfile;
+}
+
+bool BrowserWindowController::MayQuit() {
+    if (quitConfirmed_) return true;
+    // A close that comes while the dialog is open (a second click on the close button) waits for it.
+    if (askingToQuit_) return false;
+    if (downloads_.List().Active().empty()) {
+        quitConfirmed_ = true;
+        return true;
+    }
+    askingToQuit_ = true;
+    const bool close = RunDownloadsInProgress(window_.Handle(), options_.quiet);
+    askingToQuit_ = false;
+    if (!close) return false;
+    quitConfirmed_ = true;
+#ifdef KITE_HAS_CEF
+    // Close Kite cancels them. Those still running now (some may have finished while it asked).
+    std::vector<Chromium::DownloadKey> running;
+    for (const DownloadItem& item : downloads_.List().Active()) {
+        if (item.engineID) running.emplace_back(*item.engineID, item.engineContext.value_or(""));
+    }
+    if (chromium_) {
+        chromium_->CancelDownloads(std::move(running), [this](const Chromium::DownloadKey& key) {
+            if (const DownloadItem* item = downloads_.List().Item(key.first, key.second)) downloads_.CanceledWithoutEngine(*item);
+        });
+    }
+#endif
+    return true;
 }
 
 void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save) {
@@ -583,6 +933,8 @@ void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save)
     }
     if (save) SessionChanged(*save);
     SyncSpace();
+    // The selected tab's page's status first, so the top row's update shows both together.
+    ShowPageStatus();
     sidebar_->Update(state_, pagesAnchor_);
     // A slide begins at once: the new page and the caption buttons' appearance drawn and the
     // strip's animation committed now, not on the next pass (the crossfade's first frame comes
@@ -625,9 +977,12 @@ void BrowserWindowController::LoadInTab(const std::string& tabID, const std::str
 }
 
 void BrowserWindowController::PageGone(const std::string& tabID) {
+    // Its status goes with it (BrowserStore.clearPage): a tab that comes back has no history.
+    pageStatus_.erase(tabID);
 #ifdef KITE_HAS_CEF
     if (!chromium_) return;
     chromium_->Close(tabID);
+    ForgetRecorded(tabID);
     // A closed page can't be anyone's opener or popup again.
     std::erase_if(popupOpeners_, [&](const auto& entry) { return entry.first == tabID || entry.second == tabID; });
 #else
@@ -664,6 +1019,7 @@ void BrowserWindowController::Commit(const CommandSuggestion& row, CommandBarMod
     switch (row.kind) {
     case CommandSuggestion::Kind::Open:
     case CommandSuggestion::Kind::Search:
+    case CommandSuggestion::Kind::History:
         if (mode == CommandBarMode::EditCurrent && state_.SelectedTab()) {
             const std::string id = state_.SelectedTab()->id;
             if (auto at = state_.Location(id)) {
@@ -707,6 +1063,69 @@ void BrowserWindowController::ReopenClosedTab() {
     if (state_.ReopenLastClosed()) SelectionMoved();
 }
 
+void BrowserWindowController::ShowPageStatus() {
+    const Tab* tab = state_.SelectedTab();
+    const auto found = tab ? pageStatus_.find(tab->id) : pageStatus_.end();
+    sidebar_->SetPageStatus(found != pageStatus_.end() ? found->second : PageStatus{});
+}
+
+void BrowserWindowController::ToggleSidebar() { SetSidebarShown(!sidebarShown_); }
+
+void BrowserWindowController::SetSidebarShown(bool shown) {
+    if (shown == sidebarShown_) return;
+    // Hiding ends a rename, keeping what was typed, as the field editor leaving a hidden view does.
+    if (!shown) sidebar_->EndRenaming(true);
+    sidebarShown_ = shown;
+    KillTimer(window_.Handle(), kToggleTimer);
+    // Like Arc: the final frames set once, the compositor drawing the frames between (no slide
+    // on a window that isn't on screen).
+    const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
+    const double duration = sidebar_->SetShown(shown, visible);
+    toggling_ = duration > 0;
+    // The display at its highest rate while it slides (docs/windows.md, Refresh rate).
+    toggleBoost_.Set(toggling_);
+    // The system menu's item says what it will do next (validateMenuItem's retitling).
+    if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
+        ModifyMenuW(menu, kToggleSidebarMenuID, MF_BYCOMMAND | MF_STRING, kToggleSidebarMenuID, ToggleSidebarMenuText().c_str());
+    }
+    // The page clear of the sidebar: a show moves it first, a hide at the end.
+    if (shown || !toggling_) MovePage();
+    // Shown again, what changed while it was hidden draws before the slide's first frame.
+    if (shown) {
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) {
+            OutputDebugStringW((L"Kite: the sidebar couldn't draw: " + problem + L"\n").c_str());
+        }
+        if (sidebar_->DeviceLost()) Draw();
+    }
+    if (compositor_) compositor_->Commit();
+    // The compositor starts it at the commit's frame, up to a frame after now: a frame at 60 Hz to
+    // spare, as the pages' settle.
+    if (toggling_) SetTimer(window_.Handle(), kToggleTimer, static_cast<UINT>(std::ceil(duration * 1000)) + 17, nullptr);
+}
+
+std::wstring BrowserWindowController::ToggleSidebarMenuText() const {
+    std::wstring text = Widen(ToggleSidebarTitle(sidebarShown_));
+    // A menu's key equivalent after a tab, as Windows' menus right-align it.
+    if (const std::optional<KeyShortcut> shortcut = MenuShortcut(shortcuts_, "toggleSidebar")) text += L"\t" + Widen(shortcut->DisplayString());
+    return text;
+}
+
+void BrowserWindowController::FinishToggle() {
+    KillTimer(window_.Handle(), kToggleTimer);
+    if (!toggling_) return;
+    toggling_ = false;
+    toggleBoost_.Set(false);
+    sidebar_->SettleToggle();
+    if (!sidebarShown_) MovePage();
+    if (compositor_) compositor_->Commit();
+}
+
+void BrowserWindowController::MovePage() {
+#ifdef KITE_HAS_CEF
+    if (chromium_) chromium_->SetBounds(ContentBounds());
+#endif
+}
+
 void BrowserWindowController::MakeCommands() {
     // What each shortcut's command does: the Mac's menu items of the same ids (MainMenu.swift).
     commands_ = {
@@ -714,6 +1133,7 @@ void BrowserWindowController::MakeCommands() {
         {"openLocation", [this] { OpenCommandBar(CommandBarMode::EditCurrent); }},
         {"archiveTab", [this] { ArchiveTab(); }},
         {"reopenClosedTab", [this] { ReopenClosedTab(); }},
+        {"importFromArc", [this] { ImportFromArc(); }},
         // One window, so closing it quits, as the Mac's last window does with Kite set so.
         {"closeWindow", [this] { PostMessageW(window_.Handle(), WM_CLOSE, 0, 0); }},
         {"quitKite", [this] { PostMessageW(window_.Handle(), WM_CLOSE, 0, 0); }},
@@ -724,6 +1144,7 @@ void BrowserWindowController::MakeCommands() {
              const Tab* tab = state_.SelectedTab();
              if (!tab || !tab->url || !CopyText(window_.Handle(), Widen(*tab->url))) MessageBeep(MB_OK);
          }},
+        {"toggleSidebar", [this] { ToggleSidebar(); }},
         {"collapsePinnedSection",
          [this] {
              TogglePinnedSection(state_, state_.SelectedSpace().id);
@@ -966,6 +1387,17 @@ void BrowserWindowController::OnSize() {
 // MARK: The window's messages
 
 bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
+    static_assert([] {
+        constexpr UINT ids[] = {MainWindow::kWakeMessage, CommandBarView::kRedrawMessage, SidebarView::kRedrawMessage, kFaviconsMessage,
+                                kFrameMessage, kSpaceIconsMessage, kMemoryPressureMessage, kHistoryMessage, kArcReadMessage, kArcSavedMessage,
+                                kDownloadsReadMessage, kPerfRequestMessage};
+        for (size_t i = 0; i < std::size(ids); ++i) {
+            for (size_t j = i + 1; j < std::size(ids); ++j) {
+                if (ids[i] == ids[j]) return false;
+            }
+        }
+        return true;
+    }(), "two of the window's WM_APP messages share an id");
     if (options_.perfControl) {
         if (message == WM_COPYDATA) {
             result = QueuePerfRequest(reinterpret_cast<const COPYDATASTRUCT*>(lParam)) ? 1 : 0;
@@ -1077,7 +1509,8 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     if (message == kFrameMessage) {
         // Delivered after the frame: a frame that takes longer than the next tick doesn't queue
         // another behind it.
-        if (clock_->Running()) {
+        // A test run steps its own (RunUntil), and one posted before it began is dropped.
+        if (clock_->Running() && !clock_->Manual()) {
             double rate = 0;
             const double time = FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr, perf::On() ? &rate : nullptr);
             Frame(time, rate);
@@ -1087,6 +1520,51 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     }
     if (message == WM_TIMER && wParam == kSaveTimer) {
         SaveNow();
+        return true;
+    }
+    if (message == WM_TIMER && wParam == kHistoryTimer) {
+        KillTimer(window_.Handle(), kHistoryTimer);
+        if (history_) history_->SaveDue();
+        ArmHistorySave();
+        return true;
+    }
+    if (message == kHistoryMessage) {
+        // A profile's history.json has been read: it takes the place of what this run had (its
+        // visits replayed over it), and an open bar shows its rows.
+        std::vector<std::string> problems;
+        if (history_ && history_->Adopt(&problems)) {
+            if (commandBar_ && commandBar_->IsOpen()) commandBar_->Refresh();
+            ArmHistorySave();
+        }
+        // A file that didn't read was moved aside (or, if it couldn't be, is left alone and not
+        // saved over); the Mac logs it too. The save log's history block has the default's.
+        for (const std::string& problem : problems) {
+            OutputDebugStringW((L"Kite: history couldn't be read, starting without it: " + Widen(problem) + L"\n").c_str());
+        }
+        return true;
+    }
+    if (message == WM_TIMER && wParam == kDownloadsSaveTimer) {
+        SaveDownloadsNow();
+        return true;
+    }
+    if (message == kDownloadsReadMessage) {
+        DownloadsRead();
+        return true;
+    }
+#ifdef KITE_HAS_CEF
+    if (message == WM_TIMER && chromium_ && chromium_->HandleTimer(wParam)) return true;
+#endif
+    if (message == WM_TIMER && wParam == kTestCloseTabTimer) {
+        KillTimer(window_.Handle(), kTestCloseTabTimer);
+#ifdef KITE_HAS_CEF
+        // First a click's user activation for the page (so it may ask Leave Page), then the close.
+        if (!testGestureGiven_ && chromium_ && chromium_->TestUserGesture()) {
+            testGestureGiven_ = true;
+            SetTimer(window_.Handle(), kTestCloseTabTimer, 500, nullptr);
+            return true;
+        }
+#endif
+        if (const Tab* tab = state_.SelectedTab()) CloseTab(tab->id);
         return true;
     }
     if (message == kMemoryPressureMessage) {
@@ -1111,8 +1589,37 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         FinishSettling();
         return true;
     }
+    if (message == WM_TIMER && wParam == kToggleTimer) {
+        FinishToggle();
+        return true;
+    }
+    if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == kToggleSidebarMenuID) {
+        RunCommand("toggleSidebar");
+        result = 0;
+        return true;
+    }
     if (message == kSpaceIconsMessage) {
         sidebar_->PicturesArrived();
+        return true;
+    }
+    // Each of the window's own messages has its own id (W15 and W11 once took the same two).
+    static_assert(kArcReadMessage > kHistoryMessage && kArcSavedMessage > kArcReadMessage, "the window's message ids overlap");
+    if (message == kArcReadMessage) {
+        ArcRead();
+        return true;
+    }
+    if (message == kArcSavedMessage) {
+        ArcSaved();
+        return true;
+    }
+    if (message == WM_TIMER && wParam == kArcMergeTimer) {
+        KillTimer(window_.Handle(), kArcMergeTimer);
+        ArcSaved();
+        return true;
+    }
+    if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == kImportFromArcMenuID) {
+        RunCommand("importFromArc");
+        result = 0;
         return true;
     }
     if (message == kFaviconsMessage) {
@@ -1137,9 +1644,12 @@ void BrowserWindowController::Show(int showCommand) {
     } else {
         window_.Show(showCommand);
     }
+    // Before the first page, whose first download then usually finds the history already in.
+    ReadDownloads();
 #ifdef KITE_HAS_CEF
     ShowFirstPage();
 #endif
+    if (options_.saveLog && options_.testCloseTabMs) SetTimer(window_.Handle(), kTestCloseTabTimer, *options_.testCloseTabMs, nullptr);
     // The auto-archive's later passes (the launch's ran before the window). A capture never archives.
     if (!options_.capture) SetTimer(window_.Handle(), kArchiveTimer, kArchiveIntervalMs, nullptr);
 }

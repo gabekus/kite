@@ -52,6 +52,13 @@ public:
     // spaces then (after the caller has landed any settle it catches).
     Step Handle(const SwipeInput& input, bool overSidebar, const std::function<SwipeStart()>& begin);
 
+    // Whether the last Handle asked where the pointer was, as the Mac asks isOverSidebar: for a
+    // gesture's began, or its movement before the gesture is decided. Off the sidebar then, the
+    // gesture isn't Kite's; asked nothing (the rest of a vertical gesture, its momentum), it
+    // stays the list's wherever the pointer has gone.
+    bool AskedWhere() const { return askedWhere_; }
+    // The gesture was decided vertical (the list's), until the next one begins.
+    bool Vertical() const { return vertical_; }
     // The swipe the fingers are making, until they let go.
     const std::optional<SpaceSwipe>& Swipe() const { return swipe_; }
     bool Swiping() const { return swipe_.has_value(); }
@@ -69,6 +76,7 @@ private:
     // A gesture that started vertically scrolls the tab list for its whole length.
     bool vertical_ = false;
     bool abandoned_ = false;  // the rest of an abandoned gesture is the swipe's, showing nothing
+    bool askedWhere_ = false;  // by the last Handle
     int landing_ = 0;
 };
 

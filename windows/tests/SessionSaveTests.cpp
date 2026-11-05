@@ -12,6 +12,7 @@
 #include <memory>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 
 #include "Check.h"
@@ -557,6 +558,42 @@ TEST(aWriterThatMayNotSaveWritesNothing) {
     }
     CHECK(ReadText(b.store.File()) == "locked, say");
     CHECK(!fs::exists(b.store.Backups().Directory()));
+}
+
+// W33a: Import from Arc's other files come after the session, on the writer's thread.
+TEST(saveThenRunsOnTheWriterAfterTheWriteWithItsError) {
+    Backups b(5);
+    SessionWriter writer(b.store);
+    std::atomic<int> calls{0};
+    std::string seen = "unset", onDisk;
+    std::thread::id ran;
+    writer.SaveThen(b.State(2), [&](const std::string& error) {
+        seen = error;
+        onDisk = ReadText(b.store.File());  // the session is there before this runs
+        ran = std::this_thread::get_id();
+        ++calls;
+    });
+    CHECK(writer.Flush().empty());
+    CHECK(calls == 1 && seen.empty() && !onDisk.empty() && ran != std::this_thread::get_id());
+    // A failed write: the continuation hears why.
+    const fs::path inTheWay = store_file::NextTempPath(b.store.File());
+    fs::create_directories(inTheWay / "in-the-way");
+    seen = "unset";
+    writer.SaveThen(b.State(3), [&](const std::string& error) {
+        seen = error;
+        ++calls;
+    });
+    writer.Flush();
+    CHECK(calls == 2 && !seen.empty() && seen != "unset");
+    fs::remove_all(inTheWay);
+    // One that throws is dropped; the writer goes on.
+    writer.SaveThen(b.State(4), [](const std::string&) { throw std::runtime_error("boom"); });
+    CHECK(writer.Flush().empty());
+    // A writer that may not save says so at once.
+    SessionWriter locked(b.store, false);
+    seen = "unset";
+    locked.SaveThen(b.State(1), [&](const std::string& error) { seen = error; });
+    CHECK(!seen.empty() && seen != "unset");
 }
 
 TEST(aFailedWriteIsReportedAndTheNextOneRetries) {
