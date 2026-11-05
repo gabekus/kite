@@ -72,7 +72,7 @@ struct GeneralPane: View {
                 SettingsRow(title: "Updates") {
                     CommandButton("Check for Updates…", #selector(AppDelegate.checkForUpdates(_:)))
                 }
-                if !BrowserWindowController.isDefaultBrowser {
+                if BrowserWindowController.canBeDefaultBrowser && !BrowserWindowController.isDefaultBrowser {
                     SettingsSeparator()
                     SettingsRow(title: "Kite is not your default web browser.") {
                         CommandButton("Set as Default Browser", #selector(BrowserWindowController.setAsDefaultBrowser(_:)))

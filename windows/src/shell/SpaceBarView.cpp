@@ -8,6 +8,7 @@
 #include <cmath>
 #include <set>
 
+#include "core/SymbolShape.h"
 #include "shell/Errors.h"
 #include "shell/FrameClock.h"
 #include "shell/Text.h"
@@ -36,6 +37,8 @@ constexpr float kPlusLength = 12;
 // the bar); Segoe UI Emoji's 🏠 inks 12.75pt at 12.5 (the PC's capture), so it's set larger to
 // ink the same.
 constexpr float kEmojiFontSize = space_bar_metrics::kIconFontSize * 14.5f / 12.75f;
+// The drawn symbols are designed at the bar's size, so they draw there as they are.
+static_assert(space_bar_metrics::kIconFontSize == kSymbolShapeSize);
 // The saturation effect's D2D1_SATURATION_PROP_SATURATION (MinGW's headers don't name it).
 constexpr UINT32 kSaturationProperty = 0;
 
@@ -569,7 +572,7 @@ ComPtr<ID2D1CommandList> SpaceBarView::RecordIcon(const SpaceCell& cell, HRESULT
 
 std::wstring SpaceBarView::DrawLayer(Layer& layer, UINT width, UINT height, const Compositor::Content& content, bool readBack,
                                      HRESULT& hr, bool& fresh) {
-    return DrawFadedLayer(*compositor_, layer, width, height, dpi_, content, readBack, hr, fresh);
+    return DrawFadedLayer(*compositor_, perf::View::SpaceBar, layer, width, height, dpi_, content, readBack, hr, fresh);
 }
 
 std::wstring SpaceBarView::DrawCell(size_t index, CellGpu& gpu, bool readBack, bool& fresh) {
@@ -777,7 +780,7 @@ std::wstring SpaceBarView::Draw(UINT clientHeight, Pixels* readBack) {
         surfaceHeight_ = height;
         barPixels_ = Pixels{};
         error = compositor_->DrawSurface(
-            surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawBar(context); }, readBack ? &barPixels_ : nullptr, hr);
+            perf::View::SpaceBar, surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawBar(context); }, readBack ? &barPixels_ : nullptr, hr);
         if (!error.empty()) {
             deviceLost_ = IsDeviceLost(hr);
             return L"the space bar: " + error;

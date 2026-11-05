@@ -1,0 +1,65 @@
+{
+  "about": "Each raw URL (as Chromium can report it) and the key Kite's history keeps for it: NSURL(string: raw)?.absoluteString on the Mac (HistoryFixtureTests.urlKeysAreWhatNSURLWrites, checked on macOS 15.7.4), History::Normalized on Windows (HistoryTests.cpp, urlsAreKeptAsNSURLWritesThem). A path, query or fragment holding anything it may not is encoded whole, % signs included.",
+  "cases": [
+    {
+      "raw": "https://a.example/a|b^c`d{e}f[g]h\\i",
+      "key": "https://a.example/a%7Cb%5Ec%60d%7Be%7Df%5Bg%5Dh%5Ci"
+    },
+    {
+      "raw": "https://a.example/?q=\"x\" <y>",
+      "key": "https://a.example/?q=%22x%22%20%3Cy%3E"
+    },
+    {
+      "raw": "https://a.example/p#frag#more",
+      "key": "https://a.example/p#frag%23more"
+    },
+    {
+      "raw": "https://a.example/?x=%zz&y=%4",
+      "key": "https://a.example/?x=%25zz&y=%254"
+    },
+    {
+      "raw": "https://a.example/caf%C3%A9/café",
+      "key": "https://a.example/caf%25C3%25A9/caf%C3%A9"
+    },
+    {
+      "raw": "http://[::1]:8080/a|b",
+      "key": "http://[::1]:8080/a%7Cb"
+    },
+    {
+      "raw": "https://a.example/a%7Cb?q=%22x%22#f%23g",
+      "key": "https://a.example/a%7Cb?q=%22x%22#f%23g"
+    },
+    {
+      "raw": "https://www.example.com/path/to/page?id=1&x=y#top",
+      "key": "https://www.example.com/path/to/page?id=1&x=y#top"
+    },
+    {
+      "raw": "https://example.com",
+      "key": "https://example.com"
+    },
+    {
+      "raw": "https://a.example/caf%C3%A9?q=café",
+      "key": "https://a.example/caf%C3%A9?q=caf%C3%A9"
+    },
+    {
+      "raw": "https://a.example/a|b?x=%41",
+      "key": "https://a.example/a%7Cb?x=%41"
+    },
+    {
+      "raw": "https://a.example/p%41?x=1#a b",
+      "key": "https://a.example/p%41?x=1#a%20b"
+    },
+    {
+      "raw": "https://a.example/?x=%41&y=a b",
+      "key": "https://a.example/?x=%2541&y=a%20b"
+    },
+    {
+      "raw": "https://a.example/p#f%41 b|c",
+      "key": "https://a.example/p#f%2541%20b%7Cc"
+    },
+    {
+      "raw": "https://a.example/a|b?x=1#f%41",
+      "key": "https://a.example/a%7Cb?x=1#f%41"
+    }
+  ]
+}

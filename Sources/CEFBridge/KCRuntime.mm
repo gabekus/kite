@@ -55,7 +55,7 @@ std::set<CefRefPtr<CefBrowser>>* gBrowsers;
 bool gInitialized = false;
 NSString* gRootCachePath = nil;
 bool gQuitting = false;
-bool gEnergySaverEnabled = false;
+bool gEnergySaverEnabled = true;
 bool gEnergySaverApplied = false;
 
 // Chromium's BatterySaverModeState: 0 = disabled, 1 = on battery below 20% (Chrome's default).

@@ -110,8 +110,11 @@ private:
     CommandBarView(HWND window, Callbacks callbacks) : window_(window), callbacks_(std::move(callbacks)), line_(window, kCaretTimer) {}
 
     struct RowText {
-        Microsoft::WRL::ComPtr<IDWriteTextLayout> title, detail;
+        // A history row's " — host/path" is its own layout after the title's, dimmer, in what
+        // room the title leaves (the Mac's one attributed string, truncated at its tail).
+        Microsoft::WRL::ComPtr<IDWriteTextLayout> title, subtitle, detail;
         float detailWidth = 0;
+        float titleWidth = 0;
     };
     struct Geometry {
         UINT dpi = USER_DEFAULT_SCREEN_DPI;
@@ -158,6 +161,9 @@ private:
     void RestartCaretBlink();
 
     D2D1_COLOR_F Primary() const;  // white in a dark space, black in a light one
+    // NSColor.labelColor, which the Mac's field text, row titles, details and icons use: Primary
+    // at 85% (at `opacity` of that: the Mac's alphaValue on top of it).
+    D2D1_COLOR_F Label(float opacity = 1) const;
     D2D1_COLOR_F Accent() const;
     void DrawPanel(ID2D1DeviceContext* context, float height);
     void DrawField(ID2D1DeviceContext* context);
