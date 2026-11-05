@@ -145,6 +145,23 @@ public struct UIPointerSample: Hashable, Sendable {
     }
 }
 
+/// One view in a `ui hit` answer: the view hit, then each of its superviews.
+public struct UIHitView: Hashable, Sendable {
+    /// Its path in `ui tree` ("0.3.1"), nil where the tree has none (inside a web view, the titlebar's views).
+    public var path: String?
+    public var className: String
+    public var frame: UIRect
+    /// Hidden itself (`isHidden`); a hit view and its superviews never are, but the report says so if one is.
+    public var isHidden: Bool
+
+    public init(path: String?, className: String, frame: UIRect, isHidden: Bool = false) {
+        self.path = path
+        self.className = className
+        self.frame = frame
+        self.isHidden = isHidden
+    }
+}
+
 /// Formats the `ui` tool's answers. Compact by default: frames on one line per node, and
 /// identical pointer samples folded into runs.
 public enum UIReport {
@@ -220,6 +237,17 @@ public enum UIReport {
         }
         if lines.isEmpty { return match.map { "No menu item matches \"\($0)\"." } ?? "The menu bar is empty." }
         return lines.joined(separator: "\n")
+    }
+
+    /// A hit test at `point`: the view hit first, then its superviews up to the window's, one per line as
+    /// "PATH CLASS [x,y w×h]" ("-" for a view the tree has no path for).
+    public static func hit(_ point: UIPoint, chain: [UIHitView]) -> String {
+        let at = "(\(number(point.x)), \(number(point.y)))"
+        guard !chain.isEmpty else { return "Hit at \(at): nothing." }
+        let lines = chain.map { view in
+            "\(view.path ?? "-") \(view.className) [\(view.frame.description)]" + (view.isHidden ? " hidden=true" : "")
+        }
+        return "Hit at \(at): the view a click there reaches, then its superviews.\n" + lines.joined(separator: "\n")
     }
 
     /// Pointer samples, consecutive identical results folded into one run.

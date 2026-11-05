@@ -74,6 +74,9 @@ public enum UIInspection: Hashable, Sendable {
     /// areas and the cursor Kite sets.
     /// `modifiers` are held through the moves (⇧ for link previews).
     case pointer(window: Int?, points: [UIPoint], modifiers: KeyChord.Modifiers = [])
+    /// The view a click at `point` would reach (AppKit's hit test from the window's frame view, as a mouse down
+    /// takes), then each of its superviews. Nothing is sent: no event, no hover, no move.
+    case hit(window: Int?, point: UIPoint)
     case input(window: Int?, event: UIInputEvent)
     /// The menu bar: every item's path, shortcut, action, target, enabled and hidden state.
     case menu(match: String?)
@@ -82,7 +85,7 @@ public enum UIInspection: Hashable, Sendable {
     /// Records animations and frame timing for `seconds`, optionally after pressing `keys`.
     case trace(window: Int?, seconds: Double, keys: [KeyChord]?, match: String?)
 
-    public static let actions = ["windows", "tree", "capture", "pointer", "input", "menu", "key_log", "trace"]
+    public static let actions = ["windows", "tree", "capture", "pointer", "hit", "input", "menu", "key_log", "trace"]
     public static let defaultDepth = 12
     public static let defaultMaxNodes = 400
     public static let maxPointerSteps = 400
@@ -148,6 +151,9 @@ public enum UIInspection: Hashable, Sendable {
             }
             guard points.count <= Self.maxPointerSteps + 1 else { throw Invalid("At most \(Self.maxPointerSteps + 1) points.") }
             self = .pointer(window: window, points: points, modifiers: try a.modifiers())
+        case "hit":
+            guard let point = try a.point("point") else { throw Invalid("\"point\" is required: [x, y] in window points.") }
+            self = .hit(window: window, point: point)
         case "input":
             self = .input(window: window, event: try a.inputEvent())
         case "menu":
@@ -171,7 +177,9 @@ public enum UIInspection: Hashable, Sendable {
         window's top-left. Actions: windows; tree (views with frames, materials, radii, colours, fonts, SwiftUI elements; \
         root, depth, match, layers); capture (exact window pixels even when covered or in the background; region \
         [x,y,w,h], pixels [[x,y],…] for hex colours only); pointer (synthetic moves via points or from/to/steps: view hit, \
-        cursor rects, tracking areas, cursor shown); input (keys, text, click, drag, scroll, phased trackpad scroll into Kite's window only); \
+        cursor rects, tracking areas, cursor shown); hit (point: the view a click there would reach and its superviews, \
+        by AppKit's own hit test, with nothing sent); input (keys, text, click, drag, scroll, phased trackpad scroll into \
+        Kite's window only); \
         menu (every item, shortcut, action, enabled; flags unsafe shortcuts); key_log (where recent keys went); \
         trace (animations with durations and curves, sampled frames and frame timing for seconds, after optional keys).
         """
@@ -197,6 +205,8 @@ public enum UIInspection: Hashable, Sendable {
                 "source": ["type": "string", "enum": .array(CaptureSource.allCases.map { .string($0.rawValue) }),
                            "description": "capture: screen (ScreenCaptureKit: exact, needs Screen Recording), in-process (Kite draws the window: views, the Metal theme and the pages exact, blurred materials unblurred and listed; needs no permission), or auto (default: screen when Screen Recording is granted, else in-process; never asks for permission)."],
                 "points": ["type": "array", "items": point, "description": "pointer: points to move through."],
+                "point": ["type": "array", "items": ["type": "number"], "minItems": 2, "maxItems": 2,
+                          "description": "hit: the point to hit-test."],
                 "from": point, "to": point,
                 "hold": ["type": "number", "description": "input drag: seconds to keep the button down at \"to\" before releasing (max 10); returns at once."],
                 "steps": ["type": "integer", "minimum": 1, "maximum": .number(Double(maxPointerSteps))],
