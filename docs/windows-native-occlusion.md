@@ -119,14 +119,15 @@ Reading them:
 
     | phase | Kite CPU ms/s | page hidden % | rAF fps |
     |---|---:|---:|---:|
-    | idle | 488 → 10.1 | 0 → 100 | 351 → 0 |
+    | idle | 488 → 10.0 | 0 → 100 | 351 → 0 |
     | nearMover | 471 → 2.1 | 0 → 100 | 349 → 0 |
     | covered | 484 → 3.1 | 0 → 100 | 350 → 0 |
     | overMover | 474 → 3.1 | 0 → 100 | 350 → 0 |
-    | lockNotice | 482 → 2.3 | 0 → 100 | 351 → 0 |
+    | lockNotice | 482 → 2.9 | 0 → 100 | 351 → 0 |
 
-    The "on" arm (tracker back on) went the same way: covered 481 → 4.3, lockNotice 477 → 2.7.
-    Its movers stayed at 21.9 and 23.6 ms/s, the tracker's ~1,845 cs/s.
+    The "on" arm (tracker back on) went the same way: covered 481 → 4.4, lockNotice 477 → 2.3.
+    Its movers stayed at 22.8 and 23.0 ms/s, the tracker's ~1,840–1,930 cs/s. ("with it" is
+    #410 as merged, after its review.)
 
 ## Short answer (P12a)
 
