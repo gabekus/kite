@@ -5,6 +5,7 @@
 #include <dwmapi.h>
 #include <wtsapi32.h>
 
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -38,6 +39,23 @@ constexpr DWORD kDwmSystemBackdropType = 38;    // DWMWA_SYSTEMBACKDROP_TYPE
 constexpr int kBackdropAcrylic = 3;             // DWMSBT_TRANSIENTWINDOW
 // GUID_SESSION_DISPLAY_STATUS: the session's display is off (0), on (1) or dimmed (2).
 constexpr GUID kDisplayStatus = {0x2b84c20e, 0xad23, 0x4ddf, {0x93, 0xdb, 0x05, 0xff, 0xbd, 0x7e, 0xfc, 0xa5}};
+// WTSSessionInfoEx's answer (WTSINFOEXW), as far as the lock flag: the level, then a union
+// that starts 8-byte aligned (it holds LARGE_INTEGERs) with WTSINFOEX_LEVEL1_W's first fields.
+constexpr WTS_INFO_CLASS kWtsSessionInfoEx = static_cast<WTS_INFO_CLASS>(25);
+constexpr LONG kWtsSessionStateLock = 0;  // WTS_SESSIONSTATE_LOCK
+struct SessionInfoEx {
+    DWORD level;
+    DWORD padding;  // to the union's 8-byte alignment
+    struct Level1 {
+        ULONG sessionID;
+        INT sessionState;
+        LONG sessionFlags;
+    } level1;
+};
+#ifdef _MSC_VER  // the SDK has the real one (MinGW's headers don't)
+static_assert(offsetof(WTSINFOEXW, Data.WTSInfoExLevel1.SessionFlags) == offsetof(SessionInfoEx, level1.sessionFlags));
+static_assert(WTSSessionInfoEx == kWtsSessionInfoEx && WTS_SESSIONSTATE_LOCK == kWtsSessionStateLock);
+#endif
 
 double Seconds() {
     static const double frequency = [] {
@@ -459,12 +477,12 @@ Occlusion::Occlusion(HWND window, UINT message, const std::filesystem::path& log
     worker_ = std::make_unique<Worker>(*this, window, message);
     if (!log.empty()) worker_->log.open(log, std::ios::binary | std::ios::trunc);
     // Launched while locked (a scheduled test run): hidden from the start.
-    WTSINFOEXW* info = nullptr;
+    SessionInfoEx* info = nullptr;
     DWORD bytes = 0;
-    if (WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTSSessionInfoEx, reinterpret_cast<LPWSTR*>(&info),
+    if (WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, kWtsSessionInfoEx, reinterpret_cast<LPWSTR*>(&info),
                                     &bytes) &&
         info) {
-        if (info->Level == 1 && info->Data.WTSInfoExLevel1.SessionFlags == WTS_SESSIONSTATE_LOCK) locked_ = 1;
+        if (bytes >= sizeof(SessionInfoEx) && info->level == 1 && info->level1.sessionFlags == kWtsSessionStateLock) locked_ = 1;
         WTSFreeMemory(info);
     }
     sessionNotification_ = WTSRegisterSessionNotification(window, NOTIFY_FOR_THIS_SESSION) != 0;
