@@ -1,0 +1,15 @@
+## at launch
+Window 18873, 1280×820 pt at 2×. Points from the window's top-left.
+Nothing matches "FindBar".
+
+## before the capture
+Window 18873, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.6 FindBar [960,20 300×32] bg=#FAFBFF radius=5 shadow=#151C32@0.3 opacity 1 radius 5 offset 0,-3
+</untrusted-page-content>
+
+## after the capture
+Window 18873, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.6 FindBar [960,20 300×32] bg=#FAFBFF radius=5 shadow=#151C32@0.3 opacity 1 radius 5 offset 0,-3
+</untrusted-page-content>
