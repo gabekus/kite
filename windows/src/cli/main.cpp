@@ -897,6 +897,8 @@ int main(int argc, char** argv) {
             plan = picked ? arc_import::ReadPicked(*picked, arcDirectory) : arc_import::ReadAuto(arcDirectory);
         } catch (const std::exception& e) {
             plan = arc_import::ReadFailed(e.what());
+        } catch (...) {
+            plan = arc_import::ReadFailed(nullptr);
         }
         if (auto* error = std::get_if<arc_import::LoadError>(&plan)) {
             std::fprintf(stderr, "kitecore: %s %s\n", error->message.c_str(), error->detail.c_str());

@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -150,6 +151,8 @@ struct Imported {
         std::vector<HistoryEntry> entries;
     };
     std::vector<PendingHistory> histories;
+    // What MergeHistories has done so far, across its passes.
+    size_t historyMerged = 0, historyAdded = 0, historyDropped = 0;
 };
 
 // The import (the Mac's perform), in two steps so the session is saved before anything else is
@@ -166,8 +169,13 @@ void WriteProfileFiles(Imported& imported, const std::filesystem::path& profileD
 // read first, so the counts are against what they hold; false, and nothing merged, when they
 // weren't read in that time. Zero (the app's) doesn't wait: a store whose file isn't read yet
 // queues the pages and merges them over it once it is (new pages aren't counted then).
+// `profiles`: how many of the waiting profiles this pass merges (the app merges one a message, so
+// the UI thread is held for one profile's merge at a time); the rest stay in `histories`, and
+// the counts add up across passes. Merging on the history worker, from a snapshot, is the
+// follow-up that takes it off the UI thread altogether.
 bool MergeHistories(Imported& imported, HistoryStores& stores,
-                    std::chrono::milliseconds waitForLoads = std::chrono::milliseconds::zero());
+                    std::chrono::milliseconds waitForLoads = std::chrono::milliseconds::zero(),
+                    size_t profiles = std::numeric_limits<size_t>::max());
 // Counts per kind of what came over, what was skipped and why, and the notes. Never Arc's
 // titles, addresses or names.
 json::Value Summary(const Imported& imported);

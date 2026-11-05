@@ -44,6 +44,8 @@ struct SessionWriter::Shared : WorkerState {
     // The write's error, empty when written (or the file already held these bytes).
     std::string Write(const BrowserState& state);
     void BackUpHourly();
+    // BackUpHourly with anything it throws as lastBackupError.
+    void BackUpHourlyReporting();
 };
 
 SessionWriter::SessionWriter(SessionStore store, bool maySave, std::function<double()> now)
@@ -121,11 +123,42 @@ SessionWriter::Statistics SessionWriter::Stats() const {
 }
 
 // One pass: the launch backup, the newest snapshot and an offered backup, all that's waiting.
+namespace {
+
+// SaveThen's continuations taken for one pass. Each runs exactly once: with the write's result as
+// soon as it's known (Report), or, on any other way out of the pass (an exception in the launch
+// backup or the write), with an error as the guard goes.
+class Continuations {
+public:
+    explicit Continuations(std::vector<std::function<void(const std::string&)>> taken) : taken_(std::move(taken)) {}
+    Continuations(const Continuations&) = delete;
+    Continuations& operator=(const Continuations&) = delete;
+    ~Continuations() { Report(kNotWritten); }
+    void Report(const std::string& error) noexcept {
+        auto taken = std::move(taken_);
+        taken_.clear();
+        for (auto& then : taken) {
+            try {
+                then(error);
+            } catch (...) {
+                // The continuation's own failure is its to report; the writer goes on.
+            }
+        }
+    }
+
+private:
+    static inline const std::string kNotWritten = "couldn't save the session";
+    std::vector<std::function<void(const std::string&)>> taken_;
+};
+
+}  // namespace
+
+// One pass: the launch backup, the newest snapshot and an offered backup, all that's waiting.
 void SessionWriter::Shared::RunOne(std::unique_lock<std::mutex>& lock) {
     // The launch backup first: it's the session as found, before any change.
     std::optional<BrowserState> found = std::exchange(launch, std::nullopt);
     std::optional<BrowserState> snapshot = std::exchange(next, std::nullopt);
-    std::vector<std::function<void(const std::string&)>> continuations = std::exchange(after, {});
+    Continuations continuations(std::exchange(after, {}));
     // A save offers the backup anyway.
     const bool offered = std::exchange(offer, false) && !snapshot;
     lock.unlock();
@@ -135,30 +168,34 @@ void SessionWriter::Shared::RunOne(std::unique_lock<std::mutex>& lock) {
         stats.backups += made.made ? 1 : 0;
         stats.lastBackupError = made.error;
     }
-    auto runContinuations = [&](const std::string& error) {
-        for (auto& then : continuations) {
-            try {
-                then(error);
-            } catch (...) {
-                // The continuation's own failure is its to report; the writer goes on.
-            }
-        }
-    };
-    std::string error;
-    try {
-        if (snapshot) error = Write(*snapshot);
-    } catch (...) {
-        // Failed() records it; the continuations still hear that the session wasn't written.
-        try {
-            runContinuations("couldn't save the session");
-        } catch (...) {
-        }
-        throw;
+    if (snapshot) {
+        continuations.Report(Write(*snapshot));
+        // After every save, as the Mac's saveNow. The session is written by now: a backup that
+        // fails outright is the backups' error, never the write's.
+        if (!lastWritten.empty()) BackUpHourlyReporting();
+    } else if (offered && !lastWritten.empty()) {
+        BackUpHourlyReporting();
     }
-    runContinuations(error);
-    if (offered && !lastWritten.empty()) BackUpHourly();
     lock.lock();
     stats.pending = HasWork();
+}
+
+void SessionWriter::Shared::BackUpHourlyReporting() {
+    try {
+        BackUpHourly();
+    } catch (const std::exception& e) {
+        std::lock_guard lock(mutex);
+        try {
+            stats.lastBackupError = std::string("couldn't back up the session: ") + e.what();
+        } catch (...) {
+        }
+    } catch (...) {
+        std::lock_guard lock(mutex);
+        try {
+            stats.lastBackupError = "couldn't back up the session";
+        } catch (...) {
+        }
+    }
 }
 
 // Every failure becomes lastError, and the next save tries again.
@@ -187,7 +224,6 @@ std::string SessionWriter::Shared::Write(const BrowserState& state) {
             stats.lastEncodeMicros = encodeMicros;
             stats.lastError.clear();
         }
-        BackUpHourly();
         return {};
     }
     const size_t size = bytes.size();
@@ -206,7 +242,6 @@ std::string SessionWriter::Shared::Write(const BrowserState& state) {
         stats.lastError.assign(error);  // into its reserved room (see Run's catch)
         if (stats.lastError.empty()) ++stats.written;
     }
-    if (!lastWritten.empty()) BackUpHourly();
     return error;
 }
 

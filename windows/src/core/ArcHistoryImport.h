@@ -75,7 +75,7 @@ std::optional<HistoryRead> ReadChromiumHistory(sqlite::PageSource& source, const
 std::filesystem::path ArcHistoryFile(const std::filesystem::path& arcFolder, const std::string& profile);
 
 // Whether something has `file` open for writing (a sharing violation on a read that denies
-// writers). Windows only: elsewhere, false.
+// writers); any failure but the file not being there counts as one. Windows only: elsewhere, false.
 bool HasLiveWriter(const std::filesystem::path& file);
 
 // Why Arc may be changing the SQLite `database` now, or empty: a live writer of it, its journal,

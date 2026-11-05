@@ -99,6 +99,9 @@ def fixture():
     add(db, "https://braces.example.test/{id}#a|b", "Fragment", 1, BASE + 5 * 3600 * SECOND)
     # A path with an escape already in it that also needs encoding: NSURL encodes the part whole.
     add(db, "https://pct.example.test/a%20b|c", "Escaped", 1, BASE + 2 * 3600 * SECOND)
+    # The same page twice once encoded, the newer row with no title: the older one's title stays.
+    add(db, "https://notitle.example.test/x|y", None, 1, BASE + 3 * 3600 * SECOND)
+    add(db, "https://notitle.example.test/x%7Cy", "Older", 4, BASE + 1 * 3600 * SECOND)
     db.commit()
     db.close()
 

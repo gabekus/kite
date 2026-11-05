@@ -229,37 +229,50 @@ void BrowserWindowController::ArcRead() {
 }
 
 void BrowserWindowController::ArcSaved() {
-    std::shared_ptr<ArcSave> save = std::move(arcSave_);
-    if (!save) return;
+    // The window is closing: FinishArcImport has taken it.
+    if (closing_ || !arcSave_) return;
+    std::shared_ptr<ArcSave> save = arcSave_;
     std::unique_lock lock(save->mutex);
-    if (!save->done) {
-        arcSave_ = std::move(save);  // not this import's message
-        return;
-    }
+    if (!save->done) return;  // not this import's message
     const HWND owner = window_.Handle();
     if (!save->sessionError.empty()) {
+        arcSave_.reset();
         // Nothing else of the import was written: shortcut changes, routes and history all wait
         // on the session that names their spaces and profiles.
-        if (!closing_ && IsWindow(owner)) {
-            MessageBoxW(owner, (L"The spaces are in this window, but Kite couldn't save them yet: " + Widen(save->sessionError) +
-                                L"\n\nKite tries again when the window closes. The shortcut changes, routes and history weren't imported; "
-                                L"import again once the session saves.")
-                                   .c_str(),
-                        L"Import from Arc", MB_OK | MB_ICONWARNING);
-        }
+        lock.unlock();
+        MessageBoxW(owner, (L"The spaces are in this window, but Kite couldn't save them yet: " + Widen(save->sessionError) +
+                            L"\n\nKite tries again when the window closes. The shortcut changes, routes and history weren't imported; "
+                            L"import again once the session saves.")
+                               .c_str(),
+                    L"Import from Arc", MB_OK | MB_ICONWARNING);
         return;
     }
-    // Each Arc profile's history into the Kite profile it went to, as the Mac's perform: the
-    // stores save it at once, on their worker (a store whose file isn't read yet merges it then).
-    if (history_) {
-        arc_import::MergeHistories(save->imported, *history_);
+    // Each Arc profile's history into the Kite profile it went to, as the Mac's perform, one
+    // profile a message, so the UI thread is held for one profile's merge at a time (about 50 ms
+    // for 20,000 pages); the stores save each at once, on their worker.
+    if (history_ && !save->imported.histories.empty()) {
+        arc_import::MergeHistories(save->imported, *history_, std::chrono::milliseconds::zero(), 1);
         ArmHistorySave();
+        if (!save->imported.histories.empty()) {
+            PostMessageW(owner, kArcSavedMessage, 0, 0);
+            return;
+        }
     }
+    arcSave_.reset();
     OutputDebugStringW((L"Kite: Arc import: " + Widen(json::Write(arc_import::Summary(save->imported))) + L"\n").c_str());
-    if (!save->filesError.empty() && !closing_ && IsWindow(owner)) {
+    if (!save->filesError.empty()) {
+        lock.unlock();
         MessageBoxW(owner, (L"The spaces and history came over, but Kite couldn't write the shortcut changes and routes: " + Widen(save->filesError)).c_str(),
                     L"Import from Arc", MB_OK | MB_ICONWARNING);
     }
+}
+
+void BrowserWindowController::FinishArcImport() {
+    std::shared_ptr<ArcSave> save = std::move(arcSave_);
+    if (!save || !history_) return;
+    std::lock_guard lock(save->mutex);
+    if (!save->done || !save->sessionError.empty()) return;
+    arc_import::MergeHistories(save->imported, *history_);
 }
 
 }  // namespace kite

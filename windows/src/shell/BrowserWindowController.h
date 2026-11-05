@@ -223,6 +223,10 @@ private:
     void ReadArc(std::optional<std::filesystem::path> picked);
     void ArcRead();
     void ArcSaved();
+    // As the window closes: an import the writer has reported back on gets the rest of its
+    // history merged at once. One it hasn't reported on yet (its session still being written)
+    // keeps its spaces and side files, and its history isn't merged.
+    void FinishArcImport();
     // As the window goes: asks a running read to stop and waits for it (a few seconds at most).
     void StopArcRead();
     void RunCommand(const std::string& command);

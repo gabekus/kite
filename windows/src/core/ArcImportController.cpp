@@ -682,32 +682,32 @@ void WriteProfileFiles(Imported& out, const fs::path& profileDirectory) {
     out.routes.reset();
 }
 
-bool MergeHistories(Imported& out, HistoryStores& stores, std::chrono::milliseconds waitForLoads) {
+bool MergeHistories(Imported& out, HistoryStores& stores, std::chrono::milliseconds waitForLoads, size_t profiles) {
     if (out.histories.empty()) return true;
+    const size_t now = std::min(profiles, out.histories.size());
     std::vector<HistoryStore*> targets;
-    for (const Imported::PendingHistory& history : out.histories) targets.push_back(&stores.ForProfile(history.kiteProfile));
+    for (size_t i = 0; i < now; ++i) targets.push_back(&stores.ForProfile(out.histories[i].kiteProfile));
     // Nothing merged into stores that haven't read their files: the caller says so and saves nothing.
     if (waitForLoads > std::chrono::milliseconds::zero() && !stores.WaitForLoads(waitForLoads)) return false;
-    size_t merged = 0, added = 0, dropped = 0;
-    for (size_t i = 0; i < out.histories.size(); ++i) {
+    for (size_t i = 0; i < now; ++i) {
         HistoryStore& store = *targets[i];
         const bool loaded = store.IsLoaded();
         const size_t before = store.Get().Count();
-        merged += out.histories[i].entries.size();
+        out.historyMerged += out.histories[i].entries.size();
         // Moved, not copied: a store whose file isn't read yet only queues them (HistoryStore::Merge).
         const size_t fresh = store.Merge(std::move(out.histories[i].entries));
         if (!loaded) continue;
-        added += fresh;
+        out.historyAdded += fresh;
         // Past the cap, the oldest pages went (Arc's or Kite's own).
-        dropped += before + fresh - store.Get().Count();
+        out.historyDropped += before + fresh - store.Get().Count();
     }
-    out.imported.insert_or_assign("historyPages", merged);
-    out.imported.insert_or_assign("historyPagesNew", added);
-    if (dropped > 0) {
-        out.skipped.push_back(Skipped("historyPruned", dropped,
+    out.histories.erase(out.histories.begin(), out.histories.begin() + static_cast<std::ptrdiff_t>(now));
+    out.imported.insert_or_assign("historyPages", out.historyMerged);
+    out.imported.insert_or_assign("historyPagesNew", out.historyAdded);
+    if (out.histories.empty() && out.historyDropped > 0) {
+        out.skipped.push_back(Skipped("historyPruned", out.historyDropped,
                                       "Kite's history keeps the latest " + std::to_string(History::kMaxEntries) + " pages a profile, so the oldest went"));
     }
-    out.histories.clear();
     return true;
 }
 

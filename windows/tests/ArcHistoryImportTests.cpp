@@ -145,19 +145,22 @@ TEST(ArcHistoryImport_urlsAreKeptAsTheMacsURLReadsThem) {
     auto read = ReadChromiumHistory(pages);
     CHECK(read);
     if (!read) return;
-    CHECK(read->rows == 4 && read->sameURL == 1 && read->notWebPages == 0 && read->entries.size() == 3);
-    if (read->entries.size() != 3) return;
+    CHECK(read->rows == 6 && read->sameURL == 2 && read->notWebPages == 0 && read->entries.size() == 4);
+    if (read->entries.size() != 4) return;
     const HistoryEntry& pipes = read->entries[0];
     CHECK(pipes.url == "https://pipes.example.test/a%7Cb?q=%7Bx%7D" && pipes.title == "Raw" && pipes.visitCount == 5 &&
           pipes.lastVisit == History::ChromiumDate(At(20)));
     CHECK(read->entries[1].url == History::Normalized("https://braces.example.test/{id}#a|b") &&
           read->entries[1].url.find_first_of("{}|") == std::string::npos);
     // NSURL's rule is per part: a part that needs any encoding is encoded whole, its % too.
-    CHECK(read->entries[2].url == "https://pct.example.test/a%2520b%7Cc" &&
-          read->entries[2].url == History::Normalized("https://pct.example.test/a%20b|c"));
+    // The newer row has no title: the older row's stays, as the Mac's merge keeps it.
+    CHECK(read->entries[2].url == "https://notitle.example.test/x%7Cy" && read->entries[2].title == "Older" &&
+          read->entries[2].visitCount == 4 && read->entries[2].lastVisit == History::ChromiumDate(At(3)));
+    CHECK(read->entries[3].url == "https://pct.example.test/a%2520b%7Cc" &&
+          read->entries[3].url == History::Normalized("https://pct.example.test/a%20b|c"));
     // What Merge keys them by is what was read: a second import finds them.
     History history;
-    CHECK(history.Merge(read->entries) == 3 && history.Merge(read->entries) == 0);
+    CHECK(history.Merge(read->entries) == 4 && history.Merge(read->entries) == 0);
     CHECK(history.Find("https://pipes.example.test/a%7Cb?q=%7Bx%7D"));
 }
 
@@ -455,6 +458,29 @@ TEST(ArcImportController_historyGoesToTheKiteProfileItsSpacesWentTo) {
         CHECK(stores.Flush(DeadlineAfter(std::chrono::seconds(10))).empty());
     }
     CHECK(ImportedCount(again, "historyPages") == 88 && ImportedCount(again, "historyPagesNew") == 0);
+}
+
+TEST(ArcImportController_historyMergesOneProfileAPass) {
+    // The app merges one profile a message; the counts add up across the passes.
+    TempDir dir;
+    auto plan = ReadAuto(Arc());
+    CHECK(std::holds_alternative<Plan>(plan));
+    if (!std::holds_alternative<Plan>(plan)) return;
+    BrowserState state;
+    ImportOptions everything;
+    everything.includeUntitled = true;
+    Imported imported = Import(state, std::get<Plan>(plan), everything);
+    CHECK(imported.histories.size() == 2);
+    HistoryStores stores(dir.path);
+    stores.Start();
+    CHECK(MergeHistories(imported, stores, std::chrono::seconds(10), 1));
+    CHECK(imported.histories.size() == 1 && ImportedCount(imported, "historyPages") == 86 && ImportedCount(imported, "historyPagesNew") == 86);
+    CHECK(MergeHistories(imported, stores, std::chrono::seconds(10), 1));
+    CHECK(imported.histories.empty() && ImportedCount(imported, "historyPages") == 88 && ImportedCount(imported, "historyPagesNew") == 88);
+    CHECK(MergeHistories(imported, stores, std::chrono::seconds(10), 1));  // nothing left: nothing changes
+    CHECK(ImportedCount(imported, "historyPages") == 88);
+    stores.SaveNow();
+    CHECK(stores.Flush(DeadlineAfter(std::chrono::seconds(10))).empty());
 }
 
 TEST(ArcImportController_historyLeftOutWithItsProfileAndPrunedPastTheCap) {

@@ -264,6 +264,9 @@ std::wstring BrowserWindowController::Init() {
         memoryWatch_.reset();
         RunPending();
         SaveNow();
+        // An Arc import whose session is written but whose history isn't merged yet: all of it
+        // now, before history's last save.
+        FinishArcImport();
         // History too, as the Mac's flush at quit; main.cpp waits for its writes.
         if (history_) {
             KillTimer(window_.Handle(), kHistoryTimer);
@@ -452,7 +455,11 @@ void BrowserWindowController::SessionChanged(SessionSaveDelay delay) {
 void BrowserWindowController::SaveNow(std::function<void(const std::string& error)> then) {
     KillTimer(window_.Handle(), kSaveTimer);
     saveSchedule_.Saved();
-    if (!writer_ || !writer_->MaySave()) return;
+    if (!writer_ || !writer_->MaySave()) {
+        // Nothing is written, and whoever waits on this write hears so.
+        if (then) then("Kite doesn't save this session (it couldn't be read)");
+        return;
+    }
     // A copy for the writer's thread (the session is the UI thread's to change): the only cost
     // here. Encoding and the disk are the writer's.
     const auto start = std::chrono::steady_clock::now();

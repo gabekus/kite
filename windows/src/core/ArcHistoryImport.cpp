@@ -104,14 +104,14 @@ bool HasLiveWriter(const fs::path& file) {
 #ifdef _WIN32
     // Read access while denying others write access: Windows refuses that (a sharing violation)
     // while another handle has the file open for writing, as SQLite's and Chromium's lockfile's
-    // are. Closed at once.
+    // are. Closed at once. Fails closed: anything but "no such file" counts as a writer.
     int fd = -1;
     const errno_t error = _wsopen_s(&fd, file.c_str(), _O_RDONLY | _O_BINARY, _SH_DENYWR, _S_IREAD);
     if (error == 0) {
         _close(fd);
         return false;
     }
-    return error == EACCES;
+    return error != ENOENT;
 #else
     (void)file;
     return false;
@@ -220,6 +220,8 @@ std::optional<HistoryRead> ReadChromiumHistory(sqlite::PageSource& source, const
         if (auto [it, fresh] = seen.emplace(*address, out.entries.size()); !fresh) {
             HistoryEntry& page = out.entries[it->second];
             page.visitCount = std::max(page.visitCount, visits);
+            // The newer row's title, unless it has none (the Mac's merge keeps the older one then).
+            if (page.title.empty()) page.title = ValidUtf8(std::move(row.title));
             ++out.sameURL;
             continue;
         }
