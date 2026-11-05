@@ -28,7 +28,9 @@ bool IsChromiumSwitch(std::string_view argument);
 
 // Nullopt when every argument is one of `spec`'s flags or options, each option has a value, no
 // value is something Chromium would read as a switch, and nothing has "chromehtml:" in it (which
-// Chromium handles itself, before any of Kite's code runs). Else why not.
+// Chromium handles itself, before any of Kite's code runs). Else why not. A value that is exactly
+// an integer ("-120", no whitespace) is let through: Chromium reads it as a switch named "120",
+// and it has no switch named by a number.
 std::optional<std::string> Check(const std::vector<std::string>& arguments, const Spec& spec);
 
 // The --type switch Chromium would read (its last value, as Chromium keeps), if any: how

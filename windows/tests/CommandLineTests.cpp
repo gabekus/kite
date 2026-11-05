@@ -68,6 +68,33 @@ TEST(aValueIsNeverASwitchChromiumWouldRead) {
     CHECK(Accepted({"--frame-log", "C:\\frames.jsonl"}));
 }
 
+TEST(aValueThatIsExactlyAnIntegerIsAValue) {
+    // Chromium reads "-120" as a switch named "120"; it has none named by a number.
+    CHECK(Accepted({"--capture", "C:\\out.png", "--frame-log", "-120"}));
+    CHECK(Accepted({"--frame-log", "-1"}));
+    CHECK(Accepted({"--frame-log", "120"}));
+    CHECK(Accepted({"--frame-log", "-0"}));
+    // Exactly an integer: anything else that starts with "-" is still refused.
+    CHECK(Check({"--frame-log", "-120x"}, Kite()) == std::optional<std::string>("--frame-log takes a value, not -120x"));
+    CHECK(!Accepted({"--frame-log", "-x"}));
+    CHECK(!Accepted({"--frame-log", "-1e3"}));
+    CHECK(!Accepted({"--frame-log", "-12.5"}));
+    CHECK(!Accepted({"--frame-log", "-"}));
+    CHECK(!Accepted({"--frame-log", "--120"}));
+    CHECK(!Accepted({"--frame-log", "-120=1"}));
+    CHECK(!Accepted({"--frame-log", "-0x10"}));
+    CHECK(!Accepted({"--frame-log", "/120"}));
+    // Nothing is trimmed off first: whitespace before or after, or U+00A0 before, is refused.
+    CHECK(!Accepted({"--frame-log", " -120"}));
+    CHECK(!Accepted({"--frame-log", "-120 "}));
+    CHECK(!Accepted({"--frame-log", "\xC2\xA0-120"}));
+    // Only ASCII digits: a fullwidth one (U+FF11) isn't an integer.
+    CHECK(!Accepted({"--frame-log", "-\xEF\xBC\x91"}));
+    // Only as a value: alone, it's an unknown option.
+    CHECK(!Accepted({"-120"}));
+    CHECK(!Accepted({"--smoke-test", "-120"}));
+}
+
 TEST(chromehtmlIsRefusedAnywhere) {
     // Chromium acts on an argument with chromehtml: in it before Kite's code runs.
     CHECK(!Accepted({"chromehtml:x"}));

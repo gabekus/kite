@@ -162,7 +162,9 @@ line is Kite's, but Chromium reads the raw line too: CEF's startup parses it bef
 `--`, `-` and `/` as switch prefixes, case-insensitively, and acts on `chromehtml:` itself. So
 Kite takes only its own flags and their values (`core/CommandLine.h`): any other argument, a
 value Chromium could read as a switch, or `chromehtml:` anywhere, is an error before anything
-starts. `--type` launches are Chromium's own helpers: one spelled any other way than Chromium's
+starts. A value that is exactly an integer, like `--swipe -120`'s, is the one exception:
+Chromium reads `-120` as a switch named `120`, and none of its switches is a number.
+`--type` launches are Chromium's own helpers: one spelled any other way than Chromium's
 `--type=X`, or for a helper Kite doesn't run (a crashpad handler), exits at once.
 `--wait-for-debugger` is still honoured before Kite's parser runs (CEF's own startup); it only
 waits. W30's protocol and file handlers must register as `"Kite.exe" --single-argument %1`, as
