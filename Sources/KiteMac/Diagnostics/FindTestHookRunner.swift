@@ -74,8 +74,21 @@ final class FindTestHookRunner {
             wait.pageLoading = status?.isLoading
             wait.progress = status?.progress
             wait.windowVisible = controller.window?.occlusionState.contains(.visible) == true
+            if let webView = (controller.shownPage as? WebKitPage)?.webView {
+                wait.webViewLoading = webView.isLoading
+                wait.webViewProgress = webView.estimatedProgress
+                wait.webViewHasURL = webView.url != nil
+            }
+            wait.windowOrderedIn = controller.window?.isVisible == true
+            wait.windowOnScreen = controller.window?.screen != nil
+            wait.screens = NSScreen.screens.count
+            wait.contentProcessEnds = Self.contentProcessEnds
             Self.log(FindTestHook.timeoutLine(wait))
-            return finish()
+            // The page never loaded (W21's headless runs: no page loads there at all), but the bar doesn't need it:
+            // open it anyway, so an empty bar can still be captured; a query shows no result, and the line says so.
+            finish()
+            if controller.applyFindTestHook(hook, fallback: true) { Self.log(FindTestHook.fallbackLine(hook)) }
+            return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.pollInterval) { [weak self] in
             self?.poll(until: deadline)
@@ -98,5 +111,17 @@ final class FindTestHookRunner {
     /// One `KITE_TEST_FIND:` line on stderr, which the capture script waits for and lists in NOTES.md.
     nonisolated static func log(_ line: String) {
         FileHandle.standardError.write(Data((line + "\n").utf8))
+    }
+
+    /// Times a page's web content process ended on this run (WebKitPage), for the give-up line.
+    private(set) static var contentProcessEnds = 0
+
+    /// A page milestone from WebKit's navigation delegate, on a run with a find hook only (nothing otherwise): where
+    /// a headless load stops. An error gives its domain and code only.
+    static func logPage(_ milestone: String, error: Error? = nil) {
+        guard configured != nil else { return }
+        if milestone == "content process ended" { contentProcessEnds += 1 }
+        let nsError = error.map { $0 as NSError }
+        log(FindTestHook.pageLine(milestone, error: nsError.map { ($0.domain, $0.code) }))
     }
 }

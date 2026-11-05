@@ -486,13 +486,32 @@ extension WebKitPage: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        FindTestHookRunner.logPage("finished")
         webView.evaluateJavaScript(Self.faviconScript) { [weak self] result, _ in
             guard let href = result as? String else { return }
             self?.onEvent?(.favicon(URL(string: href)))
         }
     }
 
+    // Logged on a run with a find hook only (FindTestHookRunner.logPage), to see where a headless load stops.
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        FindTestHookRunner.logPage("started")
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        FindTestHookRunner.logPage("committed")
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        FindTestHookRunner.logPage("failed before commit", error: error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        FindTestHookRunner.logPage("failed", error: error)
+    }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        FindTestHookRunner.logPage("content process ended")
         webView.reload()
     }
 }

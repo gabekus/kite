@@ -165,6 +165,7 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         if (IsIconic(window_.Handle())) ShowWindow(window_.Handle(), SW_RESTORE);
         SetForegroundWindow(window_.Handle());
     };
+    events.downloadUpdated = [this](const DownloadUpdate& update) { DownloadUpdated(update); };
     if (const auto started = Chromium::Start(instance_, window_.Handle(), root, sandboxInfo, std::move(events), options_.quiet,
                                              options_.chromiumSwitches, chromium_, error);
         started != Chromium::StartResult::Started) {
@@ -172,6 +173,11 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     }
     // A verdict that came before Chromium did.
     chromium_->SetOccluded(occluded_);
+    // Each profile's download folder and Ask, as each download starts (read once: nothing on
+    // Windows changes them yet; Settings comes with W31a).
+    chromium_->SetDownloadLocations(DownloadLocations(), options_.downloadFolder);
+    if (options_.saveLog && options_.testAutomaticDownloads) chromium_->AllowAutomaticDownloads(*options_.testAutomaticDownloads);
+    if (options_.saveLog) chromium_->LogParkedPages();
     window_.onWake = [this] { chromium_->RunPending(); };
     window_.onMinimize = [this] {
         sidebar_->HideTip();
@@ -181,7 +187,7 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         sidebar_->HideTip();
         chromium_->WindowMoved();
     };
-    window_.mayClose = [this] { return chromium_->MayCloseWindow(); };
+    window_.mayClose = [this] { return MayQuit() && chromium_->MayCloseWindow(); };
     window_.onFocus = [this] {
         // The open bar keeps the keyboard in Kite's window.
         if (!commandBar_ || !commandBar_->IsOpen()) chromium_->Focus();
