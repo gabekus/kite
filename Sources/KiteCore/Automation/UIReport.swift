@@ -162,6 +162,41 @@ public struct UIHitView: Hashable, Sendable {
     }
 }
 
+/// `ui input`'s `expect`: the view a click's or drag's mouse down must reach. Kite hit-tests the point and sends the
+/// event in the same main-thread turn, so nothing can move between the check and the press (a separate `ui hit` can
+/// be a few hundred milliseconds stale by the time the input arrives). Used by scripts that may only press approved
+/// views (scripts/mac-reference-captures.sh).
+public struct UIHitExpectation: Hashable, Sendable {
+    /// The approved view's path in `ui tree` ("0.3.4.0.1").
+    public var path: String
+    /// Its class, as `ui tree` and `ui hit` name it.
+    public var className: String
+    /// Classes the view hit may be instead, with every superview up to the approved one of these classes too (a
+    /// row's button with no menu of its own, for a right-click). Empty: the view hit must be the approved view itself.
+    public var inside: Set<String>
+
+    public init(path: String, className: String, inside: Set<String> = []) {
+        self.path = path
+        self.className = className
+        self.inside = inside
+    }
+
+    /// Nil when `chain` (the view hit, then its superviews, as `ui hit` lists them) reaches the approved view;
+    /// else why not. Mirrors the script's own check of a `ui hit` answer.
+    public func refusal(for chain: [UIHitView]) -> String? {
+        guard let first = chain.first else { return "it hits nothing" }
+        for view in chain {
+            let at = view.path ?? "-"
+            if view.isHidden { return "it reaches a hidden \(view.className) (\(at))" }
+            if view.path == path {
+                return view.className == className ? nil : "it reaches a \(view.className) at \(path), not a \(className)"
+            }
+            if !inside.contains(view.className) { return "it reaches a \(view.className) (\(at)), not the \(className) at \(path)" }
+        }
+        return "it reaches a \(first.className) (\(first.path ?? "-")), which isn't inside the \(className) at \(path)"
+    }
+}
+
 /// Formats the `ui` tool's answers. Compact by default: frames on one line per node, and
 /// identical pointer samples folded into runs.
 public enum UIReport {

@@ -108,6 +108,53 @@ import Testing
         #expect(throws: (any Error).self) { try ui(["action": "hit", "point": [1]]) }
         #expect(throws: (any Error).self) { try ui(["action": "hit", "point": "120,364"]) }
     }
+    @Test func inputTakesAnExpectationForAClickOrDragOnly() throws {
+        let rowExpect: JSONValue = ["path": "0.3.3.0.5.1", "class": "TabRowCell", "inside": ["SymbolButton", "SidebarPassthroughView"]]
+        let row = UIHitExpectation(path: "0.3.3.0.5.1", className: "TabRowCell", inside: ["SymbolButton", "SidebarPassthroughView"])
+        let rightClick = UIInputEvent.click(UIPoint(x: 120, y: 364.5), button: .right, count: 1, modifiers: [])
+        let parsedClick = try ui(["action": "input", "window": 7, "click": [120, 364.5], "button": "right", "expect": rowExpect])
+        #expect(parsedClick == UIInspection.input(window: 7, event: rightClick, expect: row))
+
+        let spaceExpect: JSONValue = ["path": "0.3.4.0.1", "class": "SpaceCellView"]
+        let drag = UIInputEvent.drag(from: UIPoint(x: 86, y: 795), to: UIPoint(x: 150, y: 795), steps: 10)
+        let parsedDrag = try ui(["action": "input", "from": [86, 795], "to": [150, 795], "expect": spaceExpect])
+        #expect(parsedDrag == UIInspection.input(window: nil, event: drag, expect: UIHitExpectation(path: "0.3.4.0.1", className: "SpaceCellView")))
+
+        // Without one, nothing changes.
+        let leftClick = UIInputEvent.click(UIPoint(x: 1, y: 2), button: .left, count: 1, modifiers: [])
+        let none: UIHitExpectation? = nil
+        #expect(try ui(["action": "input", "click": [1, 2]]) == UIInspection.input(window: nil, event: leftClick, expect: none))
+
+        // Not a press: nothing to hit-test.
+        let expect: JSONValue = ["path": "0.3", "class": "NewTabRowCell"]
+        let notPresses: [[String: JSONValue]] = [
+            ["action": "input", "keys": "cmd+t", "expect": expect],
+            ["action": "input", "text": "a", "expect": expect],
+            ["action": "input", "scroll": [1, 2], "dy": 3, "expect": expect],
+            ["action": "input", "flags": "ctrl", "expect": expect],
+        ]
+        for arguments in notPresses {
+            #expect(throws: AutomationCommand.InvalidArguments.self, "\(arguments)") { try ui(arguments) }
+        }
+        // Malformed.
+        let malformed: [JSONValue] = [
+            "0.3",
+            ["class": "NewTabRowCell"],
+            ["path": "0.3"],
+            ["path": "", "class": "A"],
+            ["path": "0..3", "class": "A"],
+            ["path": "0.3.", "class": "A"],
+            ["path": "titlebar", "class": "A"],
+            ["path": "0.3", "class": ""],
+            ["path": "0.3", "class": "A", "inside": "B"],
+            ["path": "0.3", "class": "A", "inside": [""]],
+            ["path": "0.3", "class": "A", "window": 3],
+        ]
+        for bad in malformed {
+            let arguments: [String: JSONValue] = ["action": "input", "click": [1, 2], "expect": bad]
+            #expect(throws: AutomationCommand.InvalidArguments.self, "\(bad)") { try ui(arguments) }
+        }
+    }
 }
 
 @Suite struct UIReportTests {
@@ -220,5 +267,32 @@ import Testing
             - NSThemeFrame [0,0 1280×820] hidden=true
             """)
         #expect(UIReport.hit(UIPoint(x: -1, y: -1), chain: []) == "Hit at (-1, -1): nothing.")
+    }
+
+    @Test func anExpectationIsMetOnlyByTheApprovedViewOrWhatItAllowsInsideIt() {
+        func view(_ path: String?, _ cls: String, hidden: Bool = false) -> UIHitView {
+            UIHitView(path: path, className: cls, frame: UIRect(x: 0, y: 0, width: 10, height: 10), isHidden: hidden)
+        }
+        let rowUp = [view("0.3.3.0.5", "SidebarRowContainer"), view("0.3", "NSView"), view(nil, "NSThemeFrame")]
+        let row = UIHitExpectation(path: "0.3.3.0.5.1", className: "TabRowCell", inside: ["SymbolButton", "SidebarPassthroughView"])
+        let cell = UIHitExpectation(path: "0.3.4.0.1", className: "SpaceCellView")
+        // The view itself, or allowed views all the way up to it.
+        #expect(row.refusal(for: [view("0.3.3.0.5.1", "TabRowCell")] + rowUp) == nil)
+        #expect(row.refusal(for: [view("0.3.3.0.5.1.1.6", "SymbolButton"), view("0.3.3.0.5.1.1", "SidebarPassthroughView"),
+                                  view("0.3.3.0.5.1", "TabRowCell")] + rowUp) == nil)
+        #expect(cell.refusal(for: [view("0.3.4.0.1", "SpaceCellView"), view("0.3.4.0", "NSView")]) == nil)
+        // Nothing, another view, a class it doesn't allow on the way, the wrong class at the path, a hidden view, or a
+        // view outside it.
+        #expect(cell.refusal(for: []) == "it hits nothing")
+        #expect(cell.refusal(for: [view("0.2", "WKWebView"), view("0", "NSView")])?.contains("WKWebView") == true)
+        #expect(cell.refusal(for: [view("0.3.4.0.1.2", "SymbolButton"), view("0.3.4.0.1", "SpaceCellView")]) != nil)
+        #expect(row.refusal(for: [view("0.3.3.0.5.1.0", "RenameField"), view("0.3.3.0.5.1", "TabRowCell")] + rowUp) != nil)
+        #expect(cell.refusal(for: [view("0.3.4.0.1", "TabRowCell")])?.contains("not a SpaceCellView") == true)
+        #expect(cell.refusal(for: [view("0.3.4.0.1", "SpaceCellView", hidden: true)])?.contains("hidden") == true)
+        #expect(row.refusal(for: [view("0.3.3.0.5.1.1.6", "SymbolButton", hidden: true), view("0.3.3.0.5.1", "TabRowCell")]) != nil)
+        #expect(row.refusal(for: [view("0.3.3.0.6.1.1.6", "SymbolButton"), view("0.3.3.0.6.1", "SidebarPassthroughView")])?
+            .contains("isn't inside") == true)
+        // A view the tree has no path for never matches a path.
+        #expect(cell.refusal(for: [view(nil, "SpaceCellView")]) != nil)
     }
 }
