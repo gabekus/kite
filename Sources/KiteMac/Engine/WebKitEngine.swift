@@ -106,6 +106,13 @@ final class WebKitEngine: WebEngine {
         )
         if let state {
             page.webView.interactionState = state
+            // A state saved before the page's first load committed brings back no page: load the URL (PageRestore).
+            if PageRestore.loadsURLAfterRestoring(hasURL: url != nil, restoredCurrentItem: page.webView.backForwardList.currentItem != nil,
+                                                  restoredURL: page.webView.url != nil, restoredLoading: page.webView.isLoading),
+               let url {
+                FindTestHookRunner.logPage("restored state held no page, so loading the URL")
+                page.load(url)
+            }
         } else if let url {
             page.load(url)
         }
@@ -344,7 +351,10 @@ final class WebKitPage: NSObject, WebPage {
         }
     }
 
-    func hibernationState() -> Any? { webView.interactionState }
+    /// Nil for a page with no committed page yet: its state would restore a blank tab (PageRestore).
+    func hibernationState() -> Any? {
+        PageRestore.keepsState(hasCurrentItem: webView.backForwardList.currentItem != nil) ? webView.interactionState : nil
+    }
 
     func checkBusy(_ completion: @escaping (Bool) -> Void) {
         if webView.cameraCaptureState == .active || webView.microphoneCaptureState == .active {

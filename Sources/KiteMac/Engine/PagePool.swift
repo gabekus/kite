@@ -180,10 +180,19 @@ final class PagePool {
         // A tab on one of Kite's own pages gets a blank page; the window draws the page over it.
         let url = InternalPage(tab.url) == nil ? tab.url : nil
         // History saved when the page hibernated, here or in a linked window, or before Kite last quit.
-        let restoring = savedState.removeValue(forKey: tab.id) ?? shared?.takeSavedState(tab.id, excluding: self)
-            ?? url.flatMap { historyFiles?.load(tab: tab.id, url: $0, profile: engine.profileDirectory) }
+        var source = PageRestore.Source.none
+        var restoring = savedState.removeValue(forKey: tab.id)
+        if restoring != nil { source = .thisWindow }
+        if restoring == nil, let state = shared?.takeSavedState(tab.id, excluding: self) { restoring = state; source = .anotherWindow }
+        if restoring == nil, let state = url.flatMap({ historyFiles?.load(tab: tab.id, url: $0, profile: engine.profileDirectory) }) {
+            restoring = state
+            source = .file
+        }
+        FindTestHookRunner.logPageMade(hasURL: url != nil, restoredFrom: source)   // a run with a find hook only
         let page = engine.makePage(url: url, restoring: restoring)
         register(page, id: tab.id)
+        // The engine started the load before the page was registered: its first "loading" went to no one.
+        recordLoadingAtRegistration(page, id: tab.id)
         pageProfiles[tab.id] = engine.profileDirectory
         // Before the engine asks for the first document's scripts.
         page.themeCSS = themeCSS(forTabs: [tab.id])[tab.id] ?? nil
@@ -270,6 +279,7 @@ final class PagePool {
         let id = UUID()
         register(page, id: id)
         pageProfiles[id] = profileDirectory ?? currentEngine.profileDirectory
+        recordLoadingAtRegistration(page, id: id)
         return id
     }
 
@@ -323,6 +333,7 @@ final class PagePool {
         store.mutateWithoutUndo { state in
             if let from = opener ?? source { state.openTab(id: newID, url: url, openedBy: from) } else { state.openTab(id: newID, url: url) }
         }
+        recordLoadingAtRegistration(page, id: newID)
         if let from = opener ?? source { onTabOpened?(newID, from) }
     }
 
@@ -347,6 +358,17 @@ final class PagePool {
     func register(existing page: WebPage, id: UUID, profileDirectory: String?) {
         register(page, id: id)
         pageProfiles[id] = profileDirectory
+        recordLoadingAtRegistration(page, id: id)
+    }
+
+    /// A page made before this pool listened to it (by the engine in `makePage`, or by a Peek, a popup or Little
+    /// Kite) may already be loading, and its first "loading" event went to no one (PageRegistration): record it now,
+    /// as that event would have, or a slow load shows reload instead of the X. Back and forward aren't on WebPage,
+    /// so they come with the page's next navigation event.
+    private func recordLoadingAtRegistration(_ page: WebPage, id: UUID) {
+        guard PageRegistration.loadingToRecord(pageIsLoading: page.isLoading, recorded: store.pages[id]?.isLoading) == true else { return }
+        store.updatePage(id) { $0.isLoading = true }
+        onLoadingChanged?(id, page, true)
     }
 
     func discard(_ id: UUID, keepHistory: Bool) {
@@ -388,7 +410,12 @@ final class PagePool {
     }
 
     private func saveHistory(of id: UUID) {
-        guard historyFiles != nil, let page = pages[id], let state = page.hibernationState() as? Data else { return }
+        guard historyFiles != nil, let page = pages[id] else { return }
+        // No state (a page with nothing committed yet, PageRestore): an older file would restore what's gone.
+        guard let state = page.hibernationState() as? Data else {
+            historyFiles?.remove(tab: id)
+            return
+        }
         writeHistory(state, of: id, profile: pageProfiles[id])
     }
 
