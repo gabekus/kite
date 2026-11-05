@@ -262,11 +262,11 @@ if(NOT workShows STREQUAL "symbol" OR NOT workGlyph STREQUAL "ON" OR NOT workAcc
   message(FATAL_ERROR "Work's header gave ${work}")
 endif()
 # Work's icon as a picture (a valid name and an invalid one), as a symbol Windows has no
-# stand-in for, as one Kite draws as its own shape, and as none: a picture in the bar and the
-# header; the dot in the bar with a blank slot in the header; the drawn symbol in both; the dot
-# with no slot.
+# stand-in for, as one drawn from a Segoe glyph (Kite's own shapes are the briefcase's, above),
+# and as none: a picture in the bar and the header; the dot in the bar with a blank slot in the
+# header; the glyph in both; the dot with no slot.
 file(READ "${CMAKE_CURRENT_LIST_DIR}/../helix/states/sidebar.json" sidebarState)
-foreach(icon "image:x.png" "image:a/b.png" "symbol:not.a.symbol" "symbol:pawprint.fill" "")
+foreach(icon "image:x.png" "image:a/b.png" "symbol:not.a.symbol" "symbol:star.fill" "")
   set(other "${WORK}-icon")
   file(REMOVE_RECURSE "${other}")
   file(MAKE_DIRECTORY "${other}")
@@ -283,13 +283,14 @@ foreach(icon "image:x.png" "image:a/b.png" "symbol:not.a.symbol" "symbol:pawprin
   elseif(icon STREQUAL "")
     set(wantCell "dot")
     set(wantHead "none")
-  elseif(icon STREQUAL "symbol:pawprint.fill")
+  elseif(icon STREQUAL "symbol:star.fill")
     set(wantCell "symbol")
     set(wantHead "symbol")
-    string(JSON cellDrawn GET "${out}" spaceBar cells 1 glyph drawn)
-    string(JSON headDrawn GET "${out}" rows 0 glyph drawn)
-    if(NOT cellDrawn STREQUAL "ON" OR NOT headDrawn STREQUAL "ON")
-      message(FATAL_ERROR "Work's drawn symbol gave ${out}")
+    string(JSON cellGlyph GET "${out}" spaceBar cells 1 glyph fluent)
+    string(JSON headGlyph GET "${out}" rows 0 glyph fluent)
+    string(JSON headMdl2 GET "${out}" rows 0 glyph mdl2)
+    if(NOT cellGlyph STREQUAL "E735" OR NOT headGlyph STREQUAL "E735" OR NOT headMdl2 STREQUAL "E735")
+      message(FATAL_ERROR "Work's glyph symbol gave ${out}")
     endif()
   else()
     set(wantCell "dot")

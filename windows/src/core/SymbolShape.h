@@ -1,9 +1,10 @@
 #pragma once
 // The SF Symbols that neither Segoe icon font has an object for (bookmark, paw, bed, cutlery,
 // dumbbell, bandage, baseball, takeaway bag, theatre masks), and the briefcase, whose Segoe
-// glyph lacks the Mac's band and clasp, drawn as Kite's own geometry: simple original shapes,
-// each sized and placed to the ink the Mac's symbol makes at the same point size (measured from
-// the Mac's renders, docs/windows.md). Nothing here is Apple's outline.
+// glyph is a plain case, drawn as Kite's own geometry: simple original shapes, each sized and
+// placed to the ink box the Mac's symbol makes at the same point size, with its inked area and
+// weight (numbers measured from the Mac's renders, docs/windows.md). Nothing here is Apple's
+// outline or fitted to it.
 //
 // A shape is layers of filled figures in points for a 12.5 pt icon (the space bar's), its origin
 // on the point the icon is centred on; it scales with the icon's size. Each layer is added to
@@ -11,6 +12,7 @@
 // the one behind). In a layer, figures fill with the nonzero rule, each made clockwise here
 // whichever way it was written, so overlapping figures join.
 
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -103,5 +105,20 @@ const SymbolShape* SymbolShapeFor(std::string_view name);
 const std::vector<std::string_view>& DrawnSymbols();
 // The size shapes are designed at (the bar's icon size).
 inline constexpr float kSymbolShapeSize = 12.5f;
+// The page header's icon size, where each shape has its own place (below).
+inline constexpr float kHeaderSymbolSize = 15.0f;
+
+// Where a drawn symbol draws for an icon `size` points: scaled by `scale` about its origin, which
+// goes `dx`, `dy` points from the icon's centre. At the bar's 12.5 the shape already sits as the
+// Mac's ink does in its cell. The Mac redraws a symbol at the header's 15 and places it by
+// metrics it rounds to the half point (SidebarKit's place(.center)), which Kite's shapes don't
+// have, so each shape carries the centre of the Mac's 15pt ink in its slot, measured from the
+// Mac's header renders (as the Mac's own SymbolOrigins are): its ink box's middle goes there.
+// Any other size scales the bar's placement.
+struct ShapePlacement {
+    float scale = 1, dx = 0, dy = 0;
+};
+// None for a name that isn't drawn.
+std::optional<ShapePlacement> PlaceDrawnSymbol(std::string_view name, float size);
 
 }  // namespace kite

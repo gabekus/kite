@@ -18,10 +18,10 @@ struct SymbolEntry {
 // Each SF Symbol's stand-in, in Segoe Fluent Icons then Segoe MDL2 Assets: the Icon tab's 56 in
 // its order, then "briefcase" (the test sessions' Work space) and the picture placeholder's "photo".
 // Each code point was checked against both fonts' cmaps (Fluent 1.54, MDL2 1.86) and picked by
-// eye from every glyph they have. Where neither font has the object, or (the briefcase) its glyph
-// lacks the Mac's details (0), Kite draws its own shape instead (core/SymbolShape.h, which says
-// which). The briefcase's glyph, E821 in both fonts, still sizes every other glyph
-// (SpaceIconPainter's calibration).
+// eye from every glyph they have. Where neither font has the object (code points 0), and for the
+// briefcase, whose glyph is a plain case where the Mac's has more, Kite draws its own shape instead
+// (core/SymbolShape.h, which says which). The briefcase keeps its glyph, E821 in both fonts: it
+// sizes every other glyph (SpaceIconPainter's calibration) and draws if the shape can't.
 constexpr SymbolEntry kSymbols[] = {
     {"star.fill", {u'\uE735', u'\uE735'}},
     {"bookmark.fill", {0, 0}},
@@ -79,7 +79,7 @@ constexpr SymbolEntry kSymbols[] = {
     {"scroll.fill", {u'\uF000', u'\uF000'}},
     {"hand.thumbsup.fill", {u'\uF3BF', u'\uE8E1'}},
     {"tram.fill", {u'\uEB4D', u'\uEB4D'}},
-    {"briefcase", {0, 0}},
+    {"briefcase", {u'\uE821', u'\uE821'}},
     {"photo", {u'\uE91B', u'\uEB9F'}},
 };
 constexpr size_t kIconTabCount = 56;

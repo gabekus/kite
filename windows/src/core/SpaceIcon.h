@@ -19,8 +19,10 @@ namespace kite {
 inline constexpr std::string_view kSymbolIconPrefix = "symbol:";
 inline constexpr std::string_view kImageIconPrefix = "image:";
 
-// A symbol's glyph in each icon font (a private-use code point). `drawn`: neither font has the
-// symbol's object, so Kite draws its own shape (SymbolShapeFor has one) and the code points are 0.
+// A symbol's glyph in each icon font (a private-use code point). `drawn`: Kite draws its own shape
+// (SymbolShapeFor has one), where neither font has the symbol's object (the code points are 0) or,
+// for the briefcase, where the glyph lacks the Mac's details (its code points stay, the glyph
+// drawn if the shape can't be).
 struct SymbolGlyph {
     char16_t fluent = 0, mdl2 = 0;
     bool drawn = false;

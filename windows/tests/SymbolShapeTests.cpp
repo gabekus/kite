@@ -72,7 +72,8 @@ TEST(eachDrawnSymbolInksTheMacsBoxWithItsWeight) {
         {"takeoutbag.and.cup.and.straw.fill", -8, 8, -7.0f, 7.59f, 165.9f},
         {"theatermasks.fill", -11.0f, 10.6f, -7.5f, 7.0f, 183.6f},
         // review/w9d-mac rest.png and w9b-mac two-spaces.png (the same box lit and greyed); the
-        // area from the dark one, where no grain adds to it.
+        // area from the dark one, where no grain adds to it. Kite's own case: only the box, the
+        // area, the centre and the stroke weight are the Mac's.
         {"briefcase", -7.5f, 7.0f, -6.0f, 6.5f, 87.1f},
     };
     CHECK(DrawnSymbols().size() == std::size(mac));
@@ -131,21 +132,48 @@ TEST(aDrawnSymbolsHolesAndGapsShowThrough) {
     CHECK(!Covers(*SymbolShapeFor("pawprint.fill"), -1.75f, -2.0f));  // between a toe and the pad
 }
 
-TEST(theBriefcaseHasTheMacsBandAndClaspAtBothSizes) {
-    // What Segoe's glyph lacks: the band across the body, higher at the walls than in the middle,
-    // and the clasp hanging from it, with the body clear above and below and the handle open.
-    const SymbolShape& bag = *SymbolShapeFor("briefcase");
-    CHECK(!Covers(bag, -0.2f, -4.0f) && Covers(bag, -0.2f, -5.4f));   // the handle's opening, its top
-    CHECK(!Covers(bag, -4.5f, -1.8f) && Covers(bag, -4.5f, 0.2f));    // over the band, the band
-    CHECK(Covers(bag, -5.9f, -0.5f) && !Covers(bag, -0.2f, -0.5f));   // it dips to the middle
-    CHECK(Covers(bag, 0, 2.0f) && !Covers(bag, -3.0f, 1.8f));         // the clasp, beside it
-    CHECK(!Covers(bag, 0, 3.2f) && Covers(bag, 0, 6.0f));             // under the clasp, the body's foot
-    CHECK(Covers(bag, -7.2f, 3.0f) && !Covers(bag, -5.9f, 3.0f));     // a wall and the inside
-    // The header's 15pt is the bar's shape scaled by 1.2 (the painter's size / 12.5): the Mac's
-    // 15pt header (review/w9b-mac two-spaces.png, 2x, ink more than half covered) is 17.5 x 15.0.
-    const ShapeBounds b = BoundsOf(bag);
-    const float header = 15.0f / kSymbolShapeSize;
-    CHECK(Near(b.Width() * header, 17.5f, 0.25f) && Near(b.Height() * header, 15.0f, 0.25f));
+TEST(eachDrawnSymbolInksTheMacsBoxInTheHeader) {
+    // The Mac's page header at 15pt (2x): each symbol's ink box from its 26pt slot's centre, the
+    // ink more than half covered, so to the 2x render's half point (review/w9b4-mac's slot crops;
+    // the briefcase from review/w9b-mac two-spaces.png, its slot [13,150 26x26]). The painter
+    // draws a shape scaled and moved by PlaceDrawnSymbol; that inks the Mac's box to within that
+    // half point's rounding (0.35pt; scaling the bar's place instead puts five of them 0.4 to
+    // 0.63pt off). The slot clips the masks' sides, so only their height is here.
+    struct Mac {
+        const char* name;
+        float left, right, top, bottom;
+    };
+    const Mac mac[] = {
+        {"bookmark.fill", -5.0f, 5.5f, -8.0f, 8.5f},
+        {"pawprint.fill", -8.0f, 8.0f, -7.5f, 8.0f},
+        {"bed.double.fill", -9.5f, 9.5f, -6.5f, 6.5f},
+        {"fork.knife", -5.5f, 5.0f, -9.0f, 8.5f},
+        {"dumbbell.fill", -10.0f, 10.0f, -5.5f, 6.0f},
+        {"bandage.fill", -7.5f, 8.0f, -7.5f, 8.0f},
+        {"baseball.fill", -7.5f, 7.5f, -7.5f, 8.0f},
+        {"takeoutbag.and.cup.and.straw.fill", -9.5f, 9.5f, -8.5f, 9.0f},
+        {"theatermasks.fill", 0, 0, -8.5f, 8.5f},
+        {"briefcase", -9.0f, 8.5f, -7.5f, 7.5f},
+    };
+    CHECK(std::size(mac) == DrawnSymbols().size());
+    for (const Mac& m : mac) {
+        const auto place = PlaceDrawnSymbol(m.name, kHeaderSymbolSize);
+        CHECK(place && Near(place->scale, 1.2f, 1e-6f));
+        if (!place) continue;
+        const ShapeBounds b = BoundsOf(*SymbolShapeFor(m.name));
+        const float left = b.left * place->scale + place->dx, right = b.right * place->scale + place->dx;
+        const float top = b.top * place->scale + place->dy, bottom = b.bottom * place->scale + place->dy;
+        const bool across = m.left == m.right || (Near(left, m.left, 0.35f) && Near(right, m.right, 0.35f));
+        const bool down = Near(top, m.top, 0.35f) && Near(bottom, m.bottom, 0.35f);
+        if (!across || !down) std::fprintf(stderr, "%s header: %.2f %.2f %.2f %.2f\n", m.name, left, right, top, bottom);
+        CHECK(across && down);
+    }
+    // The bar's 12.5 is the shape as it is; any other size scales it about the icon's centre.
+    const auto bar = PlaceDrawnSymbol("briefcase", kSymbolShapeSize);
+    CHECK(bar && bar->scale == 1 && bar->dx == 0 && bar->dy == 0);
+    const auto other = PlaceDrawnSymbol("briefcase", 25);
+    CHECK(other && other->scale == 2 && other->dx == 0 && other->dy == 0);
+    CHECK(!PlaceDrawnSymbol("star.fill", kHeaderSymbolSize));
 }
 
 TEST(aRoundedPolygonsRepeatedCornerCountsOnce) {

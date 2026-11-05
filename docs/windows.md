@@ -267,9 +267,11 @@ Apple's systems, so the Icon tab's 56 symbols, "briefcase" and "photo" each
 have a stand-in glyph in Segoe Fluent Icons, or Segoe MDL2 Assets where Fluent
 isn't installed, picked by eye from every glyph each font has and checked
 against both fonts' character maps, except ten drawn as shapes (below). A
-symbol fills its glyph's outline, centred on its ink, at the size that makes the briefcase ink the Mac's 15pt at 12.5 (one
-factor for every symbol), in the theme's accent when lit and in the label colour
-at 45% when greyed. A picture is the Mac's rounded square, round(size × 1.2) on a
+symbol fills its glyph's outline, centred on its ink, at the size that makes
+Segoe's briefcase glyph ink the Mac's briefcase width, 14.65pt at 12.5 (one
+factor for every symbol; edge to edge, as a glyph's outline is measured, from
+the Mac's dark 2x bar captures), in the theme's accent when lit and in the label
+colour at 45% when greyed. A picture is the Mac's rounded square, round(size × 1.2) on a
 side with 22% corners, its PNG from the profile's SpaceIcons folder scaled to the
 square's pixels, greyed as an emoji is; a missing file shows "photo". Pictures
 are read and decoded on a worker thread (none over 1 MB or 2048px), which posts
@@ -278,11 +280,14 @@ again; a file that can't be read keeps its placeholder and is looked for again
 at a draw 2 s on (`core/PictureLoads.h`). One painter, the sidebar's, serves
 the bar and the headers. Known differences:
 Fluent has one weight where the Mac's symbols are semibold (the placeholder's
-"photo" is regular on the Mac); several stand-ins are outlines of filled symbols, cloud and cloud.fill
-share a glyph, and nine have no such object in either font (bookmark, paw, bed,
-cutlery, dumbbell, bandage, baseball, takeaway bag, theatre masks), which W9b4
-draws as Kite's own shapes (see below); glyphs are centred on their ink where the
-Mac centres the symbol's image (checked only for the briefcase's glyph before W9b5 drew it, within 0.25pt);
+"photo" is regular on the Mac); several stand-ins are outlines of filled
+symbols, cloud and cloud.fill share a glyph, and nine have no such object in
+either font (bookmark, paw, bed, cutlery, dumbbell, bandage, baseball, takeaway
+bag, theatre masks), which W9b4 draws as Kite's own shapes (see below); glyphs
+are centred on their ink where the Mac centres the symbol's image (checked only
+for the briefcase's glyph, within 0.25pt, before W9b5 drew the briefcase); no
+Mac capture shows a symbol Segoe draws, so the calibration's 14.65pt is checked
+only on the briefcase;
 an SF Symbol name outside the 58 (which the Mac draws, from automation or a
 hand-edited session) shows the dot in the bar and a blank icon slot in the
 header; a picture shows nothing until its decode arrives (the Mac reads it in its
@@ -314,31 +319,34 @@ The nine (W9b4) are Kite's own simple shapes (`core/SymbolShape.h`), not
 Apple's outlines: each is filled figures in the bar's 12.5pt about the icon's
 centre, in layers joined or cut in order (so the front theatre mask cuts a gap
 round itself in the one behind), drawn by the same painter through one Direct2D
-geometry per symbol and scaled for the header's 15pt. Each inks the box the
+geometry per symbol, scaled by 1.2 for the header's 15pt. Each inks the box the
 Mac's symbol inks in its cell (keeping its offset from the centre), measured
 from the Mac's 2x renders to a quarter point, and comes within an eighth of its
-inked area, so it sits and weighs as the Mac's (`SymbolShapeTests`); the PC's
-captures give every one the Mac's ink box in the bar, centred within 0.15pt,
-and within half a point of it in the header. Known differences: the drawings are Kite's own,
-so details differ (the bed's headboard, the bandage's pad marked by two cuts and
-four holes, the baseball's seams and stitches, the masks' faces); the header's
-are the bar's scaled by 1.2, where the Mac's symbol is redrawn at 15pt (the
-captures' header boxes agree to half a point); and the masks reach past the
-header's 26pt slot as the Mac's do (only their width was measured from the bar,
-the slot's capture clips them).
+inked area, so it sits and weighs as the Mac's (`SymbolShapeTests`). Only those
+numbers come from the Mac: the drawings themselves are Kite's own, not fitted to
+Apple's. In the header the Mac redraws the symbol at 15pt and places it by
+metrics it rounds to the half point (`place(.center)` in SidebarKit.swift), which
+Kite's shapes don't have, so each carries where the Mac's 15pt ink sits in its
+slot, measured from the Mac's header renders, as the Mac's own `SymbolOrigins`
+are (`PlaceDrawnSymbol`; W9b5). The PC's captures give every one the Mac's ink
+box in the bar, centred within 0.15pt. Known differences: details differ (the
+bed's headboard, the bandage's pad marked by two cuts and four holes, the
+baseball's seams and stitches, the masks' faces); the header's shapes are the
+bar's scaled, where the Mac's symbol is redrawn at 15pt, so four (paw, dumbbell,
+baseball, masks) ink a header box half a point wider or taller than the Mac's; and the masks reach past the header's 26pt slot as
+the Mac's do (only their width was measured from the bar, the slot's capture
+clips them, so their header place across is the bar's scaled). If a shape's
+geometry can't be made, Kite logs it and draws nothing for that symbol, except
+the briefcase, which falls back to its glyph.
 
-The briefcase (W9b5, the test sessions' Work icon) is drawn the same way: Segoe's
-glyph is a plain case, without the Mac's band and clasp. It's outlines (a handle
-over a rounded body, strokes 1.35 and 1.2pt), a band across the body between two
-parabolas, 1.25pt deep and dipping from the walls to the middle, and a clasp hanging
-from it, fitted to the Mac's coverage in its 2x bar (the dark capture, no grain) to
-within a fifth of a pixel everywhere. The PC's captures give it the Mac's ink box in
-the bar, lit and greyed (14.5 × 12.5pt, centred at (-0.25, +0.25)), and its size in
-the header (17.5 × 15pt). Its glyph still sizes the other glyphs (the calibration
-above). Known difference: in two-spaces.json's header the PC's ink sits 0.75pt lower
-than the Mac's against the row's text, about 0.5pt of it the header's slot rather
-than the shape (the Mac's header slot isn't in that capture's tree, so this isn't
-measured).
+The briefcase (W9b5, the test sessions' Work icon) is drawn the same way, held to
+the same numbers: Segoe's glyph is a plain case, where the Mac's has more to it.
+It's Kite's own case, one 1.35pt stroke throughout (the Mac's weight): a handle
+over a rounded body, a straight band across the middle and a tab on the band,
+with the Mac's ink box in the bar (14.5 × 12.5pt, centred at (-0.25, +0.25)), its
+inked area within an eighth, and the Mac's place in the header's slot. Its glyph
+still sizes the other glyphs (the calibration above). Known difference: the band
+and the tab are Kite's, so the inside differs from the Mac's.
 
 The tip over a hovered cell (W9b3) is the Mac's SpaceTip in SpaceTipWindow's place:
 0.4 s after the pointer comes onto a cell, a capsule 28pt tall centred over it, its
