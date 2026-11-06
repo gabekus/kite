@@ -3,7 +3,8 @@
 # requestAnimationFrame stops, and stays that way while Kite stays covered.
 #
 #   pwsh windows/tests/CoveredLaunchCheck.ps1 -Kite windows\build\Release\Kite.exe [-Cover] [-Seconds 20]
-#        [-Attack none|stopPropagation|spoofState|docOpen|docOpenStop|endlessOpen|iframeStorm]
+#        [-Attack none|stopPropagation|spoofState|docOpen|docOpenStop|endlessOpen|iframeStorm|
+#                 pushStorm|hangNav|lateOpen|repeatOpen|reloadStorm]
 #
 # Kite runs as a quiet --perf-log run on a fresh %TEMP% test profile, so it opens at the bottom of
 # the z-order and never activates; its occlusion is on from the start (no --perf-control). -Cover
@@ -18,8 +19,13 @@
 # same); docOpenStop also adds stopPropagation's listener to the new document. endlessOpen keeps
 # an image loading for ever (from a listener in this script on 127.0.0.1 that never finishes a
 # response), so the page never ends loading, and rewrites itself with document.open at once.
-# iframeStorm points an iframe somewhere new every 150 ms. The page's own log reads
-# Document.prototype's getter, so it sees through the spoof.
+# iframeStorm points an iframe somewhere new every 150 ms. pushStorm calls history.pushState
+# every 150 ms. hangNav starts a navigation every second to that listener, which never answers
+# it. lateOpen rewrites the page with document.open 8 s after its load, repeatOpen every 2 s.
+# reloadStorm rewrites itself with document.open and then reloads itself 0.4 s later, over and
+# over (its log and rAF count kept in sessionStorage). The page's own log reads
+# Document.prototype's getter, so it sees through the spoof; it keeps its state on window, so a
+# rewrite carries on with it and one rAF loop.
 # The run is 20 s so its last 6 s come after Kite's last re-hide (6 s after the page's last load,
 # which a cold Kite can take 4 s to start); each re-hide shows the page for a few ms, a frame or
 # two. Never run -Cover on a PC in use: it
@@ -28,7 +34,8 @@ param(
   [Parameter(Mandatory)] [string] $Kite,
   [switch] $Cover,
   [int] $Seconds = 20,
-  [ValidateSet('none', 'stopPropagation', 'spoofState', 'docOpen', 'docOpenStop', 'endlessOpen', 'iframeStorm')] [string] $Attack = 'none'
+  [ValidateSet('none', 'stopPropagation', 'spoofState', 'docOpen', 'docOpenStop', 'endlessOpen', 'iframeStorm', 'pushStorm', 'hangNav',
+               'lateOpen', 'repeatOpen', 'reloadStorm')] [string] $Attack = 'none'
 )
 $ErrorActionPreference = 'Stop'
 Add-Type @"
@@ -94,7 +101,9 @@ public static class KiteCheck {
         held.Add(client);
         var stream = client.GetStream();
         var buffer = new byte[4096];
-        try { stream.Read(buffer, 0, buffer.Length); } catch { continue; }
+        int read = 0;
+        try { read = stream.Read(buffer, 0, buffer.Length); } catch { continue; }
+        if (Encoding.ASCII.GetString(buffer, 0, read).StartsWith("GET /hang")) continue;  // never answered
         byte[] head = Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 1000000\r\nCache-Control: no-store\r\n\r\n");
         try { stream.Write(head, 0, head.Length); stream.Write(new byte[16], 0, 16); stream.Flush(); } catch { }
       }
@@ -142,17 +151,37 @@ try {
   $html = '<!doctype html><meta charset="utf-8"><title>vis:</title>' + $attacks[$Attack] + @'
 <canvas id="c" width="200" height="100"></canvas>
 <script>
-let log = '', frames = 0, last = '';
-const realState = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState').get;
-const g = document.getElementById('c').getContext('2d');
-function vis() {
-  const s = realState.call(document) === 'visible' ? 'V' : 'H';
-  if (s !== last) { last = s; log += s + Date.now() + ' '; document.title = 'vis:' + log; }
-}
-function draw(t) { frames++; g.fillStyle = `hsl(${(t / 10) % 360} 80% 50%)`; g.fillRect(0, 0, 200, 100); requestAnimationFrame(draw); }
-requestAnimationFrame(draw);
-document.addEventListener('visibilitychange', vis); vis();
-setInterval(() => { vis(); log += 'F' + Date.now() + ':' + frames + ' '; document.title = 'vis:' + log; }, 1000);
+(() => {
+  // State on window, so a document.open rewrite carries on with it; with window.kcPersist (set by
+  // reloadStorm), also through reloads, in sessionStorage.
+  const saved = window.kcPersist && sessionStorage.getItem('kc');
+  const st = window.kc || (window.kc = saved ? JSON.parse(saved) : { log: '', frames: 0, last: '' });
+  const save = () => {
+    // Under Chromium's 4,096-character title limit, whole words only.
+    if (st.log.length > 3000) st.log = st.log.slice(st.log.indexOf(' ', st.log.length - 3000) + 1);
+    if (window.kcPersist) sessionStorage.setItem('kc', JSON.stringify(st));
+  };
+  const realState = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState').get;
+  const sample = () => { st.log += 'F' + Date.now() + ':' + st.frames + ' '; save(); document.title = 'vis:' + st.log; };
+  function vis() {
+    const s = realState.call(document) === 'visible' ? 'V' : 'H';
+    if (s !== st.last) { st.last = s; st.log += s + Date.now() + ' '; save(); document.title = 'vis:' + st.log; }
+  }
+  // One rAF loop: a rewrite starts a new one and the old one stops.
+  const loop = st.loop = (st.loop || 0) + 1;
+  function draw(t) {
+    if (st.loop !== loop) return;
+    st.frames++;
+    const c = document.getElementById('c');
+    if (c) { const g = c.getContext('2d'); g.fillStyle = `hsl(${(t / 10) % 360} 80% 50%)`; g.fillRect(0, 0, 200, 100); }
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+  document.title = 'vis:' + st.log;  // a rewrite's <title> would hide the log until the next sample
+  document.addEventListener('visibilitychange', vis); vis();
+  if (window.kcPersist) { sample(); addEventListener('pagehide', sample); }
+  if (!window.kcTimer) window.kcTimer = setInterval(() => { vis(); sample(); }, 1000);
+})();
 </script>
 '@
   $decode = { param($text) "new TextDecoder().decode(Uint8Array.from(atob('$([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($text)))'), c => c.charCodeAt(0)))" }
@@ -167,6 +196,18 @@ setInterval(() => { vis(); log += 'F' + Date.now() + ':' + frames + ' '; documen
             "<script>setTimeout(() => { document.open(); document.write($(& $decode ($html + $image))); }, 0);</script>"
   } elseif ($Attack -eq 'iframeStorm') {
     $html += "<iframe id=`"f`" width=10 height=10></iframe><script>let n = 0; setInterval(() => { document.getElementById('f').src = 'data:text/html,' + (++n); }, 150);</script>"
+  } elseif ($Attack -eq 'pushStorm') {
+    $html += "<script>let n = 0; setInterval(() => history.pushState(null, '', '#' + (++n)), 150);</script>"
+  } elseif ($Attack -eq 'hangNav') {
+    $html += "<script>setInterval(() => { location.href = 'http://127.0.0.1:$([KiteCheck]::ServeEndless())/hang?' + Date.now(); }, 1000);</script>"
+  } elseif ($Attack -eq 'lateOpen') {
+    $html += "<script>addEventListener('load', () => setTimeout(() => { document.open(); document.write($(& $decode $html)); document.close(); }, 8000));</script>"
+  } elseif ($Attack -eq 'repeatOpen') {
+    $html += "<script>if (!window.kcRepeat) window.kcRepeat = setInterval(() => { document.open(); document.write($(& $decode $html)); document.close(); }, 2000);</script>"
+  } elseif ($Attack -eq 'reloadStorm') {
+    $inner = $html + "<script>setTimeout(() => location.reload(), 400);</script>"
+    $html = '<!doctype html><meta charset="utf-8"><title>vis:</title><script>window.kcPersist = true; addEventListener("load", () => setTimeout(() => {' +
+            "document.open(); document.write($(& $decode $inner)); document.close();" + '}, 0));</script>'
   }
   [IO.File]::WriteAllText($page, $html)
   $kitecore = Join-Path (Split-Path -Parent (Resolve-Path $Kite)) 'kitecore.exe'

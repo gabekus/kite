@@ -82,11 +82,17 @@ constexpr int64_t kRehideScheduleMs[] = {500, 1000, 1500, 2000, 3000, 6000};
 // To the renderer (Shared::Ask): report the page's visibility now, through the getter its
 // VisibilityReporter kept, which neither a page's redefinitions nor document.open() reach.
 constexpr char kAskVisibilityMessage[] = "kite.askVisibility";
-// After a re-hide, the page is asked at these times: Chromium can show a page it was about to
-// show 0.3 to 0.7 s after the last re-hide (measured), so a blind step alone left it drawing
-// until the next one. At most kMaxAsks per anchor.
-constexpr int64_t kAskAfterRehideMs[] = {350, 750};
-constexpr int kMaxAsks = 16;
+// After each step (and each re-hide), the page is asked about itself every kAskEveryMs until a
+// newer step or re-hide starts the asking over: Chromium can show a page it was about to show
+// 0.3 to 0.7 s after the last re-hide (measured), later on a busy PC, so a blind step alone left
+// it drawing until the next one. At most kMaxAsks per anchor: enough to ask all through the 6 s
+// schedule and some 4 s after it.
+constexpr int64_t kAskEveryMs = 250;
+constexpr int kMaxAsks = 40;
+// While the renderer answers (it said "hidden" this recently), a step asks at once instead of
+// re-hiding blindly, and an answer of "visible" is re-hidden: the blind steps are for a
+// renderer that's silent (or lies). Each re-hide shows the page for a frame or two.
+constexpr ULONGLONG kTrustHiddenMs = 500;
 // A new anchor keeps a step due this soon rather than restarting the schedule (Shared::Anchor).
 constexpr ULONGLONG kKeepDueStepMs = 500;
 // At most this many re-hides of a page in any 10 s, whatever its renderer says: two
@@ -205,6 +211,7 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
         ULONGLONG stepDue = 0;     // when the pending step fires; 0 for none
         int asksLeft = 0;          // AskLater's budget for this anchor
         uint64_t ask = 0;          // AskLater's latest; an older ask does nothing
+        ULONGLONG saidHiddenAt = 0;  // when the renderer last said the page reads as hidden
         bool recheckDue = false;
         // Find asked for before the browser existed (Ctrl+F straight after a new tab): run once
         // it's made, the last one asked for.
@@ -605,30 +612,32 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
         Page* page = PageFor(tabID, browser);
         if (!page) return;
         page->saysVisible = visible;
+        if (!visible) page->saidHiddenAt = GetTickCount64();
         RehideIfShowing(tabID, *page);
         // Shown while Kite has it hidden: asked again after the re-hide, until it says hidden.
         if (visible && page->hwnd && !page->placed.visible) AskLater(tabID, *page);
     }
-    // Asks the page's renderer for its visibility (kAskVisibilityMessage) kAskAfterRehideMs after
-    // the latest re-hide (a newer call replaces a pending ask), unless this anchor's budget is
-    // spent; the answer comes back as a kVisibilityMessage (PageVisibility). A renderer that
-    // doesn't answer, or lies, still gets the blind steps.
-    void AskLater(const std::string& tabID, Page& page) {
+    // Asks the page's renderer for its visibility (kAskVisibilityMessage) `first` ms from now and
+    // then every kAskEveryMs, until a newer call starts over (the next step, or a re-hide after a
+    // `visible`) or this anchor's budget is spent; each answer comes back as a kVisibilityMessage
+    // (PageVisibility). A renderer that doesn't answer, or lies, still gets the blind steps.
+    void AskLater(const std::string& tabID, Page& page, int64_t first = kAskEveryMs) {
         if (page.asksLeft <= 0 || !page.browser) return;
-        const uint64_t ask = ++page.ask;
-        for (const int64_t delay : kAskAfterRehideMs) {
-            CefPostDelayedTask(TID_UI, new FunctionTask([shared = shared_from_this(), tabID, browser = page.browser, ask] {
-                shared->Post([shared, tabID, browser, ask] {
-                    Page* p = shared->PageFor(tabID, browser);
-                    if (!p || p->ask != ask || p->asksLeft <= 0) return;  // closed, or a newer re-hide's asks replace these
-                    if (!p->hwnd || p->placed.visible) return;
-                    --p->asksLeft;
-                    RunOnCefUIThread([browser] {
-                        if (CefRefPtr<CefFrame> frame = browser->GetMainFrame()) frame->SendProcessMessage(PID_RENDERER, CefProcessMessage::Create(kAskVisibilityMessage));
-                    });
+        AskIn(tabID, page.browser, ++page.ask, first);
+    }
+    void AskIn(const std::string& tabID, const CefRefPtr<CefBrowser>& browser, uint64_t ask, int64_t delay) {
+        CefPostDelayedTask(TID_UI, new FunctionTask([shared = shared_from_this(), tabID, browser, ask] {
+            shared->Post([shared, tabID, browser, ask] {
+                Page* p = shared->PageFor(tabID, browser);
+                if (!p || p->ask != ask || p->asksLeft <= 0) return;  // closed, or newer asks replace these
+                if (!p->hwnd || p->placed.visible) return;
+                --p->asksLeft;
+                RunOnCefUIThread([browser] {
+                    if (CefRefPtr<CefFrame> frame = browser->GetMainFrame()) frame->SendProcessMessage(PID_RENDERER, CefProcessMessage::Create(kAskVisibilityMessage));
                 });
-            }), delay);
-        }
+                shared->AskIn(tabID, browser, ask, kAskEveryMs);
+            });
+        }), delay);
     }
     // Something happened that might make Chromium show the page (kRehideScheduleMs): from now,
     // a page Kite has hidden then is hidden again at each step, asking nothing of the page, which
@@ -659,8 +668,11 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
                 if (!p || p->schedule != schedule) return;  // closed, or restarted since
                 p->stepDue = 0;
                 if (p->hwnd && !p->placed.visible) {
-                    Rehide(*p);
-                    shared->AskLater(tabID, *p);
+                    // Blind only when the renderer hasn't just said hidden (kTrustHiddenMs);
+                    // otherwise it's asked at once.
+                    const bool answering = GetTickCount64() - p->saidHiddenAt <= kTrustHiddenMs;
+                    if (!answering) Rehide(*p);
+                    shared->AskLater(tabID, *p, answering ? 0 : kAskEveryMs);
                 }
                 const ULONGLONG now = GetTickCount64();
                 for (const int64_t step : kRehideScheduleMs) {

@@ -94,7 +94,7 @@ jobs:
         timeout-minutes: 5
         run: ctest --test-dir windows/build -C Release --output-on-failure --timeout 120
       - name: Launch checks
-        timeout-minutes: 8  # covers kitecore.exe, which has no per-call timeout
+        timeout-minutes: 14  # covers kitecore.exe, which has no per-call timeout, and twelve 20 s covered-launch checks
         run: |
           # Runs Kite.exe and returns its exit code, killing it after a minute so a run that
           # never quits fails the step instead of hanging the job.
@@ -160,7 +160,8 @@ jobs:
           # A Kite that opens where no one can see it (under the check's own cover, which never
           # activates) ends with its page hidden and requestAnimationFrame stopped (P2), also when
           # the page tries to keep itself drawing.
-          foreach ($attack in 'none', 'stopPropagation', 'spoofState', 'docOpen', 'docOpenStop', 'endlessOpen', 'iframeStorm') {
+          foreach ($attack in 'none', 'stopPropagation', 'spoofState', 'docOpen', 'docOpenStop', 'endlessOpen', 'iframeStorm',
+                              'pushStorm', 'hangNav', 'lateOpen', 'repeatOpen', 'reloadStorm') {
             & windows/tests/CoveredLaunchCheck.ps1 -Kite windows/build/Release/Kite.exe -Cover -Attack $attack
             if (-not $?) { throw "the covered-launch check ($attack) failed" }
           }
