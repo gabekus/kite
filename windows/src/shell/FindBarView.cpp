@@ -326,7 +326,7 @@ FindBarView::Button FindBarView::ButtonAt(D2D1_POINT_2F p) const {
 LOGFONTW FindBarView::FieldFont() const {
     LOGFONTW font{};
     font.lfHeight = -std::lround(M::kFieldFontSize * Scale());
-    font.lfWeight = FW_NORMAL;
+    font.lfWeight = system_font::GdiWeight(MacWeight::Regular, M::kFieldFontSize);
     font.lfCharSet = DEFAULT_CHARSET;
     lstrcpynW(font.lfFaceName, system_font::GdiFaceName(), LF_FACESIZE);
     return font;

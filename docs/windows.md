@@ -295,17 +295,17 @@ reproduced here, since that needs a real click.
 ## Text weight
 
 SF Pro inks heavier than Segoe UI at every weight the Mac uses, and runs wider: measured against
-every `review/*-mac` reference (W-text-weight, PR body), Windows' text inked 0.69–0.85 of the Mac's
+every `review/*-mac` reference (W-text-weight, PR body), Windows' text inked 0.70–0.84 of the Mac's
 and ran 0.90–0.99 as wide. Every text format in Kite comes from `shell/SystemFont`, which takes the
 Mac's weight (`MacWeight`: regular, medium, semibold, bold) and size in points, and
 `core/TextWeight` maps it (`kitecore text-weight [WEIGHT] [SIZE...]` prints it):
 
-| Mac | Windows 11: Segoe UI Variable `wght` | `opsz` | Windows 10: Segoe UI |
+| Mac | Windows 11 | Windows 10: Segoe UI | other scripts (both) |
 |---|---|---|---|
-| regular | 590, less 22 per optical-size point under 10.5 (573.5 at 13pt, 540.5 at 11pt) | 0.75 × size | Regular (400) |
-| medium | 650 | 0.75 × size, at least 10.5 | Semibold (600) |
-| semibold | 675 | 0.75 × size, at least 10.5 | Bold (700) |
-| bold | 700 (the axis's top) | 5 (the axis's smallest) | Black (900) |
+| regular | Segoe UI Variable, `wght` 590 less 22 per optical-size point under 10.5 (573.5 at 13pt), `opsz` 0.75 × size | Regular (400) | 400 |
+| medium | Segoe UI Variable, `wght` 650, `opsz` 0.75 × size, at least 10.5 | Semibold (600) | 500 |
+| semibold | Segoe UI Variable, `wght` 675, `opsz` 0.75 × size, at least 10.5 | Semibold (600) | 600 |
+| bold | Segoe UI Black (900) | Bold (700) | 700 |
 
 - Segoe UI Variable's `opsz` is in points at 96 DPI, so Kite's DIP (the Mac's point) is 0.75 of
   one: 14pt text is the Text instance's 10.5. The optical size is only reachable through the
@@ -313,20 +313,27 @@ Mac's weight (`MacWeight`: regular, medium, semibold, bold) and size in points, 
   Text", "Small" and "Display" fix it), with `IDWriteTextFormat3::SetFontAxisValues`.
 - Smaller optical sizes ink heavier and run wider. Regular takes them (small text widens towards
   SF's) and gives the weight back so it doesn't ink past the Mac's; medium and semibold stay at the
-  Text instance or above, so a small size can't close the 25 between them on the axis; bold is the
-  heaviest the font draws. Each step up inks at least 5% more than the one below at 11–18pt.
+  Text instance or above, so a small size can't close the 25 between them on the axis.
+- SF's bold is past the axis: at 700 Create a Space's title inked 0.84 of the Mac's, lighter for
+  its size than the semibold rows under it. Segoe UI Black inks 1.01 of it and runs 0.99 as wide,
+  and the title over Choose a Theme is 1.05 as dense as the Mac's 1.06 (over the subtitle 1.68
+  against 1.64). Without Black installed, bold is Segoe UI Variable's 700.
 - What it reaches: regular 0.93–1.02 of the Mac's ink, medium 0.89–0.94, semibold 0.87–1.01, bold
-  0.86 (the Mac's semibold and bold are past the axis; they stay apart rather than both ending at
-  700); widths 0.93–1.01 of the Mac's (the find field's "domain", 1 px over at 2×, is the widest).
-- Windows 10 (no Segoe UI Variable, or a DirectWrite without `IDWriteFactory6`): Segoe UI's named
-  weights, a named step each so the four stay apart. Medium is the Semibold its 500 matched
-  already, semibold and bold go a step heavier. `--capture FILE --static-font` draws a capture in it
-  on any machine.
-- Symbols and emoji (Segoe Fluent Icons, Segoe MDL2 Assets, Segoe UI Emoji) come from
+  1.01; widths 0.93–1.01 of the Mac's (the find field's "domain", 1 px over at 2×, is the widest).
+- Windows 10 (no Segoe UI Variable, or a DirectWrite without `IDWriteFactory6`) keeps today's
+  weights: regular can't go past 400 there, so heavier steps above it would overstate the Mac's
+  hierarchy. Segoe UI has no Medium, so medium and semibold are both its Semibold, as medium's 500
+  already matched. `--capture FILE --static-font` draws a capture in it on any machine.
+- Other scripts (Japanese, Chinese, Korean, Thai, Devanagari, Arabic, emoji…) aren't what the
+  mapping measured, and DirectWrite would pick their fallback faces with the format's weight-axis
+  value: Yu Gothic UI Semibold and Malgun Gothic Bold for a regular label. Each format's
+  `IDWriteFontFallback` (over the system's) maps everything outside Latin, Greek and Cyrillic (and
+  their marks, punctuation and symbols) at the Mac's own weight, matched as a plain format at that
+  weight would be; `SystemFontTests` reads the faces a layout really draws for each.
+- Symbols and emoji fonts (Segoe Fluent Icons, Segoe MDL2 Assets, Segoe UI Emoji) come from
   `system_font::CreateIconFormat`, never re-weighted. A field's copy of its row's format is
-  `CopyTextFormat`, which keeps the axis values (a copy from the family name and weight alone would
-  draw the Text instance at 400). An IME's LOGFONT gets `GdiFaceName()`.
-
+  `CopyTextFormat`, which keeps the axis values and the fallback. An IME's LOGFONT gets
+  `GdiFaceName()` and `GdiWeight()`, the named weight nearest what the field draws.
 ## The sidebar's top row
 
 W12 ports the top of the Mac's `SidebarHeaderView` (`core/SidebarTopRow.h`,

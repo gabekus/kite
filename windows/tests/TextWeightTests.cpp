@@ -38,14 +38,22 @@ TEST(eachMacWeightMapsHigherOnTheWeightAxis) {
     for (const MacWeight weight : W::kAllWeights) {
         CHECK(W::Variable(weight, 14).weight > static_cast<float>(W::MacWeightValue(weight)) - 0.001f);
     }
-    // Regular follows the size's optical size all the way; medium and semibold follow it above
-    // the Text instance only; bold takes the smallest, past the weight axis's top.
+    // Regular follows the size's optical size all the way; medium and semibold (and bold, where
+    // there's no Segoe UI Black) follow it above the Text instance only.
     CHECK(Near(W::Variable(MacWeight::Regular, 11).opticalSize, 8.25f));
     CHECK(Near(W::Variable(MacWeight::Medium, 13).opticalSize, W::kTextOpticalSize));
     CHECK(Near(W::Variable(MacWeight::Semibold, 12).opticalSize, W::kTextOpticalSize));
     CHECK(Near(W::Variable(MacWeight::Semibold, 15).opticalSize, 11.25f));
     CHECK(Near(W::Variable(MacWeight::Medium, 18).opticalSize, 13.5f));
-    CHECK(Near(W::Variable(MacWeight::Bold, 17).opticalSize, W::kMinOpticalSize));
+    CHECK(Near(W::Variable(MacWeight::Bold, 17).opticalSize, 12.75f));
+    CHECK(Near(W::Variable(MacWeight::Bold, 12).opticalSize, W::kTextOpticalSize));
+}
+
+TEST(windows11DrawsBoldInSegoeUIBlack) {
+    // Past the weight axis: Segoe UI Variable's 700 inks under the semibold beside it.
+    CHECK(W::Windows11UsesBlack(MacWeight::Bold));
+    CHECK(W::kBoldBlackWeight == 900);
+    for (const MacWeight weight : {MacWeight::Regular, MacWeight::Medium, MacWeight::Semibold}) CHECK(!W::Windows11UsesBlack(weight));
 }
 
 TEST(regularGivesBackWhatTheSmallOpticalSizesAdd) {
@@ -73,12 +81,13 @@ TEST(theMacsHierarchyStaysApartAtEverySize) {
     }
 }
 
-TEST(windows10KeepsRegularAndStepsUpANamedWeightEach) {
-    // Segoe UI's Regular, Semibold, Bold and Black: medium is the Semibold its 500 matched before.
+TEST(windows10KeepsTodaysWeights) {
+    // Segoe UI's Regular, Semibold and Bold: medium is the Semibold its 500 matched before (Segoe UI
+    // has no Medium); regular can't go past 400, so nothing above it steps further.
     CHECK(W::StaticWeight(MacWeight::Regular) == 400);
     CHECK(W::StaticWeight(MacWeight::Medium) == 600);
-    CHECK(W::StaticWeight(MacWeight::Semibold) == 700);
-    CHECK(W::StaticWeight(MacWeight::Bold) == 900);
+    CHECK(W::StaticWeight(MacWeight::Semibold) == 600);
+    CHECK(W::StaticWeight(MacWeight::Bold) == 700);
 }
 
 TEST(weightsHaveTheMacsNames) {

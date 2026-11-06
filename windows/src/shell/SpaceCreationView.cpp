@@ -302,7 +302,7 @@ void SpaceCreationView::Submit() {
 LOGFONTW SpaceCreationView::FieldFont() const {
     LOGFONTW font{};
     font.lfHeight = -std::lround(M::kRowFontSize * Scale());
-    font.lfWeight = FW_NORMAL;
+    font.lfWeight = system_font::GdiWeight(MacWeight::Regular, M::kRowFontSize);
     font.lfCharSet = DEFAULT_CHARSET;
     lstrcpynW(font.lfFaceName, system_font::GdiFaceName(), LF_FACESIZE);
     return font;

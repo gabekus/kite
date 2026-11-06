@@ -670,7 +670,7 @@ void CommandBarView::PlaceImeWindow() {
     // The composition in the field's own size.
     LOGFONTW font{};
     font.lfHeight = -std::lround(C::kFieldFontSize * scale);
-    font.lfWeight = FW_MEDIUM;
+    font.lfWeight = system_font::GdiWeight(MacWeight::Medium, C::kFieldFontSize);
     font.lfCharSet = DEFAULT_CHARSET;
     lstrcpynW(font.lfFaceName, system_font::GdiFaceName(), LF_FACESIZE);
     line_.PlaceIme(caret, std::lround(line_.LineHeight() * scale), &font);

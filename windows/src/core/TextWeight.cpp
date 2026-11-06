@@ -18,17 +18,19 @@ VariableSetting Variable(MacWeight weight, float size) {
     // Never below the Text instance: the smaller optical sizes would bring them up to bold's ink.
     case MacWeight::Medium: return {kMediumAxis, std::max(opsz, kTextOpticalSize)};
     case MacWeight::Semibold: return {kSemiboldAxis, std::max(opsz, kTextOpticalSize)};
-    case MacWeight::Bold: return {kBoldAxis, kMinOpticalSize};
+    case MacWeight::Bold: return {kBoldAxis, std::max(opsz, kTextOpticalSize)};
     }
     return {kRegularAxis, opsz};
 }
+
+bool Windows11UsesBlack(MacWeight weight) { return weight == MacWeight::Bold; }
 
 int StaticWeight(MacWeight weight) {
     switch (weight) {
     case MacWeight::Regular: return 400;   // Regular
     case MacWeight::Medium: return 600;    // Semibold (Segoe UI has no Medium; 500 matched it already)
-    case MacWeight::Semibold: return 700;  // Bold
-    case MacWeight::Bold: return 900;      // Black
+    case MacWeight::Semibold: return 600;  // Semibold
+    case MacWeight::Bold: return 700;      // Bold
     }
     return 400;
 }

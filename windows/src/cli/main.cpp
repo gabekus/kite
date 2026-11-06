@@ -987,11 +987,18 @@ int main(int argc, char** argv) {
         for (const MacWeight weight : weights) {
             for (const float size : sizes) {
                 const text_weight::VariableSetting variable = text_weight::Variable(weight, size);
+                const json::Object axes{{"wght", static_cast<double>(variable.weight)}, {"opsz", static_cast<double>(variable.opticalSize)}};
+                // Windows 11's face: Segoe UI Variable on its axes, or Segoe UI Black for bold
+                // (`variable` is then what a system without Black draws).
+                const json::Object windows11 = text_weight::Windows11UsesBlack(weight)
+                                                   ? json::Object{{"family", "Segoe UI"}, {"weight", text_weight::kBoldBlackWeight}}
+                                                   : json::Object{{"family", "Segoe UI Variable"}, {"axes", axes}};
                 rows.push_back(json::Object{{"weight", std::string(text_weight::Name(weight))},
                                             {"size", static_cast<double>(size)},
-                                            {"variable", json::Object{{"wght", static_cast<double>(variable.weight)},
-                                                                      {"opsz", static_cast<double>(variable.opticalSize)}}},
-                                            {"static", text_weight::StaticWeight(weight)}});
+                                            {"windows11", windows11},
+                                            {"variable", axes},
+                                            {"static", text_weight::StaticWeight(weight)},
+                                            {"fallback", text_weight::MacWeightValue(weight)}});
             }
         }
         std::puts(json::Write(json::Value(std::move(rows))).c_str());
