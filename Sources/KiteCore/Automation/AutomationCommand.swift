@@ -92,6 +92,10 @@ public enum AutomationCommand: Hashable, Sendable {
     case tabsCreate(url: String?, active: Bool, placement: TabPlacement)
     case tabsClose(tab: String)
     case switchTab(tab: String)
+    /// Claude says what a tab's state is: working there, or done (with what it did). Needs-you is a handoff's.
+    case tabStatus(tab: String?, state: ClaudeTabState.Declared.Kind, note: String?)
+    /// The user's ordinary form details (`FormProfile`): read, change (the user allows it), or check an address.
+    case formProfile(FormProfile.Request)
     /// `newTab` opens the URL in a new background tab. "back" and "forward" move through history.
     case navigate(tab: String?, url: String, newTab: Bool)
     case resizeWindow(width: Int, height: Int)
@@ -164,6 +168,8 @@ public enum AutomationCommand: Hashable, Sendable {
         case tabsCreate = "tabs_create"
         case tabsClose = "tabs_close"
         case switchTab = "switch_tab"
+        case tabStatus = "tab_status"
+        case formProfile = "form_profile"
         case navigate
         case resizeWindow = "resize_window"
         case readPage = "read_page"
@@ -221,6 +227,8 @@ public enum AutomationCommand: Hashable, Sendable {
         case .tabsCreate: .tabsCreate
         case .tabsClose: .tabsClose
         case .switchTab: .switchTab
+        case .tabStatus: .tabStatus
+        case .formProfile: .formProfile
         case .navigate: .navigate
         case .resizeWindow: .resizeWindow
         case .readPage: .readPage
@@ -295,6 +303,18 @@ public enum AutomationCommand: Hashable, Sendable {
             self = .tabsClose(tab: try a.required("tab"))
         case .switchTab:
             self = .switchTab(tab: try a.required("tab"))
+        case .formProfile:
+            self = .formProfile(try FormProfile.parse(a.values))
+        case .tabStatus:
+            let name = try a.required("state").lowercased()
+            guard let state = ClaudeTabState.Declared.Kind(rawValue: name) else {
+                throw InvalidArguments("\"state\" is working or done. A tab that needs the user is a handoff.")
+            }
+            let note = try a.string("note")?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard (note?.count ?? 0) <= ClaudeTabState.maxNoteLength else {
+                throw InvalidArguments("\"note\" is at most \(ClaudeTabState.maxNoteLength) characters.")
+            }
+            self = .tabStatus(tab: tab, state: state, note: note.flatMap { $0.isEmpty ? nil : $0 })
         case .navigate:
             let url = try a.required("url")
             let newTab = try a.bool("new_tab")
@@ -377,8 +397,10 @@ public enum AutomationCommand: Hashable, Sendable {
             self = .handoff(try UserHandoff.parse(a.values, tab: tab))
         case .handoffStatus:
             let wait = try a.double("wait") ?? 0
-            guard wait >= 0, wait <= UserHandoff.maxWait else { throw InvalidArguments("\"wait\" is 0 to \(Int(UserHandoff.maxWait)) seconds.") }
-            self = .handoffStatus(id: try a.string("id").flatMap { $0.isEmpty ? nil : $0 }, wait: wait, cancel: try a.bool("cancel"))
+            guard wait >= 0, wait.isFinite else { throw InvalidArguments("\"wait\" is 0 to \(Int(UserHandoff.maxWait)) seconds.") }
+            // Longer waits time out in MCP clients first: they're held to the most that reliably returns.
+            self = .handoffStatus(id: try a.string("id").flatMap { $0.isEmpty ? nil : $0 }, wait: min(wait, UserHandoff.maxWait),
+                                  cancel: try a.bool("cancel"))
         case .readConsole:
             self = .readConsole(tab: tab, pattern: try a.pattern("pattern"), onlyErrors: try a.bool("only_errors"),
                                 limit: try a.int("limit", in: 1...1000) ?? Self.defaultLogLimit, clear: try a.bool("clear"))

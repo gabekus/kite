@@ -18,10 +18,10 @@ import Testing
             .init(instruction: "Approve Apple", target: .text("Approve")),
             .init(instruction: "Click Save", tab: "U", target: .selector("button[type=submit]")),
             .init(instruction: "Tick Super Administrator", target: .ref("e42"), why: "Only you can grant admin."),
-        ], tab: "T", wait: 120)))
+        ], tab: "T", wait: 50)))
         #expect(try AutomationCommand(tool: "handoff_status", arguments: nil) == .handoffStatus(id: nil, wait: 0, cancel: false))
         #expect(try AutomationCommand(tool: "handoff_status", arguments: ["id": "h2", "wait": 600, "cancel": true])
-            == .handoffStatus(id: "h2", wait: 600, cancel: true))
+            == .handoffStatus(id: "h2", wait: 50, cancel: true))
     }
 
     @Test(arguments: [
@@ -35,7 +35,7 @@ import Testing
         ("handoff", ["reason": "Why", "steps": [["instruction": "Run", "command": "ls"]]]),
         ("handoff", ["reason": "Why", "steps": [["instruction": "Click"]]]),
         ("handoff", ["reason": "Why", "steps": [["instruction": "Click", "tab": "T"]]]),
-        ("handoff", ["reason": "Why", "steps": [["instruction": "Click", "text": "Save"]], "wait": 601]),
+        ("handoff", ["reason": "Why", "steps": [["instruction": "Click", "text": "Save"]], "wait": -1]),
         ("handoff", ["reason": "Why", "steps": ["Click"]]),
         ("handoff_status", ["wait": -1]),
     ] as [(String, JSONValue)])
@@ -146,16 +146,16 @@ import Testing
     @Test func theReportTellsClaudeToKeepWaiting() {
         let (handoff, _, _) = sample()
         let now = handoff.report { _ in nil }
-        #expect(now.contains("Now call handoff_status with id \"h1\" and wait 600"))
+        #expect(now.contains("Now call handoff_status with id \"h1\" and wait 50"))
         #expect(now.contains("Don't end your turn while steps wait"))
-        #expect(handoff.report(waitedOut: true) { _ in nil }.contains("wait 600 again"))
+        #expect(handoff.report(waitedOut: true) { _ in nil }.contains("wait 50 again"))
         let tools = MCPServer(version: "1").tools.arrayValue ?? []
         let describe = { (name: String) in tools.first { $0["name"]?.stringValue == name }?["description"]?.stringValue ?? "" }
         #expect(describe("handoff").contains("don't end your turn while steps wait"))
         #expect(describe("handoff").contains("opens a new tab"))
         #expect(describe("handoff_status").contains("don't end your turn while steps wait"))
         #expect(MCPServer.instructions.contains("don't end your turn while steps wait"))
-        #expect(ClaudeInvocation.systemPrompt.contains("wait 600"))
+        #expect(ClaudeInvocation.systemPrompt.contains("wait 50"))
     }
 
     @Test func buildsTheRingScript() throws {
@@ -317,6 +317,12 @@ import Testing
         handoff.steps[1].blocker = nil
         handoff.steps[1].found = false
         #expect(handoff.report { _ in nil }.contains("NOT SHOWN: Kite can't find its control on the page"))
+        // No card falls back for it (Gabe: no box over the page, ever): Claude hears how to fix the step instead.
+        #expect(handoff.report { _ in nil }.contains("such as a CAPTCHA or a card field, by its visible text or a selector"))
+        // A selector that matches only something hidden (a field a site draws its own box over) says so.
+        handoff.steps[1].controlHidden = true
+        #expect(handoff.report { _ in nil }.contains("NOT SHOWN: its control is on the page but hidden"))
+        handoff.steps[1].controlHidden = nil
         #expect(handoff.report { _ in nil }.contains("blocked or unshown step"))
         handoff.steps[1].found = true
         #expect(!handoff.steps[1].isUnshown && handoff.blockedSteps.isEmpty)
@@ -402,5 +408,83 @@ import Testing
         var done = handoff("h2", age: 60, tab: shownTab)
         done.finishAll(.done, how: "the user pressed Done")
         #expect(!Handoff.needsPolling([done, handoff("h3", age: 60, tab: hiddenTab)], now: now, isShown: shown))
+    }
+
+    // MARK: Taking the user to the step (Gabe, 5 Nov 2026: steps on other tabs, and nothing ringed where he was)
+
+    @Test func leadsToTheFirstStepOnABackgroundTab() {
+        let mouser = UUID(), amazon = UUID(), tools = UUID(), mcmaster = UUID()
+        var handoff = Handoff(id: "h1", reason: "Only you can solve a CAPTCHA or enter a card", steps: [
+            .init(id: "h1.1", number: 1, instruction: "Tick \"I am human\"", tab: amazon, locator: .text("I am human")),
+            .init(id: "h1.2", number: 2, instruction: "Place order", tab: tools, locator: .text("Place order")),
+            .init(id: "h1.3", number: 3, instruction: "Card number", tab: mcmaster, locator: .selector("#card")),
+            .init(id: "h1.4", number: 4, instruction: "Pay", tab: mcmaster, locator: .text("Pay")),
+        ])
+        let open: (UUID) -> Bool = { _ in true }
+        // The user is on a tab with no step: Kite takes them to step 1's tab.
+        #expect(HandoffLead.target(handoff, front: mouser, isOpen: open)?.id == "h1.1")
+        #expect(HandoffLead.target(handoff, front: nil, isOpen: open)?.id == "h1.1")
+        // Already on a step's tab: they stay.
+        #expect(HandoffLead.target(handoff, front: tools, isOpen: open) == nil)
+        // Step 1 done on Amazon: on to the next waiting step's tab, in Claude's order.
+        handoff.finish("h1.1", .done, how: "the user clicked the highlighted control")
+        #expect(HandoffLead.target(handoff, front: amazon, isOpen: open)?.id == "h1.2")
+        // A step whose tab is closed can't be gone to: the next one that's open.
+        #expect(HandoffLead.target(handoff, front: amazon, isOpen: { $0 != tools })?.id == "h1.3")
+        handoff.finish("h1.2", .skipped, how: "the user skipped it")
+        handoff.finish("h1.3", .done, how: "the user changed the highlighted control")
+        // Step 4 is on the tab in front (the same page as step 3): no switch.
+        #expect(HandoffLead.target(handoff, front: mcmaster, isOpen: open) == nil)
+        handoff.finish("h1.4", .done, how: "the user pressed Done")
+        #expect(HandoffLead.target(handoff, front: mouser, isOpen: open) == nil)
+    }
+
+    @Test func waitsWhileTheUserTypesInKite() {
+        // Kite in the background: switching its tab interrupts nothing.
+        #expect(!HandoffLead.userIsBusy(appActive: false, sinceKey: 0, sincePointer: 0))
+        // In Kite, typing or clicking: not under their hands.
+        #expect(HandoffLead.userIsBusy(appActive: true, sinceKey: 1, sincePointer: 60))
+        #expect(HandoffLead.userIsBusy(appActive: true, sinceKey: 60, sincePointer: 0.5))
+        #expect(HandoffLead.userIsBusy(appActive: true, sinceKey: 60, sincePointer: 60, commandBarOpen: true))
+        // Paused: now.
+        #expect(!HandoffLead.userIsBusy(appActive: true, sinceKey: HandoffLead.afterTyping, sincePointer: HandoffLead.afterPointer))
+    }
+
+    @Test func tellsClaudeWhereTheUserWasTaken() {
+        let step = Handoff.Step(id: "h1.1", number: 1, instruction: "Tick", tab: UUID(), locator: .text("I am human"))
+        #expect(HandoffLead.note(step, title: "Amazon.com", led: true)
+            == "Kite brought step 1's tab (“Amazon.com”) to the front for the user, with its control ringed.")
+        #expect(HandoffLead.note(step, title: nil, led: false).contains("once the user stops typing"))
+    }
+
+    @Test func ringConfigJumpsAndOffersThePasswordManager() {
+        let step = Handoff.Step(id: "h1.1", number: 1, instruction: "Choose a password", tab: UUID(), locator: .selector("#newpw"))
+        let script = UserHandoff.ringScript(.init(step: step, scroll: true, jump: true, manager: "1Password", managerReady: true))
+        #expect(script.contains(#""jump":true"#) && script.contains(#""manager":"1Password""#) && script.contains(#""managerReady":true"#))
+        // The ring scrolls again on a jump, never draws the tag without its control, and only offers the manager on a
+        // new password's field.
+        #expect(UserHandoff.ringFunction.contains("if (cfg.jump)") && !UserHandoff.ringFunction.contains("float"))
+        #expect(UserHandoff.ringFunction.contains("new-password") && UserHandoff.ringFunction.contains("current-password"))
+        // Kite's own click on the field to open the manager doesn't end the step.
+        #expect(UserHandoff.ringFunction.contains("K.quietUntil && Date.now() < K.quietUntil"))
+        #expect(UserHandoff.RingState(json: #"{"found":false,"hidden":true}"#)?.hidden == true)
+        #expect(UserHandoff.noteScript("1Password didn't open here").contains(#"["1Password didn't open here"]"#))
+    }
+
+    // MARK: Waits that MCP clients don't time out (Gabe, 5 Nov 2026: waits of 600 and 300 s both timed out)
+
+    @Test func waitsAreCutBelowClientTimeouts() throws {
+        #expect(UserHandoff.maxWait <= 50)
+        let status = try AutomationCommand(tool: "handoff_status", arguments: ["wait": 600])
+        #expect(status == .handoffStatus(id: nil, wait: UserHandoff.maxWait, cancel: false))
+        let handoff = try AutomationCommand(tool: "handoff", arguments: ["reason": "r", "wait": 300, "steps": [["instruction": "Go", "text": "Go"]]])
+        if case .handoff(let request) = handoff { #expect(request.wait == UserHandoff.maxWait) } else { Issue.record("not a handoff") }
+        #expect(throws: AutomationCommand.InvalidArguments.self) { try AutomationCommand(tool: "handoff_status", arguments: ["wait": -1]) }
+        // Done: Claude carries on at once and fills the next page's ordinary fields.
+        var h = Handoff(id: "h9", reason: "r", steps: [.init(id: "h9.1", number: 1, instruction: "Create login", tab: UUID(), locator: .text("Create"))])
+        h.finish("h9.1", .done, how: "the user clicked the highlighted control")
+        let report = h.report { _ in nil }
+        #expect(report.contains("carry on at once") && report.contains("fill its ordinary fields"))
+        #expect(Handoff.endedNews(h).contains("handoff h9 has ended (1 of 1 done)"))
     }
 }

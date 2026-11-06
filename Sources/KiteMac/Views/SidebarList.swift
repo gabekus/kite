@@ -236,8 +236,11 @@ final class SidebarSpaceList: NSView {
         let live = parent.flatMap { store.state.folder(matching: $0.uuidString)?.folder }.flatMap { $0.live == nil ? nil : $0 }
         let audio = store.tabAudio[tab.id]
         let controlled = claudeControlled.contains(tab.id)
+        let claudeState = claude.automation?.tabState(tab.id)
         var claudeControl: String?
-        if controlled {
+        if case .working(let note?)? = claudeState {
+            claudeControl = ClaudeTabState.working(note: note).help
+        } else if controlled, case .working? = claudeState {
             if let session = claude.automation?.sessionName(controlling: tab.id) {
                 claudeControl = "Claude is controlling this tab (\(session))"
             } else {
@@ -256,7 +259,8 @@ final class SidebarSpaceList: NSView {
             liveIconTab: live != nil,
             peek: store.linkPeekBadges[tab.id],
             claudeControl: claudeControl,
-            claudeNeedsYou: claude.automation?.waitingStep(on: tab.id).map { "Claude needs you: \($0.instruction)" },
+            claudeNeedsYou: claudeState?.isNeedsYou == true ? claudeState?.help : nil,
+            claudeDone: { if case .done? = claudeState { claudeState?.help } else { nil } }(),
             splitSide: drag.splitSide(for: tab.id),
             groupHeader: groupHeader)
     }
@@ -295,8 +299,8 @@ final class SidebarSpaceList: NSView {
     /// How many tabs in a folded folder have a step Claude handed the user (handoff), so the folder says so
     /// while its tab rows are hidden. 0 for an open folder: its rows show it.
     private func claudeNeedsYouCount(in folder: TabFolder) -> Int {
-        guard !folder.isExpanded, let tabs = claude.automation?.handoffTabs, !tabs.isEmpty else { return 0 }
-        return folder.items.tabs.filter { tabs.contains($0.id) }.count
+        guard !folder.isExpanded, let automation = claude.automation else { return 0 }
+        return folder.items.tabs.filter { automation.tabState($0.id)?.isNeedsYou == true }.count
     }
 
     // MARK: Applying a new list
@@ -493,6 +497,8 @@ enum SidebarRowModel: Equatable {
         var peek: LinkPeekBadge?
         var claudeControl: String?
         var claudeNeedsYou: String?
+        /// Claude is done here: a green dot, with what it did.
+        var claudeDone: String?
         var splitSide: SplitDropSide?
         var groupHeader: TodayTabGroup?
     }

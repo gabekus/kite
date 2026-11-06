@@ -45,6 +45,10 @@ extension AutomationCommand.Tool {
             "Closes a tab. Closing a tab Claude didn't open asks the user first."
         case .switchTab:
             "Brings a tab to the front (and switches to its space)."
+        case .formProfile:
+            "The user's ordinary form details, kept in Kite: name, company, email, phone and named addresses (\"home\", \"makerspace\"). Fill every ordinary field of a form (sign-up, checkout, shipping, account) from these yourself with form_input, never from emails, old orders, the page's own suggestions or a guess. action get (default) returns them. action check with label and the address a page shows (or that you're about to enter) says whether it matches, word for word: a MISMATCH means correct the page. action set with name, company, email, phone or address {label, street, unit, city, state, zip, country} asks the user to allow the change in Kite. Cards, passwords, codes and ID numbers are never kept here: those fields are the user's (handoff, or their password manager)."
+        case .tabStatus:
+            "Says where a tab you opened or acted on stands, on its row in the user's sidebar. Every such tab shows one of three states: working (its title shimmers; Kite sets it while your tools act on the tab), needs you (orange: a handoff), or done (a green dot: this tool). When you finish with a tab, call this with state done and a note of what you did (\"Order placed\", \"Cart ready, nothing to do\"). A tab you leave for two minutes without done or a handoff turns orange for the user, \"Claude stopped here\", and your next tool result names it. state working with a note says what you're doing there."
         case .navigate:
             "Loads a URL in a tab (or a new background tab with new_tab, or space), or goes \"back\"/\"forward\". Waits for the load. To open a link for the user, use tabs_create (or pass space) so it lands in the right space."
         case .resizeWindow:
@@ -82,9 +86,9 @@ extension AutomationCommand.Tool {
         case .signIn:
             "When a page needs the user to sign in (a login form, a password or a one-time code), hands the tab to the user: Kite shows it, offers their password manager, and waits (up to 5 minutes) until they've signed in or cancelled. You never see or type the password. Returns where the tab ended up. Never ask the user for a password in chat."
         case .handoff:
-            "When you stop because the user must do something themselves on a page (your safety check or the user's rules won't let you, it needs their judgment, or a secret only they hold), hand it to them with this instead of listing steps in chat. Say why you stopped in reason, and give each step: instruction (a few words: \"Approve Apple\", \"Tick Super Administrator\"), the tab, and the control by ref (best: from find or read_page), selector or its visible text (a control in another site's frame, such as a sign-in form read_page can't read, by its text or a selector). Kite shows a step only there: it rings the control with a tag beside it (the step, Skip and Done; your reason when the pointer rests on it) and marks the tab in the sidebar. There's no card or list anywhere else, so every step needs a control on its page; anything else (a question, a command for their terminal) you ask in chat. A step is done when the user clicks the ringed control or presses Done, and skipped when they press Skip. If Kite can't find a step's control on its page (or the tab has left the page or closed), the user sees nothing for it: the result says NOT SHOWN, at once or as soon as it happens, so point it at a control that's there or withdraw it. Returns at once with a handoff id unless you pass wait. Pass wait 600 (or call handoff_status with wait 600 straight after) and don't end your turn while steps wait: once you stop, Kite can't tell you the user is done and they're left waiting on you. A wait ends early when every step has ended, a step is blocked, or a step's click opens a new tab (its id is in the result). Don't do a step yourself after handing it off."
+            "When you stop because the user must do something themselves on a page (your safety check or the user's rules won't let you, it needs their judgment, or a secret only they hold), hand it to them with this instead of listing steps in chat. Say why you stopped in reason, and give each step: instruction (a few words: \"Approve Apple\", \"Tick Super Administrator\"), the tab, and the control by ref (best: from find or read_page), selector or its visible text (a control in another site's frame, such as a CAPTCHA, a card field or a sign-in form read_page can't read, by its text or a selector). Order the steps tab by tab, in the order the user does them. Kite brings the first step's tab to the front for the user (once they stop typing in Kite), rings the control there with a tag beside it (the step, Skip and Done; on a new password's field, Suggest password, which opens their password manager), and moves them on to the next step's tab when they finish one. There's no card or list anywhere else, so every step needs a control on its page; anything else (a question, a command for their terminal) you ask in chat. A step is done when the user clicks the ringed control or presses Done, and skipped when they press Skip. If Kite can't ring a step's control (not found, hidden, the tab left the page or closed), the user sees nothing for it: the result says NOT SHOWN and why, at once or as soon as it happens, so point it at a control that's there (find or read_page for a ref) or withdraw it. Returns at once with a handoff id unless you pass wait. Pass wait 50 (or call handoff_status with wait 50 straight after), again until it's done, and don't end your turn while steps wait: once you stop, Kite can't tell you the user is done. Each wait returns the moment every step has ended, a step is blocked, or a step's click opens a new tab (its id is in the result); a longer wait is cut to 50 s, as clients time out. When it's done, read_page the tabs at once: a step often leads to a new page (an order form after a sign-up), whose ordinary fields you fill yourself from form_profile. Don't do a step yourself after handing it off."
         case .handoffStatus:
-            "Which steps of a handoff the user has done, skipped or not reached yet, with each tab's URL now, what's in the way of a waiting step (a control that's turned off, or one Kite can't show: NOT SHOWN), and any tab a step's click opened. Pass wait (seconds, up to 600) to wait until they're all done or skipped, a step is blocked or can't be shown, or a click opens a new tab; call again to keep waiting, and don't end your turn while steps wait. cancel true takes the steps you no longer need off the user's pages."
+            "Which steps of a handoff the user has done, skipped or not reached yet, with each tab's URL now, what's in the way of a waiting step (a control that's turned off, or one Kite can't show: NOT SHOWN), and any tab a step's click opened. Pass wait (seconds, up to 50: longer waits time out in clients) to wait until they're all done or skipped, a step is blocked or can't be shown, or a click opens a new tab; it returns the moment that happens. Call again to keep waiting, and don't end your turn while steps wait. When it's done, read the pages and carry on at once (fill the next page's ordinary fields from form_profile). cancel true takes the steps you no longer need off the user's pages."
         case .readConsole:
             "Console messages and uncaught errors logged since Claude started driving the tab. pattern filters by regex; clear empties the log after reading."
         case .readNetwork:
@@ -134,6 +138,24 @@ extension AutomationCommand.Tool {
         case .tabsClose, .switchTab:
             properties = ["tab": ["type": "string", "description": "Tab id from tabs_context."]]
             required = ["tab"]
+        case .formProfile:
+            let address: JSONValue = ["type": "object", "description": "{label, street, unit?, city, state, zip, country?}",
+                                      "properties": ["label": ["type": "string"], "street": ["type": "string"], "unit": ["type": "string"],
+                                                     "city": ["type": "string"], "state": ["type": "string"], "zip": ["type": "string"],
+                                                     "country": ["type": "string"]]]
+            properties = [
+                "action": ["type": "string", "enum": ["get", "set", "check"], "description": "get (default), set or check."],
+                "label": ["type": "string", "description": "For check: the user's address to compare with, like \"home\"."],
+                "name": ["type": "string"], "company": ["type": "string"], "email": ["type": "string"], "phone": ["type": "string"],
+                "address": address,
+            ]
+        case .tabStatus:
+            properties = [
+                "tab": tab,
+                "state": ["type": "string", "enum": ["working", "done"], "description": "done when you've finished with the tab; working with a note to say what you're doing."],
+                "note": ["type": "string", "description": .string("A few words the user sees: what you did, or what it waits on (at most \(ClaudeTabState.maxNoteLength) characters).")],
+            ]
+            required = ["state"]
         case .navigate:
             properties = [
                 "tab": tab,

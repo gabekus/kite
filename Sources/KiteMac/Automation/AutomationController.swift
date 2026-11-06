@@ -62,6 +62,14 @@ final class AutomationController {
     /// The tabs Claude is driving: the sidebar marks their rows and the Claude folders that hold them,
     /// and the page gets Claude's border while one is in front.
     private(set) var controlledTabIDs: Set<UUID> = []
+    /// What Claude said about each tab with tab_status, and the tabs it opened or acted on (not only read), so every one
+    /// of them shows a state in the sidebar (`tabState`): working, needs you, done, or left without a word.
+    private(set) var tabDeclared: [UUID: ClaudeTabState.Declared] = [:]
+    /// When Claude last opened or acted on each tab (not only read it). Observed: the sidebar shows those tabs.
+    private(set) var touchedTabs: [UUID: Date] = [:]
+    /// The connection that last acted on each tab, and the stalls it has heard about (`stalledNews`).
+    @ObservationIgnored private var tabConnection: [UUID: Int] = [:]
+    @ObservationIgnored private var stallsTold: [UUID: Date] = [:]
     /// Tabs handed to the user to sign in (sign_in), for the banner's Done and Cancel.
     var signIns: [UUID: SignInRequest] = [:]
     /// Steps Claude handed to the user (handoff), newest last, kept a while after they end so Claude can read how
@@ -89,6 +97,15 @@ final class AutomationController {
     /// The one look after `UserHandoff.offPageDelay` (`scheduleHandoffFollowUp`).
     @ObservationIgnored var handoffFollowUp: Task<Void, Never>?
     @ObservationIgnored var handoffPollAgain = false
+    /// A lead to a step's tab waiting for the user to pause typing or clicking in Kite (`HandoffLead`).
+    @ObservationIgnored var handoffLead: Task<Void, Never>?
+    /// Tabs Kite just brought forward for a step: their next look scrolls the control into view and pulses the ring.
+    @ObservationIgnored var ringJumps: Set<UUID> = []
+    /// Which connection made each handoff, and the handoffs whose end it has heard, for `handoffNews`.
+    @ObservationIgnored var handoffConnections: [String: Int] = [:]
+    @ObservationIgnored var handoffEndsTold: Set<String> = []
+    /// The step whose tag shows on its own at the top of each tab's page, its control not found there.
+    @ObservationIgnored var ringFloating: [UUID: String] = [:]
 
     /// The normal window the tools work in, and its store. It moves when that window closes (`attach`).
     @ObservationIgnored private weak var attachedHost: AutomationHost?
@@ -511,6 +528,50 @@ final class AutomationController {
         entry.lastActive = Date()
         entry.connections.insert(connection)
         controlledTabs[id] = entry
+        tabConnection[id] = connection
+    }
+
+    /// Tabs `connection` touched and then left, unfinished, with no step for the user: what its next tool result says,
+    /// once per stall, so the agent marks them done or hands them over.
+    func stalledNews(for connection: Int) -> String? {
+        let state = store.state
+        let stalled = touchedTabs.compactMap { id, touched -> (UUID, Date)? in
+            guard tabConnection[id] == connection, case .needsYou(_, true)? = tabState(id),
+                  stallsTold[id].map({ $0 < touched }) ?? true else { return nil }
+            return (id, touched)
+        }
+        guard !stalled.isEmpty else { return nil }
+        for (id, touched) in stalled { stallsTold[id] = touched }
+        let names = stalled.map { id, _ in "\(id.uuidString) (“\(state.tab(id)?.displayTitle ?? "")”)" }.joined(separator: ", ")
+        return "Kite: the user's sidebar shows “\(ClaudeTabState.stoppedHere)” in orange on tabs you acted on and left without "
+            + "a word: \(names). Finish the work there, or call tab_status with state done and a note of what you did, or "
+            + "handoff what's the user's."
+    }
+
+    /// Claude opened the tab or acted on it: from now on it always shows a state.
+    func noteTouched(_ id: UUID) {
+        touchedTabs[id] = Date()
+    }
+
+    /// The one state a tab Claude opened or drove shows (`ClaudeTabState`), or nil for one it never touched.
+    func tabState(_ id: UUID) -> ClaudeTabState? {
+        ClaudeTabState.of(step: waitingStep(on: id)?.instruction, declared: tabDeclared[id], active: controlledTabIDs.contains(id),
+                          lastTouched: touchedTabs[id])
+    }
+
+    /// tab_status: Claude says where a tab stands. Done ends the working indicator at once.
+    func setTabStatus(_ id: UUID, _ kind: ClaudeTabState.Declared.Kind, note: String?, connection: Int) {
+        if kind == .working { markControlled(id, connection: connection) } else { controlledTabs[id] = nil }
+        let now = Date()
+        // Touched at or before what Claude says now, so the word stands until it acts on the tab again.
+        if touchedTabs[id] == nil { touchedTabs[id] = now }
+        tabDeclared[id] = .init(kind: kind, note: note, at: now)
+    }
+
+    /// The sidebar's Clear Claude's Mark: the tab goes back to showing nothing until Claude touches it again.
+    func clearTabMark(_ id: UUID) {
+        tabDeclared[id] = nil
+        touchedTabs[id] = nil
     }
 
     /// The Claude session folder name of the session driving a tab, if it named one.
@@ -525,7 +586,7 @@ final class AutomationController {
         if let entry = controlledTabs[opener] {
             controlledTabs[child] = ControlledTab(lastActive: Date(), connections: entry.connections)
         }
-        if claudeOpened.contains(opener) { claudeOpened.insert(child) }
+        if claudeOpened.contains(opener) { claudeOpened.insert(child); noteTouched(child) }
         handoffTabOpened(child, by: opener)
     }
 
@@ -582,6 +643,9 @@ final class AutomationController {
     /// closed tabs don't pile up while no timer runs.
     private func forgetClosedTabs(live: Set<UUID>) {
         openedTabs.retain(live: live)
+        for id in Array(tabDeclared.keys) where !live.contains(id) { tabDeclared[id] = nil }
+        for id in Array(touchedTabs.keys) where !live.contains(id) { touchedTabs[id] = nil }
+        for id in Array(tabConnection.keys) where !live.contains(id) { tabConnection[id] = nil; stallsTold[id] = nil }
         for id in Array(snapshots.keys) where !live.contains(id) { snapshots[id] = nil }
         for id in Array(activities.keys) where !live.contains(id) {
             activities[id] = nil
@@ -700,12 +764,22 @@ final class AutomationController {
         }
         do {
             let command = try AutomationCommand(tool: request.tool, arguments: request.arguments)
+            // On WebKit because Chromium didn't start, the tabs aren't the user's sessions: say so, don't show empty carts.
+            if AppDelegate.engineFellBack, command.tool != .ui {
+                return .failure(AutomationError(.unsupported, EngineFallback.toolError))
+            }
             if command.needsWindow { ensureWindow?() }
             let task = request.task.flatMap(UUID.init(uuidString:)).flatMap { isRunningTask?($0) == true ? $0 : nil }
             let started = Target(host: attachedHost, store: attachedStore)
-            return try await Self.$commandTarget.withValue(started) {
+            var output = try await Self.$commandTarget.withValue(started) {
                 try await Self.$agentTask.withValue(task) { try await run(command, connection: connection) }
             }
+            // A handoff this connection made that ended while it did other things: it hears so on its next call.
+            if command.tool != .handoff, command.tool != .handoffStatus, let news = handoffNews(for: connection) {
+                output.content.append(.text(news))
+            }
+            if command.tool != .tabStatus, let news = stalledNews(for: connection) { output.content.append(.text(news)) }
+            return output
         } catch let error as AutomationError {
             return .failure(error)
         } catch let error as AutomationCommand.InvalidArguments {

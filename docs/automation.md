@@ -45,6 +45,8 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | (none) | `list_downloads` | | Downloads since control was turned on. |
 | (none) | `sign_in` | `kite call sign_in` | Hands a login page to the user, with 1Password. See below. |
 | (none) | `handoff`, `handoff_status` | `kite call handoff` | Hands steps Claude can't do to the user, shown on the pages. See below. |
+| (none) | `tab_status` | `kite call tab_status` | Claude says a tab is done (green dot) or what it's working on. See "Tab states" below. |
+| (none) | `form_profile` | `kite call form_profile` | The user's ordinary form details (name, company, email, phone, addresses). See below. |
 | (none) | `vpn` | `kite vpn` | Quiet VPN sign-in and reconnect. See the README. |
 | (none) | `list_spaces`, `switch_space`, `create_space`, `describe_space`, `pin_tab`, `create_folder`, `move_to_folder` | `kite spaces`, `kite describe-space` | Kite's own organization. |
 | `gif_creator`, `shortcuts_*`, `switch_browser` | not yet | | |
@@ -374,20 +376,52 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
     also carries the ad blocker's frame scriptlets), with its Runtime domain on so its binding reports a click that
     navigates the frame away. Refs don't reach into cross-site frames (read_page can't read them), so Claude names
     such a control by its text or a selector.
-  - **The sidebar.** A tab with a step waiting gets an orange dot at its row's end (tooltip: the step); a folded
-    folder holding one gets the dot too.
+  - **Taking the user there** (`HandoffLead`; Gabe, 5 Nov 2026: steps on Amazon, ToolsToday and McMaster while he
+    was on Mouser, and "its not highlighted"). When a handoff starts, Kite brings the first waiting step's tab to the
+    front of its window (switching space), scrolls the control into view and pulses the ring. When the user ends the
+    last waiting step on the tab in front, it does the same for the next step's tab, in Claude's order. It waits while
+    the user is typing or clicking in Kite (a key in the last 4 s, a click, scroll or pointer move in the last 1.5 s,
+    or the command bar open), so the page never switches under their hands, and it never activates Kite or raises its
+    window over another app's: the tab is simply in front when they look. Once per handoff start and per finished
+    tab: a user who goes elsewhere afterwards isn't pulled back. `handoff`'s result says where Kite took them.
+  - **Suggest password.** On a new password's field (`autocomplete="new-password"`, two password fields, or a
+    sign-up form), the tag also has **Suggest password**: Kite clicks the field (a trusted click, which its own ring
+    ignores) so the password manager's inline menu opens there with its suggestion, which the user picks. Kite never
+    reads the field. When the manager isn't added to the space's profile, or 1Password's elements
+    (`com-1password-button`, `com-1password-menu`) don't come up, the tag says so.
+  - **The sidebar.** A tab with a step waiting gets an orange title and an orange dot at its row's end (tooltip: the
+    step); a folded folder holding one gets the dot too.
   - **A step the page can't show.** When Kite can't find the control of the step a tab shows (after three looks
     half a second apart when Claude calls, or later, once it's been missing for 5 s: `UserHandoff.unshownReportDelay`),
-    or the tab has left the step's page or closed, the user sees nothing but the sidebar dot. Claude hears it: the
-    step is reported `NOT SHOWN`, and `handoff` returns at once, or a waiting `handoff_status` returns early (once per
+    or the tab has left the step's page or closed, the user sees nothing but the sidebar dot: no card or tag stands
+    in for it (Gabe: no box over the page, ever). Claude hears it: the step is reported `NOT SHOWN` with why (a
+    selector that matches only a hidden element says so: a field the site draws its own box over), and `handoff` returns at once, or a waiting `handoff_status` returns early (once per
     step), so Claude points the step at a control that's there, brings the page back, or withdraws it. Only the step to
     do now counts: one behind an earlier waiting step may be waiting for that step to bring its control up.
   - Kite bounces its Dock icon once if it isn't in front when steps arrive.
-  - **Back to Claude.** `handoff` returns at once (or after `wait` seconds, up to 600) with an id. `handoff_status`
+  - **Back to Claude.** `handoff` returns at once (or after `wait` seconds, cut to 50: MCP clients time a call out
+    at about 60 s, and a wait that times out never hears the user finish) with an id. A wait returns the moment every
+    step ends; a handoff that ends while Claude does something else is reported on its next tool call. The report
+    tells Claude to read the pages at once and fill the next page's ordinary fields. `handoff_status`
     (`id`, default the session's latest; `wait`; `cancel` to withdraw the rest) lists each step as done, skipped or
     waiting, how it ended ("the user clicked the highlighted control", "pressed Done", "skipped it"), what's in the
     way of a waiting one (turned off, or not shown), and each tab's URL now. A click on a step's control that opens a
     tab ends a wait too, and the report names the tab. Handoffs are saved in the profile (`Claude Handoffs.json`) on every step the user or Claude ends, so steps still waiting come back after Kite quits or restarts: the sidebar dots at once, the ring when the tab's page loads (a ref's mark is gone after a reload, so its label finds the control). Kite keeps handoffs for a week, and the last 20 finished ones for `handoff_status`; Claude can ask about one by id from a new connection.
+- **Tab states (`tab_status`).** Every tab Claude opened or acted on (reading alone doesn't count) shows exactly one
+  of three states in the sidebar (`ClaudeTabState`; Gabe, 5 Nov 2026: a Mouser cart tab showed nothing, so done,
+  stalled and needed looked the same): **working**, while its tools act on it (the title shimmers, a gradient mask
+  animated by the render server, a steady accent tint with Reduce Motion, and the ring around the favicon);
+  **needs you**, a handoff step (orange title and dot); **done**, when Claude calls `tab_status` with `done` and a
+  note (a green dot, the note as its tooltip). A tab Claude leaves for two minutes (Kite's control indicator lapsing)
+  without `done` or a handoff turns orange too, "Claude stopped here", and the next tool result of the connection
+  that left it names it. Acting on a done tab again makes it working; reading it doesn't. The tab's menu has Clear
+  Claude's Mark. Kept in memory only: a relaunch starts clean.
+- **Form details (`form_profile`).** One place for the user's ordinary form details: name, company, email, phone
+  and named addresses ("home", "makerspace"), in the profile folder's `Form Profile.json` (mode 0600, never synced).
+  Claude reads them (`get`), checks an address a page shows against one (`check`: case, punctuation, the usual
+  abbreviations and ZIP+4 don't count; a `MISMATCH` lists each field), and asks to change them (`set`): Kite shows the
+  change on a sheet and saves it only when the user presses Save, stamping the address confirmed. Card, account and
+  ID numbers, passwords and codes are refused, by key and by shape. Kite doesn't check addresses with USPS itself.
 - **Sign-in handoff (`sign_in`).** Claude never types or sees passwords. When a page needs the user signed in,
   Claude calls `sign_in` and waits. Kite brings the tab to the front, opens 1Password's popup over it, and shows a
   pill at the bottom of the page: "Claude is waiting for you to sign in to *site*" with 1Password, Cancel and **Done**. 1Password fills the

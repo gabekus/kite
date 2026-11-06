@@ -68,6 +68,19 @@ MainActor.assumeIsolated {
             KCRuntime.shutdown()
             exit(0)
         }
+        // Chromium didn't start (most often the last Kite's helpers still hold the profile, right after a restart).
+        // CEF can't be initialized twice in a process, so start Kite itself again rather than drop to WebKit.
+        let attempt = EngineFallback.attempt(environment: environment)
+        if EngineFallback.shouldRetry(attempt: attempt), let executable = Bundle.main.executablePath {
+            NSLog("Kite: Chromium didn't start (try %d of %d); starting again", attempt, EngineFallback.maxAttempts)
+            Thread.sleep(forTimeInterval: EngineFallback.retryDelay)
+            setenv(EngineFallback.attemptKey, String(attempt + 1), 1)
+            let args = CommandLine.arguments.map { strdup($0) } + [nil]
+            execv(executable, args)
+            NSLog("Kite: couldn't start again (errno %d)", errno)
+        }
+        NSLog("Kite: Chromium didn't start after %d tries; running on WebKit", attempt)
+        AppDelegate.engineFellBack = true
     }
     #else
     let app = NSApplication.shared
