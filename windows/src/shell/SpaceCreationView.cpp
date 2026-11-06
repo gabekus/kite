@@ -9,6 +9,7 @@
 #include <cmath>
 
 #include "shell/Errors.h"
+#include "shell/SystemFont.h"
 #include "shell/Text.h"
 
 using Microsoft::WRL::ComPtr;
@@ -72,40 +73,27 @@ D2D1_COLOR_F Gray(bool dark) { return Srgb(dark ? 0x98989D : 0x8E8E93); }
 
 std::unique_ptr<SpaceCreationView> SpaceCreationView::Create(HWND window, IDWriteFactory* dwrite, std::wstring& error) {
     std::unique_ptr<SpaceCreationView> view(new SpaceCreationView(window, dwrite));
-    // SF Pro's stand-in, as the sidebar's: Segoe UI Variable on Windows 11, Segoe UI before it.
-    ComPtr<IDWriteFontCollection> fonts;
-    dwrite->GetSystemFontCollection(fonts.GetAddressOf());
-    auto installed = [&](const wchar_t* family) {
-        UINT32 index = 0;
-        BOOL exists = FALSE;
-        return fonts && SUCCEEDED(fonts->FindFamilyName(family, &index, &exists)) && exists;
-    };
-    view->textFamily_ = installed(L"Segoe UI Variable Text") ? L"Segoe UI Variable Text" : L"Segoe UI";
-    const wchar_t* icons = installed(L"Segoe Fluent Icons") ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets";
-    auto format = [&](const wchar_t* family, DWRITE_FONT_WEIGHT weight, float size, ComPtr<IDWriteTextFormat>& out) {
-        HRESULT made = dwrite->CreateTextFormat(family, nullptr, weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"",
-                                                out.GetAddressOf());
+    // The Mac's weights for SF Pro (shell/SystemFont): the title bold, Cancel medium.
+    auto format = [&](MacWeight weight, float size, ComPtr<IDWriteTextFormat>& out) {
+        HRESULT made = system_font::CreateTextFormat(dwrite, weight, size, out);
         if (SUCCEEDED(made)) made = out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         return made;
     };
-    const wchar_t* text = view->textFamily_.c_str();
+    auto icons = [&](DWRITE_FONT_WEIGHT weight, ComPtr<IDWriteTextFormat>& out) {
+        HRESULT made = system_font::CreateIconFormat(dwrite, system_font::IconFont::Symbols, weight, kIconEm, out);
+        if (SUCCEEDED(made)) made = out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        return made;
+    };
     HRESULT hr = S_OK;
-    if (FAILED(hr = format(text, DWRITE_FONT_WEIGHT_BOLD, M::kTitleFontSize, view->titleFormat_)) ||
-        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_REGULAR, M::kSubtitleFontSize, view->subtitleFormat_)) ||
-        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_REGULAR, M::kRowFontSize, view->rowFormat_)) ||
-        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kRowFontSize, view->rowBoldFormat_)) ||
-        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kPillFontSize, view->pillFormat_)) ||
-        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_MEDIUM, M::kCancelFontSize, view->cancelFormat_)) ||
-        FAILED(hr = format(icons, DWRITE_FONT_WEIGHT_REGULAR, kIconEm, view->iconFormat_)) ||
-        FAILED(hr = format(icons, DWRITE_FONT_WEIGHT_BOLD, kIconEm, view->iconBoldFormat_))) {
+    if (FAILED(hr = format(MacWeight::Bold, M::kTitleFontSize, view->titleFormat_)) ||
+        FAILED(hr = format(MacWeight::Regular, M::kSubtitleFontSize, view->subtitleFormat_)) ||
+        FAILED(hr = format(MacWeight::Regular, M::kRowFontSize, view->rowFormat_)) ||
+        FAILED(hr = format(MacWeight::Semibold, M::kRowFontSize, view->rowBoldFormat_)) ||
+        FAILED(hr = format(MacWeight::Semibold, M::kPillFontSize, view->pillFormat_)) ||
+        FAILED(hr = format(MacWeight::Medium, M::kCancelFontSize, view->cancelFormat_)) ||
+        FAILED(hr = icons(DWRITE_FONT_WEIGHT_REGULAR, view->iconFormat_)) || FAILED(hr = icons(DWRITE_FONT_WEIGHT_BOLD, view->iconBoldFormat_))) {
         error = HResultMessage(L"CreateTextFormat", hr);
         return nullptr;
-    }
-    // Segoe UI Variable has no Medium instance: its weight axis gives Cancel's 500.
-    if (view->textFamily_ == L"Segoe UI Variable Text") {
-        const DWRITE_FONT_AXIS_VALUE medium{DWRITE_FONT_AXIS_TAG_WEIGHT, 500};
-        ComPtr<IDWriteTextFormat3> variable;
-        if (SUCCEEDED(view->cancelFormat_->QueryInterface(IID_PPV_ARGS(variable.GetAddressOf())))) variable->SetFontAxisValues(&medium, 1);
     }
     for (IDWriteTextFormat* icon : {view->iconFormat_.Get(), view->iconBoldFormat_.Get()}) {
         icon->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -316,7 +304,7 @@ LOGFONTW SpaceCreationView::FieldFont() const {
     font.lfHeight = -std::lround(M::kRowFontSize * Scale());
     font.lfWeight = FW_NORMAL;
     font.lfCharSet = DEFAULT_CHARSET;
-    lstrcpynW(font.lfFaceName, textFamily_.c_str(), LF_FACESIZE);
+    lstrcpynW(font.lfFaceName, system_font::GdiFaceName(), LF_FACESIZE);
     return font;
 }
 
