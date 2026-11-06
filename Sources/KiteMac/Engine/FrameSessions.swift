@@ -43,11 +43,13 @@ final class FrameSessions {
         browser.executeDevToolsMethod("Target.setAutoAttach", params: autoAttach, completion: nil)
     }
 
-    /// Only iframes: workers would wait too, and Kite has nothing to inject there. A frame waits before it loads only
-    /// when the ad blocker has scriptlets to put in first.
+    /// Iframes, and dedicated workers only to let them go: the renderer holds every new dedicated worker while
+    /// `waitForDebuggerOnStart` is on, filtered out or not, and one never attached is never resumed (Wix sites, which
+    /// run in a worker, never finished loading). Kite has nothing to inject into workers. A frame waits before it
+    /// loads only when the ad blocker has scriptlets to put in first.
     private var autoAttach: [String: Any] {
         ["autoAttach": true, "waitForDebuggerOnStart": adblocker != nil, "flatten": true,
-         "filter": [["type": "iframe", "exclude": false]]]
+         "filter": [["type": "iframe", "exclude": false], ["type": "worker", "exclude": false]]]
     }
 
     /// Frames let go untouched: Cloudflare's challenge (Turnstile) never passes while
@@ -96,7 +98,7 @@ final class FrameSessions {
         let target = info?["targetId"] as? String
         let reported = (info?["url"] as? String).flatMap(URL.init(string:))
         let url = reported?.host() != nil ? reported : target.flatMap { destinations.removeValue(forKey: $0) }
-        if let host = url?.host()?.lowercased(), Self.untouchedHosts.contains(host) {
+        if info?["type"] as? String == "worker" || url?.host().map({ Self.untouchedHosts.contains($0.lowercased()) }) == true {
             // Resume it and detach before it runs; its own iframes then don't attach either.
             send(session, "Runtime.runIfWaitingForDebugger")
             nextID += 1
