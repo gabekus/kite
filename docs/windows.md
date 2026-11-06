@@ -1555,11 +1555,23 @@ Windows that means:
     - **So Kite also re-hides on its own.** After anything the browser sees that might make
       Chromium show a page (its browser made, its placement going hidden, a main frame's load
       starting or ending; never a subframe's), a page Kite has hidden then is re-hidden at
-      0.5, 1, 1.5, 3 and 6 s, asking nothing of the page. A new one of these restarts the
-      schedule rather than adding to it, so a page has one step pending at a time. They're
+      0.5, 1, 1.5, 2, 3 and 6 s, asking nothing of the page. A new one of these restarts the
+      schedule rather than adding to it, so a page has one step pending at a time, but a step
+      due within 0.5 s stays and the schedule goes on from the new anchor after it, so anchors
+      coming faster than that can't put the first re-hide off for good. They're
       anchors, not causes: what makes Chromium show such a page isn't known. It was seen 0.4 to
       1.3 s after one of them, `document.open()` pages and a page whose load never ends
-      included.
+      included, and a re-hide just before that show puts it off: it came 0.3 to 0.7 s after the
+      last re-hide.
+    - **And asks.** After each step, and every 0.25 s after that until the next step or re-hide
+      starts it over, Kite asks the page's renderer for its visibility (`kite.askVisibility`);
+      at most 40 asks per anchor, enough for the whole schedule and some 4 s after it. The
+      reporter answers through the getter and document it kept, which a page's redefinitions
+      and `document.open()` don't reach. A `visible` answer is re-hidden at once. While the
+      renderer answers, the asks decide: a step re-hides blindly only if the renderer hasn't
+      said `hidden` in the last 0.5 s (and asks at once otherwise), so a renderer that's silent
+      (or lies) still gets the blind steps, and one that answers isn't shown for a frame or two
+      at every step for nothing.
     - **The re-hide.** For a page Kite has hidden, Kite shows its host and widget windows
       without activating them and hides them again at once, on CEF's thread (a few ms):
       hiding an already hidden window tells Chromium nothing, and this hide it reads like any
@@ -1602,7 +1614,8 @@ Windows that means:
     main-frame load starting or ending), with Kite's listener gone (`document.open()`) or its
     renderer lying, draws until the next anchor or verdict change. None was seen; every show
     measured came 0.4 to 1.3 s after an anchor. A page that keeps making anchors (navigating
-    every half second) keeps putting the steps off, and past 16 re-hides in 10 s waits.
+    itself over and over) is asked about itself every 0.25 s, and re-hidden blindly about every
+    half second only while its renderer is silent; past 16 re-hides in 10 s it waits.
 
 ## Measuring performance
 

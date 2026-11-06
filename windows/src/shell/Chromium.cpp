@@ -78,7 +78,23 @@ constexpr ULONGLONG kRehideSettleMs = 250;
 // hidden again at these times, whatever the page says (Shared::Anchor). None of them is what
 // makes Chromium show it; it was seen 0.4 to 1.3 s after them (measured), with or without a
 // load end.
-constexpr int64_t kRehideScheduleMs[] = {500, 1000, 1500, 3000, 6000};
+constexpr int64_t kRehideScheduleMs[] = {500, 1000, 1500, 2000, 3000, 6000};
+// To the renderer (Shared::Ask): report the page's visibility now, through the getter its
+// VisibilityReporter kept, which neither a page's redefinitions nor document.open() reach.
+constexpr char kAskVisibilityMessage[] = "kite.askVisibility";
+// After each step (and each re-hide), the page is asked about itself every kAskEveryMs until a
+// newer step or re-hide starts the asking over: Chromium can show a page it was about to show
+// 0.3 to 0.7 s after the last re-hide (measured), later on a busy PC, so a blind step alone left
+// it drawing until the next one. At most kMaxAsks per anchor: enough to ask all through the 6 s
+// schedule and some 4 s after it.
+constexpr int64_t kAskEveryMs = 250;
+constexpr int kMaxAsks = 40;
+// While the renderer answers (it said "hidden" this recently), a step asks at once instead of
+// re-hiding blindly, and an answer of "visible" is re-hidden: the blind steps are for a
+// renderer that's silent (or lies). Each re-hide shows the page for a frame or two.
+constexpr ULONGLONG kTrustHiddenMs = 500;
+// A new anchor keeps a step due this soon rather than restarting the schedule (Shared::Anchor).
+constexpr ULONGLONG kKeepDueStepMs = 500;
 // At most this many re-hides of a page in any 10 s, whatever its renderer says: two
 // navigations' schedules (start and end each restart it) and their reports.
 constexpr size_t kMaxRehidesPer10s = 16;
@@ -191,6 +207,11 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
         bool saysVisible = false;
         std::deque<ULONGLONG> rehides;
         uint64_t schedule = 0;  // Anchor's latest; an older schedule's steps do nothing
+        ULONGLONG anchoredAt = 0;  // when the latest anchor came (GetTickCount64)
+        ULONGLONG stepDue = 0;     // when the pending step fires; 0 for none
+        int asksLeft = 0;          // AskLater's budget for this anchor
+        uint64_t ask = 0;          // AskLater's latest; an older ask does nothing
+        ULONGLONG saidHiddenAt = 0;  // when the renderer last said the page reads as hidden
         bool recheckDue = false;
         // Find asked for before the browser existed (Ctrl+F straight after a new tab): run once
         // it's made, the last one asked for.
@@ -591,28 +612,76 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
         Page* page = PageFor(tabID, browser);
         if (!page) return;
         page->saysVisible = visible;
+        if (!visible) page->saidHiddenAt = GetTickCount64();
         RehideIfShowing(tabID, *page);
+        // Shown while Kite has it hidden: asked again after the re-hide, until it says hidden.
+        if (visible && page->hwnd && !page->placed.visible) AskLater(tabID, *page);
+    }
+    // Asks the page's renderer for its visibility (kAskVisibilityMessage) `first` ms from now and
+    // then every kAskEveryMs, until a newer call starts over (the next step, or a re-hide after a
+    // `visible`) or this anchor's budget is spent; each answer comes back as a kVisibilityMessage
+    // (PageVisibility). A renderer that doesn't answer, or lies, still gets the blind steps.
+    void AskLater(const std::string& tabID, Page& page, int64_t first = kAskEveryMs) {
+        if (page.asksLeft <= 0 || !page.browser) return;
+        AskIn(tabID, page.browser, ++page.ask, first);
+    }
+    void AskIn(const std::string& tabID, const CefRefPtr<CefBrowser>& browser, uint64_t ask, int64_t delay) {
+        CefPostDelayedTask(TID_UI, new FunctionTask([shared = shared_from_this(), tabID, browser, ask] {
+            shared->Post([shared, tabID, browser, ask] {
+                Page* p = shared->PageFor(tabID, browser);
+                if (!p || p->ask != ask || p->asksLeft <= 0) return;  // closed, or newer asks replace these
+                if (!p->hwnd || p->placed.visible) return;
+                --p->asksLeft;
+                RunOnCefUIThread([browser] {
+                    if (CefRefPtr<CefFrame> frame = browser->GetMainFrame()) frame->SendProcessMessage(PID_RENDERER, CefProcessMessage::Create(kAskVisibilityMessage));
+                });
+                shared->AskIn(tabID, browser, ask, kAskEveryMs);
+            });
+        }), delay);
     }
     // Something happened that might make Chromium show the page (kRehideScheduleMs): from now,
     // a page Kite has hidden then is hidden again at each step, asking nothing of the page, which
     // may have dropped the listener (document.open) or be compromised. A new anchor restarts the
-    // schedule, never adds one: one step is pending per page at a time. Past the last step, a
-    // page whose listener is gone could still draw (docs/windows.md, P2's Known gaps).
+    // schedule, never adds one: one step is pending per page at a time. But a step due within
+    // kKeepDueStepMs stays, and the schedule goes on from the new anchor after it, so anchors
+    // coming faster than that (a page navigating itself over and over) can't put the first
+    // re-hide off for good. Past the last step, a page whose listener is gone could still draw
+    // (docs/windows.md, P2's Known gaps).
     void Anchor(const std::string& tabID, Page& page) {
         if (!page.browser) return;
-        ScheduleStep(tabID, page.browser, ++page.schedule, 0);
+        const ULONGLONG now = GetTickCount64();
+        page.anchoredAt = now;
+        if (page.stepDue && page.stepDue <= now + kKeepDueStepMs) return;  // it stays; the rest follows the new anchor
+        page.asksLeft = kMaxAsks;
+        ScheduleStep(tabID, page.browser, ++page.schedule, page, kRehideScheduleMs[0]);
     }
     void Anchored(const std::string& tabID, const CefRefPtr<CefBrowser>& browser) {
         if (Page* page = PageFor(tabID, browser)) Anchor(tabID, *page);
     }
-    void ScheduleStep(const std::string& tabID, const CefRefPtr<CefBrowser>& browser, uint64_t schedule, size_t step) {
-        const int64_t delay = kRehideScheduleMs[step] - (step ? kRehideScheduleMs[step - 1] : 0);
-        CefPostDelayedTask(TID_UI, new FunctionTask([shared = shared_from_this(), tabID, browser, schedule, step] {
-            shared->Post([shared, tabID, browser, schedule, step] {
+    // The pending step, `delay` ms from now. When it fires: the re-hide, then the first step of
+    // the latest anchor's schedule still ahead, if any.
+    void ScheduleStep(const std::string& tabID, const CefRefPtr<CefBrowser>& browser, uint64_t schedule, Page& page, int64_t delay) {
+        page.stepDue = GetTickCount64() + static_cast<ULONGLONG>(delay);
+        CefPostDelayedTask(TID_UI, new FunctionTask([shared = shared_from_this(), tabID, browser, schedule] {
+            shared->Post([shared, tabID, browser, schedule] {
                 Page* p = shared->PageFor(tabID, browser);
                 if (!p || p->schedule != schedule) return;  // closed, or restarted since
-                if (p->hwnd && !p->placed.visible) Rehide(*p);
-                if (step + 1 < std::size(kRehideScheduleMs)) shared->ScheduleStep(tabID, browser, schedule, step + 1);
+                p->stepDue = 0;
+                if (p->hwnd && !p->placed.visible) {
+                    // Blind only when the renderer hasn't just said hidden (kTrustHiddenMs);
+                    // otherwise it's asked at once.
+                    const bool answering = GetTickCount64() - p->saidHiddenAt <= kTrustHiddenMs;
+                    if (!answering) Rehide(*p);
+                    shared->AskLater(tabID, *p, answering ? 0 : kAskEveryMs);
+                }
+                const ULONGLONG now = GetTickCount64();
+                for (const int64_t step : kRehideScheduleMs) {
+                    const ULONGLONG due = p->anchoredAt + static_cast<ULONGLONG>(step);
+                    if (due > now) {
+                        shared->ScheduleStep(tabID, browser, schedule, *p, static_cast<int64_t>(due - now));
+                        break;
+                    }
+                }
             });
         }), delay);
     }
@@ -886,7 +955,7 @@ private:
 class VisibilityReporter : public CefV8Handler {
 public:
     // Before the page's scripts: reports the state now, and listens for its changes.
-    static void Watch(const CefRefPtr<CefV8Context>& context) {
+    static CefRefPtr<VisibilityReporter> Watch(const CefRefPtr<CefV8Context>& context) {
         CefRefPtr<CefV8Value> global = context->GetGlobal();
         CefRefPtr<CefV8Value> document = global->GetValue("document");
         CefRefPtr<CefV8Value> object = global->GetValue("Object");
@@ -894,20 +963,21 @@ public:
         CefRefPtr<CefV8Value> listen = global->GetValue("addEventListener");
         if (!document || !document->IsObject() || !object || !object->IsObject() || !documentClass || !documentClass->IsObject() ||
             !listen || !listen->IsFunction()) {
-            return;
+            return nullptr;
         }
         CefRefPtr<CefV8Value> describe = object->GetValue("getOwnPropertyDescriptor");
         CefRefPtr<CefV8Value> prototype = documentClass->GetValue("prototype");
-        if (!describe || !describe->IsFunction() || !prototype || !prototype->IsObject()) return;
+        if (!describe || !describe->IsFunction() || !prototype || !prototype->IsObject()) return nullptr;
         CefRefPtr<CefV8Value> descriptor =
             describe->ExecuteFunctionWithContext(context, object, {prototype, CefV8Value::CreateString("visibilityState")});
         CefRefPtr<CefV8Value> getter = descriptor && descriptor->IsObject() ? descriptor->GetValue("get") : nullptr;
-        if (!getter || !getter->IsFunction()) return;
+        if (!getter || !getter->IsFunction()) return nullptr;
         CefRefPtr<VisibilityReporter> reporter = new VisibilityReporter(document, getter);
         reporter->Report(context);
         listen->ExecuteFunctionWithContext(context, global,
                                            {CefV8Value::CreateString("visibilitychange"), CefV8Value::CreateFunction("kiteVisibility", reporter),
                                             CefV8Value::CreateBool(true)});
+        return reporter;
     }
 
     bool Execute(const CefString&, CefRefPtr<CefV8Value>, const CefV8ValueList& arguments, CefRefPtr<CefV8Value>&, CefString&) override {
@@ -919,9 +989,6 @@ public:
         return true;
     }
 
-private:
-    VisibilityReporter(CefRefPtr<CefV8Value> document, CefRefPtr<CefV8Value> getter) : document_(document), getter_(getter) {}
-
     // kVisibilityMessage: whether the page reads as visible, by the getter kept.
     void Report(const CefRefPtr<CefV8Context>& context) {
         CefRefPtr<CefV8Value> state = getter_->ExecuteFunctionWithContext(context, document_, {});
@@ -931,6 +998,9 @@ private:
         message->GetArgumentList()->SetBool(0, state->GetStringValue() == "visible");
         frame->SendProcessMessage(PID_BROWSER, message);
     }
+
+private:
+    VisibilityReporter(CefRefPtr<CefV8Value> document, CefRefPtr<CefV8Value> getter) : document_(document), getter_(getter) {}
 
     const CefRefPtr<CefV8Value> document_, getter_;
     IMPLEMENT_REFCOUNTING(VisibilityReporter);
@@ -946,19 +1016,37 @@ public:
     CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
 
     // Every frame's window, before its scripts run.
-    void OnContextCreated(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, CefRefPtr<CefV8Context> context) override {
+    void OnContextCreated(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefV8Context> context) override {
         if (quietRenderer_) context->GetGlobal()->SetValue("print", CefV8Value::CreateFunction("print", new SkipPrint), V8_PROPERTY_ATTRIBUTE_NONE);
         if (!frame->IsMain()) return;
         CefRefPtr<CefProcessMessage> message = CefProcessMessage::Create(kRendererPIDMessage);
         message->GetArgumentList()->SetInt(0, static_cast<int>(GetCurrentProcessId()));
         frame->SendProcessMessage(PID_BROWSER, message);
         // Visible now (a page made, or a navigation or a renderer's restart that made a new
-        // context, while Kite has it hidden), and on each change after.
-        VisibilityReporter::Watch(context);
+        // context, while Kite has it hidden), and on each change after, and when asked.
+        if (CefRefPtr<VisibilityReporter> reporter = VisibilityReporter::Watch(context)) reporters_[browser->GetIdentifier()] = reporter;
+        else reporters_.erase(browser->GetIdentifier());
+    }
+    void OnContextReleased(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefV8Context>) override {
+        if (frame->IsMain()) reporters_.erase(browser->GetIdentifier());
+    }
+    // Kite asks (kAskVisibilityMessage): the main frame's reporter answers, as it would on a change.
+    bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefProcessId source,
+                                  CefRefPtr<CefProcessMessage> message) override {
+        if (source != PID_BROWSER || message->GetName() != kAskVisibilityMessage) return false;
+        const auto it = reporters_.find(browser->GetIdentifier());
+        CefRefPtr<CefV8Context> context = frame && frame->IsMain() ? frame->GetV8Context() : nullptr;
+        if (it != reporters_.end() && context && context->Enter()) {
+            it->second->Report(context);
+            context->Exit();
+        }
+        return true;
     }
 
 private:
     const bool quietRenderer_;
+    // Each browser's main-frame reporter in this renderer, by browser id (the render thread's).
+    std::map<int, CefRefPtr<VisibilityReporter>> reporters_;
     IMPLEMENT_REFCOUNTING(KiteHelperApp);
 };
 
