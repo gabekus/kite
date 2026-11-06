@@ -67,6 +67,16 @@ enum PageEvent {
     case permissionRequest(PermissionRequest)
     /// The engine dropped the prompt with this id itself (the page navigated or closed).
     case permissionRequestCancelled(id: Int)
+    /// The page showed a JavaScript dialog (alert, confirm, prompt, "Leave site?"), or it closed: Claude hears of it
+    /// on the tabs it works in (`DialogLog`).
+    case dialog(PageDialogEvent)
+}
+
+/// A page's JavaScript dialog as Kite showed it (`PageDialogs`).
+enum PageDialogEvent {
+    case opened(DialogLog.Kind, message: String, origin: URL?)
+    /// `by` nil: it went away unanswered (the page navigated, the engine reset it, another took its place).
+    case closed(accepted: Bool, by: DialogLog.Answerer?)
 }
 
 /// A site's permission request waiting for an answer. `respond(true)` allows and `false` blocks,

@@ -106,6 +106,12 @@ final class AutomationController {
     @ObservationIgnored var handoffEndsTold: Set<String> = []
     /// The step whose tag shows on its own at the top of each tab's page, its control not found there.
     @ObservationIgnored var ringFloating: [UUID: String] = [:]
+    /// JavaScript dialogs on the tabs Claude touched or handed steps on, kept after they close (`DialogLog`).
+    @ObservationIgnored var dialogLog = DialogLog()
+    /// Waiting steps a page's dialog interrupted once Claude heard of it, with the words their tag shows meanwhile
+    /// ("Claude saw the page's alert and is looking at it"). Observed: their tabs show working, not needs you
+    /// (`stepNeedingUser`).
+    var dialogAsides: [String: String] = [:]
 
     /// The normal window the tools work in, and its store. It moves when that window closes (`attach`).
     @ObservationIgnored private weak var attachedHost: AutomationHost?
@@ -355,6 +361,8 @@ final class AutomationController {
             network.clear()
             revoked.removeAll()
             activities.removeAll()
+            dialogLog.clear()
+            dialogAsides.removeAll()
             snapshots.removeAll()
             claudeOpened.removeAll()
             taskTabs.removeAll()
@@ -548,6 +556,9 @@ final class AutomationController {
             + "handoff what's the user's."
     }
 
+    /// The connection that last acted on a tab, for whom its page's dialogs are news (`DialogLog`).
+    func connection(lastActingOn id: UUID) -> Int? { tabConnection[id] }
+
     /// Claude opened the tab or acted on it: from now on it always shows a state.
     func noteTouched(_ id: UUID) {
         touchedTabs[id] = Date()
@@ -555,7 +566,7 @@ final class AutomationController {
 
     /// The one state a tab Claude opened or drove shows (`ClaudeTabState`), or nil for one it never touched.
     func tabState(_ id: UUID) -> ClaudeTabState? {
-        ClaudeTabState.of(step: waitingStep(on: id)?.instruction, declared: tabDeclared[id], active: controlledTabIDs.contains(id),
+        ClaudeTabState.of(step: stepNeedingUser(on: id)?.instruction, declared: tabDeclared[id], active: controlledTabIDs.contains(id),
                           lastTouched: touchedTabs[id])
     }
 
@@ -647,6 +658,7 @@ final class AutomationController {
         for id in Array(touchedTabs.keys) where !live.contains(id) { touchedTabs[id] = nil }
         for id in Array(tabConnection.keys) where !live.contains(id) { tabConnection[id] = nil; stallsTold[id] = nil }
         for id in Array(snapshots.keys) where !live.contains(id) { snapshots[id] = nil }
+        dialogLog.retain(live: live)
         for id in Array(activities.keys) where !live.contains(id) {
             activities[id] = nil
             trackedPages[id] = nil
@@ -779,6 +791,8 @@ final class AutomationController {
                 output.content.append(.text(news))
             }
             if command.tool != .tabStatus, let news = stalledNews(for: connection) { output.content.append(.text(news)) }
+            // A page's dialog Claude hasn't heard about, on a tab it works in: once, on whatever it called.
+            if command.tool != .dialogs, let news = dialogNews(for: connection) { output.content.append(.text(news)) }
             return output
         } catch let error as AutomationError {
             return .failure(error)

@@ -84,6 +84,7 @@ extension BrowserWindowController: AutomationHost {
     func installAutomationBanner(_ automation: AutomationController) {
         pool.onPageCreated = { [weak automation] id, page in automation?.pageCreated(id, page) }
         pool.onLoadFinished = { [weak automation] id in automation?.pageFinishedLoading(id) }
+        pool.onPageDialog = { [weak automation] id, event in automation?.pageDialog(id, event) }
         pool.onTabOpened = { [weak automation] child, opener in automation?.tabOpened(child, by: opener) }
         claudeButton.automation = automation
         installClaudeControlBorder(automation)

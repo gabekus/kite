@@ -1,4 +1,5 @@
 import AppKit
+import KiteCore
 
 /// A page's own dialogs (window.alert, confirm and prompt, and "Leave site?" from beforeunload) in
 /// Arc's dialog sheet (`ArcDialog`) instead of an NSAlert. Arc takes them over from Chromium the
@@ -9,7 +10,8 @@ enum PageDialogs {
     enum Kind { case alert, confirm, prompt, leave, reload }
 
     /// Shows the dialog on `view`'s window. `completion` gets OK or Cancel and a prompt's text, once.
-    /// A page that isn't in a window (a background tab) gets Cancel right away.
+    /// A page that isn't in a window (a background tab) gets Cancel right away (an alert, OK).
+    /// `report` hears it open and close, and who answered it, for Claude (`DialogLog`).
     @discardableResult
     static func present(
         _ kind: Kind,
@@ -17,9 +19,12 @@ enum PageDialogs {
         defaultText: String = "",
         origin: URL?,
         in view: NSView,
+        report: ((PageDialogEvent) -> Void)? = nil,
         completion: @escaping (_ ok: Bool, _ text: String?) -> Void
     ) -> ArcDialog? {
+        report?(.opened(logKind(kind), message: kind == .leave || kind == .reload ? "" : message, origin: origin))
         guard let window = view.window else {
+            report?(.closed(accepted: kind == .alert, by: .kite))
             completion(kind == .alert, nil)
             return nil
         }
@@ -46,7 +51,18 @@ enum PageDialogs {
         let field = kind == .prompt ? ArcDialog.Field(text: defaultText, placeholder: "") : nil
         return ArcDialog.present(on: window, title: title, message: body, field: field, actions: actions) { action, text in
             let ok = action.map { actions[$0].role != .cancel } ?? false
+            // No action: Kite took it down (the page moved on, or Claude answered it through the engine).
+            report?(.closed(accepted: ok, by: action == nil ? nil : .user))
             completion(ok, kind == .prompt && ok ? text : nil)
+        }
+    }
+
+    static func logKind(_ kind: Kind) -> DialogLog.Kind {
+        switch kind {
+        case .alert: .alert
+        case .confirm: .confirm
+        case .prompt: .prompt
+        case .leave, .reload: .beforeunload
         }
     }
 
