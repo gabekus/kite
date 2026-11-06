@@ -240,12 +240,20 @@ final class SidebarSpaceList: NSView {
         var claudeControl: String?
         if case .working(let note?)? = claudeState {
             claudeControl = ClaudeTabState.working(note: note).help
-        } else if controlled, case .working? = claudeState {
-            if let session = claude.automation?.sessionName(controlling: tab.id) {
-                claudeControl = "Claude is controlling this tab (\(session))"
-            } else {
-                claudeControl = "Claude is controlling this tab"
-            }
+        } else if case .working? = claudeState {
+            let session = claude.automation?.sessionName(controlling: tab.id).map { " (\($0))" } ?? ""
+            claudeControl = controlled ? "Claude is controlling this tab\(session)" : "Claude is working here\(session)"
+        }
+        // The line under the title. Working: Claude's working note, else Kite's words for its last tool call there
+        // while it drives the tab (`ClaudeActivity`), else what it waits on. Stalled: "Claude stopped here, ask it to
+        // pick up". Nothing for a handoff (its step is ringed on the page) or done.
+        var claudeActivity: String?, claudeActivityLog: String?
+        if case .working(let note)? = claudeState, let help = claudeControl {
+            let log = claude.automation?.tabActivity[tab.id]
+            claudeActivity = note ?? (controlled ? log?.latest?.text : nil) ?? ClaudeTabState.waitingLine
+            claudeActivityLog = ClaudeActivity.tooltip(help: help, log: log)
+        } else if claudeState?.isStalled == true {
+            claudeActivity = ClaudeTabState.stoppedHereLine
         }
         return .init(
             tab: tab, space: space, parent: parent, depth: depth, isPinned: pinned, isSelected: selected,
@@ -259,6 +267,8 @@ final class SidebarSpaceList: NSView {
             liveIconTab: live != nil,
             peek: store.linkPeekBadges[tab.id],
             claudeControl: claudeControl,
+            claudeActivity: claudeActivity,
+            claudeActivityLog: claudeActivityLog,
             claudeNeedsYou: claudeState?.isNeedsYou == true ? claudeState?.help : nil,
             claudeDone: { if case .done? = claudeState { claudeState?.help } else { nil } }(),
             splitSide: drag.splitSide(for: tab.id),
@@ -496,6 +506,9 @@ enum SidebarRowModel: Equatable {
         var liveIconTab: Bool
         var peek: LinkPeekBadge?
         var claudeControl: String?
+        /// While Claude works here: the quiet line under the title, and the row's tooltip (the last few actions).
+        var claudeActivity: String?
+        var claudeActivityLog: String?
         var claudeNeedsYou: String?
         /// Claude is done here: a green dot, with what it did.
         var claudeDone: String?

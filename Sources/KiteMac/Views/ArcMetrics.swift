@@ -103,6 +103,10 @@ enum ArcMetrics {
         static let nestingIndent: CGFloat = 16
         static let tabFontSize: CGFloat = 14
         static let tabTextOpacity: Double = 0.865
+        /// Claude's activity line under a working tab's title (Kite's own, not Arc's): 11pt, dimmed like the
+        /// section headers, its 14pt line under the 17pt title, so both fit the 36pt pill.
+        static let activityFontSize: CGFloat = 11
+        static let activityOpacity: Double = 0.5
         static let selectedFill: Double = 0.20
         static let hoverFill: Double = 0.10
         /// A tab pill's fill on a light theme (Arc's TabCellBackgroundCurrent and

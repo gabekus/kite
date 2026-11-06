@@ -143,6 +143,9 @@ public struct BrowserState: Hashable, Codable, Sendable {
     public var liveFoldersTurnedOff: [LiveFolder.Source]
     /// Whether the Pull Requests intro popover has shown (Arc's `hasSeenGithubLiveFolderEducation`).
     public var hasSeenLiveFolderIntro: Bool
+    /// What Claude did on each tab it touched, by tab id (`ClaudeTabState.Record`), so the tab's state in the sidebar
+    /// outlives a restart. Pruned with the tabs (AutomationController).
+    public var claudeTabs: [UUID: ClaudeTabState.Record]
 
     public static let recentlyClosedLimit = 25
     public static let archiveLimit = 500
@@ -177,6 +180,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.allowsJavaScriptFromAppleEvents = false
         self.liveFoldersTurnedOff = []
         self.hasSeenLiveFolderIntro = false
+        self.claudeTabs = [:]
         seedDefaultSiteSearches()
     }
 
@@ -190,7 +194,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         case developerModeEnabledForHosts, devModeReloadState, allowsJavaScriptFromAppleEvents
         case liveFoldersTurnedOff, hasSeenLiveFolderIntro, pageAppearance
         case profiles, profileFavorites, retiredProfileDirectories, favoriteSplits, profileSettings, arcProfiles
-        case commandBarPicks
+        case commandBarPicks, claudeTabs
     }
 
     public init(from decoder: Decoder) throws {
@@ -237,6 +241,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
         allowsJavaScriptFromAppleEvents = try c.decodeIfPresent(Bool.self, forKey: .allowsJavaScriptFromAppleEvents) ?? false
         liveFoldersTurnedOff = try c.decodeIfPresent([LiveFolder.Source].self, forKey: .liveFoldersTurnedOff) ?? []
         hasSeenLiveFolderIntro = try c.decodeIfPresent(Bool.self, forKey: .hasSeenLiveFolderIntro) ?? false
+        // A record that can't be read is dropped, never the session.
+        claudeTabs = (try? c.decodeIfPresent([UUID: ClaudeTabState.Record].self, forKey: .claudeTabs)) ?? [:]
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -272,6 +278,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         let favoriteSplits = favoriteSplitsByProfile.filter { !$0.value.isEmpty }
         if !favoriteSplits.isEmpty { try c.encode(favoriteSplits, forKey: .favoriteSplits) }
         if !commandBarPicks.isEmpty { try c.encode(commandBarPicks, forKey: .commandBarPicks) }
+        if !claudeTabs.isEmpty { try c.encode(claudeTabs, forKey: .claudeTabs) }
     }
 
     // MARK: Dark pages

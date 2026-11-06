@@ -544,7 +544,6 @@ enum SymbolOrigins {
     static let measured: [Key: (x: CGFloat, top: CGFloat)] = [
         Key("xmark", 9.0, .bold, 24.0, 24.0): (7.5, 7.0), // max 66
         Key("xmark", 9.0, .bold, 16.0, 16.0): (3.5, 3.0), // max 66
-        Key("arrow.uturn.backward", 10.0, .semibold, 24.0, 24.0): (6.5, 6.0), // max 62
         Key("stop.fill", 8.0, .bold, 24.0, 24.0): (7.5, 7.75), // max 73
         Key("plus", 14.0, .medium, 18.0, 18.0): (2.0, 2.0), // max 46
         Key("folder", 14.0, .regular, 18.0, 18.0): (-0.5, 1.0), // max 40

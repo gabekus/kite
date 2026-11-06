@@ -77,7 +77,8 @@ extension AutomationController {
         }
         let tab = try resolveTab(tabArgument)
         markControlled(tab.id, connection: connection)
-        if !command.tool.isReadOnly { noteTouched(tab.id) }
+        if command.tool.isReadOnly { noteRead(tab.id) } else { noteTouched(tab.id) }
+        noteActivity(tab.id, ClaudeActivity.describe(command))
         guard let host else { throw AutomationError(.failed, "Kite has no window open.") }
         let page = host.automationPage(for: tab)
         guard let driver = page.automation else { throw AutomationError(.unsupported, "This tab's engine can't be automated.") }
@@ -164,6 +165,7 @@ extension AutomationController {
 
         case .click(_, let target):
             let element = try await act().locate(target)
+            refineActivity(tab.id, ClaudeActivity.clicking(element.description))
             try await authorize(.click(element.description), tab: tab)
             let actions = try act()
             try await untilDialog(tab.id) { try await actions.click(element) }
@@ -179,6 +181,7 @@ extension AutomationController {
             } else {
                 throw AutomationError(.notFound, "Nothing on the page has keyboard focus. Pass a ref or selector.")
             }
+            refineActivity(tab.id, ClaudeActivity.typing(into: element.description))
             try await authorize(.type(element.description, text: text, submit: submit), tab: tab)
             let actions = try act()
             try await untilDialog(tab.id) { try await actions.type(text, into: element, submit: submit) }
@@ -191,6 +194,7 @@ extension AutomationController {
         case let .formInput(_, target, value):
             let element = try await act().locate(target)
             let text = value.stringValue ?? value.boolValue.map(String.init) ?? value.doubleValue.map { String(format: "%g", $0) } ?? ""
+            refineActivity(tab.id, ClaudeActivity.filling(element.description))
             try await authorize(.formInput(element.description, value: text), tab: tab)
             let actions = try act()
             var result = ""
@@ -301,6 +305,7 @@ extension AutomationController {
             fatalError("handled above")
         case let .click(location, button, count, modifiers):
             let (point, element) = try await resolve(location)
+            refineActivity(tab.id, ClaudeActivity.describe(action, element: element?.description))
             // Right-clicks only open a menu; the rest go through the same checks as click.
             if button != .right {
                 if let element { try await authorize(.click(element.description), tab: tab) } else { try authorizeUndescribed(tab: tab) }
@@ -315,7 +320,8 @@ extension AutomationController {
             await settle(tab.id)
             return report("\(button == .left ? "" : button.rawValue.capitalized + "-")\(["", "C", "Double-c", "Triple-c"][count])licked \(location.isPoint ? "at " : "")\(describe(location)).", tab.id)
         case .hover(let location):
-            let (point, _) = try await resolve(location)
+            let (point, element) = try await resolve(location)
+            refineActivity(tab.id, ClaudeActivity.describe(action, element: element?.description))
             try await actions.hover(point)
             return report("Moved the pointer to \(describe(location)).", tab.id)
         case let .scroll(location, direction, amount):
@@ -336,6 +342,7 @@ extension AutomationController {
             return report("Pressed \(chords.map(Self.keyName).joined(separator: " "))\(times > 1 ? " ×\(times)" : "").", tab.id)
         case .type(let text):
             let focused = try await actions.focusedElement()
+            refineActivity(tab.id, ClaudeActivity.describe(action, element: focused?.description))
             try await authorize(.type(focused?.description, text: text, submit: false), tab: tab)
             try await actions.insertText(text)
             return report("Typed \(text.count) characters.", tab.id)
@@ -532,6 +539,7 @@ extension AutomationController {
         }
         claudeOpened.insert(id)
         noteTouched(id)
+        noteActivity(id, ClaudeActivity.opening(url?.absoluteString))
         markControlled(id, connection: connection)
         guard let tab = store.state.tab(id) else { throw AutomationError(.failed, "Couldn't open a tab.") }
         if let url {
