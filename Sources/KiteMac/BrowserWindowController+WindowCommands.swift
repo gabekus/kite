@@ -75,9 +75,11 @@ extension BrowserWindowController {
         }
     }
 
-    /// Only the installed Kite (dev.gabek.Kite). Debug bundles are dev.gabek.Kite.dev (bundle-app.sh), and as the
-    /// default browser every link would open in whichever of the many debug builds macOS picks, with its own empty profile.
-    static let canBeDefaultBrowser = Bundle.main.bundleIdentifier == "dev.gabek.Kite"
+    /// Only the installed Kite (dev.gabek.Kite in /Applications, `RealProfileGuard`). Debug bundles are
+    /// dev.gabek.Kite.dev (bundle-app.sh), and as the default browser every link would open in whichever of the many
+    /// debug builds macOS picks; a release build still in a checkout would be the default from a folder that changes.
+    static let canBeDefaultBrowser = RealProfileGuard.isInstalledKite(
+        bundleID: Bundle.main.bundleIdentifier, bundlePath: Bundle.main.bundleURL.path, home: NSHomeDirectory())
 
     static var isDefaultBrowser: Bool {
         guard let handler = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!) else {

@@ -5,6 +5,8 @@ import CEFBridge
 #endif
 
 MainActor.assumeIsolated {
+    // Before anything opens a profile: only the installed Kite may start on the real one (exits otherwise).
+    RealProfileRefusal.refuseIfNeeded()
     // A build install-app.sh staged that the last quit didn't swap in: swap it now and open that one instead.
     StagedUpdate.finishIfWaiting()
     let environment = ProcessInfo.processInfo.environment

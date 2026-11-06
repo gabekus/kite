@@ -16,9 +16,12 @@ set -euo pipefail
 APP="$1"; LABEL="${2:-run}"; SECS="${3:-60}"; SETTLE="${SETTLE:-30}"
 # Static pages from a local server (PAGES, default 127.0.0.1:18765), so nothing depends on the network.
 PAGES="${PAGES:-http://127.0.0.1:18765}"
-P=$(mktemp -d /tmp/k.XXXX)
-[[ -d "$P" ]] || { echo "profile not a directory" >&2; exit 1; }
+# shellcheck source=../lib/test-kite.sh
+source "$(dirname "$0")/../lib/test-kite.sh"
+P=$(kite_test_profile)
 export KITE_SUPPORT_PATH=$P KITE_TEST_BLOCK_VIEWS_WINDOWS=1 TYPESAFE_API_KEY=x KITE_DIAGNOSTICS=1
+# Refuses (exit 2), before anything starts, whatever could reach the real profile or the installed Kite's settings.
+kite_check_test_launch "$APP" "$P" || exit 2
 if [[ -n "${STATE:-}" ]]; then
   [[ -d "$STATE" ]] || { echo "STATE must be a directory" >&2; exit 1; }
   for f in session.json "Claude Handoffs.json" automation.json; do

@@ -7,9 +7,12 @@
 set -euo pipefail
 APP="$1"; OUT="$2"
 mkdir -p "$OUT"
-P=$(mktemp -d /tmp/k.XXXX)
-[[ -d "$P" ]] || { echo "profile not a directory" >&2; exit 1; }
+# shellcheck source=../lib/test-kite.sh
+source "$(dirname "$0")/../lib/test-kite.sh"
+P=$(kite_test_profile)
 export KITE_SUPPORT_PATH=$P KITE_TEST_BLOCK_VIEWS_WINDOWS=1 TYPESAFE_API_KEY=x KITE_DIAGNOSTICS=1
+# Refuses (exit 2), before anything starts, whatever could reach the real profile or the installed Kite's settings.
+kite_check_test_launch "$APP" "$P" || exit 2
 [[ -n "${STATE:-}" ]] && cp "$STATE" "$P/session.json"
 "$APP/Contents/MacOS/Kite" --disable-backgrounding-occluded-windows >"$P/kite.log" 2>&1 &
 PID=$!

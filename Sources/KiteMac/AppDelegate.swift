@@ -81,6 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Release builds check for updates (8-hourly, installing on quit); others do nothing.
         SoftwareUpdater.shared.start()
+        // The installed Kite: web links going to a test build of Kite get an alert (RealProfileGuard).
+        RealProfileRefusal.checkDefaultBrowser()
         // The login shell's PATH and claude, asked once in the background, so the first claude doesn't wait.
         ClaudeConnect.loginShell.warm()
         // A typed claude:// (zoommtg://, …) link is a URL when another app opens it, not a search.
