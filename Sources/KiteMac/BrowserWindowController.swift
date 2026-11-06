@@ -535,6 +535,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         // Unclipped (macOS 14's default), its visible rect, and so its tracking area, would be the whole window.
         sidebarHoverZone.clipsToBounds = true
+        sidebarHoverZone.reportsOnRebuild = true
         sidebarHoverZone.isActive = true
         peekZone.onHover = { [weak self] inside in
             guard let self, !inside, !resizingSidebar else { return }

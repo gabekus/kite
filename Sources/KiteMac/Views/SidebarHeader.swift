@@ -25,9 +25,16 @@ final class SidebarHeaderView: NSView {
     private let actions: SidebarActions
     private let hover: SidebarHoverModel
     private let supportsDarkPages: Bool
-    var showExtensions: ((NSView) -> Void)? { didSet { field.showExtensions = showExtensions } }
-    var showSiteControls: ((NSView) -> Void)?
-    var installApp: ((NSView) -> Void)?
+    // Set after init, so each reads the model again: the first read had none of them, which left Site
+    // Controls, the install icon and the extensions button off until the next tab change.
+    var showExtensions: ((NSView) -> Void)? {
+        didSet {
+            field.showExtensions = showExtensions
+            scheduleUpdate()
+        }
+    }
+    var showSiteControls: ((NSView) -> Void)? { didSet { scheduleUpdate() } }
+    var installApp: ((NSView) -> Void)? { didSet { scheduleUpdate() } }
 
     private let toggle = SymbolButton(symbol: "sidebar.left", pointSize: 15, label: "Toggle Sidebar")
     private let back = SymbolButton(symbol: "arrow.left", pointSize: 15, label: "Back")
