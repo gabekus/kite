@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include "shell/Errors.h"
+#include "shell/SystemFont.h"
 #include "shell/Text.h"
 
 using Microsoft::WRL::ComPtr;
@@ -46,14 +47,9 @@ std::unique_ptr<RenameField> RenameField::Create(HWND window, IDWriteFactory* dw
                                                  std::string id, const std::string& text, std::wstring_view placeholder,
                                                  std::wstring& error) {
     std::unique_ptr<RenameField> field(new RenameField(window, std::move(id)));
-    // The field's own format: its row's without the "…" (a field scrolls instead).
-    wchar_t family[64]{};
+    // The field's own format: its row's (weight and axes too) without the "…" (a field scrolls instead).
     ComPtr<IDWriteTextFormat> own;
-    HRESULT hr = format->GetFontFamilyName(family, 64);
-    if (SUCCEEDED(hr)) {
-        hr = dwrite->CreateTextFormat(family, nullptr, format->GetFontWeight(), DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                                      format->GetFontSize(), L"", own.GetAddressOf());
-    }
+    HRESULT hr = system_font::CopyTextFormat(dwrite, format, format->GetFontSize(), own);
     if (SUCCEEDED(hr)) hr = own->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     static constexpr wchar_t kDone[] = L"Done";
     if (SUCCEEDED(hr) && !placeholder.empty()) {

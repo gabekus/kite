@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "shell/Errors.h"
+#include "shell/SystemFont.h"
 #include "shell/Text.h"
 
 using Microsoft::WRL::ComPtr;
@@ -36,49 +37,26 @@ bool RegisterOnce(HINSTANCE instance, WNDPROC proc) {
 
 std::unique_ptr<SpaceTipView> SpaceTipView::Create(HWND owner, IDWriteFactory* dwrite, std::wstring& error) {
     std::unique_ptr<SpaceTipView> view(new SpaceTipView(owner, dwrite));
-    // SF Pro's stand-in, as the sidebar's: Segoe UI Variable on Windows 11, Segoe UI before it.
-    ComPtr<IDWriteFontCollection> fonts;
-    dwrite->GetSystemFontCollection(fonts.GetAddressOf());
-    auto installed = [&](const wchar_t* family) {
-        UINT32 index = 0;
-        BOOL exists = FALSE;
-        return fonts && SUCCEEDED(fonts->FindFamilyName(family, &index, &exists)) && exists;
+    // The Mac's tip: the name and the profile chip in SF Pro semibold, the keys bold (shell/SystemFont).
+    struct Line {
+        MacWeight weight;
+        float size;
+        ComPtr<IDWriteTextFormat>& format;
+        float& cap;
     };
-    const wchar_t* text = installed(L"Segoe UI Variable Text") ? L"Segoe UI Variable Text" : L"Segoe UI";
-    auto format = [&](const wchar_t* family, DWRITE_FONT_WEIGHT weight, float size, ComPtr<IDWriteTextFormat>& out) {
-        HRESULT made = dwrite->CreateTextFormat(family, nullptr, weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"",
-                                                out.GetAddressOf());
-        if (SUCCEEDED(made)) made = out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        return made;
-    };
-    HRESULT hr = S_OK;
-    // Bold: SF's semibold (the name's and the chip's) inks as heavy as Segoe's bold (the UI
-    // gate's stems), as the keys' bold does.
-    if (FAILED(hr = format(text, DWRITE_FONT_WEIGHT_BOLD, T::kNameFontSize, view->nameFormat_)) ||
-        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_BOLD, T::kChipFontSize, view->chipFormat_)) ||
-        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_BOLD, T::kKeyFontSize, view->keyFormat_))) {
-        error = HResultMessage(L"CreateTextFormat", hr);
-        return nullptr;
-    }
-    // Each format's cap height, so a line's capitals (and digits) sit in the middle of what holds
-    // them, as SF's do in SwiftUI's centred line boxes.
-    auto capHeight = [&](IDWriteTextFormat* f, DWRITE_FONT_WEIGHT weight) -> float {
-        ComPtr<IDWriteFontFamily> family;
-        ComPtr<IDWriteFont> font;
-        UINT32 index = 0;
-        BOOL exists = FALSE;
-        DWRITE_FONT_METRICS metrics{};
-        if (!fonts || FAILED(fonts->FindFamilyName(text, &index, &exists)) || !exists ||
-            FAILED(fonts->GetFontFamily(index, family.GetAddressOf())) ||
-            FAILED(family->GetFirstMatchingFont(weight, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, font.GetAddressOf()))) {
-            return f->GetFontSize() * 0.7f;
+    for (const Line& line : {Line{MacWeight::Semibold, T::kNameFontSize, view->nameFormat_, view->nameCap_},
+                             Line{MacWeight::Semibold, T::kChipFontSize, view->chipFormat_, view->chipCap_},
+                             Line{MacWeight::Bold, T::kKeyFontSize, view->keyFormat_, view->keyCap_}}) {
+        HRESULT hr = system_font::CreateTextFormat(dwrite, line.weight, line.size, line.format);
+        if (SUCCEEDED(hr)) hr = line.format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        if (FAILED(hr)) {
+            error = HResultMessage(L"CreateTextFormat", hr);
+            return nullptr;
         }
-        font->GetMetrics(&metrics);
-        return f->GetFontSize() * metrics.capHeight / std::max<float>(metrics.designUnitsPerEm, 1);
-    };
-    view->nameCap_ = capHeight(view->nameFormat_.Get(), DWRITE_FONT_WEIGHT_BOLD);
-    view->chipCap_ = capHeight(view->chipFormat_.Get(), DWRITE_FONT_WEIGHT_BOLD);
-    view->keyCap_ = capHeight(view->keyFormat_.Get(), DWRITE_FONT_WEIGHT_BOLD);
+        // Its cap height, so a line's capitals (and digits) sit in the middle of what holds them,
+        // as SF's do in SwiftUI's centred line boxes.
+        line.cap = system_font::CapHeight(dwrite, line.weight, line.size);
+    }
     const HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(owner, GWLP_HINSTANCE));
     if (!RegisterOnce(instance, &SpaceTipView::WindowProc)) {
         error = L"registering the space tip's window class failed";

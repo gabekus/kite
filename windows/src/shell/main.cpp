@@ -79,6 +79,9 @@
 //                            Mac's KITE_TEST_CONTEXT_MENU logs one.
 //   Kite.exe --capture FILE.png --run-command ID
 //                            the same after the command ID (pinTab, say) ran, as its shortcut runs it.
+//   Kite.exe --capture FILE.png --static-font
+//                            the same in Windows 10's text face (Segoe UI's named weights, no axes;
+//                            shell/SystemFont) on any machine.
 //   Kite.exe --capture FILE.png --new-item-menu
 //                            the same with the space bar's + menu open over its button, as a click
 //                            there opens it (Windows' own menu, read back from its window); its line
@@ -168,6 +171,7 @@
 #include "shell/MainWindow.h"
 #include "shell/PerfLog.h"
 #include "shell/QuietRun.h"
+#include "shell/SystemFont.h"
 #include "shell/Text.h"
 
 namespace {
@@ -325,7 +329,7 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // prefixes; so no argument Chromium could read as a switch gets past this, not even as a
     // value (core/CommandLine.h).
     kite::command_line::Spec spec;
-    spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control", "--favicons", "--empty-favorites-hover", "--new-item-menu"};
+    spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control", "--favicons", "--empty-favorites-hover", "--new-item-menu", "--static-font"};
     spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log", "--rename-row", "--hover-row", "--row-menu", "--favorite-menu", "--run-command", "--find", "--find-result", "--occlusion-log", "--icon-picker", "--pick-icon", "--create-space", "--create-space-about", "--create-space-theme"};
     // Its value is switches ("--a --b"), each checked against the allow-list below; Chromium's
     // raw read sees them too, so only allowed ones get this far.
@@ -554,6 +558,11 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // it's for typed in and a preset picked from Choose a Theme's swatches (from 1).
     const bool heldNewItemMenu = HasFlag(args, L"--new-item-menu");
     if (heldNewItemMenu && !captureOption.present) return Fail(quiet, L"--new-item-menu only goes with --capture", kUsage);
+    // Windows 10's text face, before any view makes a format.
+    if (HasFlag(args, L"--static-font")) {
+        if (!captureOption.present) return Fail(quiet, L"--static-font only goes with --capture", kUsage);
+        kite::system_font::UseStaticForTesting();
+    }
     const OptionValue createSpaceOption = Option(args, L"--create-space");
     const OptionValue createAboutOption = Option(args, L"--create-space-about");
     const OptionValue createThemeOption = Option(args, L"--create-space-theme");

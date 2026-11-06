@@ -7,6 +7,7 @@
 #include <optional>
 
 #include "shell/Errors.h"
+#include "shell/SystemFont.h"
 #include "shell/SpaceIconPainter.h"
 #include "shell/Text.h"
 
@@ -36,14 +37,7 @@ wchar_t GlyphOf(const std::string& symbol) {
 std::unique_ptr<SidebarTopRowView> SidebarTopRowView::Create(HWND window, IDWriteFactory* dwrite, bool tooltips, std::wstring& error) {
     std::unique_ptr<SidebarTopRowView> view(new SidebarTopRowView(window, tooltips));
     view->dwrite_ = dwrite;
-    ComPtr<IDWriteFontCollection> fonts;
-    dwrite->GetSystemFontCollection(fonts.GetAddressOf());
-    UINT32 index = 0;
-    BOOL fluent = FALSE;
-    if (fonts) fonts->FindFamilyName(L"Segoe Fluent Icons", &index, &fluent);
-    HRESULT hr = dwrite->CreateTextFormat(fluent ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets", nullptr, DWRITE_FONT_WEIGHT_REGULAR,
-                                          DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, M::kSymbolSize, L"",
-                                          view->iconFormat_.GetAddressOf());
+    HRESULT hr = system_font::CreateIconFormat(dwrite, system_font::IconFont::Symbols, DWRITE_FONT_WEIGHT_REGULAR, M::kSymbolSize, view->iconFormat_);
     if (SUCCEEDED(hr)) hr = view->iconFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     if (FAILED(hr)) {
         error = HResultMessage(L"CreateTextFormat (the top row)", hr);

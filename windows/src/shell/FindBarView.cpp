@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "shell/Errors.h"
+#include "shell/SystemFont.h"
 #include "shell/Text.h"
 
 using Microsoft::WRL::ComPtr;
@@ -87,34 +88,18 @@ std::unique_ptr<FindBarView> FindBarView::Create(HWND window, Callbacks callback
         error = HResultMessage(L"DWriteCreateFactory", hr);
         return nullptr;
     }
-    // The system UI font, as the Mac's bar uses SF: Segoe UI Variable on Windows 11.
-    ComPtr<IDWriteFontCollection> fonts;
-    view->dwrite_->GetSystemFontCollection(fonts.GetAddressOf());
-    auto installed = [&](const wchar_t* family) {
-        UINT32 index = 0;
-        BOOL exists = FALSE;
-        return fonts && SUCCEEDED(fonts->FindFamilyName(family, &index, &exists)) && exists;
+    // The Mac's bar sets its field in SF Pro regular and its counter in medium (shell/SystemFont).
+    auto nowrap = [](HRESULT made, ComPtr<IDWriteTextFormat>& out) {
+        return SUCCEEDED(made) ? out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP) : made;
     };
-    view->textFamily_ = installed(L"Segoe UI Variable Text") ? L"Segoe UI Variable Text" : L"Segoe UI";
-    const wchar_t* iconFamily = installed(L"Segoe Fluent Icons") ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets";
-    auto format = [&](const wchar_t* family, float size, DWRITE_FONT_WEIGHT weight, ComPtr<IDWriteTextFormat>& out) {
-        HRESULT made = view->dwrite_->CreateTextFormat(family, nullptr, weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                                                       size, L"", out.GetAddressOf());
-        if (SUCCEEDED(made)) made = out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        return made;
-    };
-    const wchar_t* text = view->textFamily_.c_str();
-    if (FAILED(hr = format(text, M::kFieldFontSize, DWRITE_FONT_WEIGHT_REGULAR, view->fieldFormat_)) ||
-        FAILED(hr = format(text, M::kCounterFontSize, DWRITE_FONT_WEIGHT_MEDIUM, view->counterFormat_)) ||
-        FAILED(hr = format(iconFamily, 13, DWRITE_FONT_WEIGHT_NORMAL, view->iconFormat_))) {
+    IDWriteFactory* dwrite = view->dwrite_.Get();
+    if (FAILED(hr = nowrap(system_font::CreateTextFormat(dwrite, MacWeight::Regular, M::kFieldFontSize, view->fieldFormat_), view->fieldFormat_)) ||
+        FAILED(hr = nowrap(system_font::CreateTextFormat(dwrite, MacWeight::Medium, M::kCounterFontSize, view->counterFormat_),
+                           view->counterFormat_)) ||
+        FAILED(hr = nowrap(system_font::CreateIconFormat(dwrite, system_font::IconFont::Symbols, DWRITE_FONT_WEIGHT_NORMAL, 13, view->iconFormat_),
+                           view->iconFormat_))) {
         error = HResultMessage(L"CreateTextFormat", hr);
         return nullptr;
-    }
-    // Segoe UI Variable has no Medium instance: its weight axis gives the counter's 500.
-    if (view->textFamily_ == L"Segoe UI Variable Text") {
-        const DWRITE_FONT_AXIS_VALUE medium{DWRITE_FONT_AXIS_TAG_WEIGHT, 500};
-        ComPtr<IDWriteTextFormat3> variable;
-        if (SUCCEEDED(view->counterFormat_->QueryInterface(IID_PPV_ARGS(variable.GetAddressOf())))) variable->SetFontAxisValues(&medium, 1);
     }
     view->iconFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     view->iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -343,7 +328,7 @@ LOGFONTW FindBarView::FieldFont() const {
     font.lfHeight = -std::lround(M::kFieldFontSize * Scale());
     font.lfWeight = FW_NORMAL;
     font.lfCharSet = DEFAULT_CHARSET;
-    lstrcpynW(font.lfFaceName, textFamily_.c_str(), LF_FACESIZE);
+    lstrcpynW(font.lfFaceName, system_font::GdiFaceName(), LF_FACESIZE);
     return font;
 }
 

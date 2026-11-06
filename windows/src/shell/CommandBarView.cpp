@@ -10,6 +10,7 @@
 
 #include "core/Unicode.h"
 #include "shell/Errors.h"
+#include "shell/SystemFont.h"
 #include "shell/Text.h"
 
 using Microsoft::WRL::ComPtr;
@@ -137,38 +138,22 @@ std::unique_ptr<CommandBarView> CommandBarView::Create(HWND window, Callbacks ca
         error = HResultMessage(L"DWriteCreateFactory", hr);
         return nullptr;
     }
-    // The system UI font, as the Mac's bar uses its own (SF Pro): Segoe UI Variable on Windows
-    // 11, Segoe UI before it. Medium, as the Mac's field and rows.
-    ComPtr<IDWriteFontCollection> fonts;
-    view->dwrite_->GetSystemFontCollection(fonts.GetAddressOf());
-    auto installed = [&](const wchar_t* family) {
-        UINT32 index = 0;
-        BOOL exists = FALSE;
-        return fonts && SUCCEEDED(fonts->FindFamilyName(family, &index, &exists)) && exists;
-    };
-    view->textFamily_ = installed(L"Segoe UI Variable Text") ? L"Segoe UI Variable Text" : L"Segoe UI";
-    const wchar_t* iconFamily = installed(L"Segoe Fluent Icons") ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets";
-    auto format = [&](const wchar_t* family, float size, ComPtr<IDWriteTextFormat>& out) {
-        HRESULT made = view->dwrite_->CreateTextFormat(family, nullptr, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_STYLE_NORMAL,
-                                                       DWRITE_FONT_STRETCH_NORMAL, size, L"", out.GetAddressOf());
+    // The Mac's bar sets its field and rows in SF Pro medium (shell/SystemFont).
+    auto format = [&](float size, ComPtr<IDWriteTextFormat>& out) {
+        HRESULT made = system_font::CreateTextFormat(view->dwrite_.Get(), MacWeight::Medium, size, out);
         if (SUCCEEDED(made)) made = out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         return made;
     };
-    const wchar_t* text = view->textFamily_.c_str();
-    if (FAILED(hr = format(text, C::kFieldFontSize, view->fieldFormat_)) || FAILED(hr = format(text, C::kRowFontSize, view->rowFormat_)) ||
-        FAILED(hr = format(text, C::kRowFontSize, view->rowEllipsisFormat_)) ||
-        FAILED(hr = format(iconFamily, C::kRowIconSize, view->iconFormat_)) || FAILED(hr = format(iconFamily, 13, view->arrowFormat_))) {
+    auto icon = [&](float size, ComPtr<IDWriteTextFormat>& out) {
+        HRESULT made = system_font::CreateIconFormat(view->dwrite_.Get(), system_font::IconFont::Symbols, DWRITE_FONT_WEIGHT_MEDIUM, size, out);
+        if (SUCCEEDED(made)) made = out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        return made;
+    };
+    if (FAILED(hr = format(C::kFieldFontSize, view->fieldFormat_)) || FAILED(hr = format(C::kRowFontSize, view->rowFormat_)) ||
+        FAILED(hr = format(C::kRowFontSize, view->rowEllipsisFormat_)) || FAILED(hr = icon(C::kRowIconSize, view->iconFormat_)) ||
+        FAILED(hr = icon(13, view->arrowFormat_))) {
         error = HResultMessage(L"CreateTextFormat", hr);
         return nullptr;
-    }
-    // Segoe UI Variable has no Medium instance, so DirectWrite would match Regular: its weight
-    // axis gives the Mac's medium (500) where DirectWrite can set it (Windows 10 1809+).
-    if (view->textFamily_ == L"Segoe UI Variable Text") {
-        const DWRITE_FONT_AXIS_VALUE medium{DWRITE_FONT_AXIS_TAG_WEIGHT, 500};
-        for (IDWriteTextFormat* textFormat : {view->fieldFormat_.Get(), view->rowFormat_.Get(), view->rowEllipsisFormat_.Get()}) {
-            ComPtr<IDWriteTextFormat3> variable;
-            if (SUCCEEDED(textFormat->QueryInterface(IID_PPV_ARGS(variable.GetAddressOf())))) variable->SetFontAxisValues(&medium, 1);
-        }
     }
     // Icons sit in the middle of their tile or box.
     for (IDWriteTextFormat* icons : {view->iconFormat_.Get(), view->arrowFormat_.Get()}) {
@@ -687,7 +672,7 @@ void CommandBarView::PlaceImeWindow() {
     font.lfHeight = -std::lround(C::kFieldFontSize * scale);
     font.lfWeight = FW_MEDIUM;
     font.lfCharSet = DEFAULT_CHARSET;
-    lstrcpynW(font.lfFaceName, textFamily_.c_str(), LF_FACESIZE);
+    lstrcpynW(font.lfFaceName, system_font::GdiFaceName(), LF_FACESIZE);
     line_.PlaceIme(caret, std::lround(line_.LineHeight() * scale), &font);
 }
 

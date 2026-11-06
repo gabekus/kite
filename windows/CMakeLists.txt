@@ -70,6 +70,7 @@ add_library(KiteCoreWin STATIC
   src/core/SpaceIconPicker.cpp
   src/core/SymbolShape.cpp
   src/core/TextMatch.cpp
+  src/core/TextWeight.cpp
   src/core/PictureLoads.cpp
   src/core/PinnedTree.cpp
   src/core/PinnedURL.cpp
@@ -187,6 +188,7 @@ if(WIN32)
     src/shell/ContextMenu.cpp
     src/shell/SidebarMenus.cpp
     src/shell/SpaceTipView.cpp
+    src/shell/SystemFont.cpp
     src/shell/ThemeSwatchesView.cpp
     src/shell/TextEditing.cpp
     src/shell/TextField.cpp
@@ -384,6 +386,7 @@ add_executable(KiteCoreTests
   tests/SupportDirectoryTests.cpp
   tests/ThemeBackdropTests.cpp
   tests/ThemeTests.cpp
+  tests/TextWeightTests.cpp
   tests/TitleBarTests.cpp
   tests/UnicodeTests.cpp
   tests/URLInputTests.cpp

@@ -8,6 +8,7 @@
 #include <cmath>
 
 #include "shell/Errors.h"
+#include "shell/SystemFont.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -46,14 +47,8 @@ std::unique_ptr<CaptionButtonsView> CaptionButtonsView::Create(HWND window, std:
         return nullptr;
     }
     // Segoe Fluent Icons on Windows 11, Segoe MDL2 Assets (the same code points) on Windows 10.
-    ComPtr<IDWriteFontCollection> fonts;
-    dwrite->GetSystemFontCollection(fonts.GetAddressOf());
-    UINT32 index = 0;
-    BOOL fluent = FALSE;
-    if (fonts) fonts->FindFamilyName(L"Segoe Fluent Icons", &index, &fluent);
     ComPtr<IDWriteTextFormat> format;
-    hr = dwrite->CreateTextFormat(fluent ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets", nullptr, DWRITE_FONT_WEIGHT_REGULAR,
-                                  DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, T::kGlyphSize, L"", format.GetAddressOf());
+    hr = system_font::CreateIconFormat(dwrite.Get(), system_font::IconFont::Symbols, DWRITE_FONT_WEIGHT_REGULAR, T::kGlyphSize, format);
     if (SUCCEEDED(hr)) hr = format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     if (SUCCEEDED(hr)) hr = format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     for (int g = 0; g < 4 && SUCCEEDED(hr); ++g) {

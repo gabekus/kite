@@ -10,6 +10,7 @@
 
 #include "core/SymbolShape.h"
 #include "shell/Errors.h"
+#include "shell/SystemFont.h"
 #include "shell/FrameClock.h"
 #include "shell/Text.h"
 
@@ -50,8 +51,7 @@ std::unique_ptr<SpaceBarView> SpaceBarView::Create(IDWriteFactory* dwrite, Space
     std::unique_ptr<SpaceBarView> view(new SpaceBarView());
     view->dwrite_ = dwrite;
     view->painter_ = painter;
-    HRESULT hr = dwrite->CreateTextFormat(L"Segoe UI Emoji", nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL,
-                                          DWRITE_FONT_STRETCH_NORMAL, kEmojiFontSize, L"", view->emojiFormat_.GetAddressOf());
+    HRESULT hr = system_font::CreateIconFormat(dwrite, system_font::IconFont::Emoji, DWRITE_FONT_WEIGHT_REGULAR, kEmojiFontSize, view->emojiFormat_);
     if (SUCCEEDED(hr)) hr = view->emojiFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     if (FAILED(hr)) {
         error = HResultMessage(L"CreateTextFormat", hr);

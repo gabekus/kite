@@ -206,6 +206,7 @@
 #include "core/HistoryStore.h"
 #include "core/FindBar.h"
 #include "core/TextUndo.h"
+#include "core/TextWeight.h"
 #include "core/KeyBindings.h"
 #include "core/ProfileSettings.h"
 #include "core/StoreFile.h"
@@ -289,7 +290,8 @@ int Usage() {
         "       kitecore history chromium-date MICROSECONDS\n"
         "       kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]\n"
         "       kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY\n"
-        "       kitecore chromium-switches [--existing-enable LIST] [--existing-disable LIST] [--NAME[=VALUE]...]\n",
+        "       kitecore chromium-switches [--existing-enable LIST] [--existing-disable LIST] [--NAME[=VALUE]...]\n"
+        "       kitecore text-weight [regular|medium|semibold|bold] [SIZE...]\n",
         stderr);
     return kUsage;
 }
@@ -962,6 +964,37 @@ int main(int argc, char** argv) {
                                            {"disableFeatures", json::Value(disable)},
                                            {"problem", json::Value(chromium_switches::FeatureProblem(requested, cefEnable, cefDisable, enable, disable))}})
                       .c_str());
+        return kOk;
+    }
+
+    if (args[0] == "text-weight") {
+        // Needs no profile: how the Mac's SF Pro weights are set on Windows (core/TextWeight.h),
+        // for each weight (or the one named) at each size (default the sizes Kite sets text at).
+        std::vector<MacWeight> weights(std::begin(text_weight::kAllWeights), std::end(text_weight::kAllWeights));
+        std::vector<float> sizes;
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (const auto weight = text_weight::ParseWeight(args[i]); weight && i == 1) {
+                weights = {*weight};
+                continue;
+            }
+            float size = 0;
+            const auto [end, error] = std::from_chars(args[i].data(), args[i].data() + args[i].size(), size);
+            if (error != std::errc() || end != args[i].data() + args[i].size() || !(size > 0 && size <= 1000)) return Usage();
+            sizes.push_back(size);
+        }
+        if (sizes.empty()) sizes = {11, 11.5f, 12, 13, 14, 15, 17, 18};
+        json::Array rows;
+        for (const MacWeight weight : weights) {
+            for (const float size : sizes) {
+                const text_weight::VariableSetting variable = text_weight::Variable(weight, size);
+                rows.push_back(json::Object{{"weight", std::string(text_weight::Name(weight))},
+                                            {"size", static_cast<double>(size)},
+                                            {"variable", json::Object{{"wght", static_cast<double>(variable.weight)},
+                                                                      {"opsz", static_cast<double>(variable.opticalSize)}}},
+                                            {"static", text_weight::StaticWeight(weight)}});
+            }
+        }
+        std::puts(json::Write(json::Value(std::move(rows))).c_str());
         return kOk;
     }
 

@@ -182,7 +182,6 @@ private:
     Microsoft::WRL::ComPtr<IDWriteTextFormat> iconFormat_, arrowFormat_;  // Segoe Fluent Icons / MDL2 Assets
     Microsoft::WRL::ComPtr<IDWriteInlineObject> ellipsis_;
     Microsoft::WRL::ComPtr<ID2D1StrokeStyle1> roundStroke_;
-    std::wstring textFamily_;
 
     // GPU.
     Microsoft::WRL::ComPtr<IDCompositionDevice> composition_;  // the compositor's

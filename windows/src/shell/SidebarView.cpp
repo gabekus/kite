@@ -13,6 +13,7 @@
 #include "core/SymbolShape.h"
 #include "shell/Errors.h"
 #include "shell/FrameClock.h"
+#include "shell/SystemFont.h"
 #include "shell/Text.h"
 
 using Microsoft::WRL::ComPtr;
@@ -121,30 +122,24 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
         error = HResultMessage(L"DWriteCreateFactory", hr);
         return nullptr;
     }
-    // The system UI font for the Mac's SF Pro, as the command bar: Segoe UI Variable on
-    // Windows 11, Segoe UI before it. Both have Regular and Semibold.
-    ComPtr<IDWriteFontCollection> fonts;
-    view->dwrite_->GetSystemFontCollection(fonts.GetAddressOf());
-    auto installed = [&](const wchar_t* family) {
-        UINT32 index = 0;
-        BOOL exists = FALSE;
-        return fonts && SUCCEEDED(fonts->FindFamilyName(family, &index, &exists)) && exists;
-    };
-    const wchar_t* text = installed(L"Segoe UI Variable Text") ? L"Segoe UI Variable Text" : L"Segoe UI";
-    auto format = [&](const wchar_t* family, DWRITE_FONT_WEIGHT weight, float size, ComPtr<IDWriteTextFormat>& out) {
-        HRESULT made = view->dwrite_->CreateTextFormat(family, nullptr, weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size,
-                                                       L"", out.GetAddressOf());
+    // The Mac's SF Pro at its weights (shell/SystemFont).
+    auto format = [&](MacWeight weight, float size, ComPtr<IDWriteTextFormat>& out) {
+        HRESULT made = system_font::CreateTextFormat(view->dwrite_.Get(), weight, size, out);
         if (SUCCEEDED(made)) made = out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         return made;
     };
-    if (FAILED(hr = format(text, DWRITE_FONT_WEIGHT_REGULAR, M::kUrlFieldFontSize, view->addressFormat_)) ||
-        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kHeaderFontSize, view->headerFormat_)) ||
-        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kDoneFontSize, view->doneFormat_)) ||
-        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_REGULAR, M::kTabFontSize, view->tabFormat_)) ||
-        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kTabFontSize, view->folderFormat_)) ||
-        FAILED(hr = format(L"Segoe UI Emoji", DWRITE_FONT_WEIGHT_REGULAR, kHeaderEmojiFontSize, view->emojiFormat_)) ||
-        FAILED(hr = format(installed(L"Segoe Fluent Icons") ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets", DWRITE_FONT_WEIGHT_REGULAR,
-                           M::kIconSize, view->iconFormat_))) {
+    auto icons = [&](system_font::IconFont font, float size, ComPtr<IDWriteTextFormat>& out) {
+        HRESULT made = system_font::CreateIconFormat(view->dwrite_.Get(), font, DWRITE_FONT_WEIGHT_REGULAR, size, out);
+        if (SUCCEEDED(made)) made = out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        return made;
+    };
+    if (FAILED(hr = format(MacWeight::Regular, M::kUrlFieldFontSize, view->addressFormat_)) ||
+        FAILED(hr = format(MacWeight::Semibold, M::kHeaderFontSize, view->headerFormat_)) ||
+        FAILED(hr = format(MacWeight::Semibold, M::kDoneFontSize, view->doneFormat_)) ||
+        FAILED(hr = format(MacWeight::Regular, M::kTabFontSize, view->tabFormat_)) ||
+        FAILED(hr = format(MacWeight::Semibold, M::kTabFontSize, view->folderFormat_)) ||
+        FAILED(hr = icons(system_font::IconFont::Emoji, kHeaderEmojiFontSize, view->emojiFormat_)) ||
+        FAILED(hr = icons(system_font::IconFont::Symbols, M::kIconSize, view->iconFormat_))) {
         error = HResultMessage(L"CreateTextFormat", hr);
         return nullptr;
     }
