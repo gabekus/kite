@@ -26,10 +26,9 @@ constexpr float kLabelAlpha = 0.85f;
 // Room around the body for its edge, in points.
 constexpr float kMargin = 1;
 
-D2D1_COLOR_F Srgb(int r, int g, int b, float a = 1) { return D2D1_COLOR_F{r / 255.0f, g / 255.0f, b / 255.0f, a}; }
-// Arc's PopoverBackground, as the find bar's popover colours, and its edge.
-D2D1_COLOR_F Fill(bool dark) { return dark ? Srgb(0x15, 0x1C, 0x30) : Srgb(0xFA, 0xFB, 0xFF); }
-D2D1_COLOR_F Edge(bool dark) { return dark ? D2D1_COLOR_F{1, 1, 1, 0.12f} : D2D1_COLOR_F{0, 0, 0, 0.12f}; }
+// NSPopover's material, as the picker's (PopoverWindow's): the Mac's theme editor is a plain popover.
+D2D1_COLOR_F Fill(bool dark) { return PopoverFill(dark); }
+D2D1_COLOR_F Edge(bool dark) { return PopoverEdge(dark); }
 
 }  // namespace
 

@@ -206,7 +206,9 @@ constexpr float kSwatchPitch = 29.5f;
 constexpr float kSwatchRing = 1.5f;      // white at 25%, inside the edge
 constexpr float kSwatchRingOpacity = 0.25f;
 constexpr float kChevronSize = 15, kChevronOpacity = 0.3f;
-constexpr float kArrowWidth = 18, kArrowDepth = 9;  // NSPopover's arrow, pointing at the row
+// NSPopover's arrow, pointing at the row: 13pt deep, as the UI gate measured the picker's and the
+// theme editor's (the window is the content plus 13pt a side, its leading edge at the row's).
+constexpr float kArrowWidth = 18, kArrowDepth = 13;
 constexpr float kCornerRadius = 10;
 constexpr float kHeight = kInset + kSwatchButton + kInset;
 }  // namespace theme_swatches_metrics

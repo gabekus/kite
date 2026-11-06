@@ -357,7 +357,7 @@ TEST(theSwatchesSitInTheEditorsPresetRow) {
     CHECK(ThemeSwatchAt(l, 48.5f, 12.5f) == std::nullopt);
     CHECK(ThemeSwatchAt(l, 48 + 6 * T::kSwatchPitch + 12, 24) == std::optional<size_t>(6));
     CHECK(ThemeSwatchAt(l, 330, 24) == std::nullopt);
-    // Off the row's trailing edge, past the arrow, level with the row.
+    // Off the row's trailing edge, past NSPopover's 13pt arrow (the UI gate), level with the row.
     const SwatchesPlacement at = PlaceThemeSwatches(BarRect{14, 365, 226, 401}, l);
-    CHECK(Near(at.left, 235) && Near(at.top, 359) && Near(at.arrowY, 24));
+    CHECK(Near(at.left, 239) && Near(at.top, 359) && Near(at.arrowY, 24));
 }

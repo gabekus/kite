@@ -322,7 +322,7 @@ std::wstring BrowserWindowController::Init() {
     swatches_->onDeviceLost = [this] { Draw(); };
     showNewItemMenu_ = [this](const std::vector<NewItemMenuItem>& items, POINT screen) -> std::optional<NewItemMenuItem::Command> {
         const std::optional<size_t> chosen =
-            ShowContextMenu(window_.Handle(), NewItemEntries(items), screen, dark_.value_or(true), ContextMenuPlacement::AboveCentred);
+            ShowContextMenu(window_.Handle(), NewItemEntries(items), screen, PopoverDark(), ContextMenuPlacement::AboveCentred);
         if (!chosen || *chosen >= items.size()) return std::nullopt;
         return items[*chosen].command;
     };
@@ -1220,6 +1220,13 @@ void BrowserWindowController::Commit(const CommandSuggestion& row, CommandBarMod
 
 // MARK: Find in page
 
+bool BrowserWindowController::PopoverDark() const {
+    // NSPopover takes NSApp's appearance (Kite's Appearance setting, else the system's), not the
+    // sidebar's per-theme one: the UI gate's Mac picker and theme editor are dark over a light
+    // theme. The find bar's rule, and the + menu's (an NSPopover on the Mac: NewItemMenu).
+    return FindBarDark();
+}
+
 bool BrowserWindowController::FindBarDark() const {
     const json::Value* appearance = nullptr;
     if (auto it = state_.extra.find("pageAppearance"); it != state_.extra.end()) appearance = &it->second;
@@ -1982,6 +1989,9 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         // The system's light or dark mode changed: the bar follows (pageAppearance automatic).
         if (message == WM_SETTINGCHANGE && lParam && std::wstring_view(reinterpret_cast<const wchar_t*>(lParam)) == L"ImmersiveColorSet") {
             findBar_->SetDark(FindBarDark());
+            // And an open popover (NSApp's appearance, as the find bar's).
+            if (iconPicker_) iconPicker_->SetDark(PopoverDark());
+            if (swatches_) swatches_->SetDark(PopoverDark());
         }
     }
     if (sidebar_->HandleMouse(message, wParam, lParam)) return true;

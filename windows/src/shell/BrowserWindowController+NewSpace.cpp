@@ -89,7 +89,7 @@ void BrowserWindowController::ShowThemeSwatches(const BarRect& row) {
     GiveKeyboard(KeyboardField::ThemeSwatches);
     // Open closes the popover before it (the Mac's present): the keyboard stays its throughout.
     openingSwatches_ = true;
-    const std::wstring problem = swatches_->Open(row, window_.Dpi(), dark_.value_or(true), std::move(accents));
+    const std::wstring problem = swatches_->Open(row, window_.Dpi(), PopoverDark(), std::move(accents));
     openingSwatches_ = false;
     // A failure, or lost on the way (a GPU lost in its draw): nothing holds the keyboard.
     if (!problem.empty() || !swatches_->IsOpen()) {
@@ -107,9 +107,8 @@ void BrowserWindowController::ShowThemeSwatches(const BarRect& row) {
 void BrowserWindowController::PickSpaceTheme(size_t preset) {
     if (!creation_ || !ChooseSpaceTheme(state_, creation_, creation_->spaceID, preset)) return;
     // The backdrop crossfades to it (SyncSpace), the sidebar takes its appearance, and it's saved
-    // soon. The popover stays open, in the new appearance.
+    // soon. The popover stays open, in Kite's appearance (not the space's).
     StateChanged();
-    if (swatches_) swatches_->SetDark(dark_.value_or(true));
 }
 
 void BrowserWindowController::CloseThemeSwatches(bool handBack) {

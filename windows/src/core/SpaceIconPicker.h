@@ -42,11 +42,14 @@ constexpr float kIconGridTop = 12;
 constexpr float kDividerThickness = 1;
 // AppKit's own controls and the popover's frame, which the Mac doesn't size itself: AppKit's
 // regular segmented control and rounded-border field, SF's trash at 14pt, NSPopover's arrow and
-// corners. Estimates until the UI gate measures the Mac's (review/w9e-mac-request).
+// corners. The UI gate (review/w9e-mac) measured the arrow: NSPopover's window is its content
+// plus 13pt on every side (298x294 for the Emoji tab's 272x268), its top at the arrow's tip, and
+// the tabs 25pt under it. The arrow's width and the corners aren't in the in-process capture.
 constexpr float kTabsHeight = 22;
 constexpr float kSearchHeight = 22;
+constexpr float kSearchBezelInset = 1;  // the rounded-border field draws its bezel 1pt in from its frame
 constexpr float kRemoveWidth = 15;
-constexpr float kArrowHeight = 11, kArrowWidth = 22;
+constexpr float kArrowHeight = 13, kArrowWidth = 22;
 constexpr float kCornerRadius = 10;
 // How far from the screen's edge AppKit keeps a popover.
 constexpr float kScreenMargin = 4;
@@ -185,5 +188,28 @@ struct IconPickerPlacement {
     bool operator==(const IconPickerPlacement&) const = default;
 };
 IconPickerPlacement PlaceIconPicker(const PickerRect& anchor, float contentWidth, float contentHeight, const PickerRect& screen);
+
+// An Icon tab symbol's ink as the Mac draws it (16pt semibold), which its Segoe stand-in is fitted
+// to: the ink's box (Segoe's is scaled so its sides' geometric mean is this box's), the ink's
+// middle from the cell's, and how much heavier it's drawn (its outline stroked this wide, in
+// points) where Segoe's stand-in is lighter than SF's at the same box. Measured in the UI gate
+// (review/w9e-mac picker-icon, the 28 symbols its capture shows: columns 5-8); the other 28 take
+// those's medians (`measured` false). Matched by box, area, weight and centre; no SF Symbol traced.
+struct IconTabInk {
+    float width = 0, height = 0;  // the ink's box, points
+    float dx = 0, dy = 0;         // its middle from the cell's
+    float stroke = 0;             // extra weight: the outline stroked this wide too
+    bool measured = false;
+};
+IconTabInk IconTabInkFor(std::string_view symbol);
+
+// The category bar's and the bin's symbols (regular 14pt on the Mac): their size as a fraction of
+// the bar's (briefcase) factor at 14pt, and an outline stroke for weight, per symbol. The UI gate
+// measured the lightbulb, heart, flag, car and trash; the rest take 0.78 and no stroke.
+struct BarGlyphFit {
+    float scale = 0.78f;
+    float stroke = 0;
+};
+BarGlyphFit BarGlyphFitFor(std::string_view symbol);
 
 }  // namespace kite

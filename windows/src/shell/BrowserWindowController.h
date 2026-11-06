@@ -496,6 +496,8 @@ private:
     void UpdateFindHole();
     // The app's appearance (the session's pageAppearance, else the system's apps' mode).
     bool FindBarDark() const;
+    // The icon picker's and Choose a Theme's popovers: Kite's appearance, as NSPopover's.
+    bool PopoverDark() const;
     // Which of Kite's fields has the keyboard (Windows has one system caret a thread, and the
     // Mac one first responder a window): the command bar's while it's open, else a rename's, else
     // the find bar's, else the icon picker's Search, else Create a Space's fields', else none (the

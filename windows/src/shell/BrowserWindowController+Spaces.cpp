@@ -169,7 +169,7 @@ void BrowserWindowController::ShowIconPicker(const std::string& spaceID) {
     openingIconPicker_ = true;
     const std::wstring problem = iconPicker_->Open(std::move(*picker), state_.spaces[*index].icon,
                                                    PickerRect{anchor->left, anchor->top, anchor->right, anchor->bottom}, window_.Dpi(),
-                                                   dark_.value_or(true));
+                                                   PopoverDark());
     openingIconPicker_ = false;
     // Lost on the way (a GPU lost in Open's own redraw rebuilds everything, which closes it) is a
     // failure too: no picker, so nothing to hold the keyboard or the header's slot.
