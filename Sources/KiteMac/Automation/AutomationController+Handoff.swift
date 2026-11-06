@@ -19,9 +19,13 @@ extension AutomationController {
             steps.append(step)
         }
         let handoff = Handoff(id: id, reason: request.reason, session: sessionFolders[connection], steps: steps)
+        if let tab = steps.first?.tab { Trace.span?.set("tab", .string(tab.uuidString)) }
         handoffConnections[id] = connection
         handoffs = Handoff.pruned(handoffs + [handoff])
         saveHandoffs()
+        Trace.event("handoff.created", connection: connection, session: handoff.session,
+                    ["handoff": .string(id), "steps": .number(Double(steps.count))])
+        for tab in Set(steps.compactMap(\.tab)) { Trace.event("tab.state", tab: tab, connection: connection, ["state": "needs_you"]) }
         // Take the user to the first step's tab (now, or once they stop typing in Kite): a step on a tab that isn't in
         // front shows them nothing.
         let lead = leadToStep(of: id)
@@ -52,7 +56,9 @@ extension AutomationController {
             // A fresh look first, so a step Claude just unblocked (or the page did) isn't reported from an old one.
             await lookAtSteps(handoff.id, attempts: 1)
         }
-        return try await handoffReport(handoff.id, wait: cancel ? 0 : wait, reportBlockedAfter: UserHandoff.blockedReportDelay)
+        return try await Trace.measure("user") {
+            try await handoffReport(handoff.id, wait: cancel ? 0 : wait, reportBlockedAfter: UserHandoff.blockedReportDelay)
+        }
     }
 
     /// Waits up to `wait` seconds for the user to end every step, then reports. A step that has been blocked for
@@ -164,6 +170,8 @@ extension AutomationController {
         guard let index = handoffs.firstIndex(where: { $0.id == id }) else { return }
         let before = handoffs[index]
         change(&handoffs[index])
+        // The one place a step ends (done, skipped, withdrawn), for the trace.
+        traceStepChanges(from: before, to: handoffs[index])
         // Saved: what the user or Claude did, and the steps' pages and tabs; not what the ring found.
         if handoffs[index].steps.map({ [$0.state.rawValue, $0.url, $0.tab?.uuidString] }) != before.steps.map({ [$0.state.rawValue, $0.url, $0.tab?.uuidString] }) {
             saveHandoffs()
@@ -171,6 +179,25 @@ extension AutomationController {
     }
 
     private func handoffID(of step: String) -> String { String(step.prefix { $0 != "." }) }
+
+    /// Steps that ended between two versions of a handoff, as trace events: how (click, value, done, skip,
+    /// withdrawn), and how long after the handoff was made. The agent's next call measures its reaction from here.
+    private func traceStepChanges(from before: Handoff, to after: Handoff) {
+        guard Trace.isEnabled else { return }
+        for step in after.steps {
+            guard step.state != .waiting, before.steps.first(where: { $0.id == step.id })?.state == .waiting else { continue }
+            let how = step.how ?? ""
+            let token = how.contains("withdrew") ? "withdrawn" : how.contains("skipped") ? "skip" : how.contains("Done") ? "done"
+                : how.contains("changed") ? "value" : how.contains("clicked") ? "click" : how.contains("navigat") ? "navigation" : "other"
+            let connection = handoffConnections[after.id]
+            Trace.event(step.state == .skipped ? "handoff.step_skipped" : "handoff.step_done", tab: step.tab,
+                        actor: token == "withdrawn" ? Trace.actor ?? .user : token == "other" ? .kite : .user,
+                        connection: connection, session: after.session,
+                        ["handoff": .string(after.id), "step": .number(Double(step.number)), "how": .string(token),
+                         "since_created_ms": .number((Date().timeIntervalSince(after.created) * 1000).rounded())])
+            if token != "withdrawn" { Trace.stepFinished(connection: connection) }
+        }
+    }
 
     /// Handoffs `connection` made that ended since it last heard about them: the line its next tool result carries, so
     /// it picks up at once even if it wasn't waiting in handoff_status.
@@ -197,6 +224,7 @@ extension AutomationController {
               let tab = step.tab else { return nil }
         guard userIsBusy else {
             bringForward(tab)
+            Trace.event("handoff.step_shown", tab: tab, actor: .kite, ["handoff": .string(id), "step": .number(Double(step.number))])
             return (step, tab, true)
         }
         handoffLead = Task { [weak self] in
@@ -474,6 +502,10 @@ extension AutomationController {
                 let reason = handoffs.first { $0.id == handoffID(of: step.id) }?.reason
                 let at = store.state.tab(id)?.url
                 guard let state = await ringLook(step, why: reason, scroll: first, probe: false, tab: id, actions: actions) else { continue }
+                if first, state.found {
+                    Trace.event("handoff.step_ringed", tab: id, actor: .kite,
+                                ["handoff": .string(handoffID(of: step.id)), "step": .number(Double(step.number))])
+                }
                 ringShown[id] = step.id
                 let handoff = handoffID(of: step.id)
                 if let done = state.done {

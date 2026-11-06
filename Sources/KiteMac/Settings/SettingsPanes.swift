@@ -556,6 +556,9 @@ struct AdvancedPane: View {
                 CommandToggle("Ask Claude in the Claude App", #selector(AppDelegate.toggleClaudeRunsInDesktop(_:)))
                 SettingsSeparator()
                 CommandToggle("Diagnostics for Claude", #selector(AppDelegate.toggleClaudeDiagnostics(_:)))
+                SettingsSeparator()
+                // The action trace (docs/action-trace.md): timings of Claude's calls and your browsing, kept on this Mac.
+                DefaultsToggle("Record Action Trace (timings, kept on this Mac)", key: Trace.disabledKey, inverted: true)
             }
         }
     }

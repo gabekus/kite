@@ -67,6 +67,11 @@ enum PageEvent {
     case permissionRequest(PermissionRequest)
     /// The engine dropped the prompt with this id itself (the page navigated or closed).
     case permissionRequestCancelled(id: Int)
+    /// An action trace event the page saw (a dialog shown or answered): the pool adds the tab and drops it in a
+    /// private window. `attrs` are already safe (`Trace.event`).
+    case trace(String, [String: JSONValue], duration: Double?, start: (t: Double, m: Double))
+    /// A report from the trace's page script (`TraceInputScript`), raw: `TracePageInput` reads it.
+    case traceInput(String)
 }
 
 /// A site's permission request waiting for an answer. `respond(true)` allows and `false` blocks,

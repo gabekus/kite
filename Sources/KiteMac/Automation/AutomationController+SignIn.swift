@@ -45,7 +45,13 @@ extension AutomationController {
             }
         }
 
-        let outcome = await waitForSignIn(tab.id, start: start, actions: actions)
+        let began = TraceClock.now()
+        Trace.event("sign_in.started", tab: tab.id, url: start, connection: connection)
+        // The user's time, not the page's: its polls don't count as the call's JavaScript.
+        let outcome = await Trace.measure("user") { await waitForSignIn(tab.id, start: start, actions: actions) }
+        Trace.event("sign_in.finished", tab: tab.id, url: store.state.tab(tab.id)?.url, actor: .user,
+                    duration: TraceClock.monotonic() - began.m, start: began, connection: connection,
+                    ["outcome": .string(TraceRedaction.word("\(outcome)"))])
         if isRevoked(tab.id) { throw AutomationError.stopped }
         if outcome != .signedIn {
             // Whatever the password manager (or the user) put in the form stays out of Claude's reach.
