@@ -8,6 +8,8 @@ import CEFBridge
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Chosen in main.swift before the app finishes launching.
     var engine: WebEngine!
+    /// Chromium didn't start, even after Kite started itself again, so this run is on WebKit (`EngineFallback`).
+    nonisolated(unsafe) static var engineFellBack = false
 
     private var store: BrowserStore!
     /// For Settings, which changes the search engine directly.
@@ -65,6 +67,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let tabHistory = TabHistoryStore(directory: supportDirectory.appendingPathComponent("Tab History", isDirectory: true))
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // On WebKit because Chromium didn't start: say so once the window is up, rather than show empty, signed-out pages.
+        if Self.engineFellBack {
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = EngineFallback.alertTitle
+                alert.informativeText = EngineFallback.alertText
+                alert.addButton(withTitle: "Quit Kite")
+                alert.addButton(withTitle: "Keep Using It")
+                if WindowPresenter.runModal(alert) == .alertFirstButtonReturn { NSApp.terminate(nil) }
+            }
+        }
         // Release builds check for updates (8-hourly, installing on quit); others do nothing.
         SoftwareUpdater.shared.start()
         // The login shell's PATH and claude, asked once in the background, so the first claude doesn't wait.

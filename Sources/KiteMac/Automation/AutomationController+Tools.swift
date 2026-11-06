@@ -20,6 +20,13 @@ extension AutomationController {
             let tab = try resolveTab(string)
             store.mutateWithoutUndo { $0.select(tab: tab.id) }
             return report("Switched to the tab.", tab.id)
+        case .formProfile(let request):
+            return try await formProfile(request)
+        case let .tabStatus(string, state, note):
+            let tab = try resolveTab(string)
+            setTabStatus(tab.id, state, note: note, connection: connection)
+            let shown = tabState(tab.id)?.help ?? "nothing"
+            return .text("The tab's row in the user's sidebar now says: \(shown).")
         case let .resizeWindow(width, height):
             return try resizeWindow(width: width, height: height)
         case .listDownloads:
@@ -70,6 +77,7 @@ extension AutomationController {
         }
         let tab = try resolveTab(tabArgument)
         markControlled(tab.id, connection: connection)
+        if !command.tool.isReadOnly { noteTouched(tab.id) }
         guard let host else { throw AutomationError(.failed, "Kite has no window open.") }
         let page = host.automationPage(for: tab)
         guard let driver = page.automation else { throw AutomationError(.unsupported, "This tab's engine can't be automated.") }
@@ -523,6 +531,7 @@ extension AutomationController {
             if let row = store.state.sidebarRowID(of: id) { store.reveal(row: row) }
         }
         claudeOpened.insert(id)
+        noteTouched(id)
         markControlled(id, connection: connection)
         guard let tab = store.state.tab(id) else { throw AutomationError(.failed, "Couldn't open a tab.") }
         if let url {

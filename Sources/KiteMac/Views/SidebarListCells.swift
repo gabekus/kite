@@ -393,6 +393,8 @@ final class TabRowCell: SidebarRowCell {
     private let reset = SymbolButton(symbol: "arrow.uturn.backward", pointSize: 10, weight: .semibold, label: "Back to Pinned URL")
     private let unread = DotView()
     private let needsYou = DotView()
+    /// Claude is done here: green (`ClaudeTabState`).
+    private let finished = DotView()
     private let peek = PeekBadgeView()
     private let splitPreview = FillView()
     private var ring: ClaudeRingView?
@@ -421,7 +423,11 @@ final class TabRowCell: SidebarRowCell {
         needsYou.color = { _ in .claude }
         needsYou.setAccessibilityElement(true)
         needsYou.setAccessibilityLabel("Claude needs you")
-        for view in [needsYou, unread, reset, close, peek] as [NSView] { content.addSubview(view) }
+        finished.diameter = 7
+        finished.color = { _ in .systemGreen }
+        finished.setAccessibilityElement(true)
+        finished.setAccessibilityLabel("Claude is done")
+        for view in [finished, needsYou, unread, reset, close, peek] as [NSView] { content.addSubview(view) }
         reset.toolTip = "Back to Pinned URL"
         addSubview(header)
         title.setAccessibilityElement(true)
@@ -445,6 +451,12 @@ final class TabRowCell: SidebarRowCell {
         close.action = { actions.closeTab(id) }
         reset.action = { actions.resetTab(id) }
         needsYou.toolTip = t.claudeNeedsYou
+        finished.toolTip = t.claudeDone
+        finished.setAccessibilityHelp(t.claudeDone)
+        needsYou.setAccessibilityHelp(t.claudeNeedsYou)
+        // One of three states: needs you (orange title and dot), working (the title shimmers), done (green dot).
+        title.shimmers = t.claudeControl != nil && t.claudeNeedsYou == nil
+        if !title.shimmers { title.textColor = t.claudeNeedsYou != nil ? .claude : .labelColor }
         if let badge = t.peek { peek.show(badge) }
 
         // Claude's ring around the favicon.
@@ -589,6 +601,7 @@ final class TabRowCell: SidebarRowCell {
         place(reset, width: 24, height: 24, shown: isHovered && t.canReset && !renaming)
         place(unread, width: 24, height: 24, shown: t.isUnread && !isHovered)
         place(needsYou, width: 24, height: 24, shown: t.claudeNeedsYou != nil && !renaming)
+        place(finished, width: 24, height: 24, shown: t.claudeDone != nil && t.claudeNeedsYou == nil && !renaming)
         // The spacer after the title keeps the HStack's gap on both sides of it.
         let titleEnd = trailing.isEmpty ? w - 6 - M.iconTextGap : end - M.iconTextGap
         let room = max(titleEnd - x, 0)
@@ -631,6 +644,9 @@ final class TabRowCell: SidebarRowCell {
         let menu = NSMenu()
         if t.claudeControl != nil {
             menu.add("Stop Claude") { list.claude.automation?.stop(tabs: [id]) }
+            menu.addSeparator()
+        } else if t.claudeDone != nil || t.claudeNeedsYou?.hasPrefix(ClaudeTabState.stoppedHere) == true {
+            menu.add("Clear Claude's Mark") { list.claude.automation?.clearTabMark(id) }
             menu.addSeparator()
         }
         menu.add("Add to Favorites") { store.mutate { $0.toggleFavorite(tab: id) } }

@@ -25,9 +25,10 @@ public struct MCPServer: Sendable {
     /// Forms for an account the user opens (a bank, a carrier, a supplier): what Claude fills in and what it leaves the
     /// user. Gabe's standing rule (4 Nov 2026); Kite's own Claude prompt and the setup guide carry it too.
     public static let accountForms = """
-        Forms for an account the user opens (a bank, a carrier, a supplier): fill in the ordinary details they \
-        approve (business or personal name, owner, title, addresses, phone and email, plain choices such as the \
-        account type or "no EIN") in one pass, and don't guess them: ask, or use what the site has on file. Leave \
+        Forms (an account the user opens, a sign-up, a checkout, shipping): fill in the ordinary details yourself \
+        (business or personal name, owner, title, addresses, phone and email, plain choices such as the account type \
+        or "no EIN") in one pass, from form_profile, never from emails, old orders or a guess; check an address the \
+        page already shows with form_profile check, and ask when something isn't there. Leave \
         the user every click that creates the account, agrees to terms, authorizes a credit check, verifies \
         identity or pays, and every field for an SSN, EIN or other ID number, a card or bank number, a password or \
         a one-time code: hand the account-making click over with handoff and wait on it, then fill the next page.
@@ -50,11 +51,15 @@ public struct MCPServer: Sendable {
         you never see the password. Never ask for a password or type one yourself. \
         When you stop because the user must do something themselves on a page (your safety check or their rules won't \
         let you, it needs their judgment, or a secret only they hold), call handoff instead of listing steps in chat: \
-        give the reason you stopped and each step with its tab and its control (ref, selector or visible text). Kite \
-        shows each step beside its control on the page, and nowhere else, so the user never has to come back to the \
-        chat to see what to do; a step with no control on a page (a question, a command for their computer) you ask in \
-        chat. Then call handoff_status with wait 600, again and again, \
-        until they're done, and carry on: don't end your turn while steps wait, or nothing tells you they're done. \
+        give the reason you stopped and each step with its tab and its control (ref, selector or visible text), ordered \
+        tab by tab. Kite takes the user to the first step's tab and rings each control there, and nowhere else, so the \
+        user never has to come back to the chat to see what to do; a step with no control on a page (a question, a \
+        command for their computer) you ask in chat. Then call handoff_status with wait 50, again and again, until \
+        they're done (it returns the moment they finish), and carry on at once: read the pages and fill the next \
+        page's ordinary fields; don't end your turn while steps wait, or nothing tells you they're done. \
+        Every tab you open or act on shows the user one state: working while your tools act on it, needs you (a \
+        handoff), or done: when you finish with a tab, call tab_status with state done and a note of what you did. One \
+        you leave without either turns orange for the user, "Claude stopped here". \
         To check Kite's own interface (sidebar, command bar, menus, cursors, animations), use the ui tool, not \
         screenshots of the screen or the user's mouse. \
         When the user's VPN needs to reconnect, or its SSO sign-in keeps opening tabs, use the vpn tool: \

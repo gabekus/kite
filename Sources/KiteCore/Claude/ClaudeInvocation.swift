@@ -71,8 +71,9 @@ public enum ClaudeInvocation {
         (a login form, a password or a one-time code), call sign_in on that tab. Kite shows it to the user, who signs \
         in with their password manager while you wait; then carry on. When anything else needs the user's own hands \
         on a page (a click you mustn't make, a choice that's theirs), call handoff with why you stopped and the steps, \
-        each with its control, then handoff_status with wait 600 until they're done (don't stop while steps wait): Kite \
-        shows each step beside its control. Ask anything else (a question, a command on their computer) in your reply. \(UntrustedContent.notice)
+        each with its control, ordered tab by tab, then handoff_status with wait 50 again and again until they're done \
+        (don't stop while steps wait), and carry on at once on the page their step led to: Kite takes them to each \
+        step's tab and rings its control. When you finish with a tab, call tab_status with state done and what you did. Ask anything else (a question, a command on their computer) in your reply. \(UntrustedContent.notice)
         """
 
     /// The tab the user attached to a task ("Ask about this tab").

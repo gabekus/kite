@@ -19,7 +19,7 @@ PORT="${PORT:-18795}"
 
 P=$(mktemp -d /tmp/k.XXXX)
 [[ -d "$P" ]] || { echo "profile not a directory" >&2; exit 1; }
-export KITE_SUPPORT_PATH=$P KITE_TEST_BLOCK_VIEWS_WINDOWS=1 TYPESAFE_API_KEY=x KITE_DIAGNOSTICS=1
+export KITE_SUPPORT_PATH=$P KITE_TEST_BLOCK_VIEWS_WINDOWS=1 TYPESAFE_API_KEY=x KITE_DIAGNOSTICS=1 KITE_TEST_ALLOW_FORM_PROFILE=1
 python3 "$ROOT/Tests/Browser/handoff/server.py" "$PORT" 2>/dev/null &
 SERVER=$!
 # A second origin, for frames of another origin than the page's.
@@ -195,6 +195,67 @@ if [[ -z "${RING_SOURCE:-}" ]]; then
     # A control in a frame of another origin, which the top page's look can't reach: Kite looks in the frame. Another
     # port of 127.0.0.1 is the same site (the tab's own process, like idmsa.apple.com on appleid.apple.com);
     # localhost is another site (a renderer of its own, reached through its own session).
+    # Taking the user to the step (Gabe, 5 Nov 2026: steps on other tabs, nothing ringed where he was). A test run's
+    # Kite is never the active app, so it never waits for the user to stop typing.
+    front() { "$CLI" tabs | awk '/^- tab / && /front/ {print $3; exit}'; }
+    SIGNUP="http://127.0.0.1:$PORT/signup.html"
+    "$CLI" open "$SIGNUP" --tab "$TAB" >/dev/null
+    OTHER=$("$CLI" call tabs_create "{\"url\":\"http://127.0.0.1:$PORT/tag.html\",\"claude_folder\":false}" \
+        | grep -oE '[0-9A-F]{8}-[0-9A-F-]{27}' | head -1)
+    # The user is on a third tab with no step (Mouser, in Gabe's case).
+    ELSEWHERE=$("$CLI" call tabs_create "{\"url\":\"http://127.0.0.1:$PORT/ring.html\",\"active\":true,\"claude_folder\":false}" \
+        | grep -oE '[0-9A-F]{8}-[0-9A-F-]{27}' | head -1)
+    sleep 1
+    [[ "$(front)" == "$ELSEWHERE" ]] || fail "setup: the user's own tab isn't in front ($(front))"
+    OUT=$("$CLI" call handoff "{\"reason\":\"Only you can\",\"steps\":[{\"instruction\":\"Create it\",\"tab\":\"$TAB\",\"text\":\"Create account\"},{\"instruction\":\"Approve it\",\"tab\":\"$OTHER\",\"text\":\"Approve\"}]}" 2>&1)
+    [[ "$(front)" == "$TAB" ]] && grep -q "Kite brought step 1's tab" <<<"$OUT" \
+        && pass "a handoff whose first step is on a background tab brings that tab to the front" \
+        || fail "first step on a background tab: front $(front), $OUT"
+    for _ in $(seq 25); do box=$(js "window.tagBox('create')"); grep -q '"left":[0-9]' <<<"$box" && break; sleep 0.2; done
+    grep -q '"left":[0-9]' <<<"$box" && pass "its control is ringed with the tag beside it" || fail "no tag beside the control: $box"
+    "$CLI" click --selector "#create" --tab "$TAB" >/dev/null
+    for _ in $(seq 25); do [[ "$(front)" == "$OTHER" ]] && break; sleep 0.2; done
+    [[ "$(front)" == "$OTHER" ]] && pass "finishing the last step on that tab takes the user on to the next step's tab" \
+        || fail "after step 1, front is $(front), not the next step's tab"
+    "$CLI" call handoff_status '{"cancel":true}' >/dev/null
+    # A step whose control can't be ringed: Claude hears why, and no card or tag stands in for it on the page.
+    "$CLI" call switch_tab "{\"tab\":\"$TAB\"}" >/dev/null
+    OUT=$("$CLI" call handoff "{\"reason\":\"Only you enter cards\",\"tab\":\"$TAB\",\"steps\":[{\"instruction\":\"Card number\",\"selector\":\"#hiddencc\"}]}" 2>&1 || true)
+    grep -q "NOT SHOWN: its control is on the page but hidden" <<<"$OUT" && pass "a hidden control is reported to Claude as hidden" \
+        || fail "hidden control: $OUT"
+    sleep 1.5
+    [[ $(js "window.anyHandoff()") == none ]] && pass "nothing stands in for a step Kite can't ring: no card or tag on the page" \
+        || fail "something shows for an unringable step: $(js "window.anyHandoff()")"
+    "$CLI" call handoff_status '{"cancel":true}' >/dev/null
+    # A new password's field: the tag is wider by its Suggest password button; with no password manager in this
+    # profile, Kite doesn't click the field (no 1Password here to open), and the field is never read.
+    "$CLI" call handoff "{\"reason\":\"Only you choose passwords\",\"tab\":\"$TAB\",\"steps\":[{\"instruction\":\"Pick a password\",\"selector\":\"#newpw\"}]}" >/dev/null
+    for _ in $(seq 25); do pw=$(js "window.tagBox('newpw')"); grep -q '"left":[0-9]' <<<"$pw" && break; sleep 0.2; done
+    "$CLI" call handoff_status '{"cancel":true}' >/dev/null
+    "$CLI" call handoff "{\"reason\":\"Only you sign in\",\"tab\":\"$TAB\",\"steps\":[{\"instruction\":\"Pick a password\",\"selector\":\"#curpw\"}]}" >/dev/null
+    for _ in $(seq 25); do cur=$(js "window.tagBox('curpw')"); grep -q '"left":[0-9]' <<<"$cur" && break; sleep 0.2; done
+    width() { python3 -c "import json,sys; b=json.loads(sys.argv[1]); print(b['right']-b['left'])" "$1"; }
+    (( $(width "$pw") > $(width "$cur") + 40 )) && pass "a new password's field offers Suggest password; a sign-in's doesn't" \
+        || fail "tag widths: new password $pw, current password $cur"
+    "$CLI" call handoff_status '{"cancel":true}' >/dev/null
+    # handoff_status's wait is cut below MCP clients' timeouts.
+    OUT=$("$CLI" call handoff_status '{"wait":600}' 2>&1)
+    grep -q "1 of 1\|0 of 1" <<<"$OUT" && pass "handoff_status takes a wait of 600 (cut to 50 s) without an error" || fail "wait 600: $OUT"
+    # Tab states: done is a green dot on the row; the form details round-trip.
+    "$CLI" call tab_status "{\"tab\":\"$TAB\",\"state\":\"done\",\"note\":\"Account made\"}" >/dev/null
+    sleep 0.5
+    # The tab's row (its title, then its trailing views): a dot filled in system green (#32D74B in dark).
+    ROW=$("$CLI" ui tree 2>&1 | grep 'SidebarLabel "Handoff: a new password"' | awk '{print $1}' | sed 's/\.[0-9]*$//' | head -1)
+    OUT=$("$CLI" ui tree "{\"root\":\"$ROW\"}" 2>&1 | grep -B1 -E 'FillView .*bg=#(32D74B|34C759)' || true)
+    grep -q 'DotView' <<<"$OUT" && ! grep -q 'DotView.*hidden=true' <<<"$OUT" && pass "tab_status done puts the green dot on the tab's row" \
+        || fail "no done mark in the sidebar: $OUT"
+    OUT=$("$CLI" call form_profile '{"action":"set","name":"Pat Doe","address":{"label":"home","street":"12 Example Ave","unit":"Apt 3B","city":"Queens","state":"NY","zip":"11101"}}' 2>&1)
+    OUT2=$("$CLI" call form_profile '{"action":"check","label":"home","address":{"street":"12 Example Street","city":"Queens","state":"NY","zip":"11101"}}' 2>&1)
+    grep -q 'address "home": street 12 Example Ave' <<<"$OUT" && grep -q "MISMATCH" <<<"$OUT2" \
+        && pass "form_profile saves the user's details and flags a wrong street" || fail "form_profile: $OUT / $OUT2"
+    OUT=$("$CLI" call form_profile '{"action":"set","phone":"4242 4242 4242 4242"}' 2>&1 || true)
+    grep -q "never keeps" <<<"$OUT" && pass "form_profile refuses a card number" || fail "form_profile took a card number: $OUT"
+
     for case in "127.0.0.1|the same site's" "localhost|another site's"; do
         host=${case%%|*} kind=${case#*|}
         "$CLI" open "http://127.0.0.1:$PORT/frames.html?src=http://$host:$PORT2/form.html" --tab "$TAB" >/dev/null
