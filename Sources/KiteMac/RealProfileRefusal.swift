@@ -36,6 +36,45 @@ enum RealProfileRefusal {
         exit(RealProfileGuard.refusedExitStatus)
     }
 
+    /// Chromium found the profile open in another Kite (EngineFallback.Step.refuseProfileInUse): names that Kite
+    /// on stderr and in the log, and on screen when Launch Services started this one, then exits.
+    static func refuseProfileInUse(profile: String) -> Never {
+        let holder = profileHolder(profile).map { SocketServerProcess.lookup(pid: $0)?.summary ?? "PID \($0)" }
+        let message = EngineFallback.profileInUseMessage(profile: profile, holder: holder)
+        FileHandle.standardError.write(Data((message + "\n").utf8))
+        NSLog("%@", message)
+        if getppid() == 1 || ProcessInfo.processInfo.environment["KITE_TEST_REFUSAL_ALERT"] == "1" {
+            NSApplication.shared.setActivationPolicy(.regular)
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Kite is already open"
+            alert.informativeText = "Another Kite has this profile open" + (holder.map { ":\n\n\($0)" } ?? ".")
+                + "\n\nUse that one, or quit it and open Kite again."
+            alert.addButton(withTitle: "Quit")
+            WindowPresenter.activateApp()
+            _ = WindowPresenter.runModal(alert)
+        }
+        exit(EngineFallback.profileInUseExitStatus)
+    }
+
+    /// The process in Chromium's SingletonLock for `profile`, if it's another one and still running.
+    static func profileHolder(_ profile: String) -> Int32? {
+        let lock = URL(fileURLWithPath: profile).appendingPathComponent("SingletonLock").path
+        guard let pid = (try? FileManager.default.destinationOfSymbolicLink(atPath: lock)).flatMap(EngineFallback.lockHolderPID(lockTarget:)),
+              pid != getpid(), kill(pid, 0) == 0 else { return nil }
+        return pid
+    }
+
+    /// Chromium said the profile is open in another Kite: waits up to `EngineFallback.holderQuitWait` for that one to
+    /// quit (a restart), and refuses if it doesn't. Returns when it's gone, for another try.
+    static func waitForProfileHolder(profile: String) {
+        guard let pid = profileHolder(profile) else { return }
+        NSLog("Kite: the profile at %@ is open in PID %d; waiting for it to quit", profile, pid)
+        let deadline = Date().addingTimeInterval(EngineFallback.holderQuitWait)
+        while kill(pid, 0) == 0, Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+        if kill(pid, 0) == 0 { refuseProfileInUse(profile: profile) }
+    }
+
     private static func showAlert(_ message: String, home: String) {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
