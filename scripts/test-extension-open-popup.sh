@@ -19,9 +19,12 @@ PORT="${PORT:-18795}"
 ID=$(python3 -c 'import hashlib, os, sys
 print("".join(chr(97 + int(c, 16)) for c in hashlib.sha256(os.path.realpath(sys.argv[1]).encode()).hexdigest()[:32]))' "$EXT")
 
-P=$(mktemp -d /tmp/k.XXXX)
-[[ -d "$P" ]] || { echo "profile not a directory" >&2; exit 1; }
+# shellcheck source=lib/test-kite.sh
+source "$(dirname "$0")/lib/test-kite.sh"
+P=$(kite_test_profile)
 export KITE_SUPPORT_PATH=$P KITE_TEST_BLOCK_VIEWS_WINDOWS=1 TYPESAFE_API_KEY=x KITE_DIAGNOSTICS=1
+# Refuses (exit 2), before anything starts, whatever could reach the real profile or the installed Kite's settings.
+kite_check_test_launch "$APP" "$P" || exit 2
 # The start page: the automation tools only open web addresses, so a local page goes on to the
 # extension's (web-accessible) trigger page.
 python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$EXT" >/dev/null 2>&1 &

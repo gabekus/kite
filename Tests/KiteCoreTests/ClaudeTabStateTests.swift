@@ -124,4 +124,24 @@ import Testing
         #expect(EngineFallback.shouldRetry(attempt: 1) && !EngineFallback.shouldRetry(attempt: EngineFallback.maxAttempts))
         #expect(EngineFallback.toolError.contains("quit Kite (⌘Q) and open it again"))
     }
+
+    /// A profile another Kite has open (CEF 24: the launch was handed to it) used to retry, fall back to WebKit and
+    /// hang before finishing launching (5 Nov 2026). It's retried (that Kite may be quitting), then refused.
+    @Test func aProfileInUseIsRefusedNeverWebKit() {
+        for code: Int32 in [21, 24] {
+            #expect(EngineFallback.next(attempt: 1, exitCode: code) == .retry)
+            #expect(EngineFallback.next(attempt: EngineFallback.maxAttempts, exitCode: code) == .refuseProfileInUse)
+        }
+        // Anything else is Chromium itself failing: WebKit, in a fresh process.
+        #expect(EngineFallback.next(attempt: EngineFallback.maxAttempts, exitCode: 1) == .webKit)
+        #expect(EngineFallback.next(attempt: EngineFallback.maxAttempts - 1, exitCode: 1) == .retry)
+    }
+
+    @Test func theLockNamesTheKiteHoldingTheProfile() {
+        #expect(EngineFallback.lockHolderPID(lockTarget: "Gabes-Macbook.local-62875") == 62875)
+        #expect(EngineFallback.lockHolderPID(lockTarget: "nohyphen") == nil)
+        #expect(EngineFallback.lockHolderPID(lockTarget: "host-0") == nil)
+        let message = EngineFallback.profileInUseMessage(profile: "/tmp/k.AbCd/Chromium", holder: "PID 62875 (/x/Kite.app)")
+        #expect(message.contains("already open in another Kite, PID 62875 (/x/Kite.app)"))
+    }
 }

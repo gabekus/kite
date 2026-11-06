@@ -65,7 +65,7 @@ final class AutomationServer: @unchecked Sendable {
         // Don't take the socket from another Kite that's still answering on it
         // (it would lose Claude's connection). The controller tries again when the folder changes.
         if Self.isAnswering(address) {
-            throw AutomationError(.failed, "Another Kite is already answering at \(path).")
+            throw SocketTaken(path: path, holder: SocketServerProcess.serving(socketPath: path))
         }
         // A socket left behind by a crash would make bind fail.
         unlink(path)
@@ -92,6 +92,17 @@ final class AutomationServer: @unchecked Sendable {
         listenSource = source
         lock.unlock()
         source.resume()
+    }
+
+    /// Another process answers on the socket: named, so a stale or test build holding it is obvious.
+    struct SocketTaken: Error, CustomStringConvertible {
+        let path: String
+        /// Nil if it quit between answering and the lookup.
+        let holder: SocketServerProcess?
+
+        var description: String {
+            "Another Kite is already answering at \(path)" + (holder.map { ": \($0.summary)." } ?? ".")
+        }
     }
 
     /// Stops listening and drops every connection. Returns at once: the connections close on `queue`.

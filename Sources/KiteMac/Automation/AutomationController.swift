@@ -145,6 +145,8 @@ final class AutomationController {
     /// prompts within `socketRetryPause` are skipped, so a failure can't loop through the watch.
     @ObservationIgnored private var lastSocketFailure: Date?
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
+    /// Other Kites found holding the socket, each reported once (`reportSocketTaken`).
+    @ObservationIgnored private var reportedSocketHolders: Set<Int32> = []
     /// The last reason the socket didn't open, so each reason is logged once.
     @ObservationIgnored private var lastSocketError: String?
     /// Console, network and dialog state of tabs Claude has touched, and the page each was collected from.
@@ -483,6 +485,8 @@ final class AutomationController {
         do {
             try server.start()
         } catch {
+            // Turning the setting on shows its own alert with the same holder; at launch and on retries, this one.
+            if !interactive, let taken = error as? AutomationServer.SocketTaken { reportSocketTaken(taken) }
             guard interactive else {
                 let reason = "\(error)"
                 if reason != lastSocketError { NSLog("Kite: couldn't open Claude's socket: \(reason)") }
@@ -503,6 +507,51 @@ final class AutomationController {
         stopSocketRetry()
         watchDownloads()
         return true
+    }
+
+    /// Another Kite answers on this profile's socket, so Claude's tools reach it, not this Kite. Says so loudly, once per
+    /// holder: a log line and an alert naming its PID, app and start time. The installed Kite offers to quit a holder
+    /// that isn't the installed Kite (a test or stale build on the real profile), and takes the socket once it's gone.
+    private func reportSocketTaken(_ taken: AutomationServer.SocketTaken) {
+        guard let holder = taken.holder, holder.pid != getpid(), !reportedSocketHolders.contains(holder.pid) else { return }
+        reportedSocketHolders.insert(holder.pid)
+        NSLog("Kite: Claude's automation socket at %@ is served by another Kite, %@. Claude's tools reach that Kite, "
+            + "not this one, until it quits.", taken.path, holder.summary)
+        let home = NSHomeDirectory()
+        let mayQuitIt = RealProfileGuard.isInstalledKite(bundleID: Bundle.main.bundleIdentifier,
+                                                         bundlePath: Bundle.main.bundleURL.path, home: home)
+            && !holder.isInstalledKite(home: home)
+        DispatchQueue.main.async { [weak self] in
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Another Kite has Claude's connection"
+            alert.informativeText = "Claude's tools are talking to another Kite on this profile, not this one:\n\n"
+                + "\(holder.summary)\n\nThis Kite takes over Claude's connection as soon as that one quits."
+            if mayQuitIt {
+                alert.informativeText += " It isn't the Kite in Applications, so it's a test or old build."
+                alert.addButton(withTitle: "Quit the Other Kite")
+                alert.addButton(withTitle: "Leave It Running")
+            } else {
+                alert.addButton(withTitle: "OK")
+            }
+            guard WindowPresenter.runModal(alert) == .alertFirstButtonReturn, mayQuitIt else { return }
+            self?.quitSocketHolder(holder, path: taken.path)
+        }
+    }
+
+    /// Asks the holder to quit (as ⌘Q would), if it's still the one answering, then takes the socket.
+    private func quitSocketHolder(_ holder: SocketServerProcess, path: String) {
+        guard SocketServerProcess.serving(socketPath: path)?.pid == holder.pid else { return checkSocket() }
+        NSLog("Kite: asking %@ to quit, to take Claude's socket back.", holder.summary)
+        if NSRunningApplication(processIdentifier: holder.pid)?.terminate() != true { kill(holder.pid, SIGTERM) }
+        var tries = 0
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                tries += 1
+                let gone = SocketServerProcess.serving(socketPath: path)?.pid != holder.pid
+                if gone || tries >= 20 { timer.invalidate(); self?.checkSocket() }
+            }
+        }
     }
 
     private func watchDownloads() {

@@ -183,6 +183,10 @@ NSString* KCRootCachePath() {
     return gInitialized;
 }
 
++ (int)lastExitCode {
+    return CefGetExitCode();
+}
+
 + (BOOL)energySaverEnabled {
     return gEnergySaverEnabled;
 }
