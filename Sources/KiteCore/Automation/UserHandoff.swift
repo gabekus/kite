@@ -282,6 +282,16 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
 
         public var isWaiting: Bool { state == .waiting }
 
+        /// A step whose control sends the page on: Pay, Place order, Submit, Confirm, Buy, Check out, Complete purchase.
+        public var isSubmit: Bool {
+            let words = [instruction, targetName ?? ""].joined(separator: " ").lowercased()
+            let submit = ["pay", "place order", "place your order", "submit", "confirm", "buy", "purchase", "check out", "checkout",
+                          "complete order", "complete purchase", "finish", "send"]
+            return submit.contains { phrase in
+                words.range(of: "\\b" + NSRegularExpression.escapedPattern(for: phrase) + "\\b", options: .regularExpression) != nil
+            }
+        }
+
         /// The words on the step's control, for "“Invite members” can't be clicked yet".
         public var targetName: String? {
             switch locator {
@@ -418,6 +428,17 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         var tabs: [UUID] = []
         for tab in ended.compactMap(\.tab) where current(on: tab) == nil && !tabs.contains(tab) { tabs.append(tab) }
         return tabs
+    }
+
+    /// The steps a navigation off the page of `tab`'s step ends, the user having seen that step ringed there: that step,
+    /// and when the tab's last waiting step is a submit or pay button, every waiting step on the tab, since the page
+    /// moving on after it means the user did them all (Gabe's Muji checkout, 5 Nov 2026: billing address, card, Pay
+    /// now, then /thank-you, and the handoff still said 0 of 3 done, step 1 "not on the step's page").
+    public func stepsEndedByNavigation(on tab: UUID) -> [String] {
+        guard let current = current(on: tab) else { return [] }
+        let onTab = waiting.filter { $0.tab == tab }
+        guard let last = onTab.last, last.isSubmit else { return [current.id] }
+        return onTab.map(\.id)
     }
 
     /// Ends every waiting step (the user dismissed the handoff, or Claude withdrew it).
@@ -766,12 +787,25 @@ extension UserHandoff {
         }
     }
 
+    /// Words for Claude when the user's steps sent the page on to another: "the page moved on to “Thank you”
+    /// (shop.example/checkouts/thank-you); check it". The title only when it's the new page's (a navigation event comes
+    /// before the new page's title does).
+    public static func movedOn(to url: URL?, title: String?) -> String {
+        let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let title: String? = trimmed.isEmpty ? nil : trimmed
+        let place = url.flatMap { url in url.host.map { $0 + url.path } }
+        guard title != nil || place != nil else { return describe("navigated") }
+        let named = title.map { "“\($0.count > 80 ? $0.prefix(79) + "…" : Substring($0))”" }
+        return "the page moved on to " + [named, place.map { named == nil ? $0 : "(\($0))" }].compactMap { $0 }.joined(separator: " ")
+            + "; check it"
+    }
+
     /// Words for Claude about how the page saw the user end the step.
     public static func describe(_ how: String) -> String {
         switch how {
         case "change": "the user changed the highlighted control"
         case "value": "the user filled in the highlighted field and moved on"
-        case "navigated": "the page moved on to another address"
+        case "navigated": "the page moved on to another address; check it"
         case "gone": "the highlighted control went away (the form was sent or replaced)"
         case "appeared": "what the step waited for appeared on the page"
         case "dialog": "the page opened a dialog"

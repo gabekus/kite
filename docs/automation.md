@@ -372,7 +372,11 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
     nothing takes its place for 300 ms (the form was sent or replaced), when the page opens a dialog
     (`Page.javascriptDialogOpening`; the dialog itself reaches Claude with the dialog capture work on
     `claude/dialogs-to-agent`, `handoffDialogOpened` is its hook), and when the user clicks a later step's control on
-    the same tab (every waiting step there up to it is done). The moment a step ends its tab shimmers again ("Claude is
+    the same tab (every waiting step there up to it is done). When the page moves on and the tab's last waiting step is a
+    submit or pay button (Pay, Place order, Submit, Confirm, Buy, Check out), every waiting step on the tab is done, and
+    Claude reads "the page moved on to “Thank you” (…/thank-you); check it", never NOT SHOWN (Gabe's Muji checkout, 5 Nov
+    2026: billing address, card and Pay now all done, the tab on /thank-you, and the handoff still said 0 of 3). A step
+    Kite never rang isn't ended by a navigation: it may be on the next page (Approve after Create account). The moment a step ends its tab shimmers again ("Claude is
     picking up"), Claude's `handoff_status` wait returns, and the tab's next step gets the ring. A ref is marked with `data-kite-handoff` when Claude calls,
     and its label finds it again if the page redraws it; `text` matches buttons, links, labels and other controls,
     exact first. Skip reports through the same binding, also only on a trusted press. Kite looks at the pages when a tab comes forward (in any normal window) or closes, a step tab's

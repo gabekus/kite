@@ -455,6 +455,33 @@ import Testing
         #expect(!UserHandoff.samePage(page, URL(string: "https://shop.example/checkout")!))
     }
 
+    // Gabe's Muji checkout (5 Nov 2026): billing address, card, Pay now on one tab, then /thank-you, and the handoff
+    // still said 0 of 3 done, step 1 "not on the step's page".
+    @Test func aPageThatMovesOnAfterItsPayStepEndsEveryStepThere() {
+        let checkout = UUID(), other = UUID()
+        let handoff = Handoff(id: "h1", reason: "Only you pay", steps: [
+            .init(id: "h1.1", number: 1, instruction: "Pick the billing address", tab: checkout, locator: .text("Same as shipping address")),
+            .init(id: "h1.2", number: 2, instruction: "Card number", tab: checkout, locator: .selector("#card")),
+            .init(id: "h1.3", number: 3, instruction: "Pay now", tab: checkout, locator: .text("Pay now")),
+            .init(id: "h1.4", number: 4, instruction: "Approve", tab: other, locator: .text("Approve")),
+        ])
+        #expect(handoff.stepsEndedByNavigation(on: checkout) == ["h1.1", "h1.2", "h1.3"])
+        // A tab whose last step isn't a submit: only the step it showed (the next may be on the page it went to).
+        #expect(handoff.stepsEndedByNavigation(on: other) == ["h1.4"])
+        let signUp = Handoff(id: "h2", reason: "r", steps: [
+            .init(id: "h2.1", number: 1, instruction: "Create account", tab: checkout, locator: .text("Create account")),
+            .init(id: "h2.2", number: 2, instruction: "Tick the terms", tab: checkout, locator: .text("I agree")),
+        ])
+        #expect(signUp.stepsEndedByNavigation(on: checkout) == ["h2.1"])
+        #expect(Handoff.Step(id: "x", number: 1, instruction: "Click it", locator: .text("Place order")).isSubmit)
+        #expect(!Handoff.Step(id: "x", number: 1, instruction: "Type your ZIP", locator: .selector("#zip")).isSubmit)
+        // "Payment" isn't "Pay": whole words only.
+        #expect(!Handoff.Step(id: "x", number: 1, instruction: "Payment method", locator: .text("Payment method")).isSubmit)
+        #expect(UserHandoff.movedOn(to: URL(string: "https://muji.us/checkouts/c/1/thank-you"), title: "Thank you")
+            == "the page moved on to “Thank you” (muji.us/checkouts/c/1/thank-you); check it")
+        #expect(UserHandoff.movedOn(to: URL(string: "https://muji.us/thank-you"), title: nil) == "the page moved on to muji.us/thank-you; check it")
+    }
+
     @Test func leadsToTheFirstStepOnABackgroundTab() {
         let mouser = UUID(), amazon = UUID(), tools = UUID(), mcmaster = UUID()
         var handoff = Handoff(id: "h1", reason: "Only you can solve a CAPTCHA or enter a card", steps: [

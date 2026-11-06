@@ -8,7 +8,8 @@
 # that redraws its controls on timers, and on Tests/Browser/handoff/tag.html: the tag's Skip (there's no Done), steps
 # Kite refuses or can't show, and no card in Kite's interface; on Tests/Browser/handoff/done.html, every way a step
 # finishes by itself (a field filled in and left, Enter, a payment field in another origin's frame, a later step's
-# control, the control gone, the page moving on, words appearing, a dialog) and the user never being moved to
+# control, the control gone, the page moving on, words appearing, a dialog; on checkout.html, a checkout that moves
+# on to its thank-you page after its pay step) and the user never being moved to
 # another tab; and on Tests/Browser/handoff/frames.html, a control in a frame of another origin (the same site's,
 # as Apple's sign-in form is, and another site's).
 # Usage: scripts/test-handoff-ring.sh [APP]   (default build/Kite.app; never /Applications/Kite.app)
@@ -329,6 +330,18 @@ if [[ -z "${RING_SOURCE:-}" ]]; then
     js "setTimeout(() => alert('Sure?'), 50); 1" >/dev/null
     nth_has 1 '\[done\].*dialog' && pass "a dialog the page opens ends the step" || fail "a dialog: $LINE"
     "$CLI" call handle_dialog "{\"tab\":\"$TAB\",\"accept\":true}" >/dev/null 2>&1 || true
+
+    # Gabe's Muji checkout: three steps on one tab, the last a pay button, and the page moved on to its thank-you page
+    # without Kite hearing the steps: every step there is done, and Claude is told to check the new page.
+    "$CLI" open "http://127.0.0.1:$PORT/checkout.html" --tab "$TAB" >/dev/null
+    sleep 1.5
+    hand '[{"instruction":"Pick the billing address","text":"Same as shipping address"},{"instruction":"Card number","selector":"#cardnumber"},{"instruction":"Pay now","text":"Pay now"}]'
+    js "setTimeout(() => { location.href = 'thank-you.html'; }, 50); 1" >/dev/null
+    OUT=""
+    for _ in $(seq 50); do OUT=$("$CLI" call handoff_status '{}'); grep -q "3 of 3 done" <<<"$OUT" && break; sleep 0.2; done
+    if grep -q "3 of 3 done" <<<"$OUT" && [[ $(grep -c "moved on to .*check it" <<<"$OUT") -eq 3 ]] && ! grep -q "NOT SHOWN" <<<"$OUT"; then
+        pass "a checkout whose page moves on after its pay step: every step on the tab is done, and Claude checks the new page"
+    else fail "the checkout that moved on: $OUT"; fi
 
     for case in "127.0.0.1|the same site's" "localhost|another site's"; do
         host=${case%%|*} kind=${case#*|}

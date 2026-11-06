@@ -149,8 +149,10 @@ extension AutomationController {
         // inside the page).
         if let shown = handoffShownAt[stepID], let current, Handoff.canReturn(to: current), !UserHandoff.samePage(shown, current),
            let step = waitingStep(on: tab), step.id == stepID {
-            return finishFromPage(step, how: "navigated", later: nil, tab: tab)
+            return finishByNavigation(step, tab: tab, to: current, titled: true)
         }
+        // Only a step the user saw ringed: one the page left before Kite rang it may belong on the next page (a sign-up's
+        // Approve, after its Create account).
         if state.found, handoffShownAt[stepID] == nil, let current, current == at { handoffShownAt[stepID] = current }
         let now = Date()
         if state.found { controlMissingSince[stepID] = nil } else if controlMissingSince[stepID] == nil { controlMissingSince[stepID] = now }
@@ -276,11 +278,25 @@ extension AutomationController {
         pollHandoffsSoon()
     }
 
-    /// The tab's main frame went to `url`: a step the user saw ringed there is done ("navigated").
+    /// The tab's main frame went to `url`: a step the user saw ringed there is done, and every step on the tab when its
+    /// last is a submit or pay button (`Handoff.stepsEndedByNavigation`).
     func handoffNavigated(_ tab: UUID, to url: String) {
         guard let step = waitingStep(on: tab), let shown = handoffShownAt[step.id], let to = URL(string: url),
               Handoff.canReturn(to: to), !UserHandoff.samePage(shown, to) else { return }
-        finishFromPage(step, how: "navigated", later: nil, tab: tab)
+        finishByNavigation(step, tab: tab, to: to, titled: false)
+    }
+
+    /// Ends the steps a navigation off `step`'s page ends, telling Claude where the page went, to check it. `titled`:
+    /// the tab's title is already the new page's.
+    func finishByNavigation(_ step: Handoff.Step, tab: UUID, to url: URL?, titled: Bool) {
+        let id = handoffID(of: step.id)
+        guard let handoff = handoffs.first(where: { $0.id == id }) else { return }
+        let ended = handoff.stepsEndedByNavigation(on: tab)
+        let words = UserHandoff.movedOn(to: url, title: titled ? store.state.tab(tab)?.title : nil)
+        update(id) { h in for stepID in ended { h.finish(stepID, .done, how: words) } }
+        for stepID in ended { handoffShownAt[stepID] = nil }
+        stepEnded(step.id, on: tab)
+        pollHandoffsSoon()
     }
 
     /// The page opened a dialog while a step waits on its tab: the step is done, and Claude's wait wakes to it. The
