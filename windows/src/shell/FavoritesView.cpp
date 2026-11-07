@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include "shell/Errors.h"
+#include "shell/SystemFont.h"
 #include "shell/SpaceIconPainter.h"
 #include "shell/Text.h"
 
@@ -40,21 +41,9 @@ std::unique_ptr<FavoritesView> FavoritesView::Create(HWND window, IDWriteFactory
                                                      std::wstring& error) {
     std::unique_ptr<FavoritesView> view(new FavoritesView(window, favicons, tooltips));
     view->dwrite_ = dwrite;
-    ComPtr<IDWriteFontCollection> fonts;
-    dwrite->GetSystemFontCollection(fonts.GetAddressOf());
-    auto installed = [&](const wchar_t* family) {
-        UINT32 index = 0;
-        BOOL exists = FALSE;
-        return fonts && SUCCEEDED(fonts->FindFamilyName(family, &index, &exists)) && exists;
-    };
-    // The system UI font for the Mac's SF Pro, as the rest of the sidebar.
-    const wchar_t* text = installed(L"Segoe UI Variable Text") ? L"Segoe UI Variable Text" : L"Segoe UI";
-    HRESULT hr = dwrite->CreateTextFormat(text, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                                          E::kTitleSize, L"", view->titleFormat_.GetAddressOf());
-    if (SUCCEEDED(hr)) {
-        hr = dwrite->CreateTextFormat(text, nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                                      E::kSubtitleSize, L"", view->subtitleFormat_.GetAddressOf());
-    }
+    // The empty state's CenteredLabels: SF Pro semibold over regular (shell/SystemFont).
+    HRESULT hr = system_font::CreateTextFormat(dwrite, MacWeight::Semibold, E::kTitleSize, view->titleFormat_);
+    if (SUCCEEDED(hr)) hr = system_font::CreateTextFormat(dwrite, MacWeight::Regular, E::kSubtitleSize, view->subtitleFormat_);
     if (FAILED(hr)) {
         error = HResultMessage(L"CreateTextFormat (the favorites)", hr);
         return nullptr;

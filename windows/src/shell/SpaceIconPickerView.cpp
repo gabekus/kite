@@ -9,6 +9,7 @@
 #include <iterator>
 
 #include "shell/Errors.h"
+#include "shell/SystemFont.h"
 #include "shell/Text.h"
 
 using Microsoft::WRL::ComPtr;
@@ -67,21 +68,10 @@ D2D1_COLOR_F OverDarkFill(float alpha) {
 std::unique_ptr<SpaceIconPickerView> SpaceIconPickerView::Create(HWND owner, IDWriteFactory* dwrite, SpaceIconPainter* painter,
                                                                  Callbacks callbacks, bool keepInOwner, std::wstring& error) {
     std::unique_ptr<SpaceIconPickerView> view(new SpaceIconPickerView(owner, dwrite, painter, std::move(callbacks), keepInOwner));
-    ComPtr<IDWriteFontCollection> fonts;
-    dwrite->GetSystemFontCollection(fonts.GetAddressOf());
-    auto installed = [&](const wchar_t* family) {
-        UINT32 index = 0;
-        BOOL exists = FALSE;
-        return fonts && SUCCEEDED(fonts->FindFamilyName(family, &index, &exists)) && exists;
-    };
-    const wchar_t* text = installed(L"Segoe UI Variable Text") ? L"Segoe UI Variable Text" : L"Segoe UI";
-    HRESULT hr = dwrite->CreateTextFormat(text, nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                                          kTextSize, L"", view->textFormat_.GetAddressOf());
+    // The tabs' titles and the search field in SF Pro regular; the grid's emoji (shell/SystemFont).
+    HRESULT hr = system_font::CreateTextFormat(dwrite, MacWeight::Regular, kTextSize, view->textFormat_);
     if (SUCCEEDED(hr)) hr = view->textFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-    if (SUCCEEDED(hr)) {
-        hr = dwrite->CreateTextFormat(L"Segoe UI Emoji", nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL,
-                                      DWRITE_FONT_STRETCH_NORMAL, kEmojiSize, L"", view->emojiFormat_.GetAddressOf());
-    }
+    if (SUCCEEDED(hr)) hr = system_font::CreateIconFormat(dwrite, system_font::IconFont::Emoji, DWRITE_FONT_WEIGHT_REGULAR, kEmojiSize, view->emojiFormat_);
     if (SUCCEEDED(hr)) hr = view->emojiFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     for (const IconPickerTab tab : kIconPickerTabs) {
         if (FAILED(hr)) break;

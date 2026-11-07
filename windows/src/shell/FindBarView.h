@@ -150,7 +150,6 @@ private:
     Microsoft::WRL::ComPtr<IDWriteTextFormat> fieldFormat_, counterFormat_, iconFormat_;
     Microsoft::WRL::ComPtr<IDWriteTextLayout> counter_;
     float counterWidth_ = 0;
-    std::wstring textFamily_;
 
     // GPU.
     Microsoft::WRL::ComPtr<IDCompositionVisual> visual_;

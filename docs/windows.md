@@ -292,6 +292,48 @@ the Mac has, so Kite leaves it to a fix in CEF (cancel the request when the fram
 is deleted). Popups were said to log it too; one that opens from a click wasn't
 reproduced here, since that needs a real click.
 
+## Text weight
+
+SF Pro inks heavier than Segoe UI at every weight the Mac uses, and runs wider: measured against
+every `review/*-mac` reference (W-text-weight, PR body), Windows' text inked 0.70–0.84 of the Mac's
+and ran 0.90–0.99 as wide. Every text format in Kite comes from `shell/SystemFont`, which takes the
+Mac's weight (`MacWeight`: regular, medium, semibold, bold) and size in points, and
+`core/TextWeight` maps it (`kitecore text-weight [WEIGHT] [SIZE...]` prints it):
+
+| Mac | Windows 11 | Windows 10: Segoe UI | other scripts (both) |
+|---|---|---|---|
+| regular | Segoe UI Variable, `wght` 590 less 22 per optical-size point under 10.5 (573.5 at 13pt), `opsz` 0.75 × size | Regular (400) | 400 |
+| medium | Segoe UI Variable, `wght` 650, `opsz` 0.75 × size, at least 10.5 | Semibold (600) | 500 |
+| semibold | Segoe UI Variable, `wght` 675, `opsz` 0.75 × size, at least 10.5 | Semibold (600) | 600 |
+| bold | Segoe UI Black (900) | Bold (700) | 700 |
+
+- Segoe UI Variable's `opsz` is in points at 96 DPI, so Kite's DIP (the Mac's point) is 0.75 of
+  one: 14pt text is the Text instance's 10.5. The optical size is only reachable through the
+  typographic family name, "Segoe UI Variable" (the weight-stretch-style families "Segoe UI Variable
+  Text", "Small" and "Display" fix it), with `IDWriteTextFormat3::SetFontAxisValues`.
+- Smaller optical sizes ink heavier and run wider. Regular takes them (small text widens towards
+  SF's) and gives the weight back so it doesn't ink past the Mac's; medium and semibold stay at the
+  Text instance or above, so a small size can't close the 25 between them on the axis.
+- SF's bold is past the axis: at 700 Create a Space's title inked 0.84 of the Mac's, lighter for
+  its size than the semibold rows under it. Segoe UI Black inks 1.01 of it and runs 0.99 as wide,
+  and the title over Choose a Theme is 1.05 as dense as the Mac's 1.06 (over the subtitle 1.68
+  against 1.64). Without Black installed, bold is Segoe UI Variable's 700.
+- What it reaches: regular 0.93–1.02 of the Mac's ink, medium 0.89–0.94, semibold 0.87–1.01, bold
+  1.01; widths 0.93–1.01 of the Mac's (the find field's "domain", 1 px over at 2×, is the widest).
+- Windows 10 (no Segoe UI Variable, or a DirectWrite without `IDWriteFactory6`) keeps today's
+  weights: regular can't go past 400 there, so heavier steps above it would overstate the Mac's
+  hierarchy. Segoe UI has no Medium, so medium and semibold are both its Semibold, as medium's 500
+  already matched. `--capture FILE --static-font` draws a capture in it on any machine.
+- Other scripts (Japanese, Chinese, Korean, Thai, Devanagari, Arabic, emoji…) aren't what the
+  mapping measured, and DirectWrite would pick their fallback faces with the format's weight-axis
+  value: Yu Gothic UI Semibold and Malgun Gothic Bold for a regular label. Each format's
+  `IDWriteFontFallback` (over the system's) maps everything outside Latin, Greek and Cyrillic (and
+  their marks, punctuation and symbols) at the Mac's own weight, matched as a plain format at that
+  weight would be; `SystemFontTests` reads the faces a layout really draws for each.
+- Symbols and emoji fonts (Segoe Fluent Icons, Segoe MDL2 Assets, Segoe UI Emoji) come from
+  `system_font::CreateIconFormat`, never re-weighted. A field's copy of its row's format is
+  `CopyTextFormat`, which keeps the axis values and the fallback. An IME's LOGFONT gets
+  `GdiFaceName()` and `GdiWeight()`, the named weight nearest what the field draws.
 ## The sidebar's top row
 
 W12 ports the top of the Mac's `SidebarHeaderView` (`core/SidebarTopRow.h`,
@@ -665,8 +707,8 @@ draws space N's at rest over the frame. Known differences: the Mac's ⌃n is Alt
 so the first keycap says "Alt" and is wider than the Mac's 18pt square (4pt either
 side of its label); the chip's face is drawn as the Mac's 2x capture inks SF's
 face.smiling (a disc with the eyes and smile cut out; Segoe has no filled face); the
-text is Segoe UI Variable's, the name and the chip bold where the Mac's are semibold (SF's semibold
-inks as heavy) with each text's capitals centred, so the tip's width differs from the
+text is the Mac's weights through Kite's shared mapping (Text weight, below: the name and the chip
+semibold, the keys bold) with each text's capitals centred, so the tip's width differs from the
 Mac's by the fonts' advances; the tip hides when the window moves or resizes, where the
 Mac's child panel moves with it; the keycaps' corners are circular where the Mac's are
 continuous; and its x is on whole pixels where the Mac's is on whole points (up to
@@ -961,10 +1003,9 @@ Known differences for W9f:
   (SwiftUI's disabled plain button); the field that has the page's keyboard (in an inactive window
   too) keeps placeholderTextColor's placeholder and the other shows it at half the label's; typed
   text in textColor (black in the light); and Choose a Theme's brush bold for the weight of SF's
-  filled one. Still different: Windows' text inks about 15-30% lighter than SF Pro's at the same
-  weight (up to 43% for dark text on a light theme), and Segoe UI runs about 5% narrower, across
-  Kite, not only here; that's a Kite-wide text-weight checkpoint of its own (DirectWrite's
-  grayscale enhanced contrast doesn't close it: under 5%, dark-on-light only). In a dark space the
+  filled one. Windows' text inked 15-30% lighter than SF Pro's at the same weight and ran about 5%
+  narrower, across Kite; W-text-weight's shared mapping (Text weight, below) closes most of it
+  (DirectWrite's grayscale enhanced contrast doesn't: under 5%, dark-on-light only). In a dark space the
   Mac's capture inks Profile's face.smiling filled (its code asks for the outline, which it inks in
   a light space), and Windows' stays the outline; baselines are where SF's are.
 

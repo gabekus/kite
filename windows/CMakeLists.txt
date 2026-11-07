@@ -70,6 +70,7 @@ add_library(KiteCoreWin STATIC
   src/core/SpaceIconPicker.cpp
   src/core/SymbolShape.cpp
   src/core/TextMatch.cpp
+  src/core/TextWeight.cpp
   src/core/PictureLoads.cpp
   src/core/PinnedTree.cpp
   src/core/PinnedURL.cpp
@@ -187,6 +188,7 @@ if(WIN32)
     src/shell/ContextMenu.cpp
     src/shell/SidebarMenus.cpp
     src/shell/SpaceTipView.cpp
+    src/shell/SystemFont.cpp
     src/shell/ThemeSwatchesView.cpp
     src/shell/TextEditing.cpp
     src/shell/TextField.cpp
@@ -384,6 +386,7 @@ add_executable(KiteCoreTests
   tests/SupportDirectoryTests.cpp
   tests/ThemeBackdropTests.cpp
   tests/ThemeTests.cpp
+  tests/TextWeightTests.cpp
   tests/TitleBarTests.cpp
   tests/UnicodeTests.cpp
   tests/URLInputTests.cpp
@@ -421,6 +424,18 @@ target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURR
                                                KITE_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
                                                KITE_ARC_FIXTURE_DIR="${KITE_ARC_FIXTURE_DIR}")
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)
+if(WIN32)
+  # The faces DirectWrite really draws Kite's text formats in (shell/SystemFont), other scripts'
+  # fallbacks too: it needs Windows' fonts, so it runs on Windows (a cross-compile builds it).
+  add_executable(SystemFontTests tests/main.cpp tests/SystemFontTests.cpp src/shell/SystemFont.cpp)
+  target_link_libraries(SystemFontTests PRIVATE KiteCoreWin dwrite)
+  if(MSVC)
+    set_target_properties(SystemFontTests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tests/$<CONFIG>")
+  endif()
+  if(NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME SystemFontTests COMMAND SystemFontTests)
+  endif()
+endif()
 add_test(NAME chromium-ignores-kites-command-line
   COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/shell/Chromium.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ChromiumSettingsCheck.cmake)
 add_test(NAME history-bench COMMAND history-bench 300)

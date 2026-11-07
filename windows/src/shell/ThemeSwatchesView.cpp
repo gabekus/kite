@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "shell/Errors.h"
+#include "shell/SystemFont.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -40,14 +41,7 @@ std::unique_ptr<ThemeSwatchesView> ThemeSwatchesView::Create(HWND owner, IDWrite
         return nullptr;
     }
     HRESULT hr = S_OK;
-    ComPtr<IDWriteFontCollection> fonts;
-    dwrite->GetSystemFontCollection(fonts.GetAddressOf());
-    UINT32 index = 0;
-    BOOL fluent = FALSE;
-    if (fonts) fonts->FindFamilyName(L"Segoe Fluent Icons", &index, &fluent);
-    hr = dwrite->CreateTextFormat(fluent ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets", nullptr, DWRITE_FONT_WEIGHT_MEDIUM,
-                                          DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, T::kChevronSize, L"",
-                                          view->chevronFormat_.GetAddressOf());
+    hr = system_font::CreateIconFormat(dwrite, system_font::IconFont::Symbols, DWRITE_FONT_WEIGHT_MEDIUM, T::kChevronSize, view->chevronFormat_);
     if (FAILED(hr)) {
         error = HResultMessage(L"CreateTextFormat", hr);
         return nullptr;

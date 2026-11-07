@@ -176,7 +176,6 @@ private:
 
     Microsoft::WRL::ComPtr<IDWriteTextFormat> titleFormat_, subtitleFormat_, rowFormat_, rowBoldFormat_, pillFormat_, cancelFormat_,
         iconFormat_, iconBoldFormat_;
-    std::wstring textFamily_;
 
     // GPU.
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
