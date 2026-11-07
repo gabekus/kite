@@ -344,6 +344,8 @@ final class ExtensionTabsBridge {
 
     private func pushState(force: Bool) {
         guard helperReady else { return }
+        // A name asked for too early (the worker hadn't set up `chrome` yet) is asked again.
+        for session in Set(sessions.values) where !session.isEmpty { learnName(session) }
         let state = currentState()
         guard force || state != lastState else { return }
         lastState = state
