@@ -160,14 +160,14 @@ jobs:
           # A Kite that opens where no one can see it (under the check's own cover, which never
           # activates) ends with its page hidden and requestAnimationFrame stopped (P2), also when
           # the page tries to keep itself drawing.
-          # TEMPORARY (diagnosing the reloadStorm flake): reloadStorm 8 times first, each failure's marks printed.
+          # TEMPORARY (diagnosing the reloadStorm flake): reloadStorm 10 times first, each failure's marks printed.
           $flakes = 0
-          foreach ($i in 1..8) {
-            & windows/tests/CoveredLaunchCheck.ps1 -Kite windows/build/Release/Kite.exe -Cover -Attack reloadStorm
-            if (-not $?) { $flakes++ }
+          foreach ($i in 1..10) {
+            try { & windows/tests/CoveredLaunchCheck.ps1 -Kite windows/build/Release/Kite.exe -Cover -Attack reloadStorm }
+            catch { Write-Host "reloadStorm run $i failed: $_"; $flakes++ }
           }
-          Write-Host "reloadStorm: $flakes of 8 failed"
-          if ($flakes -gt 0) { throw "reloadStorm failed $flakes of 8" }
+          Write-Host "reloadStorm: $flakes of 10 failed"
+          if ($flakes -gt 0) { throw "reloadStorm failed $flakes of 10" }
           foreach ($attack in 'none', 'stopPropagation', 'spoofState', 'docOpen', 'docOpenStop', 'endlessOpen', 'iframeStorm',
                               'pushStorm', 'hangNav', 'lateOpen', 'repeatOpen', 'reloadStorm') {
             & windows/tests/CoveredLaunchCheck.ps1 -Kite windows/build/Release/Kite.exe -Cover -Attack $attack

@@ -652,8 +652,13 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
         if (!page.browser) return;
         const ULONGLONG now = GetTickCount64();
         page.anchoredAt = now;
-        if (page.stepDue && page.stepDue <= now + kKeepDueStepMs) return;  // it stays; the rest follows the new anchor
+        // Each anchor gets its own asks, also one that keeps a due step: a page navigating itself
+        // over and over (reloadStorm) anchors every 0.5 s with a step always due, and refilled only
+        // with a new schedule it ran out of asks 10 s in. The renderer then spoke only from each new
+        // document, about 515 ms apart, just past kTrustHiddenMs, so every step was blind and each
+        // re-hide's flash could let a frame through.
         page.asksLeft = kMaxAsks;
+        if (page.stepDue && page.stepDue <= now + kKeepDueStepMs) return;  // it stays; the rest follows the new anchor
         ScheduleStep(tabID, page.browser, ++page.schedule, page, kRehideScheduleMs[0]);
     }
     void Anchored(const std::string& tabID, const CefRefPtr<CefBrowser>& browser) {
