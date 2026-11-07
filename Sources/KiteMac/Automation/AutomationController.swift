@@ -492,8 +492,8 @@ final class AutomationController {
     private func openSocket(interactive: Bool) -> Bool {
         let server = AutomationServer(
             socketURL: socketURL,
-            handler: { [weak self] request, connection in
-                await self?.perform(request, connection: connection) ?? .failure(.disabled)
+            handler: { [weak self] request, connection, received in
+                await self?.perform(request, connection: connection, received: received) ?? .failure(.disabled)
             },
             onDisconnect: { [weak self] connection in
                 Task { @MainActor in self?.disconnected(connection) }
@@ -590,6 +590,7 @@ final class AutomationController {
     // MARK: Control indicator
 
     func markControlled(_ id: UUID, connection: Int) {
+        if controlledTabs[id] == nil { Trace.event("tab.state", tab: id, connection: connection, ["state": "working"]) }
         var entry = controlledTabs[id] ?? ControlledTab(lastActive: Date(), connections: [])
         entry.lastActive = Date()
         entry.connections.insert(connection)
@@ -616,7 +617,10 @@ final class AutomationController {
             return (id, touched)
         }
         guard !idle.isEmpty else { return nil }
-        for (id, touched) in idle { stallsTold[id] = touched }
+        for (id, touched) in idle {
+            stallsTold[id] = touched
+            Trace.event("tab.state", tab: id, actor: .kite, connection: connection, ["state": "stalled"])
+        }
         let names = idle.map { id, _ in "\(id.uuidString) (“\(state.tab(id)?.displayTitle ?? "")”)" }.joined(separator: ", ")
         return "Kite: tabs you touched and left still show as working in the user's sidebar, “\(ClaudeTabState.waitingLine)”: "
             + "\(names). Finish the work there and call tab_status with state done and a note of what you did, handoff what's "
@@ -676,6 +680,8 @@ final class AutomationController {
 
     /// tab_status: Claude says where a tab stands. Done ends the working indicator at once.
     func setTabStatus(_ id: UUID, _ kind: ClaudeTabState.Declared.Kind, note: String?, connection: Int) {
+        Trace.event("tab.state", tab: id, url: store.state.tab(id)?.url, connection: connection,
+                    ["state": .string(kind.rawValue), "declared": true, "note_len": .number(Double(note?.count ?? 0))])
         if kind == .working { markControlled(id, connection: connection) } else { controlledTabs[id] = nil; tabActivity[id] = nil }
         let now = Date()
         // Touched at or before what Claude says now, so the word stands until it acts on the tab again.
@@ -750,7 +756,10 @@ final class AutomationController {
         let live = store.state.allTabIDs
         for (id, entry) in controlledTabs {
             let idle = entry.connections.isEmpty ? Timing.idleAfterDisconnect : Timing.idleWhileConnected
-            if now.timeIntervalSince(entry.lastActive) > idle || !live.contains(id) { controlledTabs[id] = nil }
+            if now.timeIntervalSince(entry.lastActive) > idle || !live.contains(id) {
+                controlledTabs[id] = nil
+                if live.contains(id) { Trace.event("tab.state", tab: id, actor: .kite, ["state": "idle"]) }
+            }
         }
         forgetClosedTabs(live: live)
         if !isEnabled || controlledTabs.isEmpty {
@@ -871,6 +880,10 @@ final class AutomationController {
 
     /// Lets a click or Return start its navigation, then waits (briefly) for the load to finish.
     func settle(_ id: UUID, startDelay: TimeInterval = 0.25) async {
+        await Trace.measure("wait") { await settleUntraced(id, startDelay: startDelay) }
+    }
+
+    private func settleUntraced(_ id: UUID, startDelay: TimeInterval) async {
         try? await Task.sleep(for: .seconds(startDelay))
         if activities[id]?.dialog != nil { return }
         let deadline = Date().addingTimeInterval(Timing.loadWait)
@@ -881,8 +894,18 @@ final class AutomationController {
 
     // MARK: Running tool calls
 
-    func perform(_ request: AutomationWire.Request, connection: Int) async -> ToolOutput {
+    func perform(_ request: AutomationWire.Request, connection: Int, received: Double? = nil) async -> ToolOutput {
         guard isEnabled else { return .failure(.disabled) }
+        // Every call is traced here, at the one door they all come through (`traceCall`).
+        let actor = TraceCall.actor(client: request.client)
+        let output = try? await traceCall(request.tool, arguments: request.arguments, connection: connection, actor: actor,
+                                          task: request.task, parent: nil, received: received) {
+            await self.performUntraced(request, connection: connection)
+        }
+        return output ?? .failure(AutomationError(.failed, "No result."))
+    }
+
+    private func performUntraced(_ request: AutomationWire.Request, connection: Int) async -> ToolOutput {
         if request.tool == TicketTest.wireTool {
             // Only the user's own `kite test-ticket`: a Claude task can't start another task.
             guard request.task == nil else { return .failure(AutomationError(.denied, "A Claude task can't start a ticket test.")) }
@@ -898,8 +921,17 @@ final class AutomationController {
             if command.needsWindow { ensureWindow?() }
             let task = request.task.flatMap(UUID.init(uuidString:)).flatMap { isRunningTask?($0) == true ? $0 : nil }
             let started = Target(host: attachedHost, store: attachedStore)
+            // A batch's steps keep their raw arguments for their trace records.
+            let batchTab = request.arguments["tab"]
+            let steps = (request.arguments["steps"]?.arrayValue ?? []).map { step -> JSONValue in
+                var arguments = step["arguments"]?.objectValue ?? [:]
+                if arguments["tab"] == nil, let batchTab { arguments["tab"] = batchTab }
+                return .object(arguments)
+            }
             var output = try await Self.$commandTarget.withValue(started) {
-                try await Self.$agentTask.withValue(task) { try await run(command, connection: connection) }
+                try await Self.$agentTask.withValue(task) {
+                    try await Self.$batchStepArguments.withValue(steps) { try await run(command, connection: connection) }
+                }
             }
             // A handoff this connection made that ended while it did other things: it hears so on its next call.
             if command.tool != .handoff, command.tool != .handoffStatus, let news = handoffNews(for: connection) {
@@ -1018,9 +1050,13 @@ final class AutomationController {
             window?.endSheet(alert.window, returnCode: .alertFirstButtonReturn)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + Timing.confirmationWait, execute: timeout)
+        let asked = TraceClock.now()
         let response = await withCheckedContinuation { continuation in
             alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
         }
+        let waited = TraceClock.monotonic() - asked.m
+        Trace.phase("confirm", waited)
+        Trace.event("confirm.answered", tab: id, actor: .user, duration: waited, start: asked, ["allowed": .bool(response == .alertSecondButtonReturn)])
         timeout.cancel()
         return response == .alertSecondButtonReturn
     }

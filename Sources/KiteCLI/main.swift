@@ -48,6 +48,12 @@ let usage = """
                                                      pointer, input, menu, key_log, trace. kite ui tree '{"match":"Sidebar"}'
                                                      (capture --in-process: Kite draws the window, no Screen Recording)
       kite probe APP [tree | capture] [...]          The same for another app, e.g. Arc (kite probe --help)
+      kite trace [--since 1h] [--session NAME] [--tab ID] [--actor user|agent|kite] [--json]
+                                                     Kite's action trace: a timeline of tool calls and events with
+                                                     their timings, then a summary (per tool p50/p95/max, the slowest
+                                                     calls, waiting on the user, page loads, energy)
+      kite trace export [--session NAME] [filters]   The matching records as JSONL, for evals
+      kite trace resources [--since 1h] [--limit N]  Top tabs by memory and energy, Kite's totals, the Mac
       kite tools                                     List every tool
       kite server                                    Which Kite serves the automation socket (PID, app, start time)
       kite mcp                                       Run as an MCP server on stdin/stdout
@@ -74,6 +80,12 @@ final class KiteConnection: @unchecked Sendable {
     /// Set while the process serving the real profile's socket isn't the installed Kite (a test or stale build).
     private var warning: String?
     private var warnedPID: Int32?
+    /// Who's calling, for Kite's action trace: the MCP client's name once it initializes, else the CLI.
+    private var clientName = "cli"
+    var client: String {
+        get { lock.withLock { clientName } }
+        set { lock.withLock { clientName = newValue } }
+    }
 
     init(path: String, isRealProfileSocket: Bool) {
         self.path = path
@@ -99,9 +111,11 @@ final class KiteConnection: @unchecked Sendable {
             nextID += 1
             pending[id] = continuation
             let socket = fd
+            let client = clientName
             lock.unlock()
 
-            guard let line = try? AutomationWire.encodeLine(AutomationWire.Request(id: id, tool: tool, arguments: arguments, task: task)),
+            guard let line = try? AutomationWire.encodeLine(AutomationWire.Request(id: id, tool: tool, arguments: arguments, task: task,
+                                                                                   client: client)),
                   writeAll(socket, line) else {
                 finish(id, .failure(AutomationError(.failed, "Lost the connection to Kite.")))
                 disconnect(socket)
@@ -236,7 +250,7 @@ struct Arguments {
     static let valued: Set<String> = ["--tab", "--space", "--session", "--max", "--selector", "--ref", "--socket", "-o", "--output", "--format",
                                       "--window", "--depth", "--match", "--region", "--pixels",
                                       "--status", "--host", "--type", "--url", "--since", "--limit", "--profile", "--timeout",
-                                      "--target"]
+                                      "--target", "--actor"]
 
     init(_ raw: ArraySlice<String>) throws {
         var iterator = raw.makeIterator()
@@ -262,14 +276,16 @@ struct CLIError: Error, CustomStringConvertible {
 
 func socketPath(_ arguments: Arguments) -> String {
     if let path = arguments.options["--socket"] { return path }
-    let support: URL
+    return AutomationWire.socketURL(supportDirectory: supportDirectory()).path
+}
+
+/// The Kite profile's folder: `$KITE_SUPPORT_PATH`, or Application Support/Kite.
+func supportDirectory() -> URL {
     if let override = ProcessInfo.processInfo.environment["KITE_SUPPORT_PATH"] {
-        support = URL(fileURLWithPath: override, isDirectory: true)
-    } else {
-        support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Kite", isDirectory: true)
+        return URL(fileURLWithPath: override, isDirectory: true)
     }
-    return AutomationWire.socketURL(supportDirectory: support).path
+    return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Kite", isDirectory: true)
 }
 
 func isRealProfileSocket(_ path: String) -> Bool {
@@ -436,6 +452,12 @@ func runMCP(_ connection: KiteConnection) async {
                 out.write(MCPServer.error(id: .null, .parseError, "That wasn't JSON."))
                 continue
             }
+            // The client's name, for Kite's action trace ("claude-code", "claude-ai").
+            if message["method"]?.stringValue == "initialize", let name = message["params"]?["clientInfo"]?["name"]?.stringValue {
+                connection.client = TraceRedaction.word(name).isEmpty ? "mcp" : TraceRedaction.word(name)
+            } else if message["method"]?.stringValue == "initialize" {
+                connection.client = "mcp"
+            }
             // Concurrently, so a call waiting on the user's confirmation doesn't block pings.
             group.addTask {
                 let response = await server.handle(message) { tool, arguments in
@@ -541,6 +563,9 @@ func main() async -> Int32 {
         }
         if name == "test-ticket" {
             return try await testTicket(args, connection)
+        }
+        if name == "trace" {
+            return try TraceCommand.run(args, supportDirectory: supportDirectory())
         }
         let (tool, arguments) = try toolCall(for: name, args)
         if tool == .networkLog && args.flags.contains("--follow") {
