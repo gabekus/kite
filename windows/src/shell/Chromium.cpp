@@ -613,6 +613,7 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
         if (!page) return;
         page->saysVisible = visible;
         if (!visible) page->saidHiddenAt = GetTickCount64();
+        if (perf::On() && !page->placed.visible) perf::Mark("page-visibility", std::string(visible ? "visible" : "hidden") + " tab=" + tabID);
         RehideIfShowing(tabID, *page);
         // Shown while Kite has it hidden: asked again after the re-hide, until it says hidden.
         if (visible && page->hwnd && !page->placed.visible) AskLater(tabID, *page);
@@ -670,8 +671,9 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
                 if (p->hwnd && !p->placed.visible) {
                     // Blind only when the renderer hasn't just said hidden (kTrustHiddenMs);
                     // otherwise it's asked at once.
-                    const bool answering = GetTickCount64() - p->saidHiddenAt <= kTrustHiddenMs;
-                    if (!answering) Rehide(*p);
+                    const ULONGLONG heard = GetTickCount64() - p->saidHiddenAt;
+                    const bool answering = heard <= kTrustHiddenMs;
+                    if (!answering) Rehide(tabID, *p, "blind", heard);
                     shared->AskLater(tabID, *p, answering ? 0 : kAskEveryMs);
                 }
                 const ULONGLONG now = GetTickCount64();
@@ -703,13 +705,19 @@ struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
             }), delay);
             return;
         }
-        Rehide(page);
+        Rehide(tabID, page, "visible", now - page.saidHiddenAt);
     }
-    // HideAgain, unless the page had kMaxRehidesPer10s in the last 10 s.
-    static void Rehide(Page& page) {
+    // HideAgain, unless the page had kMaxRehidesPer10s in the last 10 s. `why` (blind: a step while
+    // the renderer hadn't said hidden for `heard` ms; visible: it said visible) and the outcome go
+    // in the perf log as a "rehide" mark, for CoveredLaunchCheck to show when a frame got through.
+    static void Rehide(const std::string& tabID, Page& page, const char* why, ULONGLONG heard) {
         const ULONGLONG now = GetTickCount64();
         while (!page.rehides.empty() && now - page.rehides.front() >= kRehideWindowMs) page.rehides.pop_front();
-        if (page.rehides.size() >= kMaxRehidesPer10s) return;
+        const bool capped = page.rehides.size() >= kMaxRehidesPer10s;
+        if (perf::On()) {
+            perf::Mark("rehide", std::string(why) + (capped ? " capped" : "") + " heardHiddenMsAgo=" + std::to_string(heard) + " tab=" + tabID);
+        }
+        if (capped) return;
         page.rehides.push_back(now);
         RunOnCefUIThread([host = page.hwnd] { HideAgain(host); });
     }
