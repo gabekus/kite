@@ -57,6 +57,8 @@ extension AutomationController {
             return try await handoffStatus(id, wait: wait, cancel: cancel, connection: connection)
         case .dialogs(let tab):
             return try dialogsReport(tab, connection: connection)
+        case let .readExtensionConsole(name, pattern, onlyErrors, limit, clear):
+            return try readExtensionConsole(name, pattern: pattern, onlyErrors: onlyErrors, limit: limit, clear: clear)
         case .batch(let steps):
             return await runBatch(steps, connection: connection)
         default:

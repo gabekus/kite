@@ -12,6 +12,8 @@ public struct TabActivity: Sendable {
         public var level: String
         public var text: String
         public var source: String?
+        /// When it was logged (extension workers' logs outlive any one look at them).
+        public var time: Date? = nil
         public var isError: Bool { level == "error" || level == "exception" || level == "assert" }
     }
 
@@ -64,16 +66,16 @@ public struct TabActivity: Sendable {
             let text = args.map(Self.describe).joined(separator: " ")
             let frame = params["stackTrace"]?["callFrames"]?[0]
             appendConsole(ConsoleEntry(level: Self.level(params["type"]?.stringValue ?? "log"), text: text,
-                                       source: Self.location(frame?["url"]?.stringValue, frame?["lineNumber"]?.intValue.map { $0 + 1 })))
+                                       source: Self.location(frame?["url"]?.stringValue, frame?["lineNumber"]?.intValue.map { $0 + 1 }), time: now))
         case "Runtime.exceptionThrown":
             let details = params["exceptionDetails"]
             let text = details?["exception"]?["description"]?.stringValue ?? details?["text"]?.stringValue ?? "Uncaught error"
             appendConsole(ConsoleEntry(level: "exception", text: text,
-                                       source: Self.location(details?["url"]?.stringValue, details?["lineNumber"]?.intValue.map { $0 + 1 })))
+                                       source: Self.location(details?["url"]?.stringValue, details?["lineNumber"]?.intValue.map { $0 + 1 }), time: now))
         case "Log.entryAdded":
             let entry = params["entry"]
             appendConsole(ConsoleEntry(level: entry?["level"]?.stringValue ?? "info", text: entry?["text"]?.stringValue ?? "",
-                                       source: Self.location(entry?["url"]?.stringValue, entry?["lineNumber"]?.intValue.map { $0 + 1 })))
+                                       source: Self.location(entry?["url"]?.stringValue, entry?["lineNumber"]?.intValue.map { $0 + 1 }), time: now))
         case "Network.requestWillBeSent":
             guard let id = params["requestId"]?.stringValue, let request = params["request"] else { return false }
             let entry = Request(id: id, method: request["method"]?.stringValue ?? "GET", url: request["url"]?.stringValue ?? "",
@@ -125,17 +127,24 @@ public struct TabActivity: Sendable {
 
     // MARK: Reports
 
-    public func consoleReport(pattern: String?, onlyErrors: Bool, limit: Int) -> String {
+    /// A note in the log itself, such as "the worker restarted".
+    public mutating func noteConsole(_ text: String, now: Date = Date()) {
+        appendConsole(ConsoleEntry(level: "kite", text: text, source: nil, time: now))
+    }
+
+    /// `showTimes` prefixes each line with its local time; `empty` replaces the
+    /// "since Claude started driving this tab" wording.
+    public func consoleReport(pattern: String?, onlyErrors: Bool, limit: Int, showTimes: Bool = false, empty: String? = nil) -> String {
         let regex = pattern.flatMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
         let matching = console.filter { entry in
             (!onlyErrors || entry.isError) && (regex.map { Self.matches($0, entry.text) } ?? true)
         }
         guard !matching.isEmpty else {
-            return console.isEmpty ? "No console messages since Claude started driving this tab." : "No console messages match."
+            return console.isEmpty ? (empty ?? "No console messages since Claude started driving this tab.") : "No console messages match."
         }
         let shown = matching.suffix(limit)
         let lines = shown.map { entry in
-            "[\(entry.level)] \(Self.truncate(entry.text, 500))" + (entry.source.map { " (\($0))" } ?? "")
+            (showTimes ? entry.time.map { Self.clock.string(from: $0) + " " } ?? "" : "") + "[\(entry.level)] \(Self.truncate(entry.text, 500))" + (entry.source.map { " (\($0))" } ?? "")
         }
         return "\(matching.count) message\(matching.count == 1 ? "" : "s")\(matching.count > shown.count ? ", newest \(shown.count) shown" : ""):\n"
             + lines.joined(separator: "\n")
@@ -158,6 +167,12 @@ public struct TabActivity: Sendable {
     }
 
     // MARK: Private
+
+    private static let clock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter
+    }()
 
     private mutating func appendConsole(_ entry: ConsoleEntry) {
         console.append(entry)

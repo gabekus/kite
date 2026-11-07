@@ -78,6 +78,15 @@ run_case() {
 failures=0
 echo "Chromium's own openPopup: $(ask native)"
 
+# The worker logged that failure; Claude reads it from the worker's console, which Kite keeps.
+worker_log=$("$CLI" call read_console_messages '{"extension":"Kite openPopup test","only_errors":true}' 2>&1 || true)
+if [[ "$worker_log" == *"openPopup (native) failed"* ]]; then
+  echo "PASS worker console: Claude can read the extension worker's errors"
+else
+  echo "FAIL worker console: ${worker_log:-nothing}"
+  failures=$((failures + 1))
+fi
+
 # Kite's script reaches the worker once Kite's helper has attached to it.
 replaced=""
 for _ in $(seq 40); do

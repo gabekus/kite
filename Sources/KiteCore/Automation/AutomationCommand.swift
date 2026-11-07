@@ -128,6 +128,8 @@ public enum AutomationCommand: Hashable, Sendable {
 
     // Debugging
     case readConsole(tab: String?, pattern: String?, onlyErrors: Bool, limit: Int, clear: Bool)
+    /// An extension's background worker's console (by name or id) instead of a tab's.
+    case readExtensionConsole(extension: String, pattern: String?, onlyErrors: Bool, limit: Int, clear: Bool)
     case readNetwork(tab: String?, urlPattern: String?, limit: Int, clear: Bool)
     /// Kite's HAR-style log across tabs, from a cursor. `query.tab` nil means every tab.
     case networkLog(query: NetworkLog.Query)
@@ -250,7 +252,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case .signIn: .signIn
         case .handoff: .handoff
         case .handoffStatus: .handoffStatus
-        case .readConsole: .readConsole
+        case .readConsole, .readExtensionConsole: .readConsole
         case .readNetwork: .readNetwork
         case .networkLog: .networkLog
         case .networkRequest: .networkRequest
@@ -408,6 +410,12 @@ public enum AutomationCommand: Hashable, Sendable {
             self = .handoffStatus(id: try a.string("id").flatMap { $0.isEmpty ? nil : $0 }, wait: min(wait, UserHandoff.maxWait),
                                   cancel: try a.bool("cancel"))
         case .readConsole:
+            if let name = try a.string("extension")?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
+                guard tab == nil else { throw InvalidArguments("Pass \"tab\" or \"extension\", not both.") }
+                self = .readExtensionConsole(extension: name, pattern: try a.pattern("pattern"), onlyErrors: try a.bool("only_errors"),
+                                             limit: try a.int("limit", in: 1...1000) ?? Self.defaultLogLimit, clear: try a.bool("clear"))
+                return
+            }
             self = .readConsole(tab: tab, pattern: try a.pattern("pattern"), onlyErrors: try a.bool("only_errors"),
                                 limit: try a.int("limit", in: 1...1000) ?? Self.defaultLogLimit, clear: try a.bool("clear"))
         case .readNetwork:

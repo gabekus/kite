@@ -14,6 +14,10 @@ chrome.runtime.onMessage.addListener((message, _sender, reply) => {
   const open = message === 'native' ? native : message === 'tab' ? openTabPopup : () => chrome.action.openPopup();
   Promise.resolve()
     .then(open)
-    .then(() => reply({ ok: true }), (error) => reply({ ok: false, error: error.message }));
+    .then(() => reply({ ok: true }), (error) => {
+      // Kite keeps the worker's console for Claude (read_console_messages with extension).
+      console.error(`openPopup (${message}) failed: ${error.message}`);
+      reply({ ok: false, error: error.message });
+    });
   return true;
 });

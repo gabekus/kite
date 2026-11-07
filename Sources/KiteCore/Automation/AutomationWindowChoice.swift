@@ -86,7 +86,7 @@ extension AutomationCommand {
     public var needsWindow: Bool {
         switch self {
         case .ui, .listDownloads, .networkLog, .networkRequest, .exportHAR, .handoffStatus, .formProfile, .dialogs,
-             .listSpaces, .createSpace, .describeSpace:
+             .listSpaces, .createSpace, .describeSpace, .readExtensionConsole:
             false
         case .tabsContext, .tabsCreate, .tabsClose, .switchTab, .tabStatus, .navigate, .resizeWindow, .readPage, .find,
              .getPageText, .screenshot, .click, .type, .formInput, .computer, .javascript, .waitFor, .handleDialog,

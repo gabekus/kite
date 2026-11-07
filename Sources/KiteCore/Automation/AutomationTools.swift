@@ -92,7 +92,7 @@ extension AutomationCommand.Tool {
         case .handoffStatus:
             "Which steps of a handoff the user has done, skipped or not reached yet, with each tab's URL now, what's in the way of a waiting step (a control that's turned off, or one Kite can't show: NOT SHOWN), and any tab a step's click opened. Pass wait (seconds, up to 50: longer waits time out in clients) to wait until a step is done or skipped, a step is blocked or can't be shown, a click opens a new tab, or a page on the handoff's tabs shows a JavaScript dialog (an alert such as \"Double check your card information\" after the user's step: the result quotes it and says how it closed; read the page and work out what's wrong before you wait again); it returns the moment that happens. Call again to keep waiting, and don't end your turn while steps wait. When it's done, read the pages and carry on at once (fill the next page's ordinary fields from form_profile). cancel true takes the steps you no longer need off the user's pages."
         case .readConsole:
-            "Console messages and uncaught errors logged since Claude started driving the tab. pattern filters by regex; clear empties the log after reading."
+            "Console messages and uncaught errors logged since Claude started driving the tab. pattern filters by regex; clear empties the log after reading. extension (a name such as \"1Password\", or an id) reads that extension's background worker instead of a tab, with times: Kite keeps those logs from launch, so check them when an extension's button or prompt does nothing or shows an error."
         case .readNetwork:
             "Network requests since Claude started driving the tab: method, URL, status, type. url_pattern filters by regex."
         case .networkLog:
@@ -284,7 +284,8 @@ extension AutomationCommand.Tool {
             ]
         case .readConsole:
             properties = ["tab": tab, "pattern": ["type": "string", "description": "Regular expression to match messages."],
-                          "only_errors": ["type": "boolean"], "limit": Self.limit, "clear": ["type": "boolean"]]
+                          "only_errors": ["type": "boolean"], "limit": Self.limit, "clear": ["type": "boolean"],
+                          "extension": ["type": "string", "description": "An extension's name or id: read its background worker's console instead of a tab's."]]
         case .readNetwork:
             properties = ["tab": tab, "url_pattern": ["type": "string", "description": "Regular expression to match URLs."],
                           "limit": Self.limit, "clear": ["type": "boolean"]]
