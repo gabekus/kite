@@ -4,6 +4,8 @@
 #
 #   dist/release/<version>/Kite-<version>.zip   the signed app, which Sparkle downloads
 #   dist/release/<version>/appcast.xml          the feed, EdDSA signature included
+#   dist/release/<version>/Kite.zip             the same app under a fixed name, so the README's
+#                                               releases/latest/download/Kite.zip link always works
 #   dist/release/<version>/notes.md             what changed since the last release
 #
 # Every release carries its own appcast.xml, and Kite reads the one on the latest release
@@ -167,6 +169,10 @@ $NOTES_HTML
   </channel>
 </rss>
 EOF
+# The README's Download button links releases/latest/download/Kite.zip, which needs a fixed
+# name on every release. Sparkle keeps using the versioned zip the appcast names.
+cp "$ZIP" "$OUT/Kite.zip"
+
 echo "Built Kite $VERSION (build $BUILD) in $OUT ($(du -h "$ZIP" | cut -f1))"
 
 if [[ "$PUBLISH" == 0 ]]; then
@@ -175,7 +181,14 @@ if [[ "$PUBLISH" == 0 ]]; then
 fi
 
 # A draft first, so releases/latest (and its appcast.xml) only moves once both files are up.
-gh release create "$TAG" "$ZIP" "$OUT/appcast.xml" --repo "$REPO" --target "$(git rev-parse HEAD)" \
+gh release create "$TAG" "$ZIP" "$OUT/Kite.zip" "$OUT/appcast.xml" --repo "$REPO" --target "$(git rev-parse HEAD)" \
     --title "Kite $VERSION" --notes-file "$OUT/notes.md" --draft
 gh release edit "$TAG" --repo "$REPO" --draft=false --latest
 echo "Published https://github.com/$REPO/releases/tag/$TAG"
+# The README's Download button must keep working: check it lands on this release's zip.
+DOWNLOAD_URL="https://github.com/$REPO/releases/latest/download/Kite.zip"
+# The first redirect names the release; later ones go to GitHub's storage. Then the zip itself must load.
+LANDED="$(curl -fsI -o /dev/null -w '%{redirect_url}' "$DOWNLOAD_URL" || true)"
+curl -fsIL -o /dev/null "$DOWNLOAD_URL" || fail "$DOWNLOAD_URL doesn't download"
+[[ "$LANDED" == *"/$TAG/Kite.zip"* ]] || fail "$DOWNLOAD_URL doesn't reach $TAG's Kite.zip (got: ${LANDED:-nothing})"
+echo "Download button OK: $DOWNLOAD_URL"

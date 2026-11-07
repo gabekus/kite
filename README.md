@@ -8,6 +8,17 @@ and drops the account wall.
 
 > Kite is a working name and early. Expect breaking changes.
 
+<p align="center">
+  <a href="https://github.com/gabekus/kite/releases/latest/download/Kite.zip">
+    <img alt="Download Kite for macOS" src="https://img.shields.io/badge/Download_Kite-macOS_14%2B-0A84FF?style=for-the-badge&logo=apple&logoColor=white" height="44">
+  </a>
+  <br>
+  <sub>Always the latest release · <a href="https://github.com/gabekus/kite/releases">all releases</a></sub>
+</p>
+
+Unzip it and drag Kite.app to Applications. It's signed and notarized, so it opens like any
+Mac app, and it updates itself after that.
+
 ## Status
 
 | | |
