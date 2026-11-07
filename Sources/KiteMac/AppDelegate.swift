@@ -269,12 +269,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onPress: { [weak self] in self?.openLittleKiteWindow(url: nil) }
         )
         keyBindings.didApply = { [weak self] in self?.littleKiteHotkey?.update() }
-        if showsOnboarding { showGettingStarted(nil) }
+        if showsOnboarding { showOnboarding(resume: true) }
     }
 
     /// Help › Getting Started, and onboarding on a new profile's first launch.
-    @objc func showGettingStarted(_ sender: Any?) {
-        OnboardingWindow.show { [weak self] in
+    @objc func showGettingStarted(_ sender: Any?) { showOnboarding(resume: false) }
+
+    private func showOnboarding(resume: Bool) {
+        OnboardingWindow.show(resume: resume) { [weak self] in
             guard let self else { return nil }
             return windows.currentNormal(visibleOnly: true) ?? windows.openNewWindow()
         }

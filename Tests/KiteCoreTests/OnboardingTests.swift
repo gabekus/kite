@@ -47,6 +47,21 @@ import Testing
         #expect(Onboarding.load(from: file) == nil)
     }
 
+    @Test func resumesAtTheStepItWasLeftOn() throws {
+        #expect(Onboarding.resumeStep(nil, stepCount: 4) == 0)
+        #expect(Onboarding.resumeStep(.init(completed: false), stepCount: 4) == 0)
+        #expect(Onboarding.resumeStep(.init(completed: false, step: 2), stepCount: 4) == 2)
+        #expect(Onboarding.resumeStep(.init(completed: true, step: 2), stepCount: 4) == 0)
+        #expect(Onboarding.resumeStep(.init(completed: false, step: 9), stepCount: 4) == 0)
+
+        // An onboarding.json from before steps were saved still reads.
+        let old = try JSONDecoder().decode(Onboarding.State.self, from: Data(#"{"completed":false}"#.utf8))
+        #expect(old == .init(completed: false))
+        let saved = try JSONDecoder().decode(Onboarding.State.self,
+                                             from: JSONEncoder().encode(Onboarding.State(completed: false, step: 1)))
+        #expect(saved.step == 1)
+    }
+
     @Test func promptCarriesTheGuide() {
         let guide = "# Setting up Kite with Claude\n\n## 1. Find Kite\n"
         let prompt = ClaudeSetupPrompt.withGuide(guide, kite: "/Applications/Kite.app/Contents/Helpers/kite")
