@@ -1,0 +1,45 @@
+# The one check main requires. Kite's other workflows only run for the paths they cover,
+# so none of them can be required on its own: a PR they skip would wait forever. This runs
+# on every PR, waits for whichever checks the PR started, and passes when they all pass.
+# With it required, GitHub's auto-merge has something to wait for (see auto-merge.yml).
+# A check re-run after a failure doesn't restart this one: re-run "All checks" too.
+name: All checks
+
+on:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+permissions:
+  checks: read
+
+jobs:
+  all-checks:
+    name: All checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Wait for the PR's other checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Let the other workflows register their checks first.
+          sleep 30
+          while :; do
+            runs=$(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100&filter=latest" \
+              --jq '[.check_runs[] | select(.name != "All checks")]')
+            failed=$(jq -r '.[] | select(.status == "completed"
+              and (.conclusion | IN("success", "skipped", "neutral") | not)) | "\(.name): \(.conclusion)"' <<<"$runs")
+            if [[ -n "$failed" ]]; then echo "Failed:"; echo "$failed"; exit 1; fi
+            pending=$(jq -r '.[] | select(.status != "completed") | .name' <<<"$runs")
+            if [[ -z "$pending" ]]; then
+              echo "All $(jq length <<<"$runs") checks passed."
+              exit 0
+            fi
+            echo "Waiting on: $(tr '\n' ' ' <<<"$pending")"
+            sleep 30
+          done

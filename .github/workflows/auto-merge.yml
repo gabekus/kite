@@ -1,0 +1,29 @@
+# Turns on auto-merge for every PR from a branch of this repository, so it merges as soon as
+# "All checks" (required on main) passes. Fork PRs are left alone: they never get the token.
+#
+# It uses the AUTOMERGE_TOKEN secret (a fine-grained token for this repo with Contents and
+# Pull requests read/write), not GITHUB_TOKEN: a merge done as GITHUB_TOKEN wouldn't start
+# main's own CI run, which saves the build cache PRs restore.
+name: Auto-merge
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+
+permissions: {}
+
+jobs:
+  enable:
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    steps:
+      - name: Turn on auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
+          PR: ${{ github.event.pull_request.html_url }}
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::warning::No AUTOMERGE_TOKEN secret, so auto-merge wasn't turned on."
+            exit 0
+          fi
+          gh pr merge --auto --merge "$PR"
