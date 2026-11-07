@@ -11,7 +11,8 @@ import KiteCore
 /// (`isListening`, `ownsSocketFile`, `stop`) never waits on `queue`, so a client
 /// that stops reading can't stall Kite.
 final class AutomationServer: @unchecked Sendable {
-    typealias Handler = @Sendable (AutomationWire.Request, _ connection: Int) async -> ToolOutput
+    /// `received` is when the request's line arrived (`TraceClock.monotonic`), for the trace's queue phase.
+    typealias Handler = @Sendable (AutomationWire.Request, _ connection: Int, _ received: Double) async -> ToolOutput
 
     let socketURL: URL
     private let handler: Handler
@@ -65,7 +66,7 @@ final class AutomationServer: @unchecked Sendable {
         // Don't take the socket from another Kite that's still answering on it
         // (it would lose Claude's connection). The controller tries again when the folder changes.
         if Self.isAnswering(address) {
-            throw AutomationError(.failed, "Another Kite is already answering at \(path).")
+            throw SocketTaken(path: path, holder: SocketServerProcess.serving(socketPath: path))
         }
         // A socket left behind by a crash would make bind fail.
         unlink(path)
@@ -92,6 +93,17 @@ final class AutomationServer: @unchecked Sendable {
         listenSource = source
         lock.unlock()
         source.resume()
+    }
+
+    /// Another process answers on the socket: named, so a stale or test build holding it is obvious.
+    struct SocketTaken: Error, CustomStringConvertible {
+        let path: String
+        /// Nil if it quit between answering and the lookup.
+        let holder: SocketServerProcess?
+
+        var description: String {
+            "Another Kite is already answering at \(path)" + (holder.map { ": \($0.summary)." } ?? ".")
+        }
     }
 
     /// Stops listening and drops every connection. Returns at once: the connections close on `queue`.
@@ -173,23 +185,26 @@ final class AutomationServer: @unchecked Sendable {
             let connection = Connection(id: id, fd: fd, queue: queue)
             connection.onLine = { [weak self] line in self?.received(line, on: connection) }
             connection.onClose = { [weak self] in
+                Trace.event("connection.closed", actor: .kite, connection: id)
                 guard let self else { return }
                 connections[id] = nil
                 onDisconnect(id)
             }
             connections[id] = connection
+            Trace.event("connection.opened", actor: .kite, connection: id)
             connection.start()
         }
     }
 
     private func received(_ line: Data, on connection: Connection) {
+        let received = TraceClock.monotonic()
         guard let request = try? JSONDecoder().decode(AutomationWire.Request.self, from: line) else {
             connection.send(AutomationWire.Response(id: -1, output: .failure(AutomationError(.invalidArguments, "Malformed request."))))
             return
         }
         let handler = self.handler
         Task {
-            let output = await handler(request, connection.id)
+            let output = await handler(request, connection.id, received)
             connection.send(AutomationWire.Response(id: request.id, output: output))
         }
     }

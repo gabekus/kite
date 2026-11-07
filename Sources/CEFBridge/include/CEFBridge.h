@@ -34,6 +34,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (class, nonatomic, readonly) BOOL isAvailable;
 @property (class, nonatomic, readonly) BOOL isInitialized;
 + (BOOL)initializeWithSettings:(KCRuntimeSettings *)settings;
+/// CEF's result code after `initializeWithSettings:` failed (cef_resultcode_t): 21 or 24 mean another
+/// Chromium process has the profile open.
+@property (class, nonatomic, readonly) int lastExitCode;
 /// Chromium's Energy Saver, which drops pages to 30fps on battery below 20%.
 /// On by default, as in Chrome. Can be set before or after initializing.
 @property (class, nonatomic) BOOL energySaverEnabled;

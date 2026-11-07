@@ -238,6 +238,9 @@ mkdir -p "$LOGS" "$WORK/plan"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 PROFILE_LIST="${MACCAP_PROFILE_LIST:-}"
 
+# shellcheck source=lib/test-kite.sh
+source "$ROOT/scripts/lib/test-kite.sh"
+
 # Every launch (Kite, check-test-defaults.sh) starts from the runner's environment minus anything Kite reads.
 SCRUB=(env -u KITE_SUPPORT_PATH)
 while IFS='=' read -r key _; do
@@ -1024,8 +1027,7 @@ while IFS= read -r folder <&3; do
     if [[ "$SKIP" == 1 ]]; then echo skipped >"$folder/status"; continue; fi
 
     defaults delete "$BUNDLE_ID" SidebarWidth >/dev/null 2>&1 || true
-    PROFILE="$(mktemp -d /tmp/k.XXXX)"
-    [[ -d "$PROFILE" && ! -L "$PROFILE" ]] || { echo "profile isn't a directory" >&2; exit 1; }
+    PROFILE="$(kite_test_profile)" || exit 1
     if [[ -n "$PROFILE_LIST" ]]; then echo "$PROFILE" >>"$PROFILE_LIST"; fi
     STORES="$folder/datastores"
     cp "$folder/session.json" "$PROFILE/session.json"
@@ -1040,6 +1042,8 @@ while IFS= read -r folder <&3; do
         if [[ "$line" == *=@profile/* ]]; then line="${line%%=*}=$PROFILE/${line#*=@profile/}"; fi
         if [[ -n "$line" ]]; then launch_env+=("$line"); fi
     done <"$folder/env"
+    # Refuses anything that could reach the real profile or the installed Kite's settings.
+    (unset KITE_SUPPORT_PATH; kite_check_test_launch "$APP" "$PROFILE") || exit 2
     "${launch_env[@]}" "$APP/Contents/MacOS/Kite" </dev/null >"$PROFILE/kite.log" 2>&1 &
     KITE_PID=$!
     export KITE_SUPPORT_PATH="$PROFILE"   # so the CLI finds this profile's socket

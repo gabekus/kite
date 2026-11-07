@@ -10,7 +10,7 @@ import Testing
             #expect(text.contains(MCPServer.accountForms))
         }
         let rule = MCPServer.accountForms
-        for words in ["ordinary details they approve", "don't guess them", "creates the account", "agrees to terms",
+        for words in ["ordinary details yourself", "from form_profile, never from emails, old orders or a guess", "creates the account", "agrees to terms",
                       "authorizes a credit check", "verifies identity", "SSN, EIN or other ID number", "a card or bank number",
                       "a password or a one-time code", "hand the account-making click over with handoff and wait on it"] {
             #expect(rule.contains(words), "missing: \(words)")

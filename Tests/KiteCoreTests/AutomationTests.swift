@@ -96,6 +96,11 @@ import Testing
             == .waitFor(tab: nil, condition: .networkIdle, timeout: 10))
         #expect(try AutomationCommand(tool: "read_console_messages", arguments: ["pattern": "err(or)?", "only_errors": true])
             == .readConsole(tab: nil, pattern: "err(or)?", onlyErrors: true, limit: 100, clear: false))
+        #expect(try AutomationCommand(tool: "read_console_messages", arguments: ["extension": " 1Password ", "only_errors": true])
+            == .readExtensionConsole(extension: "1Password", pattern: nil, onlyErrors: true, limit: 100, clear: false))
+        #expect(throws: AutomationCommand.InvalidArguments.self) {
+            try AutomationCommand(tool: "read_console_messages", arguments: ["extension": "1Password", "tab": "abc"])
+        }
         #expect(try AutomationCommand(tool: "network_log", arguments: ["since": 12, "status": "4XX", "type": "fetch, XHR", "host": "api.example"])
             == .networkLog(query: NetworkLog.Query(since: 12, host: "api.example", status: "4xx", types: ["fetch", "xhr"])))
         #expect(try AutomationCommand(tool: "network_log", arguments: [:]) == .networkLog(query: NetworkLog.Query()))

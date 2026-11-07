@@ -62,6 +62,19 @@ final class AutomationController {
     /// The tabs Claude is driving: the sidebar marks their rows and the Claude folders that hold them,
     /// and the page gets Claude's border while one is in front.
     private(set) var controlledTabIDs: Set<UUID> = []
+    /// What Claude said about each tab with tab_status and when it last touched it, so every tab it touched shows a
+    /// state in the sidebar (`tabState`): working, needs you, done, or left without a word. Kept with the session
+    /// (`BrowserState.claudeTabs`), so the states outlive a restart.
+    var claudeRecords: [UUID: ClaudeTabState.Record] { store.state.claudeTabs }
+    /// What Claude last did on each tab it works on (`ClaudeActivity`). Observed: the row's line under the title
+    /// and its tooltip show it while the tab is working.
+    private(set) var tabActivity: [UUID: ClaudeActivity.Log] = [:]
+    /// The connection that last acted on each tab, and the stalls it has heard about (`stalledNews`).
+    @ObservationIgnored private var tabConnection: [UUID: Int] = [:]
+    @ObservationIgnored private var stallsTold: [UUID: Date] = [:]
+    /// The socket connections open now, each a Claude session's (or a CLI call's) link to Kite. Observed: a tab Claude
+    /// touched stays working while the connection that touched it is open, and turns orange once it closes.
+    private(set) var liveConnections: Set<Int> = []
     /// Tabs handed to the user to sign in (sign_in), for the banner's Done and Cancel.
     var signIns: [UUID: SignInRequest] = [:]
     /// Steps Claude handed to the user (handoff), newest last, kept a while after they end so Claude can read how
@@ -89,6 +102,23 @@ final class AutomationController {
     /// The one look after `UserHandoff.offPageDelay` (`scheduleHandoffFollowUp`).
     @ObservationIgnored var handoffFollowUp: Task<Void, Never>?
     @ObservationIgnored var handoffPollAgain = false
+    /// A lead to a step's tab waiting for the user to pause typing or clicking in Kite (`HandoffLead`).
+    @ObservationIgnored var handoffLead: Task<Void, Never>?
+    /// Tabs Kite just brought forward for a step: their next look scrolls the control into view and pulses the ring.
+    @ObservationIgnored var ringJumps: Set<UUID> = []
+    /// Which connection made each handoff, and the handoffs whose end it has heard, for `handoffNews`.
+    @ObservationIgnored var handoffConnections: [String: Int] = [:]
+    @ObservationIgnored var handoffEndsTold: Set<String> = []
+    /// The step whose tag shows on its own at the top of each tab's page, its control not found there.
+    @ObservationIgnored var ringFloating: [UUID: String] = [:]
+    /// Where each waiting step's control was first seen ringed: its tab going to another page ends the step.
+    @ObservationIgnored var handoffShownAt: [String: URL] = [:]
+    /// JavaScript dialogs on the tabs Claude touched or handed steps on, kept after they close (`DialogLog`).
+    @ObservationIgnored var dialogLog = DialogLog()
+    /// Waiting steps a page's dialog interrupted once Claude heard of it, with the words their tag shows meanwhile
+    /// ("Claude saw the page's alert and is looking at it"). Observed: their tabs show working, not needs you
+    /// (`stepNeedingUser`).
+    var dialogAsides: [String: String] = [:]
 
     /// The normal window the tools work in, and its store. It moves when that window closes (`attach`).
     @ObservationIgnored private weak var attachedHost: AutomationHost?
@@ -128,6 +158,8 @@ final class AutomationController {
     /// prompts within `socketRetryPause` are skipped, so a failure can't loop through the watch.
     @ObservationIgnored private var lastSocketFailure: Date?
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
+    /// Other Kites found holding the socket, each reported once (`reportSocketTaken`).
+    @ObservationIgnored private var reportedSocketHolders: Set<Int32> = []
     /// The last reason the socket didn't open, so each reason is logged once.
     @ObservationIgnored private var lastSocketError: String?
     /// Console, network and dialog state of tabs Claude has touched, and the page each was collected from.
@@ -320,6 +352,7 @@ final class AutomationController {
             NSLog("Kite: Claude's socket file at \(server.socketURL.path) went away; reopening it.")
             server.stop()
             self.server = nil
+            liveConnections.removeAll()
         }
         _ = openSocket(interactive: false)
     }
@@ -333,11 +366,14 @@ final class AutomationController {
             stopWatchdog()
             server?.stop()
             server = nil
+            liveConnections.removeAll()
             stop(tabs: Set(controlledTabs.keys).union(pendingConfirmations.keys).union(trackedPages.keys))
             stopRecording()
             network.clear()
             revoked.removeAll()
             activities.removeAll()
+            dialogLog.clear()
+            dialogAsides.removeAll()
             snapshots.removeAll()
             claudeOpened.removeAll()
             taskTabs.removeAll()
@@ -456,8 +492,8 @@ final class AutomationController {
     private func openSocket(interactive: Bool) -> Bool {
         let server = AutomationServer(
             socketURL: socketURL,
-            handler: { [weak self] request, connection in
-                await self?.perform(request, connection: connection) ?? .failure(.disabled)
+            handler: { [weak self] request, connection, received in
+                await self?.perform(request, connection: connection, received: received) ?? .failure(.disabled)
             },
             onDisconnect: { [weak self] connection in
                 Task { @MainActor in self?.disconnected(connection) }
@@ -466,6 +502,8 @@ final class AutomationController {
         do {
             try server.start()
         } catch {
+            // Turning the setting on shows its own alert with the same holder; at launch and on retries, this one.
+            if !interactive, let taken = error as? AutomationServer.SocketTaken { reportSocketTaken(taken) }
             guard interactive else {
                 let reason = "\(error)"
                 if reason != lastSocketError { NSLog("Kite: couldn't open Claude's socket: \(reason)") }
@@ -488,6 +526,51 @@ final class AutomationController {
         return true
     }
 
+    /// Another Kite answers on this profile's socket, so Claude's tools reach it, not this Kite. Says so loudly, once per
+    /// holder: a log line and an alert naming its PID, app and start time. The installed Kite offers to quit a holder
+    /// that isn't the installed Kite (a test or stale build on the real profile), and takes the socket once it's gone.
+    private func reportSocketTaken(_ taken: AutomationServer.SocketTaken) {
+        guard let holder = taken.holder, holder.pid != getpid(), !reportedSocketHolders.contains(holder.pid) else { return }
+        reportedSocketHolders.insert(holder.pid)
+        NSLog("Kite: Claude's automation socket at %@ is served by another Kite, %@. Claude's tools reach that Kite, "
+            + "not this one, until it quits.", taken.path, holder.summary)
+        let home = NSHomeDirectory()
+        let mayQuitIt = RealProfileGuard.isInstalledKite(bundleID: Bundle.main.bundleIdentifier,
+                                                         bundlePath: Bundle.main.bundleURL.path, home: home)
+            && !holder.isInstalledKite(home: home)
+        DispatchQueue.main.async { [weak self] in
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Another Kite has Claude's connection"
+            alert.informativeText = "Claude's tools are talking to another Kite on this profile, not this one:\n\n"
+                + "\(holder.summary)\n\nThis Kite takes over Claude's connection as soon as that one quits."
+            if mayQuitIt {
+                alert.informativeText += " It isn't the Kite in Applications, so it's a test or old build."
+                alert.addButton(withTitle: "Quit the Other Kite")
+                alert.addButton(withTitle: "Leave It Running")
+            } else {
+                alert.addButton(withTitle: "OK")
+            }
+            guard WindowPresenter.runModal(alert) == .alertFirstButtonReturn, mayQuitIt else { return }
+            self?.quitSocketHolder(holder, path: taken.path)
+        }
+    }
+
+    /// Asks the holder to quit (as ⌘Q would), if it's still the one answering, then takes the socket.
+    private func quitSocketHolder(_ holder: SocketServerProcess, path: String) {
+        guard SocketServerProcess.serving(socketPath: path)?.pid == holder.pid else { return checkSocket() }
+        NSLog("Kite: asking %@ to quit, to take Claude's socket back.", holder.summary)
+        if NSRunningApplication(processIdentifier: holder.pid)?.terminate() != true { kill(holder.pid, SIGTERM) }
+        var tries = 0
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                tries += 1
+                let gone = SocketServerProcess.serving(socketPath: path)?.pid != holder.pid
+                if gone || tries >= 20 { timer.invalidate(); self?.checkSocket() }
+            }
+        }
+    }
+
     private func watchDownloads() {
         #if canImport(CEFBridge)
         guard downloadObserver == nil else { return }
@@ -507,15 +590,118 @@ final class AutomationController {
     // MARK: Control indicator
 
     func markControlled(_ id: UUID, connection: Int) {
+        if controlledTabs[id] == nil { Trace.event("tab.state", tab: id, connection: connection, ["state": "working"]) }
         var entry = controlledTabs[id] ?? ControlledTab(lastActive: Date(), connections: [])
         entry.lastActive = Date()
         entry.connections.insert(connection)
         controlledTabs[id] = entry
+        tabConnection[id] = connection
+        if let session = sessionFolders[connection], claudeRecords[id]?.session != session {
+            updateRecord(id) { $0.session = session }
+        }
+    }
+
+    /// Changes a tab's kept record (`BrowserState.claudeTabs`), out of the user's undo.
+    private func updateRecord(_ id: UUID, _ body: (inout ClaudeTabState.Record) -> Void) {
+        store.mutateWithoutUndo { body(&$0.claudeTabs[id, default: .init()]) }
+    }
+
+    /// Tabs `connection` touched and then left for a while (its control lapsed), still working with no word of what's
+    /// next and no step for the user: what its next tool result says, once per lull, so the agent marks them done,
+    /// hands them over, or says what it'll do there next, before its session ends and they turn orange.
+    func stalledNews(for connection: Int) -> String? {
+        let state = store.state
+        let idle = claudeRecords.compactMap { id, record -> (UUID, Date)? in
+            guard let touched = record.touched ?? record.acted, tabConnection[id] == connection, controlledTabs[id] == nil,
+                  case .working(nil)? = tabState(id), stallsTold[id].map({ $0 < touched }) ?? true else { return nil }
+            return (id, touched)
+        }
+        guard !idle.isEmpty else { return nil }
+        for (id, touched) in idle {
+            stallsTold[id] = touched
+            Trace.event("tab.state", tab: id, actor: .kite, connection: connection, ["state": "stalled"])
+        }
+        let names = idle.map { id, _ in "\(id.uuidString) (“\(state.tab(id)?.displayTitle ?? "")”)" }.joined(separator: ", ")
+        return "Kite: tabs you touched and left still show as working in the user's sidebar, “\(ClaudeTabState.waitingLine)”: "
+            + "\(names). Finish the work there and call tab_status with state done and a note of what you did, handoff what's "
+            + "the user's, or call tab_status with state working and a note of what's next there (“next, after McMaster”). "
+            + "Once your session ends, any that isn't done turns orange for the user: “\(ClaudeTabState.stoppedHere)”."
+    }
+
+    /// The user finished their step on `tab`: working again at once, "Claude is picking up", as a touch from the
+    /// connection that made the handoff (so it stays working while that connection is live). With no connection
+    /// (a handoff from before a restart), the tab turns orange with its page outlined, as any stalled tab.
+    func pickUp(_ tab: UUID, connection: Int?) {
+        guard store.state.tab(tab) != nil else { return }
+        if let connection { markControlled(tab, connection: connection) }
+        let now = Date()
+        updateRecord(tab) { $0.touched = now }
+        noteActivity(tab, ClaudeTabState.pickingUpLine)
+    }
+
+    /// Whether the connection that last touched the tab is still connected: the tab stays working while it is.
+    func connectionLive(for id: UUID) -> Bool {
+        tabConnection[id].map(liveConnections.contains) ?? false
+    }
+
+    /// The connection that last acted on a tab, for whom its page's dialogs are news (`DialogLog`).
+    func connection(lastActingOn id: UUID) -> Int? { tabConnection[id] }
+
+    /// Claude opened the tab or acted on it: from now on it always shows a state.
+    func noteTouched(_ id: UUID) {
+        let now = Date()
+        updateRecord(id) { $0.acted = now; $0.touched = now }
+    }
+
+    /// Claude only read the tab: that's a touch too, so it shows a state from now on, but it doesn't end a done.
+    /// Kept to one write every few seconds, so a run of reads doesn't save the session each time.
+    func noteRead(_ id: UUID) {
+        let now = Date()
+        if let touched = claudeRecords[id]?.touched, now.timeIntervalSince(touched) < 5 { return }
+        updateRecord(id) { $0.touched = now }
+    }
+
+    /// A tool call on a tab, in Kite's words for the sidebar (`ClaudeActivity`).
+    func noteActivity(_ id: UUID, _ text: String?) {
+        guard let text else { return }
+        tabActivity[id, default: .init()].append(text)
+    }
+
+    /// The same call's words, now that its element is known.
+    func refineActivity(_ id: UUID, _ text: String) {
+        tabActivity[id, default: .init()].refineLatest(text)
+    }
+
+    /// The one state a tab Claude opened or drove shows (`ClaudeTabState`), or nil for one it never touched.
+    func tabState(_ id: UUID) -> ClaudeTabState? {
+        ClaudeTabState.of(step: stepNeedingUser(on: id)?.instruction, record: claudeRecords[id], active: controlledTabIDs.contains(id),
+                          connectionLive: connectionLive(for: id), inClaudeFolder: { self.store.state.isInClaudeFolder(tab: id) })
+    }
+
+    /// tab_status: Claude says where a tab stands. Done ends the working indicator at once.
+    func setTabStatus(_ id: UUID, _ kind: ClaudeTabState.Declared.Kind, note: String?, connection: Int) {
+        Trace.event("tab.state", tab: id, url: store.state.tab(id)?.url, connection: connection,
+                    ["state": .string(kind.rawValue), "declared": true, "note_len": .number(Double(note?.count ?? 0))])
+        if kind == .working { markControlled(id, connection: connection) } else { controlledTabs[id] = nil; tabActivity[id] = nil }
+        let now = Date()
+        // Touched at or before what Claude says now, so the word stands until it acts on the tab again.
+        updateRecord(id) { record in
+            if record.acted == nil { record.acted = now }
+            if record.touched == nil { record.touched = now }
+            record.declared = .init(kind: kind, note: note, at: now)
+        }
+    }
+
+    /// The sidebar's Clear Claude's Mark: the tab goes back to showing nothing until Claude touches it again.
+    func clearTabMark(_ id: UUID) {
+        let now = Date()
+        updateRecord(id) { $0 = .init(cleared: now) }
+        tabActivity[id] = nil
     }
 
     /// The Claude session folder name of the session driving a tab, if it named one.
     func sessionName(controlling id: UUID) -> String? {
-        controlledTabs[id]?.connections.sorted().compactMap { sessionFolders[$0] }.first
+        controlledTabs[id]?.connections.sorted().compactMap { sessionFolders[$0] }.first ?? claudeRecords[id]?.session
     }
 
     /// A tab's page opened `child`. When Claude drives the opener, it drives the child too: the border and the
@@ -525,7 +711,7 @@ final class AutomationController {
         if let entry = controlledTabs[opener] {
             controlledTabs[child] = ControlledTab(lastActive: Date(), connections: entry.connections)
         }
-        if claudeOpened.contains(opener) { claudeOpened.insert(child) }
+        if claudeOpened.contains(opener) { claudeOpened.insert(child); noteTouched(child) }
         handoffTabOpened(child, by: opener)
     }
 
@@ -548,6 +734,7 @@ final class AutomationController {
     }
 
     private func disconnected(_ connection: Int) {
+        liveConnections.remove(connection)
         for (id, var entry) in controlledTabs where entry.connections.contains(connection) {
             entry.connections.remove(connection)
             controlledTabs[id] = entry
@@ -569,7 +756,10 @@ final class AutomationController {
         let live = store.state.allTabIDs
         for (id, entry) in controlledTabs {
             let idle = entry.connections.isEmpty ? Timing.idleAfterDisconnect : Timing.idleWhileConnected
-            if now.timeIntervalSince(entry.lastActive) > idle || !live.contains(id) { controlledTabs[id] = nil }
+            if now.timeIntervalSince(entry.lastActive) > idle || !live.contains(id) {
+                controlledTabs[id] = nil
+                if live.contains(id) { Trace.event("tab.state", tab: id, actor: .kite, ["state": "idle"]) }
+            }
         }
         forgetClosedTabs(live: live)
         if !isEnabled || controlledTabs.isEmpty {
@@ -582,7 +772,12 @@ final class AutomationController {
     /// closed tabs don't pile up while no timer runs.
     private func forgetClosedTabs(live: Set<UUID>) {
         openedTabs.retain(live: live)
+        let gone = claudeRecords.keys.filter { !live.contains($0) }
+        if !gone.isEmpty { store.mutateWithoutUndo { state in for id in gone { state.claudeTabs[id] = nil } } }
+        for id in Array(tabActivity.keys) where !live.contains(id) { tabActivity[id] = nil }
+        for id in Array(tabConnection.keys) where !live.contains(id) { tabConnection[id] = nil; stallsTold[id] = nil }
         for id in Array(snapshots.keys) where !live.contains(id) { snapshots[id] = nil }
+        dialogLog.retain(live: live)
         for id in Array(activities.keys) where !live.contains(id) {
             activities[id] = nil
             trackedPages[id] = nil
@@ -613,6 +808,10 @@ final class AutomationController {
             return
         }
         if method == "Page.navigatedWithinDocument" { handoffPageNavigated(id) }
+        if method == "Page.frameNavigated", params["frame"]?["parentId"] == nil, let url = params["frame"]?["url"]?.stringValue {
+            handoffNavigated(id, to: url)
+        }
+        if method == "Page.javascriptDialogOpening" { handoffDialogOpened(id) }
         if method.hasPrefix("Network.") {
             let finished = network.ingest(method: method, params: params, tab: id.uuidString)
             if isRecordingNetwork { networkStore.append(finished) }
@@ -681,6 +880,10 @@ final class AutomationController {
 
     /// Lets a click or Return start its navigation, then waits (briefly) for the load to finish.
     func settle(_ id: UUID, startDelay: TimeInterval = 0.25) async {
+        await Trace.measure("wait") { await settleUntraced(id, startDelay: startDelay) }
+    }
+
+    private func settleUntraced(_ id: UUID, startDelay: TimeInterval) async {
         try? await Task.sleep(for: .seconds(startDelay))
         if activities[id]?.dialog != nil { return }
         let deadline = Date().addingTimeInterval(Timing.loadWait)
@@ -691,21 +894,53 @@ final class AutomationController {
 
     // MARK: Running tool calls
 
-    func perform(_ request: AutomationWire.Request, connection: Int) async -> ToolOutput {
+    func perform(_ request: AutomationWire.Request, connection: Int, received: Double? = nil) async -> ToolOutput {
         guard isEnabled else { return .failure(.disabled) }
+        // Every call is traced here, at the one door they all come through (`traceCall`).
+        let actor = TraceCall.actor(client: request.client)
+        let output = try? await traceCall(request.tool, arguments: request.arguments, connection: connection, actor: actor,
+                                          task: request.task, parent: nil, received: received) {
+            await self.performUntraced(request, connection: connection)
+        }
+        return output ?? .failure(AutomationError(.failed, "No result."))
+    }
+
+    private func performUntraced(_ request: AutomationWire.Request, connection: Int) async -> ToolOutput {
         if request.tool == TicketTest.wireTool {
             // Only the user's own `kite test-ticket`: a Claude task can't start another task.
             guard request.task == nil else { return .failure(AutomationError(.denied, "A Claude task can't start a ticket test.")) }
             return startTicketTest?(request.arguments) ?? .failure(AutomationError(.unsupported, "This Kite can't run ticket tests."))
         }
+        if !liveConnections.contains(connection) { liveConnections.insert(connection) }
         do {
             let command = try AutomationCommand(tool: request.tool, arguments: request.arguments)
+            // On WebKit because Chromium didn't start, the tabs aren't the user's sessions: say so, don't show empty carts.
+            if AppDelegate.engineFellBack, command.tool != .ui {
+                return .failure(AutomationError(.unsupported, EngineFallback.toolError))
+            }
             if command.needsWindow { ensureWindow?() }
             let task = request.task.flatMap(UUID.init(uuidString:)).flatMap { isRunningTask?($0) == true ? $0 : nil }
             let started = Target(host: attachedHost, store: attachedStore)
-            return try await Self.$commandTarget.withValue(started) {
-                try await Self.$agentTask.withValue(task) { try await run(command, connection: connection) }
+            // A batch's steps keep their raw arguments for their trace records.
+            let batchTab = request.arguments["tab"]
+            let steps = (request.arguments["steps"]?.arrayValue ?? []).map { step -> JSONValue in
+                var arguments = step["arguments"]?.objectValue ?? [:]
+                if arguments["tab"] == nil, let batchTab { arguments["tab"] = batchTab }
+                return .object(arguments)
             }
+            var output = try await Self.$commandTarget.withValue(started) {
+                try await Self.$agentTask.withValue(task) {
+                    try await Self.$batchStepArguments.withValue(steps) { try await run(command, connection: connection) }
+                }
+            }
+            // A handoff this connection made that ended while it did other things: it hears so on its next call.
+            if command.tool != .handoff, command.tool != .handoffStatus, let news = handoffNews(for: connection) {
+                output.content.append(.text(news))
+            }
+            if command.tool != .tabStatus, let news = stalledNews(for: connection) { output.content.append(.text(news)) }
+            // A page's dialog Claude hasn't heard about, on a tab it works in: once, on whatever it called.
+            if command.tool != .dialogs, let news = dialogNews(for: connection) { output.content.append(.text(news)) }
+            return output
         } catch let error as AutomationError {
             return .failure(error)
         } catch let error as AutomationCommand.InvalidArguments {
@@ -815,9 +1050,13 @@ final class AutomationController {
             window?.endSheet(alert.window, returnCode: .alertFirstButtonReturn)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + Timing.confirmationWait, execute: timeout)
+        let asked = TraceClock.now()
         let response = await withCheckedContinuation { continuation in
             alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
         }
+        let waited = TraceClock.monotonic() - asked.m
+        Trace.phase("confirm", waited)
+        Trace.event("confirm.answered", tab: id, actor: .user, duration: waited, start: asked, ["allowed": .bool(response == .alertSecondButtonReturn)])
         timeout.cancel()
         return response == .alertSecondButtonReturn
     }

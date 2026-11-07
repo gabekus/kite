@@ -16,6 +16,13 @@ struct ChromiumAutomation: PageActions {
     /// moment, so "not-ready" is retried for a few seconds.
     @discardableResult
     func call(_ method: String, _ params: [String: Any] = [:], timeout: TimeInterval = 15) async throws -> [String: Any] {
+        // The round trip to the page, as a phase of the tool call being traced: screenshot (Chromium renders and
+        // encodes), input, or js (scripts, the DOM and the accessibility tree).
+        let started = TraceClock.monotonic()
+        defer {
+            let phase = method == "Page.captureScreenshot" ? "screenshot" : method.hasPrefix("Input.") ? "input" : "js"
+            Trace.phase(phase, TraceClock.monotonic() - started)
+        }
         let deadline = Date().addingTimeInterval(timeout)
         while true {
             do {

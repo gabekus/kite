@@ -44,7 +44,8 @@ final class ChromiumEngine: WebEngine {
             browser: KCBrowser(url: url, delegate: ChromiumDelegateProxy.placeholder, context: context,
                                navigationState: state as? Data),
             adblocker: adblocker,
-            appliesBoosts: appliesBoosts
+            appliesBoosts: appliesBoosts,
+            tracesInput: profileDirectory != nil && Trace.isEnabled
         )
     }
 
@@ -115,7 +116,11 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     private static let playingMediaScript =
         "[...document.querySelectorAll('video,audio')].some(m => !m.paused && !m.muted && m.readyState > 2)"
 
-    init(browser: KCBrowser, adblocker: Adblocker?, appliesBoosts: Bool = true) {
+    /// Whether the action trace's page script runs (`TraceInputScript`): never in a private window.
+    private let tracesInput: Bool
+
+    init(browser: KCBrowser, adblocker: Adblocker?, appliesBoosts: Bool = true, tracesInput: Bool = false) {
+        self.tracesInput = tracesInput
         self.browser = browser
         self.adblocker = adblocker
         self.appliesBoosts = appliesBoosts
@@ -167,10 +172,16 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         ),
     ]
 
+    /// This page's: the shared ones, and the trace's outside private windows.
+    private var documentScripts: [DocumentScript] {
+        tracesInput ? Self.documentScripts + [DocumentScript(source: TraceInputScript.source, world: TraceInputScript.worldName,
+                                                               binding: TraceInputScript.bindingName)] : Self.documentScripts
+    }
+
     private func prepareDocumentScripts() {
         browser.pageFeatureEventHandler = { [weak self] method, params in self?.handlePageFeatureEvent(method, params) }
         browser.executeDevToolsMethod("Page.enable", params: nil, completion: nil)
-        for script in Self.documentScripts {
+        for script in documentScripts {
             addBinding(for: script)
             var params: [String: Any] = ["source": script.source]
             if let world = script.world { params["worldName"] = world }
@@ -205,7 +216,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
             browser.callDevToolsMethod("Page.getFrameTree", params: nil) { [weak self] result, _ in
                 guard let self, let frame = (result?["frameTree"] as? [String: Any])?["frame"] as? [String: Any],
                       let frameID = frame["id"] as? String else { return }
-                for script in Self.documentScripts { runLate(script, frame: frameID) }
+                for script in documentScripts { runLate(script, frame: frameID) }
             }
         }
     }
@@ -575,6 +586,9 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
                   let report = MediaState.parse(params["payload"] as? String ?? "") else { return }
             mediaContext = context
             onEvent?(.media(report))
+        case "Runtime.bindingCalled" where params["name"] as? String == TraceInputScript.bindingName:
+            guard tracesInput, let payload = params["payload"] as? String, payload.utf8.count < 4096 else { return }
+            onEvent?(.traceInput(payload))
         case "Runtime.bindingCalled" where params["name"] as? String == Self.mailBindingName:
             // MailHandlers checks the handler is on the main frame's origin.
             guard let call = MailHandlers.parse(params["payload"] as? String ?? "") else { return }
@@ -687,9 +701,16 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         if request != nil { perform(closeFlow.dialogShown()) }
         let present = { [weak self] in
             guard let self else { return completion(false, nil) }
+            // The dialog's kind and how it was answered, never its message or what was typed in it.
+            let shown = TraceClock.now()
+            let traceKind = TraceRedaction.word("\(kinds[kind] ?? .alert)")
+            onEvent?(.trace("dialog.shown", ["kind": .string(traceKind)], duration: nil, start: shown))
             pageDialog = PageDialogs.present(kinds[kind] ?? .alert, message: message, defaultText: defaultText,
-                                             origin: origin, in: browser.view) { [weak self] ok, text in
+                                             origin: origin, in: browser.view,
+                                             report: { [weak self] in self?.onEvent?(.dialog($0)) }) { [weak self] ok, text in
                 guard let self else { return completion(ok, text) }
+                onEvent?(.trace("dialog.answered", ["kind": .string(traceKind), "accepted": .bool(ok)],
+                                duration: TraceClock.monotonic() - shown.m, start: shown))
                 pageDialog = nil
                 // Before the engine hears it: answering resets the page's dialog state on the way.
                 if request != nil { perform(closeFlow.answered(leave: ok)) }
@@ -752,7 +773,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
 
     func browser(_ browser: KCBrowser, didCreatePopup popup: KCBrowser, url: URL?) -> Bool {
         guard let onEvent else { return false }
-        let page = ChromiumPage(browser: popup, adblocker: adblocker, appliesBoosts: appliesBoosts)
+        let page = ChromiumPage(browser: popup, adblocker: adblocker, appliesBoosts: appliesBoosts, tracesInput: tracesInput)
         onEvent(.popup(page))
         // Whatever keeps a popup gives it a handler (`PagePool.register`); a background page's handler
         // (a reader, an install, a verification page) lets it go.

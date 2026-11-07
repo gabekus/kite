@@ -4,7 +4,10 @@ import KiteCore
 import CEFBridge
 #endif
 
+ActionTrace.mark("main")
 MainActor.assumeIsolated {
+    // Before anything opens a profile: only the installed Kite may start on the real one (exits otherwise).
+    RealProfileRefusal.refuseIfNeeded()
     // A build install-app.sh staged that the last quit didn't swap in: swap it now and open that one instead.
     StagedUpdate.finishIfWaiting()
     let environment = ProcessInfo.processInfo.environment
@@ -62,12 +65,51 @@ MainActor.assumeIsolated {
            FileManager.default.fileExists(atPath: helper.appendingPathComponent("manifest.json").path) {
             settings.extensionDirectories = [helper.path]
         }
-        if KCRuntime.initialize(with: settings) {
+        // scripts/test-profile-in-use.sh: a test profile can make Chromium "fail" with a given CEF result code.
+        let forcedFailure = environment["KITE_SUPPORT_PATH"] == nil ? nil : environment["KITE_TEST_CHROMIUM_FAIL"].flatMap { Int32($0) }
+        if forcedFailure == nil, KCRuntime.initialize(with: settings) {
             delegate.engine = ChromiumEngine()
             KCRuntime.runMessageLoop()
             KCRuntime.shutdown()
             exit(0)
         }
+        // Chromium didn't start (most often the last Kite's helpers still hold the profile, right after a restart).
+        // CEF can't be initialized twice in a process, so Kite starts itself again (execv: same PID, so a script's $!
+        // still names it) rather than drop to WebKit.
+        let attempt = EngineFallback.attempt(environment: environment)
+        let startAgain = { (why: String) in
+            guard let executable = Bundle.main.executablePath else { return }
+            let args = CommandLine.arguments.map { strdup($0) } + [nil]
+            execv(executable, args)
+            NSLog("Kite: couldn't start again for %@ (errno %d)", why, errno)
+        }
+        let exitCode = forcedFailure ?? KCRuntime.lastExitCode
+        // Another Kite has the profile: a restart's old one gets a few seconds to quit; one that stays is refused.
+        if EngineFallback.profileInUseExitCodes.contains(exitCode) {
+            RealProfileRefusal.waitForProfileHolder(profile: settings.profilePath)
+        }
+        switch EngineFallback.next(attempt: attempt, exitCode: exitCode) {
+        case .retry:
+            NSLog("Kite: Chromium didn't start (try %d of %d); starting again", attempt, EngineFallback.maxAttempts)
+            Thread.sleep(forTimeInterval: EngineFallback.retryDelay)
+            setenv(EngineFallback.attemptKey, String(attempt + 1), 1)
+            startAgain("another try")
+        case .refuseProfileInUse:
+            // Still open after every try: another Kite is using it, not one that's quitting.
+            RealProfileRefusal.refuseProfileInUse(profile: settings.profilePath)
+        case .webKit:
+            NSLog("Kite: Chromium didn't start after %d tries; starting again on WebKit", attempt)
+            // Not in this process: after a failed CefInitialize, AppKit never finishes launching here.
+            setenv("KITE_ENGINE", "webkit", 1)
+            setenv(EngineFallback.fellBackKey, "1", 1)
+            startAgain("WebKit")
+        }
+        // execv failed: there's no good way on from here.
+        exit(1)
+    }
+    // The fresh process a failed Chromium started on WebKit (EngineFallback.Step.webKit).
+    if environment["KITE_ENGINE"] == "webkit", environment[EngineFallback.fellBackKey] == "1" {
+        AppDelegate.engineFellBack = true
     }
     #else
     let app = NSApplication.shared

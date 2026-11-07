@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Handoff: steps finish by themselves</title>
+<!-- No Done button: every step ends by itself, the moment it's done (Gabe, 5 Nov 2026). One control per case; the
+     test hands each over with Kite's handoff tool and does what the user would. Each control has its own line, so
+     the ring's tag beside one never covers the next. -->
+<style>body{font:14px system-ui;margin:40px} p{margin:14px 0} iframe{width:260px;height:60px;border:1px solid #ccc}</style>
+<p><label>ZIP code <input id="zip"></label></p>
+<p><button id="other">Something else</button></p>
+<p><label>Search <input id="search"></label></p>
+<p>Card: <iframe id="card"></iframe></p>
+<p><button id="after">Next field</button></p>
+<p><label>Promo code <input id="promo"></label></p>
+<p><button id="pay">Pay</button></p>
+<p><button id="vanish">Send</button></p>
+<p><button id="stay">Review</button></p>
+<p><button id="confirm">Confirm</button> <span id="status"></span></p>
+<p><button id="dlg">Delete</button></p>
+<script>
+// The card field lives in a frame of another origin (localhost against 127.0.0.1), as Stripe's and NMI's do.
+const port2 = new URLSearchParams(location.search).get('port2');
+if (port2) document.getElementById('card').src = 'http://localhost:' + port2 + '/card.html';
+// Where an element sits, in the screenshot coordinates the computer tool clicks at.
+window.at = (id, dx = 0) => {
+  const r = document.getElementById(id).getBoundingClientRect(), scale = innerWidth > 1280 ? 1280 / innerWidth : 1;
+  return JSON.stringify({ x: Math.round((r.left + (dx || r.width / 2)) * scale), y: Math.round((r.top + r.height / 2) * scale) });
+};
+</script>

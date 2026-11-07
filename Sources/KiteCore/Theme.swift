@@ -84,6 +84,18 @@ public struct Theme: Hashable, Codable, Sendable {
         return OKLab.toSRGB(lab)
     }
 
+    /// What a lit space icon (an SF Symbol in the space bar and header) is drawn in: the accent, or nil for a
+    /// colourless theme, whose icon takes the label colour instead. A grey theme's accent is a mid grey, darker
+    /// than the 45% label colour of the greyed icons beside it, so the lit icon would read as the unlit one.
+    public var iconColor: ThemeColor? {
+        let chroma = colors.map { hypot($0.lab.y, $0.lab.z) }.max() ?? 0
+        return chroma < Self.neutralChroma ? nil : accent
+    }
+
+    /// OKLab chroma under which a theme counts as colourless: Arc's default near-black and the slate preset
+    /// (0x3B4049, about 0.015) sit under it; every coloured preset is well over 0.1.
+    static let neutralChroma: Float = 0.04
+
     /// Arc's default dark theme: near-black, no grain, at intensity 0.8, so the
     /// sidebar is mostly the system material picking up the wallpaper.
     public static let arcDefault = Theme(colors: [ThemeColor(r: 0.1, g: 0.1, b: 0.1)], grain: 0, tint: defaultTint * 0.8)

@@ -2,8 +2,9 @@ import AppKit
 import KiteCore
 
 // handoff: Claude hands the user steps it can't do, and Kite shows each one where it happens: a ring on the
-// control in the page with the step, Skip and Done beside it, and a mark on the tab in the sidebar. Nothing else:
-// there's no card over the page. See `UserHandoff`.
+// control in the page with the step and Skip beside it, and a mark on the tab in the sidebar. Nothing else: there's
+// no card over the page. Kite takes the user to the first step's tab when the handoff starts (`HandoffLead`), and
+// never moves them after; every step finishes by itself (`UserHandoff.DoneWhen`). See `UserHandoff`.
 
 extension AutomationController {
     func handOff(_ request: UserHandoff.Request, connection: Int) async throws -> ToolOutput {
@@ -13,14 +14,26 @@ extension AutomationController {
         var steps: [Handoff.Step] = []
         for (index, spec) in request.steps.enumerated() {
             var step = Handoff.Step(id: "\(id).\(index + 1)", number: index + 1, instruction: spec.instruction, why: spec.why)
+            step.doneWhen = spec.doneWhen
+            step.appears = spec.appears
             let tab = try resolveTab(spec.tab ?? request.tab)
             step.tab = tab.id
             step.locator = try await locator(for: spec.target, step: step.id, tab: tab)
             steps.append(step)
         }
         let handoff = Handoff(id: id, reason: request.reason, session: sessionFolders[connection], steps: steps)
+        if let tab = steps.first?.tab { Trace.span?.set("tab", .string(tab.uuidString)) }
+        handoffConnections[id] = connection
+        // New steps on a tab whose step a page's dialog interrupted: the user is needed there again.
+        endDialogAsides(tabs: Set(steps.compactMap(\.tab)))
         handoffs = Handoff.pruned(handoffs + [handoff])
         saveHandoffs()
+        Trace.event("handoff.created", connection: connection, session: handoff.session,
+                    ["handoff": .string(id), "steps": .number(Double(steps.count))])
+        for tab in Set(steps.compactMap(\.tab)) { Trace.event("tab.state", tab: tab, connection: connection, ["state": "needs_you"]) }
+        // Take the user to the first step's tab (now, or once they stop typing in Kite): a step on a tab that isn't in
+        // front shows them nothing.
+        let lead = leadToStep(of: id)
         // The tab in front may be one of them: show its step at once rather than on the next look.
         pollHandoffsSoon()
         if !NSApp.isActive { WindowPresenter.requestAttention() }
@@ -29,7 +42,9 @@ extension AutomationController {
         // after the wait. One that turns off or goes missing later, during the wait, may only be the page checking or
         // following what the user just did: it waits out the usual delay.
         let blocked = handoffs.first { $0.id == id }.map { !$0.blockedSteps.isEmpty } ?? false
-        return try await handoffReport(id, wait: blocked ? 0 : request.wait, reportBlockedAfter: UserHandoff.blockedReportDelay)
+        let note = lead.map { HandoffLead.note($0.step, title: store.state.tab($0.tab)?.displayTitle, led: $0.now) }
+        return try await handoffReport(id, wait: blocked ? 0 : request.wait, reportBlockedAfter: UserHandoff.blockedReportDelay,
+                                       note: note, connection: connection)
     }
 
     func handoffStatus(_ id: String?, wait: Double, cancel: Bool, connection: Int) async throws -> ToolOutput {
@@ -43,23 +58,39 @@ extension AutomationController {
             update(handoff.id) { $0.finishAll(.skipped, how: "Claude withdrew it") }
             pollHandoffsSoon()
         } else {
+            // Waiting on the user again: steps a page's dialog interrupted are theirs once more.
+            if wait > 0 { endDialogAsides(handoff: handoff.id) }
             // A fresh look first, so a step Claude just unblocked (or the page did) isn't reported from an old one.
             await lookAtSteps(handoff.id, attempts: 1)
         }
-        return try await handoffReport(handoff.id, wait: cancel ? 0 : wait, reportBlockedAfter: UserHandoff.blockedReportDelay)
+        return try await Trace.measure("user") {
+            try await handoffReport(handoff.id, wait: cancel ? 0 : wait, reportBlockedAfter: UserHandoff.blockedReportDelay,
+                                    connection: connection)
+        }
     }
 
     /// Waits up to `wait` seconds for the user to end every step, then reports. A step that has been blocked for
     /// `reportBlockedAfter` (unshown for `UserHandoff.unshownReportDelay`) ends the wait early (once per step), so
     /// Claude can fix what's in the way instead of waiting on a user who can't go on; so does a click that opens a
-    /// new tab, for Claude to carry on there.
-    private func handoffReport(_ id: String, wait: Double, reportBlockedAfter delay: TimeInterval) async throws -> ToolOutput {
+    /// new tab, for Claude to carry on there, and a JavaScript dialog on the handoff's tabs (`DialogLog.wakes`): the
+    /// page's alert after the user's step is usually the page refusing it.
+    private func handoffReport(_ id: String, wait: Double, reportBlockedAfter delay: TimeInterval,
+                               note: String? = nil, connection: Int) async throws -> ToolOutput {
         let deadline = Date().addingTimeInterval(wait)
         var watch = HandoffBlockWatch(reported: reportedBlockedSteps)
         let openedBefore = handoffs.first { $0.id == id }?.opened.count ?? 0
+        let waitingBefore = handoffs.first { $0.id == id }?.waiting.count ?? 0
+        // Any step ending wakes the wait, not only the last one, so Claude picks up on the page it led to at once.
         while Date() < deadline, let handoff = handoffs.first(where: { $0.id == id }), !handoff.isFinished,
-              handoff.opened.count == openedBefore,
-              !watch.shouldReport(handoff, delay: delay, unshownDelay: max(delay, UserHandoff.unshownReportDelay)) {
+              handoff.opened.count == openedBefore, handoff.waiting.count == waitingBefore,
+              !watch.shouldReport(handoff, delay: delay, unshownDelay: max(delay, UserHandoff.unshownReportDelay)),
+              dialogLog.wakes(handoff, connection: connection).isEmpty {
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        // A step the page's dialog just ended: hold on until that dialog is news (answered, or open past its grace), so
+        // this report carries it and Claude reads the page now, not on its next call.
+        while wait > 0, Date() < deadline, let handoff = handoffs.first(where: { $0.id == id }),
+              !dialogLog.pending(handoff).isEmpty {
             try await Task.sleep(for: .milliseconds(250))
         }
         // A click that just ended a step may also be opening a tab: give it a moment to arrive, so the report has it.
@@ -69,9 +100,14 @@ extension AutomationController {
         }
         guard let handoff = handoffs.first(where: { $0.id == id }) else { throw AutomationError(.notFound, "Handoff \(id) is gone.") }
         reportedBlockedSteps.formUnion(handoff.blockedSteps.map(\.id))
-        var text = handoff.report(waitedOut: wait > 0 && !handoff.isFinished) { [store] tab in
+        if handoff.isFinished { handoffEndsTold.insert(id) }
+        // A page's dialog on the handoff's tabs comes first: Claude, not the user, has the next move.
+        let dialogs = dialogLog.wakes(handoff, connection: connection)
+        var text = handoff.report(waitedOut: wait > 0 && !handoff.isFinished, dialog: !dialogs.isEmpty) { [store] tab in
             store.state.tab(tab).map { (url: $0.url?.absoluteString, title: $0.displayTitle) }
         }
+        if let note, !handoff.isFinished { text += "\n" + note }
+        if !dialogs.isEmpty { text = tellDialogs(dialogs, connection: connection) + "\n\n" + text }
         // What the user's steps opened (a popup from a button they pressed), so Claude carries on there.
         for tab in Set(handoff.steps.compactMap(\.tab)) {
             if let opened = openedReport(by: tab, since: handoff.created) { text += "\n\n" + opened }
@@ -131,6 +167,15 @@ extension AutomationController {
     /// the look began: a look a navigation overtook teaches nothing about where the control is.
     private func setLook(_ stepID: String, _ state: UserHandoff.RingState, tab: UUID, at: URL?) {
         let current = store.state.tab(tab)?.url
+        // A step the user saw ringed is done once its tab goes to another page (a navigation the events missed, or one
+        // inside the page).
+        if let shown = handoffShownAt[stepID], let current, Handoff.canReturn(to: current), !UserHandoff.samePage(shown, current),
+           let step = waitingStep(on: tab), step.id == stepID {
+            return finishByNavigation(step, tab: tab, to: current, titled: true)
+        }
+        // Only a step the user saw ringed: one the page left before Kite rang it may belong on the next page (a sign-up's
+        // Approve, after its Create account).
+        if state.found, handoffShownAt[stepID] == nil, let current, current == at { handoffShownAt[stepID] = current }
         let now = Date()
         if state.found { controlMissingSince[stepID] = nil } else if controlMissingSince[stepID] == nil { controlMissingSince[stepID] = now }
         let missing = controlMissingSince[stepID].map { now.timeIntervalSince($0) >= UserHandoff.offPageDelay } ?? false
@@ -144,6 +189,8 @@ extension AutomationController {
             let off = missing && Handoff.isOffPage(stepURL: h.steps[i].url, current: current)
             let blocker = state.blocker ?? (off ? .offPage : nil)
             if h.steps[i].found != state.found { h.steps[i].found = state.found }
+            let hidden = state.found ? nil : state.hidden
+            if h.steps[i].controlHidden != hidden { h.steps[i].controlHidden = hidden }
             if h.steps[i].blocker != blocker { h.steps[i].blocker = blocker }
         }
     }
@@ -153,6 +200,10 @@ extension AutomationController {
         guard let index = handoffs.firstIndex(where: { $0.id == id }) else { return }
         let before = handoffs[index]
         change(&handoffs[index])
+        // The one place a step ends (done, skipped, withdrawn), for the trace.
+        traceStepChanges(from: before, to: handoffs[index])
+        // The user finished their step on a tab: it goes back to working at once, the handoff's connection's touch.
+        for tab in handoffs[index].tabsPickedUp(since: before) { pickUp(tab, connection: handoffConnections[id]) }
         // Saved: what the user or Claude did, and the steps' pages and tabs; not what the ring found.
         if handoffs[index].steps.map({ [$0.state.rawValue, $0.url, $0.tab?.uuidString] }) != before.steps.map({ [$0.state.rawValue, $0.url, $0.tab?.uuidString] }) {
             saveHandoffs()
@@ -160,6 +211,144 @@ extension AutomationController {
     }
 
     private func handoffID(of step: String) -> String { String(step.prefix { $0 != "." }) }
+
+    /// Steps that ended between two versions of a handoff, as trace events: how (click, value, done, skip,
+    /// withdrawn), and how long after the handoff was made. The agent's next call measures its reaction from here.
+    private func traceStepChanges(from before: Handoff, to after: Handoff) {
+        guard Trace.isEnabled else { return }
+        for step in after.steps {
+            guard step.state != .waiting, before.steps.first(where: { $0.id == step.id })?.state == .waiting else { continue }
+            let how = step.how ?? ""
+            let token = how.contains("withdrew") ? "withdrawn" : how.contains("skipped") ? "skip" : how.contains("Done") ? "done"
+                : how.contains("changed") ? "value" : how.contains("clicked") ? "click" : how.contains("navigat") ? "navigation" : "other"
+            let connection = handoffConnections[after.id]
+            Trace.event(step.state == .skipped ? "handoff.step_skipped" : "handoff.step_done", tab: step.tab,
+                        actor: token == "withdrawn" ? Trace.actor ?? .user : token == "other" ? .kite : .user,
+                        connection: connection, session: after.session,
+                        ["handoff": .string(after.id), "step": .number(Double(step.number)), "how": .string(token),
+                         "since_created_ms": .number((Date().timeIntervalSince(after.created) * 1000).rounded())])
+            if token != "withdrawn" { Trace.stepFinished(connection: connection) }
+        }
+    }
+
+    /// Handoffs `connection` made that ended since it last heard about them: the line its next tool result carries, so
+    /// it picks up at once even if it wasn't waiting in handoff_status.
+    func handoffNews(for connection: Int) -> String? {
+        let ended = handoffs.filter { $0.isFinished && handoffConnections[$0.id] == connection && !handoffEndsTold.contains($0.id) }
+        guard !ended.isEmpty else { return nil }
+        handoffEndsTold.formUnion(ended.map(\.id))
+        return ended.map(Handoff.endedNews).joined(separator: "\n")
+    }
+
+    // MARK: Taking the user to the step
+
+    /// Takes the user to the step of handoff `id` they're needed for (`HandoffLead.target`): brings its tab (and space)
+    /// forward now, or once they've paused typing or clicking in Kite. `from`: only if the tab in front is still that
+    /// one then (after a step there ended: a user who has gone elsewhere since isn't pulled back). Nil when there's
+    /// nowhere to take them; `now` says whether the tab came forward at once.
+    @discardableResult
+    func leadToStep(of id: String, from: UUID? = nil) -> (step: Handoff.Step, tab: UUID, now: Bool)? {
+        handoffLead?.cancel()
+        handoffLead = nil
+        let state = store.state
+        guard from == nil || state.selectedTab?.id == from, let handoff = handoffs.first(where: { $0.id == id }),
+              let step = HandoffLead.target(handoff, front: state.selectedTab?.id, isOpen: { state.tab($0) != nil }),
+              let tab = step.tab else { return nil }
+        guard userIsBusy else {
+            bringForward(tab)
+            Trace.event("handoff.step_shown", tab: tab, actor: .kite, ["handoff": .string(id), "step": .number(Double(step.number))])
+            return (step, tab, true)
+        }
+        handoffLead = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(HandoffLead.recheck))
+                guard let self, !Task.isCancelled else { return }
+                if self.userIsBusy { continue }
+                self.handoffLead = nil
+                // Looked at again: the user may have gone to the step themselves, or finished it, meanwhile.
+                self.leadToStep(of: id, from: from)
+                return
+            }
+        }
+        return (step, tab, false)
+    }
+
+    /// Brings a step's tab to the front of the tools' window (switching to its space), without activating Kite or
+    /// raising its window over another app's: the user finds it there when they look. Its next look scrolls the
+    /// control into view and pulses the ring.
+    private func bringForward(_ tab: UUID) {
+        ringJumps.insert(tab)
+        store.mutateWithoutUndo { $0.select(tab: tab) }
+        pollHandoffsSoon()
+    }
+
+    /// Whether the user is typing or clicking in Kite right now (`HandoffLead.userIsBusy`).
+    private var userIsBusy: Bool {
+        let since = { (type: CGEventType) in CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: type) }
+        let pointer = [CGEventType.leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel, .mouseMoved, .leftMouseDragged]
+            .map(since).min() ?? .infinity
+        return HandoffLead.userIsBusy(appActive: NSApp.isActive, sinceKey: since(.keyDown), sincePointer: pointer,
+                                      commandBarOpen: store.commandBar != nil)
+    }
+
+    /// The user ended a step on `tab`. They stay where they are (Gabe, 5 Nov 2026: "when i hit the final step of a claude
+    /// action it seems to take me to another tab.. dont.. keep me in the same tab"): the next step's tab is orange in
+    /// the sidebar with its control ringed, and a lead still waiting from the handoff's start is dropped, since they've
+    /// found the steps.
+    private func stepEnded(_ stepID: String, on tab: UUID) {
+        handoffLead?.cancel()
+        handoffLead = nil
+        guard HandoffLead.bringsTabForward(at: .stepEnded) else { return }
+        leadToStep(of: handoffID(of: stepID), from: tab)
+    }
+
+    /// Ends `step` from what the page saw (`how`, `UserHandoff.describe`). "later": the user clicked step `later`'s
+    /// control on the same tab, so every waiting step there up to it is done.
+    func finishFromPage(_ step: Handoff.Step, how: String, later: String?, tab: UUID) {
+        let id = handoffID(of: step.id)
+        update(id) { h in
+            if let later, let target = h.steps.first(where: { $0.id == later }), target.tab == tab, target.isWaiting {
+                for other in h.steps where other.isWaiting && other.tab == tab && other.number < target.number {
+                    h.finish(other.id, .done, how: UserHandoff.describe("later"))
+                }
+                h.finish(later, .done, how: UserHandoff.describe("click"))
+            } else {
+                h.finish(step.id, UserHandoff.state(how), how: UserHandoff.describe(how))
+            }
+        }
+        handoffShownAt[step.id] = nil
+        if UserHandoff.onControl(how) { stepClicked(later ?? step.id, on: tab) }
+        stepEnded(step.id, on: tab)
+        pollHandoffsSoon()
+    }
+
+    /// The tab's main frame went to `url`: a step the user saw ringed there is done, and every step on the tab when its
+    /// last is a submit or pay button (`Handoff.stepsEndedByNavigation`).
+    func handoffNavigated(_ tab: UUID, to url: String) {
+        guard let step = waitingStep(on: tab), let shown = handoffShownAt[step.id], let to = URL(string: url),
+              Handoff.canReturn(to: to), !UserHandoff.samePage(shown, to) else { return }
+        finishByNavigation(step, tab: tab, to: to, titled: false)
+    }
+
+    /// Ends the steps a navigation off `step`'s page ends, telling Claude where the page went, to check it. `titled`:
+    /// the tab's title is already the new page's.
+    func finishByNavigation(_ step: Handoff.Step, tab: UUID, to url: URL?, titled: Bool) {
+        let id = handoffID(of: step.id)
+        guard let handoff = handoffs.first(where: { $0.id == id }) else { return }
+        let ended = handoff.stepsEndedByNavigation(on: tab)
+        let words = UserHandoff.movedOn(to: url, title: titled ? store.state.tab(tab)?.title : nil)
+        update(id) { h in for stepID in ended { h.finish(stepID, .done, how: words) } }
+        for stepID in ended { handoffShownAt[stepID] = nil }
+        stepEnded(step.id, on: tab)
+        pollHandoffsSoon()
+    }
+
+    /// The page opened a dialog while a step waits on its tab: the step is done, and Claude's wait wakes to it. The
+    /// dialog itself reaches Claude with the dialog capture work (branch `claude/dialogs-to-agent`): this is its hook.
+    func handoffDialogOpened(_ tab: UUID) {
+        guard let step = waitingStep(on: tab) else { return }
+        finishFromPage(step, how: "dialog", later: nil, tab: tab)
+    }
 
     // MARK: Across launches
 
@@ -262,6 +451,7 @@ extension AutomationController {
         handoffObservers = []
         handoffPoller?.cancel()
         handoffFollowUp?.cancel()
+        handoffLead?.cancel()
     }
 
     /// A page of a step's tab moved within the document (a single-page app's route): look again.
@@ -374,6 +564,8 @@ extension AutomationController {
             step.tab.flatMap { host.livePages[$0] }.map(isOnScreen) == true ? step.id : nil
         })
         controlMissingSince = controlMissingSince.filter { watched.contains($0.key) }
+        let waitingIDs = Set(handoffs.flatMap(\.waiting).map(\.id))
+        handoffShownAt = handoffShownAt.filter { waitingIDs.contains($0.key) }
         // What a page that isn't live any more (Kite slept it) showed is old news: forget it until Kite can look again.
         for handoff in handoffs where !handoff.isFinished {
             for step in handoff.waiting where step.tab.map({ live.contains($0) && host.livePages[$0] == nil }) == true
@@ -395,11 +587,13 @@ extension AutomationController {
                 let reason = handoffs.first { $0.id == handoffID(of: step.id) }?.reason
                 let at = store.state.tab(id)?.url
                 guard let state = await ringLook(step, why: reason, scroll: first, probe: false, tab: id, actions: actions) else { continue }
+                if first, state.found {
+                    Trace.event("handoff.step_ringed", tab: id, actor: .kite,
+                                ["handoff": .string(handoffID(of: step.id)), "step": .number(Double(step.number))])
+                }
                 ringShown[id] = step.id
-                let handoff = handoffID(of: step.id)
                 if let done = state.done {
-                    update(handoff) { $0.finish(step.id, UserHandoff.state(done), how: UserHandoff.describe(done)) }
-                    if UserHandoff.onControl(done) { stepClicked(step.id, on: id) }
+                    finishFromPage(step, how: done, later: state.later, tab: id)
                     // Again at once: the tab's next step gets the ring, or the ring goes.
                     handoffPollAgain = true
                 } else {
@@ -412,18 +606,21 @@ extension AutomationController {
                                                        binding: UserHandoff.bindingName, in: frame)
                 }
                 ringShown[id] = nil
+                ringFloating[id] = nil
             }
         }
         // Pages that went away (hibernated or closed) took their ring along.
         for id in Array(ringShown.keys) where host.livePages[id] == nil { ringShown[id] = nil }
+        for id in Array(ringFloating.keys) where host.livePages[id] == nil { ringFloating[id] = nil }
         for id in Array(ringFrames.keys) where host.livePages[id] == nil { ringFrames[id] = nil }
     }
 
     /// Shows a step's ring where its control is, and says what the look saw. The top frame first: its look walks
     /// into same-origin frames itself. Then the frame of another origin that had the ring, then the others (a
     /// sign-in form in Apple's or another site's frame), probed without drawing until one has the control, which
-    /// then gets the ring. One place shows it at a time: the frame that had it is cleared when it moves. `probe`
-    /// only looks, drawing nothing.
+    /// then gets the ring. One place shows it at a time: the frame that had it is cleared when it moves. When no frame
+    /// has it for `floatDelay`, the tag shows on its own at the top of the page, so the user still reads the step.
+    /// `probe` only looks, drawing nothing.
     private func ringLook(_ step: Handoff.Step, why: String?, scroll: Bool, probe: Bool, tab: UUID,
                           actions: PageActions) async -> UserHandoff.RingState? {
         func run(_ config: UserHandoff.RingConfig, in frame: PageFrame?) async -> UserHandoff.RingState? {
@@ -435,7 +632,14 @@ extension AutomationController {
         func clear(_ frame: PageFrame) async {
             _ = try? await actions.runIsolated(UserHandoff.clearScript, world: UserHandoff.worldName, binding: UserHandoff.bindingName, in: frame)
         }
-        let config = UserHandoff.RingConfig(step: step, why: why, scroll: scroll, probe: probe)
+        let jump = !probe && ringJumps.remove(tab) != nil
+        let later = handoffs.first { $0.id == handoffID(of: step.id) }?.steps
+            .filter { $0.isWaiting && $0.tab == tab && $0.number > step.number } ?? []
+        var config = UserHandoff.RingConfig(step: step, why: why, scroll: scroll || jump, probe: probe, jump: jump,
+                                            manager: host?.passwordManagerName, managerReady: host?.canOpenPasswordManager ?? false,
+                                            later: later)
+        // A page's dialog interrupted the step and Claude is looking at it: the tag says so, in place of "Claude needs you".
+        config.aside = dialogAsides[step.id]
         guard let top = await run(config, in: nil) else { return nil }
         let held = ringFrames[tab]
         if top.found || top.done != nil {
@@ -451,25 +655,72 @@ extension AutomationController {
             if !probe { await clear(held); ringFrames[tab] = nil }
         }
         let look = UserHandoff.RingConfig(step: step, why: why, scroll: false, probe: true)
+        var hidden = top.hidden == true
         for frame in frames.prefix(UserHandoff.maxFramesLooked) where !same(frame, held) {
-            guard let seen = await run(look, in: frame), seen.found else { continue }
+            guard let seen = await run(look, in: frame) else { continue }
+            if seen.hidden == true { hidden = true }
+            guard seen.found else { continue }
             if probe { return seen }
             // Newly ringed there: scroll the frame to it.
-            guard let state = await run(.init(step: step, why: why, scroll: true), in: frame) else { continue }
+            var ring = config
+            ring.scroll = true
+            guard let state = await run(ring, in: frame) else { continue }
             ringFrames[tab] = frame
             return state
         }
-        return top
+        var state = top
+        state.hidden = hidden
+        return state
     }
 
-    /// The ring's click listener (and its tag's Skip and Done), through the binding: ends the step at once, even if the
-    /// click navigates away.
+    // MARK: Suggest password
+
+    /// The tag's "Suggest password" on a new password's field: Kite clicks the field (a real click, as the user's would
+    /// be) so the password manager's own inline menu opens there with its suggestion, which the user picks. Kite never
+    /// reads the field, and its click doesn't end the step. When the manager isn't added to this space's profile, or its
+    /// menu doesn't come up (locked, or not on this page), the tag says so.
+    private func suggestPassword(for step: Handoff.Step, on tab: UUID) async {
+        guard let host, let page = host.livePages[tab], let actions = page.automation as? PageActions else { return }
+        let frame = ringFrames[tab]
+        func note(_ words: String?) async {
+            _ = try? await actions.runIsolated(UserHandoff.noteScript(words), world: UserHandoff.worldName,
+                                               binding: UserHandoff.bindingName, in: frame)
+        }
+        let name = host.passwordManagerName ?? "Your password manager"
+        guard host.canOpenPasswordManager else {
+            return await note("Add \(name): ⇧⌘X")
+        }
+        guard let json = try? await actions.runIsolated(UserHandoff.prepareManagerScript, world: UserHandoff.worldName,
+                                                        binding: UserHandoff.bindingName, in: frame),
+              let point = try? JSONDecoder().decode([String: Double].self, from: Data(json.utf8)),
+              let x = point["x"], let y = point["y"] else { return }
+        if frame == nil {
+            try? await actions.click(at: ViewportPoint(x: x, y: y), button: .left, count: 1, modifiers: [])
+        } else {
+            // In a frame, the point is the frame's own: focus the field there and press ↓, the key the manager's menu
+            // opens on.
+            _ = try? await actions.runIsolated("(() => { const K = window.__kiteHandoff; if (K && K.el) K.el.focus(); return true; })()",
+                                               world: UserHandoff.worldName, binding: UserHandoff.bindingName, in: frame)
+            if let down = try? KeyChord.parse("ArrowDown") { try? await actions.press([down]) }
+        }
+        // Only 1Password's page elements are known (its own inline button and menu): another manager gets no check.
+        guard name == PasswordManager.onePassword.name else { return await note(nil) }
+        try? await Task.sleep(for: .milliseconds(900))
+        let present = try? await actions.runIsolated(UserHandoff.onePasswordPresentScript, world: UserHandoff.worldName,
+                                                     binding: UserHandoff.bindingName, in: frame)
+        await note(present == "true" ? nil : "Unlock 1Password, then again")
+    }
+
+    /// The ring's listeners (a click, a field filled in, a later step's control, the control gone, and its tag's Skip),
+    /// through the binding: ends the step at once, even if the click navigates away.
     func handoffBindingCalled(_ params: JSONValue, tab: UUID) {
         guard params["name"]?.stringValue == UserHandoff.bindingName,
               let payload = params["payload"]?.stringValue, let event = UserHandoff.RingEvent(json: payload),
               let step = waitingStep(on: tab), step.id == event.step else { return }
-        update(handoffID(of: step.id)) { $0.finish(step.id, UserHandoff.state(event.how), how: UserHandoff.describe(event.how)) }
-        if UserHandoff.onControl(event.how) { stepClicked(step.id, on: tab) }
-        pollHandoffsSoon()
+        if event.how == UserHandoff.managerEvent {
+            Task { await suggestPassword(for: step, on: tab) }
+            return
+        }
+        finishFromPage(step, how: event.how, later: event.later, tab: tab)
     }
 }

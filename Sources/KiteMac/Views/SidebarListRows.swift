@@ -55,9 +55,9 @@ final class SpaceIconImageView: NSView {
         } else if icon.hasPrefix(Space.symbolPrefix) {
             image.isHidden = false
             image.layer?.masksToBounds = false
-            let accent = theme?.accent ?? ThemeColor(r: 1, g: 1, b: 1)
             image.contentTintColor = greyed ? NSColor.labelColor.withAlphaComponent(0.45)
-                : NSColor(srgbRed: CGFloat(accent.r), green: CGFloat(accent.g), blue: CGFloat(accent.b), alpha: 1)
+                : theme?.iconColor.map { NSColor(srgbRed: CGFloat($0.r), green: CGFloat($0.g), blue: CGFloat($0.b), alpha: 1) }
+                ?? NSColor.labelColor
         } else {
             label.isHidden = false
             label.text = icon

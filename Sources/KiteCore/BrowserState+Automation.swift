@@ -57,6 +57,19 @@ extension BrowserState {
 
     /// Adds an empty folder at the end of a space's pinned section.
     @discardableResult
+    /// Whether the tab sits in a Claude folder (Claude, or Claude › a session), at any depth.
+    public func isInClaudeFolder(tab id: UUID) -> Bool {
+        func search(_ items: [PinnedItem], inClaude: Bool) -> Bool {
+            items.contains { item in
+                switch item {
+                case .tab(let tab): inClaude && tab.id == id
+                case .folder(let folder): search(folder.items, inClaude: inClaude || folder.ephemeral == true)
+                }
+            }
+        }
+        return spaces.contains { search($0.pinnedItems, inClaude: false) }
+    }
+
     /// The space's Claude folder, where Claude's tabs go when asked from that space: made on
     /// first use, and gone again once its tabs have all archived (`TabFolder.ephemeral`).
     public mutating func claudeFolder(inSpace id: UUID) -> UUID? {

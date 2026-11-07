@@ -107,6 +107,60 @@ final class SidebarLabel: NSTextField {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override var acceptsFirstResponder: Bool { false }
 
+    // MARK: Shimmer
+
+    /// While Claude works in the tab, a soft highlight sweeps across the title, as Claude Code's working label does
+    /// (Gabe, 5 Nov 2026: "make the tab text shiny text"): a gradient mask on the text's layer, animated by the render
+    /// server, so it costs the main thread nothing. With Reduce Motion, the title holds a steady accent tint instead (orange is needs-you's).
+    var shimmers = false {
+        didSet {
+            guard shimmers != oldValue else { return }
+            if shimmers { startShimmer() } else { stopShimmer() }
+        }
+    }
+    private var shimmerMask: CAGradientLayer?
+
+    private func startShimmer() {
+        guard let layer else { return }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            textColor = .controlAccentColor
+            return
+        }
+        let mask = CAGradientLayer()
+        mask.startPoint = CGPoint(x: 0, y: 0.5)
+        mask.endPoint = CGPoint(x: 1, y: 0.5)
+        // Dimmed text, with a bright band a third of the mask wide.
+        let dim = NSColor.black.withAlphaComponent(0.45).cgColor, full = NSColor.black.cgColor
+        mask.colors = [dim, dim, full, dim, dim]
+        mask.locations = [0, 0.35, 0.5, 0.65, 1]
+        mask.frame = CGRect(x: -bounds.width, y: 0, width: bounds.width * 3, height: bounds.height)
+        layer.mask = mask
+        shimmerMask = mask
+        let sweep = CABasicAnimation(keyPath: "position.x")
+        sweep.fromValue = -bounds.width / 2
+        sweep.toValue = bounds.width * 1.5
+        sweep.duration = 1.8
+        sweep.repeatCount = .infinity
+        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        mask.add(sweep, forKey: "shimmer")
+    }
+
+    private func stopShimmer() {
+        textColor = .labelColor
+        shimmerMask?.removeAllAnimations()
+        layer?.mask = nil
+        shimmerMask = nil
+    }
+
+    override func layout() {
+        super.layout()
+        // A new width (a resize, a new title) re-lays the sweep across it.
+        if shimmers, let mask = shimmerMask, abs(mask.frame.width - bounds.width * 3) > 1 {
+            stopShimmer()
+            startShimmer()
+        }
+    }
+
     /// The width the whole string needs on one line.
     var naturalWidth: CGFloat { ceil(attributedStringValue.size().width) }
 
@@ -490,7 +544,6 @@ enum SymbolOrigins {
     static let measured: [Key: (x: CGFloat, top: CGFloat)] = [
         Key("xmark", 9.0, .bold, 24.0, 24.0): (7.5, 7.0), // max 66
         Key("xmark", 9.0, .bold, 16.0, 16.0): (3.5, 3.0), // max 66
-        Key("arrow.uturn.backward", 10.0, .semibold, 24.0, 24.0): (6.5, 6.0), // max 62
         Key("stop.fill", 8.0, .bold, 24.0, 24.0): (7.5, 7.75), // max 73
         Key("plus", 14.0, .medium, 18.0, 18.0): (2.0, 2.0), // max 46
         Key("folder", 14.0, .regular, 18.0, 18.0): (-0.5, 1.0), // max 40

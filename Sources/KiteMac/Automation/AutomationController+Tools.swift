@@ -20,6 +20,13 @@ extension AutomationController {
             let tab = try resolveTab(string)
             store.mutateWithoutUndo { $0.select(tab: tab.id) }
             return report("Switched to the tab.", tab.id)
+        case .formProfile(let request):
+            return try await formProfile(request)
+        case let .tabStatus(string, state, note):
+            let tab = try resolveTab(string)
+            setTabStatus(tab.id, state, note: note, connection: connection)
+            let shown = tabState(tab.id)?.help ?? "nothing"
+            return .text("The tab's row in the user's sidebar now says: \(shown).")
         case let .resizeWindow(width, height):
             return try resizeWindow(width: width, height: height)
         case .listDownloads:
@@ -48,6 +55,12 @@ extension AutomationController {
             return try await handOff(request, connection: connection)
         case let .handoffStatus(id, wait, cancel):
             return try await handoffStatus(id, wait: wait, cancel: cancel, connection: connection)
+        case .trace(let request):
+            return traceReport(request, connection: connection)
+        case .dialogs(let tab):
+            return try dialogsReport(tab, connection: connection)
+        case let .readExtensionConsole(name, pattern, onlyErrors, limit, clear):
+            return try readExtensionConsole(name, pattern: pattern, onlyErrors: onlyErrors, limit: limit, clear: clear)
         case .batch(let steps):
             return await runBatch(steps, connection: connection)
         default:
@@ -69,7 +82,10 @@ extension AutomationController {
             throw AutomationError(.failed, "\(command.tool.rawValue) isn't a page tool.")
         }
         let tab = try resolveTab(tabArgument)
+        Trace.span?.set("tab", .string(tab.id.uuidString))
         markControlled(tab.id, connection: connection)
+        if command.tool.isReadOnly { noteRead(tab.id) } else { noteTouched(tab.id) }
+        noteActivity(tab.id, ClaudeActivity.describe(command))
         guard let host else { throw AutomationError(.failed, "Kite has no window open.") }
         let page = host.automationPage(for: tab)
         guard let driver = page.automation else { throw AutomationError(.unsupported, "This tab's engine can't be automated.") }
@@ -81,6 +97,7 @@ extension AutomationController {
             switch command {
             case .handleDialog, .screenshot, .readConsole, .readNetwork: break
             default:
+                dialogLog.markOpenTold(on: tab.id)
                 throw AutomationError(.failed, "A \(dialog.kind) dialog is open in this tab: "
                     + UntrustedContent.wrap(dialog.message, source: "dialog") + "\nAnswer it with handle_dialog first.")
             }
@@ -156,6 +173,7 @@ extension AutomationController {
 
         case .click(_, let target):
             let element = try await act().locate(target)
+            refineActivity(tab.id, ClaudeActivity.clicking(element.description))
             try await authorize(.click(element.description), tab: tab)
             let actions = try act()
             try await untilDialog(tab.id) { try await actions.click(element) }
@@ -171,6 +189,9 @@ extension AutomationController {
             } else {
                 throw AutomationError(.notFound, "Nothing on the page has keyboard focus. Pass a ref or selector.")
             }
+            // The kind of field and the length only, never the text (`TraceRedaction.fieldRole`).
+            Trace.span?.set("field", .string(TraceRedaction.fieldRole(element.description)))
+            refineActivity(tab.id, ClaudeActivity.typing(into: element.description))
             try await authorize(.type(element.description, text: text, submit: submit), tab: tab)
             let actions = try act()
             try await untilDialog(tab.id) { try await actions.type(text, into: element, submit: submit) }
@@ -183,6 +204,8 @@ extension AutomationController {
         case let .formInput(_, target, value):
             let element = try await act().locate(target)
             let text = value.stringValue ?? value.boolValue.map(String.init) ?? value.doubleValue.map { String(format: "%g", $0) } ?? ""
+            Trace.span?.set("field", .string(TraceRedaction.fieldRole(element.description)))
+            refineActivity(tab.id, ClaudeActivity.filling(element.description))
             try await authorize(.formInput(element.description, value: text), tab: tab)
             let actions = try act()
             var result = ""
@@ -209,7 +232,15 @@ extension AutomationController {
         case let .handleDialog(_, accept, promptText):
             guard let dialog = activities[tab.id]?.dialog else { throw AutomationError(.notFound, "No dialog is open in this tab.") }
             try await authorize(.answerDialog(kind: dialog.kind, message: dialog.message, accept: accept), tab: tab)
-            try await act().answerDialog(accept: accept, promptText: promptText)
+            // The engine takes Kite's dialog sheet down as it answers: that's Claude's answer, not the page moving on.
+            dialogLog.claudeAnswers(tab: tab.id, accept: accept)
+            do {
+                try await act().answerDialog(accept: accept, promptText: promptText)
+            } catch {
+                dialogLog.claudeAnswered(tab: tab.id, accept: nil)
+                throw error
+            }
+            dialogLog.claudeAnswered(tab: tab.id, accept: accept)
             activities[tab.id]?.dialogClosed()
             await settle(tab.id)
             return report("\(accept ? "Accepted" : "Dismissed") the \(dialog.kind) dialog.", tab.id)
@@ -246,12 +277,15 @@ extension AutomationController {
         case let .navigate(_, string, _):
             switch string.lowercased() {
             case "back":
+                Trace.intend("back", tab: tab.id)
                 page.goBack()
             case "forward":
+                Trace.intend("forward", tab: tab.id)
                 page.goForward()
             default:
                 let url = try resolveURL(string)
                 try await authorize(.navigate(url), tab: tab)
+                Trace.intend("agent", tab: tab.id)
                 page.load(url)
             }
             await settle(tab.id, startDelay: 0.3)
@@ -293,6 +327,7 @@ extension AutomationController {
             fatalError("handled above")
         case let .click(location, button, count, modifiers):
             let (point, element) = try await resolve(location)
+            refineActivity(tab.id, ClaudeActivity.describe(action, element: element?.description))
             // Right-clicks only open a menu; the rest go through the same checks as click.
             if button != .right {
                 if let element { try await authorize(.click(element.description), tab: tab) } else { try authorizeUndescribed(tab: tab) }
@@ -307,7 +342,8 @@ extension AutomationController {
             await settle(tab.id)
             return report("\(button == .left ? "" : button.rawValue.capitalized + "-")\(["", "C", "Double-c", "Triple-c"][count])licked \(location.isPoint ? "at " : "")\(describe(location)).", tab.id)
         case .hover(let location):
-            let (point, _) = try await resolve(location)
+            let (point, element) = try await resolve(location)
+            refineActivity(tab.id, ClaudeActivity.describe(action, element: element?.description))
             try await actions.hover(point)
             return report("Moved the pointer to \(describe(location)).", tab.id)
         case let .scroll(location, direction, amount):
@@ -328,6 +364,7 @@ extension AutomationController {
             return report("Pressed \(chords.map(Self.keyName).joined(separator: " "))\(times > 1 ? " ×\(times)" : "").", tab.id)
         case .type(let text):
             let focused = try await actions.focusedElement()
+            refineActivity(tab.id, ClaudeActivity.describe(action, element: focused?.description))
             try await authorize(.type(focused?.description, text: text, submit: false), tab: tab)
             try await actions.insertText(text)
             return report("Typed \(text.count) characters.", tab.id)
@@ -345,6 +382,10 @@ extension AutomationController {
     }
 
     private func waitFor(_ condition: WaitCondition, timeout: TimeInterval, tab id: UUID, actions: PageActions) async throws -> ToolOutput {
+        try await Trace.measure("wait") { try await waitForUntraced(condition, timeout: timeout, tab: id, actions: actions) }
+    }
+
+    private func waitForUntraced(_ condition: WaitCondition, timeout: TimeInterval, tab id: UUID, actions: PageActions) async throws -> ToolOutput {
         let met: Bool
         switch condition {
         case .load:
@@ -386,7 +427,13 @@ extension AutomationController {
             let label = "Step \(index + 1) (\(step.tool.rawValue))"
             do {
                 let output = try await AutomationController.$inBatch.withValue(true) {
-                    try await run(step, connection: connection)
+                    // Each step is a record of its own under the batch's.
+                    let arguments = Self.batchStepArguments.indices.contains(index) ? Self.batchStepArguments[index] : .object([:])
+                    return try await traceCall(step.tool.rawValue, arguments: arguments, connection: connection,
+                                               actor: Trace.actor ?? .agent(client: "cli"), task: nil, parent: Trace.span?.id,
+                                               received: nil) {
+                        try await run(step, connection: connection)
+                    }
                 }
                 images += output.content.filter { if case .image = $0 { true } else { false } }
                 lines.append("\(label):\n\(output.text)")
@@ -483,6 +530,8 @@ extension AutomationController {
             spaceID = store.state.spaces[index].id
         }
         let id = store.mutateWithoutUndo { $0.openTab(url: url, in: spaceID, select: false) }
+        Trace.span?.set("tab", .string(id.uuidString))
+        if url != nil { Trace.intend("agent", tab: id) }
         switch (placement, task) {
         // A link a task opens in a named space is for the user, so it stays a plain tab there rather than
         // going in the task's folder.
@@ -523,6 +572,8 @@ extension AutomationController {
             if let row = store.state.sidebarRowID(of: id) { store.reveal(row: row) }
         }
         claudeOpened.insert(id)
+        noteTouched(id)
+        noteActivity(id, ClaudeActivity.opening(url?.absoluteString))
         markControlled(id, connection: connection)
         guard let tab = store.state.tab(id) else { throw AutomationError(.failed, "Couldn't open a tab.") }
         if let url {
@@ -693,6 +744,7 @@ extension AutomationController {
             text = AutomationReport.afterAction(action, tab: id, url: tab?.url, title: tab?.displayTitle ?? "")
         }
         if let dialog = activities[id]?.dialog {
+            dialogLog.markOpenTold(on: id)
             text += "\nA \(dialog.kind) dialog is now open: " + UntrustedContent.wrap(dialog.message, source: "dialog")
                 + "\nAnswer it with handle_dialog."
         }
@@ -700,8 +752,11 @@ extension AutomationController {
     }
 
     private func screenshotOutput(_ image: Screenshot, tab id: UUID) -> ToolOutput {
-        ToolOutput(content: [
-            .image(base64: image.data.base64EncodedString(), mimeType: image.format.mimeType),
+        let encoding = TraceClock.monotonic()
+        let base64 = image.data.base64EncodedString()
+        Trace.phase("encode", TraceClock.monotonic() - encoding)
+        return ToolOutput(content: [
+            .image(base64: base64, mimeType: image.format.mimeType),
             .text("Screenshot of tab \(id.uuidString), \(image.width)×\(image.height)\(image.scale < 1 ? " (scaled to \(Int((image.scale * 100).rounded()))% of the page)" : ""). Its pixels are the coordinates computer clicks use."),
         ])
     }

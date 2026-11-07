@@ -5,8 +5,8 @@ import Foundation
 /// Claude stops for things only the user can do: its safety check won't let it approve a DNS change, a page
 /// wants a click on Super Administrator. Instead of a list in the chat, Claude calls `handoff` with why it stopped
 /// and the steps, each with its tab and its control. Kite then:
-/// - rings the control on the page itself, with a tag beside it: the step, Skip and Done (and Claude's reason when
-///   the pointer rests on it);
+/// - rings the control on the page itself, with a tag beside it: the step and Skip (and Claude's reason when the
+///   pointer rests on it);
 /// - marks those tabs, and the Claude folders holding them, in the sidebar;
 /// - tells Claude which steps the user did when it asks (`handoff_status`), or when its wait ends.
 ///
@@ -14,15 +14,33 @@ import Foundation
 /// elements"). So every step needs a control on a page, and a step whose control Kite can't find there (or whose
 /// tab left its page or closed) is reported to Claude at once, to point it at one that's there or withdraw it.
 ///
-/// A step is done when the user clicks (or changes) the ringed control, or presses Done on its tag. Only real
-/// clicks count: the page's own scripts can't fake one, since the ring and its listeners live in an isolated
-/// world the page can't reach.
+/// The user is taken to the first step when a handoff starts (`HandoffLead`): a step on a tab that isn't in front
+/// would show nobody anything (Gabe, 5 Nov 2026: "if the job is not done, then clearly im needed for something, and
+/// its not highlighted"). Kite brings its tab forward, scrolls its control into view and pulses the ring, once the
+/// user isn't in the middle of typing or clicking in Kite. Only then: finishing a step, or the whole handoff, never
+/// changes the tab or space in front (Gabe, 5 Nov 2026: "when i hit the final step of a claude action it seems to
+/// take me to another tab.. dont.. keep me in the same tab"). The next step's tab turns orange in the sidebar, its
+/// control ringed for when they go there.
+///
+/// Every step finishes by itself, the moment it's done: there's no Done button (Gabe, 5 Nov 2026: "dont even offer a
+/// done button, kite / claude should be smart enough and setup to auto detect this instantly"). What done looks like
+/// is the step's `DoneWhen`: a click on the ringed control (buttons, links, boxes), a value in the ringed field and
+/// focus leaving it or Enter or Tab (fields; a payment field in another site's frame, whose value Kite can't read,
+/// once focus has been in the frame and moves on), the page navigating, the control going away, or words appearing.
+/// Whatever it says, a step is also done when its page navigates or its ringed control goes away (the form was
+/// sent or replaced), when the page opens a dialog, and when the user clicks a later step's control on the same tab
+/// (every step before it there is done too). Skip stays, to leave a step undone. Only the user's own clicks and
+/// keys count: the page's own scripts can't fake one, since the ring and its listeners live in an isolated world
+/// the page can't reach.
 public enum UserHandoff {
     public static let maxSteps = 12
     public static let maxReasonLength = 400
     public static let maxInstructionLength = 240
-    /// The longest one call waits for the user, in seconds. Claude calls handoff_status again to wait longer.
-    public static let maxWait: Double = 600
+    /// The longest one call waits for the user, in seconds; a longer wait is cut to it. MCP clients give up on a call
+    /// after about 60 s ("Request timed out"), and a wait that times out there never hears the user finish (Gabe, 5 Nov
+    /// 2026: Claude asked for 600 and 300, both timed out, and nobody filled McMaster's next page). Claude calls
+    /// handoff_status again, and again, to wait longer.
+    public static let maxWait: Double = 50
     /// How often Kite looks at the page in front while a step waits on it and the page is on screen.
     public static let pollInterval: TimeInterval = 0.5
     /// How close together a click on a step's control and a tab its page opens must be to count as the click's doing.
@@ -60,6 +78,22 @@ public enum UserHandoff {
         case text(String)
     }
 
+    /// What says a step is done (`done_when`), so it finishes by itself. Nil: by its control, `click` for a button,
+    /// link or box, `value` for a field (or a frame holding one).
+    public enum DoneWhen: String, Hashable, Codable, Sendable, CaseIterable {
+        /// The user clicks the ringed control.
+        case click
+        /// The ringed field holds a value and focus leaves it, or the user presses Enter or Tab in it. A payment field
+        /// in another site's frame: focus has been in the frame and moves on.
+        case value
+        /// The tab goes to another page.
+        case navigation
+        /// The ringed control goes away (a form sent, a dialog closed).
+        case gone
+        /// Words (`appears`) show up on the page that weren't there when the step began: "Order confirmed".
+        case appears
+    }
+
     /// One step as Claude asks for it.
     public struct StepRequest: Hashable, Sendable {
         /// What to do, in a few words: "Approve Apple", "Tick Super Administrator".
@@ -70,12 +104,19 @@ public enum UserHandoff {
         public var target: Target
         /// Why this step is the user's, when it differs from the call's reason.
         public var why: String?
+        /// What says it's done; nil goes by the control.
+        public var doneWhen: DoneWhen?
+        /// With `doneWhen` `.appears`: the words that show up.
+        public var appears: String?
 
-        public init(instruction: String, tab: String? = nil, target: Target, why: String? = nil) {
+        public init(instruction: String, tab: String? = nil, target: Target, why: String? = nil, doneWhen: DoneWhen? = nil,
+                    appears: String? = nil) {
             self.instruction = instruction
             self.tab = tab
             self.target = target
             self.why = why
+            self.doneWhen = doneWhen
+            self.appears = appears
         }
     }
 
@@ -142,14 +183,29 @@ public enum UserHandoff {
             if case .selector(let selector) = targets[0], selector.contains("\u{0}") {
                 throw Invalid("Step \(index + 1): that selector isn't valid.")
             }
-            return StepRequest(instruction: instruction, tab: try field("tab"), target: targets[0], why: try field("why"))
+            let appears = try field("appears")
+            var doneWhen: DoneWhen?
+            if let raw = try field("done_when") {
+                guard let value = DoneWhen(rawValue: raw.lowercased()) else {
+                    throw Invalid("Step \(index + 1): \"done_when\" is one of " + DoneWhen.allCases.map { "\"\($0.rawValue)\"" }.joined(separator: ", ")
+                        + ", or leave it out to go by the control (click for a button or link, value for a field).")
+                }
+                doneWhen = value
+            }
+            if appears != nil, doneWhen == nil { doneWhen = .appears }
+            if doneWhen == .appears, appears == nil {
+                throw Invalid("Step \(index + 1): done_when \"appears\" needs \"appears\": the words that show up on the page once the "
+                    + "step is done (\"Order confirmed\").")
+            }
+            return StepRequest(instruction: instruction, tab: try field("tab"), target: targets[0], why: try field("why"),
+                               doneWhen: doneWhen, appears: doneWhen == .appears ? appears : nil)
         }
         let wait = try values["wait"].flatMap { value -> Double? in
             guard !value.isNull else { return nil }
-            guard let number = value.doubleValue, number.isFinite, number >= 0, number <= maxWait else {
+            guard let number = value.doubleValue, number.isFinite, number >= 0 else {
                 throw Invalid("\"wait\" is 0 to \(Int(maxWait)) seconds.")
             }
-            return number
+            return min(number, maxWait)
         } ?? 0
         return Request(reason: reason, steps: steps, tab: tab, wait: wait)
     }
@@ -197,10 +253,16 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         /// they lose it.
         public var url: String?
         public var state: State = .waiting
+        /// What says it's done (`UserHandoff.DoneWhen`); nil goes by the control.
+        public var doneWhen: UserHandoff.DoneWhen?
+        /// With `doneWhen` `.appears`: the words that show up.
+        public var appears: String?
         /// What finished it, in words for Claude: "the user clicked the highlighted control".
         public var how: String?
         /// Whether the ring found the control on the page the last time Kite looked.
         public var found: Bool?
+        /// The last look found no shown control but one that matches, hidden (zero size, display none, visibility hidden).
+        public var controlHidden: Bool?
         /// Why the step can't be done right now, from the last look; nil when nothing is in the way. Only the step a
         /// tab shows is looked at, so a step waiting behind another on its tab (whose control the first one turns on)
         /// isn't called blocked.
@@ -219,6 +281,16 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         }
 
         public var isWaiting: Bool { state == .waiting }
+
+        /// A step whose control sends the page on: Pay, Place order, Submit, Confirm, Buy, Check out, Complete purchase.
+        public var isSubmit: Bool {
+            let words = [instruction, targetName ?? ""].joined(separator: " ").lowercased()
+            let submit = ["pay", "place order", "place your order", "submit", "confirm", "buy", "purchase", "check out", "checkout",
+                          "complete order", "complete purchase", "finish", "send"]
+            return submit.contains { phrase in
+                words.range(of: "\\b" + NSRegularExpression.escapedPattern(for: phrase) + "\\b", options: .regularExpression) != nil
+            }
+        }
 
         /// The words on the step's control, for "“Invite members” can't be clicked yet".
         public var targetName: String? {
@@ -258,15 +330,20 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
             case .tabClosed?: (blocked ? "NOT SHOWN: " : "") + "its tab is closed, so the user can't see the step. Open the page "
                 + "again and hand the step over on the new tab, or withdraw the handoff if it's no longer needed"
             case nil where found == false && !blocked: "Kite can't find its control on the page yet (a step before it may bring it up)"
+            case nil where found == false && controlHidden == true: "NOT SHOWN: its control is on the page but hidden (no "
+                + "size, display none or visibility hidden: often a field the site draws its own box over), so Kite can't ring "
+                + "it and the user sees nothing for this step. Point it at what the user sees and clicks or types in (a ref "
+                + "from find or read_page, or the box's visible text), or withdraw the handoff"
             case nil where found == false: "NOT SHOWN: Kite can't find its control on the page, so the user sees nothing for this "
                 + "step but a dot on its tab in the sidebar. Point it at a control that's on the page now (a ref from find or "
-                + "read_page), or withdraw the handoff"
+                + "read_page; a control in another site's frame, such as a CAPTCHA or a card field, by its visible text or a "
+                + "selector), or withdraw the handoff"
             case nil: nil
             }
         }
 
         /// `found` and `blocker` are only what the last look saw, so they aren't saved.
-        enum CodingKeys: String, CodingKey { case id, number, instruction, why, command, tab, locator, url, state, how }
+        enum CodingKeys: String, CodingKey { case id, number, instruction, why, command, tab, locator, url, state, how, doneWhen, appears }
     }
 
     /// A tab a step's click opened (a link to a new tab, a popup): a wait ends for it, and Claude carries on there
@@ -342,6 +419,28 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         return true
     }
 
+    /// Tabs whose step just ended (done or skipped) between `before` and now, with no step left waiting on them: the
+    /// user's turn there is over, so they go straight back to working, "Claude is picking up", without waiting for
+    /// Claude's next tool call (Gabe, 5 Nov 2026: "as soon as i do what claude tells me from the highlight, it should go
+    /// back to the cranking state with shiny text, rn it takes a while to kick in").
+    public func tabsPickedUp(since before: Handoff) -> [UUID] {
+        let ended = steps.filter { step in !step.isWaiting && before.steps.first { $0.id == step.id }?.isWaiting == true }
+        var tabs: [UUID] = []
+        for tab in ended.compactMap(\.tab) where current(on: tab) == nil && !tabs.contains(tab) { tabs.append(tab) }
+        return tabs
+    }
+
+    /// The steps a navigation off the page of `tab`'s step ends, the user having seen that step ringed there: that step,
+    /// and when the tab's last waiting step is a submit or pay button, every waiting step on the tab, since the page
+    /// moving on after it means the user did them all (Gabe's Muji checkout, 5 Nov 2026: billing address, card, Pay
+    /// now, then /thank-you, and the handoff still said 0 of 3 done, step 1 "not on the step's page").
+    public func stepsEndedByNavigation(on tab: UUID) -> [String] {
+        guard let current = current(on: tab) else { return [] }
+        let onTab = waiting.filter { $0.tab == tab }
+        guard let last = onTab.last, last.isSubmit else { return [current.id] }
+        return onTab.map(\.id)
+    }
+
     /// Ends every waiting step (the user dismissed the handoff, or Claude withdrew it).
     public mutating func finishAll(_ state: Step.State, how: String, where include: (Step) -> Bool = { _ in true }) {
         for index in steps.indices where steps[index].isWaiting && include(steps[index]) {
@@ -350,8 +449,10 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         }
     }
 
-    /// What `handoff` and `handoff_status` tell Claude. `place` gives a tab's URL and title for steps on tabs.
-    public func report(waitedOut: Bool = false, place: (UUID) -> (url: String?, title: String)?) -> String {
+    /// What `handoff` and `handoff_status` tell Claude. `place` gives a tab's URL and title for steps on tabs. `dialog`: a
+    /// page's JavaScript dialog on the handoff's tabs is in the same result (`DialogLog`), so Claude deals with it
+    /// before it waits again.
+    public func report(waitedOut: Bool = false, dialog: Bool = false, place: (UUID) -> (url: String?, title: String)?) -> String {
         let done = steps.filter { $0.state == .done }.count
         let skipped = steps.filter { $0.state == .skipped }.count
         let left = steps.count - done - skipped
@@ -371,9 +472,15 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
             lines.append(line)
         }
         if left == 0 {
-            lines.append(skipped == 0
-                ? "The user did every step. Read the pages to check they took, then carry on."
-                : "Skipped steps weren't done: don't do them yourself. Say what's left and why, then carry on with what you can.")
+            lines.append((skipped == 0
+                ? "The user did every step. Read the pages now to check they took"
+                : "Skipped steps weren't done: don't do them yourself. Say what's left and why")
+                + ", then carry on at once: " + Self.carryOn)
+        } else if dialog {
+            lines.append("Deal with the page's dialog before you wait again: read the page and work out what's wrong, then "
+                + "fix it yourself or hand the user a new step (withdraw this one with handoff_status cancel if it no longer "
+                + "fits). Until you call handoff_status with id \"\(id)\" and a wait, or hand over a new step on that tab, the "
+                + "step's tag tells the user you saw the dialog and are looking at it, and the tab shows you at work.")
         } else if !blockedSteps.isEmpty {
             lines.append("The user can't do a blocked or unshown step as it is. Fix what's in the way yourself if you may (bring "
                 + "the step's page back, or what turns its control on), or withdraw this handoff (handoff_status cancel) and "
@@ -390,9 +497,24 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         return lines.joined(separator: "\n")
     }
 
+    /// What Claude does the moment a handoff ends: the page after the user's click is usually the next part of the job
+    /// (Gabe, 5 Nov 2026: McMaster's order form sat unfilled after he made the login).
+    static let carryOn = "a step often leads to a new page (an order form after a sign-up), so read_page each step's tab, fill "
+        + "its ordinary fields (names, addresses, phone, email, plain choices) yourself, and hand over only what's the "
+        + "user's (secrets, account-making, terms and pay clicks) with a new handoff."
+
+    /// A handoff that ended while Claude did something else, for its next tool result.
+    public static func endedNews(_ handoff: Handoff) -> String {
+        let done = handoff.steps.filter { $0.state == .done }.count, skipped = handoff.steps.filter { $0.state == .skipped }.count
+        return "Kite: handoff \(handoff.id) has ended (\(done) of \(handoff.steps.count) done"
+            + (skipped > 0 ? ", \(skipped) skipped" : "") + "). Carry on now: " + carryOn
+            + " handoff_status with id \"\(handoff.id)\" has the details."
+    }
+
     /// Why Claude keeps waiting: once its turn ends, nothing reaches it when the user is done.
     static let dontStop = "Don't end your turn while steps wait: Kite can't tell you when the user is done once you've "
-        + "stopped, and they're left waiting on you. A wait also ends early when a step's click opens a new tab."
+        + "stopped, and they're left waiting on you. Each wait returns the moment the user finishes (or a step's click "
+        + "opens a new tab), so keep calling it; a longer wait is cut to \(Int(UserHandoff.maxWait)) s, as clients time out."
 }
 
 /// When a waiting handoff_status (or handoff) ends early to tell Claude a step is blocked: once a step has stayed
@@ -418,6 +540,50 @@ public struct HandoffBlockWatch: Sendable {
         return blocked.contains { step in
             since[step.id].map { now.timeIntervalSince($0) >= (step.isUnshown ? unshownDelay ?? delay : delay) } ?? false
         }
+    }
+}
+
+/// Taking the user to the step Claude needs them for. A step on a tab that isn't in front shows nobody anything, so
+/// Kite brings that tab forward (its space too), scrolls the control into view and pulses the ring when a handoff
+/// starts. Only then: finishing a step, or the handoff, never moves the user (Gabe, 5 Nov 2026: "keep me in the same
+/// tab"); the next step's tab is orange in the sidebar with its control ringed. Only once (a user who goes elsewhere
+/// afterwards isn't pulled back), and never while they're typing or clicking in Kite, which would switch the page
+/// under their hands: Kite waits until they've paused.
+public enum HandoffLead {
+    /// When Kite might move the user to a step's tab.
+    public enum Moment: Sendable { case handoffStarted, stepEnded }
+
+    /// Whether Kite brings a step's tab to the front at `moment`: only when a handoff starts.
+    public static func bringsTabForward(at moment: Moment) -> Bool { moment == .handoffStarted }
+
+    /// How long after a key press in Kite it waits before switching the tab, and after a click, scroll or pointer move.
+    public static let afterTyping: TimeInterval = 4
+    public static let afterPointer: TimeInterval = 1.5
+    /// How often a waiting lead checks whether the user has paused.
+    public static let recheck: TimeInterval = 0.5
+
+    /// The step to take the user to: the first waiting one (in Claude's order) whose tab is open, unless the tab in
+    /// front already has a step waiting (they're where they're needed). Nil when there's nowhere to take them.
+    public static func target(_ handoff: Handoff, front: UUID?, isOpen: (UUID) -> Bool) -> Handoff.Step? {
+        if let front, handoff.current(on: front) != nil { return nil }
+        return handoff.steps.first { step in step.isWaiting && step.tab.map(isOpen) == true }
+    }
+
+    /// Whether the user is in the middle of something in Kite: Kite is the active app and they pressed a key within
+    /// `afterTyping`, or clicked, scrolled or moved the pointer within `afterPointer` (seconds since each), or they're
+    /// typing in Kite's own command bar. While Kite isn't the active app, switching its tab interrupts nothing.
+    public static func userIsBusy(appActive: Bool, sinceKey: TimeInterval, sincePointer: TimeInterval,
+                                  commandBarOpen: Bool = false) -> Bool {
+        guard appActive else { return false }
+        return commandBarOpen || sinceKey < afterTyping || sincePointer < afterPointer
+    }
+
+    /// The line for Claude about where Kite took the user. `title` is the step's tab's title.
+    public static func note(_ step: Handoff.Step, title: String?, led: Bool) -> String {
+        let place = title.map { "“\($0)”" } ?? "its tab"
+        return led
+            ? "Kite brought step \(step.number)'s tab (\(place)) to the front for the user, with its control ringed."
+            : "Kite will bring step \(step.number)'s tab (\(place)) to the front once the user stops typing in Kite."
     }
 }
 
@@ -522,14 +688,59 @@ extension UserHandoff {
         public var scroll: Bool
         /// Only look: report whether the control is there and can be used, without drawing the ring.
         public var probe: Bool
+        /// Kite just brought the tab forward for this step (`HandoffLead`): scroll the control into view again and
+        /// pulse the ring, even if the page showed the step before.
+        public var jump: Bool
+        /// The password manager to offer on the tag when the control is a new password's field ("1Password"), so the
+        /// user has it suggest one; nil for none. `manager` false: it isn't added to this tab's profile, and the tag says so.
+        public var manager: String?
+        public var managerReady: Bool
+        /// What says the step is done (`DoneWhen`'s raw value); nil goes by the control.
+        public var doneWhen: String?
+        public var appears: String?
+        /// The steps after it on the same tab, still waiting: a click on one of their controls ends this step (and every
+        /// step before that one) too.
+        public var later: [Later]
 
-        public init(step: Handoff.Step, why: String? = nil, scroll: Bool, probe: Bool = false) {
+        /// A later step's control, found the same way as the step's own.
+        public struct Later: Encodable, Equatable, Sendable {
+            public var step: String
+            public var selector: String?
+            public var text: String?
+            public var marker: String?
+            public var path: String?
+        }
+
+        /// Words in place of "Claude needs you" on the tag: a page's dialog interrupted the step and Claude is looking at
+        /// it ("Claude saw the page's alert and is looking at it", `DialogLog.stepAside`).
+        public var aside: String?
+
+        public init(step: Handoff.Step, why: String? = nil, scroll: Bool, probe: Bool = false, jump: Bool = false,
+                    manager: String? = nil, managerReady: Bool = false, later: [Handoff.Step] = []) {
+            doneWhen = step.doneWhen?.rawValue
+            appears = step.appears
+            self.later = later.map { other in
+                var found = Later(step: other.id)
+                switch other.locator {
+                case .selector(let selector)?: found.selector = selector
+                case .text(let text)?: found.text = text
+                case .marker(let marker, let label, let path)?:
+                    found.marker = marker
+                    found.text = label
+                    found.path = path
+                case nil: break
+                }
+                return found
+            }
             self.step = step.id
             number = step.number
             label = step.instruction
             self.why = step.why ?? why
             self.scroll = scroll
             self.probe = probe
+            self.jump = jump
+            self.manager = manager
+            self.managerReady = managerReady
             switch step.locator {
             case .selector(let selector)?: self.selector = selector
             case .text(let text)?: self.text = text
@@ -546,18 +757,23 @@ extension UserHandoff {
     public struct RingState: Decodable, Equatable, Sendable {
         /// The control is on the page (and shown).
         public var found: Bool
-        /// How the user ended the step, if they did since the last look ("click", "change", or the tag's "done" or
-        /// "skip").
+        /// How the step ended, if it did since the last look ("click", "change", "value", "gone", "appeared", "later",
+        /// or the tag's "skip").
         public var done: String?
+        /// With `done` "later": the later step whose control the user clicked.
+        public var later: String?
         /// The control is there but turned off, and the page's words about why when it gives some.
         public var disabled: Bool?
         public var why: String?
+        /// Not found, but something matches its selector (or Claude's ref) that doesn't show.
+        public var hidden: Bool?
 
-        public init(found: Bool, done: String? = nil, disabled: Bool? = nil, why: String? = nil) {
+        public init(found: Bool, done: String? = nil, disabled: Bool? = nil, why: String? = nil, hidden: Bool? = nil) {
             self.found = found
             self.done = done
             self.disabled = disabled
             self.why = why
+            self.hidden = hidden
         }
 
         /// What blocks the step, as far as this look saw.
@@ -573,6 +789,8 @@ extension UserHandoff {
     public struct RingEvent: Decodable, Equatable, Sendable {
         public var step: String
         public var how: String
+        /// With `how` "later": the later step whose control the user clicked.
+        public var later: String?
 
         public init?(json: String) {
             guard let event = try? JSONDecoder().decode(RingEvent.self, from: Data(json.utf8)) else { return nil }
@@ -580,22 +798,64 @@ extension UserHandoff {
         }
     }
 
+    /// Words for Claude when the user's steps sent the page on to another: "the page moved on to “Thank you”
+    /// (shop.example/checkouts/thank-you); check it". The title only when it's the new page's (a navigation event comes
+    /// before the new page's title does).
+    public static func movedOn(to url: URL?, title: String?) -> String {
+        let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let title: String? = trimmed.isEmpty ? nil : trimmed
+        let place = url.flatMap { url in url.host.map { $0 + url.path } }
+        guard title != nil || place != nil else { return describe("navigated") }
+        let named = title.map { "“\($0.count > 80 ? $0.prefix(79) + "…" : Substring($0))”" }
+        return "the page moved on to " + [named, place.map { named == nil ? $0 : "(\($0))" }].compactMap { $0 }.joined(separator: " ")
+            + "; check it"
+    }
+
     /// Words for Claude about how the page saw the user end the step.
     public static func describe(_ how: String) -> String {
         switch how {
         case "change": "the user changed the highlighted control"
+        case "value": "the user filled in the highlighted field and moved on"
+        case "navigated": "the page moved on to another address; check it"
+        case "gone": "the highlighted control went away (the form was sent or replaced)"
+        case "appeared": "what the step waited for appeared on the page"
+        case "dialog": "the page opened a dialog"
+        case "later": "the user went on to a later step's control"
+        // Handoffs from before Kite dropped its Done button.
         case "done": "the user pressed Done"
         case "skip": "the user skipped it"
         default: "the user clicked the highlighted control"
         }
     }
 
+    /// The tag's "Suggest password": not an end to the step, but a request to open the password manager on its field.
+    public static let managerEvent = "manager"
+    /// Asks the ring for the field's point, quieting its own click listener for Kite's click (`K.prepareManager`).
+    public static let prepareManagerScript = "(() => { const K = window.__kiteHandoff; return K && K.prepareManager ? K.prepareManager() : 'null'; })()"
+    /// Puts a few words on the tag's Suggest password button in its place, or takes them off (nil).
+    public static func noteScript(_ note: String?) -> String {
+        let json = (try? JSONEncoder().encode([note])).map { String(decoding: $0, as: UTF8.self) } ?? "[null]"
+        return "(() => { const K = window.__kiteHandoff; return K && K.setNote ? K.setNote(\(json)[0]) : false; })()"
+    }
+    /// Whether 1Password's own inline button or menu is on the page (its elements only, never what they hold).
+    public static let onePasswordPresentScript = "String(!!document.querySelector('com-1password-button, com-1password-menu'))"
+
     /// What the page's report makes of the step: the tag's Skip skips it, anything else does it.
     public static func state(_ how: String) -> Handoff.Step.State { how == "skip" ? .skipped : .done }
 
     /// Whether the user ended the step on the control itself (a click or a change), rather than on the tag: only such
     /// a click can be what opens a tab.
-    public static func onControl(_ how: String) -> Bool { how == "click" || how == "change" }
+    public static func onControl(_ how: String) -> Bool { ["click", "change", "value", "later"].contains(how) }
+
+    /// The same page, as far as a step is concerned: only the fragment may differ.
+    public static func samePage(_ a: URL, _ b: URL) -> Bool {
+        func strip(_ url: URL) -> String {
+            guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url.absoluteString }
+            parts.fragment = nil
+            return parts.string ?? url.absoluteString
+        }
+        return strip(a) == strip(b)
+    }
 
     /// Shows (or moves) the ring for one step, in the isolated world. Returns `RingState` as JSON.
     public static func ringScript(_ config: RingConfig) -> String {
@@ -606,7 +866,7 @@ extension UserHandoff {
     /// Takes the ring off the page.
     public static let clearScript = "(() => { const K = window.__kiteHandoff; if (K) K.clear(); return true; })()"
 
-    /// The ring itself, and the tag beside it: the step's words, Skip and Done (the only place Kite shows a step). They
+    /// The ring itself, and the tag beside it: the step's words and Skip (the only place Kite shows a step). They
     /// live in a closed shadow root on a host element that takes no clicks (only the tag does), in an isolated world, so
     /// the page can neither style them nor read or fake their state. Every frame they follow the control's box.
     ///
@@ -777,15 +1037,94 @@ extension UserHandoff {
             }
             return c.text ? byText(c.text) : null;
           };
+          // Something matches but none of it shows (zero size, display none, visibility hidden): a field a site draws
+          // its own box over, say. Claude hears so, to point the step at what the user sees.
+          const hiddenMatch = (c) => {
+            const sel = c.marker ? '[data-kite-handoff="' + CSS.escape(c.marker) + '"]' : c.selector;
+            if (!sel) return false;
+            return docs().some((d) => { try { return !!d.querySelector(sel); } catch (e) { return false; } });
+          };
           const state = (el) => {
             const b = el ? blocked(el) : null;
-            return JSON.stringify({ found: !!el, done: cfg && !cfg.probe ? K.done : null, disabled: !!b, why: b && b.why || null });
+            return JSON.stringify({ found: !!el, done: cfg && !cfg.probe ? K.done : null, later: cfg && !cfg.probe ? K.doneLater || null : null,
+              disabled: !!b, why: b && b.why || null, hidden: !el && cfg ? hiddenMatch(cfg) : null });
+          };
+          // What the user types in: the field itself (a label's field; the one frame a box holds, for a payment field in
+          // another site's frame), or null for a button, link or box.
+          const textual = (f) => f.matches('textarea,select,[contenteditable=""],[contenteditable=true]')
+            || (f.matches('input') && !/^(button|submit|reset|checkbox|radio|image|file|color|range|hidden)$/.test(f.type));
+          const field = (el) => {
+            if (!el) return null;
+            if (el.matches('label') && el.control) el = el.control;
+            if (el.matches('iframe') || textual(el)) return el;
+            const frames = el.querySelectorAll('iframe');
+            return frames.length === 1 ? frames[0] : null;
+          };
+          // What says the step is done: Claude's done_when, else the control's kind.
+          const mode = () => (K.cfg && K.cfg.doneWhen) || (field(K.el || K.cand) ? 'value' : 'click');
+          const filled = (f) => f.isContentEditable ? !!norm(f.innerText) : !!(f.value && String(f.value).trim());
+          // Ends the step: once, through the binding at once (the page may be about to go), and in the next look's state.
+          const finish = (how, later) => {
+            if (!K.step || K.done) return;
+            K.done = how; K.doneLater = later || null;
+            stopFrameWatch();
+            try { window.kiteHandoffEvent(JSON.stringify(later ? { step: K.step, how, later } : { step: K.step, how })); } catch (err) {}
+          };
+          // A later step's control on this page at `target`: the user went on to it, so this step is done too.
+          const laterAt = (target, path) => {
+            if (!target || !target.nodeType) return null;
+            for (const l of (K.cfg && K.cfg.later) || []) {
+              const el = find(l);
+              if (el && ((path || []).includes(el) || el === target || el.contains(target)) && !blocked(el)) return l;
+            }
+            return null;
+          };
+          // A payment field in another site's frame: Kite can't read its value, so focus having been in the frame and
+          // moving on (another field, another frame, a click elsewhere) is the user done typing there.
+          function stopFrameWatch() {
+            if (K.frameTimer) clearInterval(K.frameTimer);
+            K.frameTimer = 0; K.inFrame = null;
+          }
+          const frameLeft = (target, path) => {
+            if (!K.inFrame || K.done) return;
+            const l = laterAt(target, path);
+            stopFrameWatch();
+            if (l) finish('later', l.step); else finish('value');
+          };
+          const frameWatch = () => {
+            const f = K.inFrame;
+            if (!f || K.done || !K.step) return stopFrameWatch();
+            const a = f.ownerDocument.activeElement;
+            // Still in the frame (the page's focus stays there when the whole window goes to another app): not yet.
+            if (a === f) return;
+            frameLeft(a, [a]);
+          };
+          const frameFocus = () => {
+            if (!K.step || K.done || mode() !== 'value') return;
+            const f = field(K.el);
+            if (!f || !f.matches('iframe') || f.ownerDocument.activeElement !== f || K.inFrame) return;
+            K.inFrame = f;
+            K.frameTimer = setInterval(frameWatch, 150);
+          };
+          // A field for a new password (sign-up, create a login): the tag offers the password manager's suggestion.
+          const newPassword = (el) => {
+            if (!el || !el.matches('input[type=password]')) return false;
+            const ac = (el.getAttribute('autocomplete') || '').toLowerCase();
+            if (ac.includes('new-password')) return true;
+            if (ac.includes('current-password')) return false;
+            const scope = el.form || el.ownerDocument;
+            if (scope.querySelectorAll('input[type=password]').length > 1) return true;
+            return /sign ?up|create|register|join|new password|choose a password/i.test(
+              (el.form ? el.form.innerText : '') + ' ' + (el.getAttribute('placeholder') || '') + ' ' + (el.getAttribute('aria-label') || ''));
           };
           // A look without the ring: is the control there, and can it be used?
           if (cfg && cfg.probe) return state(find(cfg));
           if (!K.clear) {
             K.clear = () => {
-              K.step = null; K.el = null; K.cand = null; K.cfg = null; K.done = null; K.retry = 0; K.idle = 0;
+              K.step = null; K.el = null; K.cand = null; K.cfg = null; K.done = null; K.retry = 0; K.idle = 0; K.note = null;
+              K.doneLater = null; K.seen = 0; K.goneAt = 0; K.appearsBefore = undefined; K.fieldFocused = false;
+              if (K.frameTimer) clearInterval(K.frameTimer);
+              K.frameTimer = 0; K.inFrame = null;
               if (K.raf) cancelAnimationFrame(K.raf);
               if (K.checkRaf) cancelAnimationFrame(K.checkRaf);
               K.checkRaf = 0;
@@ -798,17 +1137,65 @@ extension UserHandoff {
               K.host = null;
             };
           }
+          // For "Suggest password": Kite's click on the field must not count as the step, and needs the field's middle on
+          // screen. Returns its point in this frame's viewport, or null.
+          K.prepareManager = () => {
+            const el = K.el && K.el.isConnected && shown(K.el) ? K.el : null;
+            if (!el) return 'null';
+            K.quietUntil = Date.now() + 2500;
+            let r = box(el, false);
+            if (r.top < 0 || r.bottom > innerHeight) { el.scrollIntoView({ block: 'center', behavior: 'instant' }); r = box(el, false); }
+            return JSON.stringify({ x: r.left + Math.min(r.width / 2, 24), y: r.top + r.height / 2 });
+          };
+          // A few words on the Suggest password button (the password manager didn't open, say), until the step changes.
+          K.setNote = (note) => { K.note = note || null; K.tagSize = null; if (K.cfg) { look(); follow(); } return true; };
           const report = (how) => (e) => {
             if (!e.isTrusted || !K.step || K.done) return;
+            // Kite's own click on the field, to open the password manager's menu there, isn't the user doing the step.
+            if (K.quietUntil && Date.now() < K.quietUntil) return;
             // The ringed control, or the live one about to take its place (a page that redrew it under the pointer, or
             // a control the user clicked before the ring settled on it).
             const path = e.composedPath ? e.composedPath() : [];
             const hit = [K.el, !K.el || !K.el.isConnected ? K.cand : null]
               .find((el) => el && el.isConnected && (path.includes(el) || el.contains(e.target)));
-            if (!hit || blocked(hit)) return;
-            K.done = how;
-            try { window.kiteHandoffEvent(JSON.stringify({ step: K.step, how })); } catch (err) {}
+            if (!hit) {
+              // A later step's control: the user went on, so this step (and any between) is done.
+              const l = how === 'click' ? laterAt(e.target, path) : null;
+              if (l) finish('later', l.step);
+              return;
+            }
+            if (blocked(hit)) return;
+            const m = mode();
+            // A field is done once it holds a value and the user moves on, not on the click into it.
+            if (m === 'value') { if (how === 'change' && !field(hit).matches('iframe')) finish('value'); return; }
+            if (m === 'click') finish(how);
           };
+          // A field: done once it holds a value and focus leaves it for somewhere else on the page. (Another app taking
+          // the window's focus leaves the page's focus on the field.)
+          const left = (e) => {
+            if (!e.isTrusted || !K.step || K.done || mode() !== 'value') return;
+            const f = field(K.el);
+            if (!f || f.matches('iframe') || !(e.target === f || f.contains(e.target))) return;
+            const next = e.relatedTarget, l = next ? laterAt(next, [next]) : null;
+            if (l) return finish('later', l.step);
+            setTimeout(() => {
+              const a = f.ownerDocument.activeElement;
+              if (!K.done && K.step && a !== f && !f.contains(a) && filled(f)) finish('value');
+            }, 0);
+          };
+          // Enter in the field, or Tab out of it with a value.
+          const key = (e) => {
+            if (!e.isTrusted || !K.step || K.done || mode() !== 'value' || (e.key !== 'Enter' && e.key !== 'Tab')) return;
+            const f = field(K.el);
+            if (!f || f.matches('iframe') || !(e.target === f || f.contains(e.target))) return;
+            if (e.key === 'Enter' || filled(f)) finish('value');
+          };
+          // A press anywhere on this page while the user was typing in the ringed frame: they've moved on.
+          const pressed = (e) => {
+            if (!e.isTrusted || !K.inFrame) return;
+            frameLeft(e.target, e.composedPath ? e.composedPath() : []);
+          };
+          const windowBlurred = () => setTimeout(frameFocus, 0);
           // Each document once, until K.clear(): hear the user's click, and look again soon after the page redraws.
           const watch = () => {
             if (!K.watching) K.watching = [];
@@ -818,6 +1205,9 @@ extension UserHandoff {
               const click = report('click'), change = report('change');
               d.addEventListener('click', click, true);
               d.addEventListener('change', change, true);
+              d.addEventListener('focusout', left, true);
+              d.addEventListener('keydown', key, true);
+              d.addEventListener('pointerdown', pressed, true);
               // The ring follows the control's box only while something may move it (see place): a scroll, a resize,
               // the end of a transition or animation, and any change to the page (classes and styles too), which costs
               // one frame to see whether the box moved.
@@ -826,6 +1216,8 @@ extension UserHandoff {
               d.addEventListener('scroll', moved, { capture: true, passive: true });
               for (const name of ['transitionend', 'animationend']) d.addEventListener(name, moved, true);
               if (view) view.addEventListener('resize', moved);
+              // Focus going into a frame shows here only as this window losing it.
+              if (view) view.addEventListener('blur', windowBlurred);
               const mover = new MutationObserver(() => checkMoved());
               mover.observe(d, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style'] });
               // While the control is missing, a page that never stops changing (Gmail) still gets the idle backoff.
@@ -838,6 +1230,10 @@ extension UserHandoff {
                 for (const name of ['transitionend', 'animationend']) d.removeEventListener(name, moved, true);
                 d.removeEventListener('click', click, true);
                 d.removeEventListener('change', change, true);
+                d.removeEventListener('focusout', left, true);
+                d.removeEventListener('keydown', key, true);
+                d.removeEventListener('pointerdown', pressed, true);
+                if (view) view.removeEventListener('blur', windowBlurred);
                 d.removeEventListener('scroll', moved, { capture: true });
                 if (view) view.removeEventListener('resize', moved);
               });
@@ -847,8 +1243,11 @@ extension UserHandoff {
           // Kite asks for a scroll on its first look at a step only; the control may settle after a later one.
           if (K.step !== cfg.step) {
             K.step = cfg.step; K.el = null; K.cand = null; K.done = null; K.scrolled = false; K.retry = 0; K.idle = 0;
-            K.wantScroll = cfg.scroll; K.pulse = true;
+            K.wantScroll = cfg.scroll; K.pulse = true; K.note = null;
+            K.doneLater = null; K.seen = 0; K.goneAt = 0; K.appearsBefore = undefined; K.fieldFocused = false; stopFrameWatch();
           }
+          // Kite brought the tab forward for this step: into view again, and pulse.
+          if (cfg.jump) { K.wantScroll = true; K.scrolled = false; K.pulse = true; }
           K.cfg = cfg;
           watch();
           if (!K.host || !K.host.isConnected) {
@@ -870,16 +1269,17 @@ extension UserHandoff {
               + 'padding:1px 7px;border-radius:5px;cursor:pointer}'
               + '.skip{color:rgba(255,255,255,.85)}.skip:hover{background:rgba(255,255,255,.18);color:#fff}'
               // No white fill: Kite's dark pages (Chromium's auto dark mode) would turn it black. A deeper orange stays.
-              + '.done{background:#A9472A;color:#fff}.done:hover{background:#963C22}.tag.off .done{background:#3A3A3C}'
+              + '.pm{background:rgba(255,255,255,.22);color:#fff}.pm:hover{background:rgba(255,255,255,.32)}.pm[hidden]{display:none}'
               + 'button:focus-visible{outline:2px solid #fff;outline-offset:1px}'
               + '@media (prefers-reduced-motion:reduce){.ring{animation:none}}'
               + '</style><div class="ring"></div><div class="tag" role="group"><span class="words"></span>'
-              + '<button class="skip" title="Leave this step undone: Claude hears you skipped it">Skip</button>'
-              + '<button class="done" title="You did it: tell Claude">Done</button></div>';
+              + '<button class="pm" hidden></button>'
+              + '<button class="skip" title="Leave this step undone: Claude hears you skipped it">Skip</button></div>';
             (document.documentElement || document.body).appendChild(host);
             K.host = host; K.ring = root.querySelector('.ring'); K.tag = root.querySelector('.tag');
             K.words = root.querySelector('.words');
-            // Skip and Done end the step the tag shows now. Only the user's own presses count, as with the control.
+            // Skip ends the step the tag shows now, undone. Only the user's own presses count, as with the control. There's
+            // no Done: every step finishes by itself (see `mode`).
             const press = (how) => (e) => {
               e.preventDefault(); e.stopPropagation();
               if (!e.isTrusted || !K.step || K.done) return;
@@ -887,7 +1287,14 @@ extension UserHandoff {
               try { window.kiteHandoffEvent(JSON.stringify({ step: K.step, how })); } catch (err) {}
             };
             root.querySelector('.skip').addEventListener('click', press('skip'));
-            root.querySelector('.done').addEventListener('click', press('done'));
+            // The password manager's suggestion: Kite clicks the field so the manager's own menu opens there. It doesn't end
+            // the step, and Kite never reads what the manager fills in.
+            K.pm = root.querySelector('.pm');
+            K.pm.addEventListener('click', (e) => {
+              e.preventDefault(); e.stopPropagation();
+              if (!e.isTrusted || !K.step || K.done) return;
+              try { window.kiteHandoffEvent(JSON.stringify({ step: K.step, how: 'manager' })); } catch (err) {}
+            });
             // A press on the tag isn't a press on the page: a menu or dialog that closes on a press outside it stays open.
             for (const name of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'dblclick'])
               K.tag.addEventListener(name, (e) => e.stopPropagation());
@@ -916,8 +1323,46 @@ extension UserHandoff {
             const el = K.el && K.el.isConnected && shown(K.el) ? K.el : null;
             const b = el ? blocked(el) : null;
             K.off = !!b;
-            // A turned-off control says so first: the tag's end is cut off on a narrow page.
-            const text = (K.off ? 'Not clickable yet · ' : 'Claude needs you · ') + K.cfg.number + '. ' + K.cfg.label;
+            if (!K.done) {
+              // Gone: a control the user saw ringed went away and nothing took its place (a form sent, a dialog closed).
+              if (el) K.seen = K.seen || now;
+              if (K.seen && !el && !K.cand) {
+                if (!K.goneAt) { K.goneAt = now; soon(settle + 20); } else if (now - K.goneAt >= settle) finish('gone');
+              } else K.goneAt = 0;
+              // Words that weren't on the page when the step began, there now.
+              if (K.cfg.appears) {
+                const want = norm(K.cfg.appears);
+                const there = docs().some((d) => d.body && norm(d.body.innerText).includes(want));
+                if (K.appearsBefore === undefined) K.appearsBefore = there;
+                else if (there && !K.appearsBefore) finish('appeared');
+                else if (!there) K.appearsBefore = false;
+              }
+              // Focus in the ringed frame, in case its window's blur came before the ring did.
+              frameFocus();
+              // A field the user was in, filled and left, for a page that sent no focus events (one behind other windows).
+              const f = mode() === 'value' ? field(el || K.el) : null;
+              if (f && !f.matches('iframe')) {
+                const a = f.ownerDocument.activeElement;
+                if (a === f || f.contains(a)) K.fieldFocused = true;
+                else if (K.fieldFocused && filled(f)) finish('value');
+              }
+            }
+            // A turned-off control says so first: the tag's end is cut off on a narrow page. While Claude looks at a dialog
+            // the page showed, the tag says that instead.
+            const text = (K.cfg.aside ? K.cfg.aside + ' · ' : K.off ? 'Not clickable yet · ' : 'Claude needs you · ')
+              + K.cfg.number + '. ' + K.cfg.label;
+            // A new password's field: "Suggest password", which opens the password manager's own menu on it.
+            const pm = !!(el && K.cfg.manager && !K.off && newPassword(el));
+            if (K.pm && K.pm.hidden === pm) { K.pm.hidden = !pm; K.tagSize = null; }
+            if (pm) {
+              // What went wrong last time, on the button itself, where the user's eyes are (the step's words may be cut off).
+              const label = K.note || 'Suggest password', title = K.cfg.managerReady
+                ? 'Have ' + K.cfg.manager + ' suggest a strong password here. Kite never sees it.'
+                : K.cfg.manager + ' isn\'t added to Kite for this space yet (⇧⌘X adds it).';
+              if (K.pm.textContent !== label) { K.pm.textContent = label; K.tagSize = null; }
+              if (K.pm.title !== title) K.pm.title = title;
+            }
+
             if (K.words && K.words.textContent !== text) { K.words.textContent = text; K.tagSize = null; }
             // Why Claude stopped, when the pointer rests on the tag.
             const why = K.cfg.why ? 'Claude: ' + K.cfg.why : text;

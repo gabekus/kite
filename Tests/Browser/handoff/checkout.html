@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Checkout</title>
+<!-- Gabe's Muji checkout (5 Nov 2026): billing address, card, Pay now on one tab, then /thank-you. The test sends the
+     page on without the ring hearing the steps (as happened there); every step on the tab must count as done. -->
+<style>body{font:14px system-ui;margin:40px} p{margin:16px 0}</style>
+<form action="thank-you.html">
+  <p><label><input type="radio" name="billing" id="same"> Same as shipping address</label></p>
+  <p><label>Card number <input id="cardnumber" autocomplete="cc-number"></label></p>
+  <p><button id="paynow">Pay now</button></p>
+</form>
