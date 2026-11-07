@@ -91,7 +91,10 @@ scripts/release.sh            # builds dist/release/<version>/ and stops
 scripts/release.sh --publish  # the same, then the GitHub release
 ```
 
-The release has two files: `Kite-<version>.zip` (the app) and `appcast.xml`. It's created as a
+The release has three files: `Kite-<version>.zip` (the app, which the appcast points Sparkle at),
+`Kite.zip` (the same app under a fixed name, for the README's Download button, which links
+`releases/latest/download/Kite.zip`) and `appcast.xml`. After publishing, release.sh checks
+that link lands on the new release. It's created as a
 draft and published once both are up, so `releases/latest` never points at a release without
 its appcast. Installed Kites see it within 8 hours, or at once from Check for Updates….
 
