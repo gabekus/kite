@@ -102,6 +102,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// Every tab on screen in pane order, and its page: one, or a split's panes.
     private(set) var shownTabIDs: [UUID] = []
     private var shownPages: [UUID: WebPage] = [:]
+    /// A shown page in HTML fullscreen, covering the window (`PageFullscreen`).
+    private var pageFullscreen: PageFullscreen?
     /// The pages on screen: the shown tab's, or each pane's of its split.
     var visiblePages: [WebPage] { Array(shownPages.values) }
     /// Shown tabs whose page another normal window has (`pageTaken`), by tab.
@@ -281,7 +283,35 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
-    func windowDidExitFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
+    func windowDidExitFullScreen(_ notification: Notification) {
+        trafficLights?.fullScreenChanged()
+        // Left with the green button or ⌃⌘F while a video was full screen: the video leaves it too.
+        pageFullscreen?.windowLeftFullScreen()
+        endPageFullscreen()
+    }
+
+    /// Tab `id`'s page went into or out of HTML fullscreen. Only the focused tab's page goes full screen.
+    private func pageFullscreenChanged(_ id: UUID, _ on: Bool) {
+        if on {
+            guard pageFullscreen == nil, let window, id == shownTabID, let page = shownPages[id],
+                  let fullscreen = PageFullscreen(page: page, tab: id, in: window) else {
+                pool.loadedPage(id)?.exitFullscreen()
+                return
+            }
+            pageFullscreen = fullscreen
+        } else if pageFullscreen?.tab == id {
+            pageFullscreen?.end()
+            pageFullscreen = nil
+        }
+    }
+
+    /// Takes the page out of fullscreen and puts it back in its pane.
+    private func endPageFullscreen() {
+        guard let fullscreen = pageFullscreen else { return }
+        pageFullscreen = nil
+        fullscreen.end()
+        fullscreen.page.exitFullscreen()
+    }
 
     // MARK: Views
 
@@ -559,6 +589,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         pool.onLinkPeek = { [weak self] id, url in self?.openLinkPeek(url, from: id) }
         installPageMenu()
+        pool.onFullscreen = { [weak self] id, on in self?.pageFullscreenChanged(id, on) }
         pool.onPermissionRequestsChanged = { [weak self] in self?.updatePermissionPrompt() }
         // Chrome's install icon in the address field, for pages with an installable manifest.
         if !isIncognito {
@@ -705,6 +736,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func show(_ tabs: [BrowserTab], focused: UUID?) {
         findBarLeavesTab(shownTabID)
         let ids = tabs.map(\.id)
+        // Another tab coming forward takes the video out of full screen, as switching tabs does in Chrome.
+        if let fullscreen = pageFullscreen, ids != shownTabIDs || focused != fullscreen.tab { endPageFullscreen() }
         // Capture… belongs to the page it was started on.
         if ids != shownTabIDs || focused != shownTabID { cancelCapture() }
         if ids != shownTabIDs {
@@ -775,6 +808,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// sidebar, and a tab has one web content). This window shows a blurred snapshot of it instead,
     /// as Arc's `WindowContentPlaceholderViewController` does, until it comes forward again.
     private func pageTaken(_ id: UUID) {
+        if pageFullscreen?.tab == id { endPageFullscreen() }
         guard let page = shownPages.removeValue(forKey: id) else { return }
         let placeholder = PagePlaceholderView(frame: page.view.frame)
         placeholders[id] = placeholder
@@ -1656,7 +1690,8 @@ final class ContentClipView: NSView {
 
     private func layoutPage() {
         let frame = CGRect(x: 0, y: 0, width: max(bounds.width, minimumPageWidth), height: bounds.height - topInset)
-        if let page, page.frame != frame { page.frame = frame }
+        // Not while the page is away in HTML fullscreen (`PageFullscreen`).
+        if let page, page.superview === self, page.frame != frame { page.frame = frame }
         toolbar?.frame = CGRect(x: 0, y: bounds.height - PageToolbar.Metrics.inset, width: bounds.width, height: PageToolbar.Metrics.inset)
     }
 }

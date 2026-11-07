@@ -49,6 +49,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
     private(set) var profile: Profile
     private let host: Host
     private var page: WebPage?
+    private var pageFullscreen: PageFullscreen?
     /// This window's key for `OAuthResumeTracker`, as a tab's id is in the main window.
     private let oauthKey = UUID()
     private(set) var url: URL?
@@ -314,6 +315,8 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         case .favicon, .progress, .blockedCount, .crashed, .addExtension, .media, .callControls, .capturing, .trace, .traceInput,
              .dialog:
             break
+        case .fullscreen(let fullscreen):
+            pageFullscreenChanged(fullscreen)
         }
     }
 
@@ -409,11 +412,33 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
     /// the archive (`windowWillClose`).
     @objc func closeTab(_ sender: Any?) { window?.performClose(sender) }
 
+    /// The page went into or out of HTML fullscreen.
+    private func pageFullscreenChanged(_ on: Bool) {
+        if on {
+            guard pageFullscreen == nil, let page, let window else { return }
+            pageFullscreen = PageFullscreen(page: page, in: window)
+            if pageFullscreen == nil { page.exitFullscreen() }
+        } else {
+            pageFullscreen?.end()
+            pageFullscreen = nil
+        }
+    }
+
+    /// The page is leaving this window (or the window is closing): out of fullscreen first.
+    private func endPageFullscreen() {
+        guard let fullscreen = pageFullscreen else { return }
+        pageFullscreen = nil
+        fullscreen.end()
+        fullscreen.page.exitFullscreen()
+    }
+
+
     /// ⌘L, like the main window's location field.
     @objc func openLocation(_ sender: Any?) { pill.beginEditing(text: url?.absoluteString ?? "") }
 
     private func move(to spaceID: UUID) {
         guard let page else { return NSSound.beep() }
+        endPageFullscreen()
         showPermissionPrompt(nil)
         page.view.removeFromSuperview()
         page.onEvent = nil
@@ -480,6 +505,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         self.profile = profile
         engine = host.engine(profile)
         if let page {
+            endPageFullscreen()
             showPermissionPrompt(nil)
             stopFollowingDownloads()
             page.onEvent = nil
@@ -546,6 +572,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
         wakeObserver = nil
         window?.saveFrame(usingName: Self.frameName)
+        endPageFullscreen()
         showPermissionPrompt(nil)
         if let page {
             page.onEvent = nil
@@ -619,7 +646,12 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
-    func windowDidExitFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
+    func windowDidExitFullScreen(_ notification: Notification) {
+        trafficLights?.fullScreenChanged()
+        // Left with the green button or ⌃⌘F while a video was full screen: the video leaves it too.
+        pageFullscreen?.windowLeftFullScreen()
+        endPageFullscreen()
+    }
     func windowDidResize(_ notification: Notification) { window?.saveFrame(usingName: Self.frameName) }
 }
 

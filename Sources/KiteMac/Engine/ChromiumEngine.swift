@@ -279,6 +279,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     func blur() { browser.blur() }
     func allowFocus() { browser.allowFocus() }
     func setVisible(_ visible: Bool) { browser.setHidden(!visible) }
+    func exitFullscreen() { browser.exitFullscreen() }
     func showDevTools(_ panel: DevToolsPanel) { browser.showDevToolsRunningFrontendScript(panel.chromiumFrontendScript) }
 
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void) {
@@ -806,6 +807,9 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     func browser(_ browser: KCBrowser, statusMessageDidChange message: String?) {
         onEvent?(.linkHover(LinkPreview.link(fromStatus: message).map { LinkHover(url: $0) }))
     }
+
+    @objc(browser:fullscreenDidChange:)
+    func browser(_ browser: KCBrowser, fullscreenDidChange fullscreen: Bool) { onEvent?(.fullscreen(fullscreen)) }
 
     @objc(browser:blockedCountDidChange:)
     func browser(_ browser: KCBrowser, blockedCountDidChange count: Int) { onEvent?(.blockedCount(count)) }

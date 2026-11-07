@@ -75,6 +75,9 @@ enum PageEvent {
     /// The page showed a JavaScript dialog (alert, confirm, prompt, "Leave site?"), or it closed: Claude hears of it
     /// on the tabs it works in (`DialogLog`).
     case dialog(PageDialogEvent)
+    /// The page entered or left HTML fullscreen (a video's full screen button). The window makes the page's
+    /// view fill the screen (`PageFullscreen`). WebKit does its own and never reports it.
+    case fullscreen(Bool)
 }
 
 /// A page's JavaScript dialog as Kite showed it (`PageDialogs`).
@@ -143,6 +146,8 @@ protocol WebPage: AnyObject {
     func allowFocus()
     /// Offscreen pages should throttle rendering and timers.
     func setVisible(_ visible: Bool)
+    /// Takes the page out of HTML fullscreen (`.fullscreen(false)` follows).
+    func exitFullscreen()
     /// Opens DevTools (Web Inspector on WebKit) on `panel`.
     func showDevTools(_ panel: DevToolsPanel)
     /// Highlights matches of `text`. `findNext` moves through matches of the same text;
@@ -205,6 +210,8 @@ extension WebPage {
     /// WebKit pages close without asking.
     func requestClose(_ completion: @escaping (PageClose.Outcome) -> Void) { completion(.close) }
     func hasBeforeUnloadHandler(_ completion: @escaping (Bool) -> Void) { completion(false) }
+    /// WebKit runs its own fullscreen window.
+    func exitFullscreen() {}
 }
 
 @MainActor

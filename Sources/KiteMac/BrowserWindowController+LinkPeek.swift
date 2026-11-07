@@ -299,6 +299,9 @@ extension BrowserWindowController {
         case .progress, .navigationState, .blockedCount, .crashed, .addExtension, .linkHover, .media, .callControls, .capturing,
              .permissionRequestCancelled, .trace, .traceInput, .dialog:
             break
+        case .fullscreen(let on):
+            // The Peek card is a preview: a video there stays in the card (open it as a tab to watch full screen).
+            if on { session.page.exitFullscreen() }
         }
     }
 }
