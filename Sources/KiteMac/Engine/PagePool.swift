@@ -47,6 +47,8 @@ final class PagePool {
     var onTabOpened: ((_ child: UUID, _ opener: UUID) -> Void)?
     /// Called when a tab's page stops loading.
     var onLoadFinished: ((UUID) -> Void)?
+    /// A tab's page showed a JavaScript dialog, or it closed (for Claude: `DialogLog`).
+    var onPageDialog: ((UUID, PageDialogEvent) -> Void)?
     /// A tab's page started (true) or finished (false) loading (the install icon checks the page).
     var onLoadingChanged: ((UUID, WebPage, Bool) -> Void)?
     /// A link clicked in tab `UUID` opens in Arc's Peek card (`LinkPeek`); nil opens it as a new tab.
@@ -548,6 +550,8 @@ final class PagePool {
             guard permissionRequests[id]?.id == requestID else { return }
             permissionRequests[id] = nil
             onPermissionRequestsChanged?()
+        case .dialog(let event):
+            onPageDialog?(id, event)
         }
     }
 

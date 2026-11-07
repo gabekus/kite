@@ -688,7 +688,8 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         let present = { [weak self] in
             guard let self else { return completion(false, nil) }
             pageDialog = PageDialogs.present(kinds[kind] ?? .alert, message: message, defaultText: defaultText,
-                                             origin: origin, in: browser.view) { [weak self] ok, text in
+                                             origin: origin, in: browser.view,
+                                             report: { [weak self] in self?.onEvent?(.dialog($0)) }) { [weak self] ok, text in
                 guard let self else { return completion(ok, text) }
                 pageDialog = nil
                 // Before the engine hears it: answering resets the page's dialog state on the way.
