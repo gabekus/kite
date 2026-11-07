@@ -3,8 +3,9 @@ import KiteCore
 
 /// The `ui` tool's Mac side: Kite's own windows, read and driven from inside the app.
 ///
-/// Off unless the user turns on Kite menu → Diagnostics for Claude (which needs Claude's
-/// control on too), or a test build runs on a throwaway profile with `KITE_DIAGNOSTICS=1`.
+/// Off unless it's turned on: Kite menu → Diagnostics for Claude, the `diagnostics` tool (an agent
+/// debugging Kite; it needs Claude's control on, like every tool), or a test build on a throwaway
+/// profile with `KITE_DIAGNOSTICS=1`.
 /// Nothing here reaches another app, moves the real pointer, or focuses Kite.
 @MainActor
 final class UIDiagnostics {
@@ -26,6 +27,17 @@ final class UIDiagnostics {
     func setEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: Self.defaultsKey)
         applySetting()
+    }
+
+    /// The `diagnostics` tool: turns it on or off (nil leaves it), and says where it stands.
+    func set(_ on: Bool?) -> String {
+        if let on { setEnabled(on) }
+        if Self.enabledByEnvironment {
+            return "Diagnostics for Claude is on: this test build runs with KITE_DIAGNOSTICS=1, which the setting can't turn off."
+        }
+        return Self.isEnabled
+            ? "Diagnostics for Claude is on: the ui tool works. Turn it off (action off) when you're done."
+            : "Diagnostics for Claude is off. Turn it on with action on."
     }
 
     func run(_ inspection: UIInspection) async throws -> ToolOutput {

@@ -108,8 +108,12 @@ Most of an agent's time goes to model round trips and context, not to the browse
 
 The tools above read web pages. `ui` reads Kite itself (window, sidebar, card, command bar, menus) from inside the
 app, so checking Kite's behaviour never needs a screen recording, an app switch or the user's pointer. It's off
-unless Kite menu → **Diagnostics for Claude** is on (it needs Claude's control on too), or a test build runs with
+unless **Diagnostics for Claude** is on (it needs Claude's control on too), or a test build runs with
 `KITE_DIAGNOSTICS=1` on a `KITE_SUPPORT_PATH` profile, which also turns control on for that profile.
+
+An agent debugging Kite turns it on itself with the `diagnostics` tool (`action`: `on`, `off`, or `status`, the
+default; CLI `kite diagnostics on`) and off again when it's done. It's the same setting as Kite menu →
+Diagnostics for Claude, so the menu's checkmark follows it.
 
 Points are window points from the window's top-left corner (the content runs under the titlebar). A point
 names the device pixel whose top-left it is, so a point on a rect's top or left edge is inside it.

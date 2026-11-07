@@ -104,6 +104,8 @@ public enum TraceCall {
             choice("action", Set(VPNAction.names))
         case .ui:
             choice("action", Set(UIInspection.actions))
+        case .diagnostics:
+            choice("action", ["status", "on", "off"])
         case .moveToFolder:
             if a["folder"]?.stringValue?.lowercased() == "claude" { out["folder"] = "claude" }
         default:

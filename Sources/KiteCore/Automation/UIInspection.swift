@@ -183,7 +183,7 @@ public enum UIInspection: Hashable, Sendable {
 
     public static let summary = """
         Kite's own native UI (sidebar, card, command bar, menus, windows), read from inside the app: no screen recording, \
-        no focus change, no real pointer. Needs Diagnostics for Claude on (Kite menu). Coordinates are points from the \
+        no focus change, no real pointer. Needs Diagnostics for Claude on (the diagnostics tool, or Kite menu). Coordinates are points from the \
         window's top-left. Actions: windows; tree (views with frames, materials, radii, colours, fonts, SwiftUI elements; \
         root, depth, match, layers); capture (exact window pixels even when covered or in the background; region \
         [x,y,w,h], pixels [[x,y],…] for hex colours only); pointer (synthetic moves via points or from/to/steps: view hit, \
