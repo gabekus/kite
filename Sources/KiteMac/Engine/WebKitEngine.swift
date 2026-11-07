@@ -704,7 +704,8 @@ extension WebKitPage: WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor () -> Void
     ) {
-        PageDialogs.present(.alert, message: message, origin: frame.request.url, in: webView) { _, _ in completionHandler() }
+        PageDialogs.present(.alert, message: message, origin: frame.request.url, in: webView,
+                            report: { [weak self] in self?.onEvent?(.dialog($0)) }) { _, _ in completionHandler() }
     }
 
     func webView(
@@ -713,7 +714,8 @@ extension WebKitPage: WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor (Bool) -> Void
     ) {
-        PageDialogs.present(.confirm, message: message, origin: frame.request.url, in: webView) { ok, _ in completionHandler(ok) }
+        PageDialogs.present(.confirm, message: message, origin: frame.request.url, in: webView,
+                            report: { [weak self] in self?.onEvent?(.dialog($0)) }) { ok, _ in completionHandler(ok) }
     }
 
     func webView(
@@ -724,7 +726,7 @@ extension WebKitPage: WKUIDelegate {
         completionHandler: @escaping @MainActor (String?) -> Void
     ) {
         PageDialogs.present(.prompt, message: prompt, defaultText: defaultText ?? "", origin: frame.request.url,
-                            in: webView) { _, text in completionHandler(text) }
+                            in: webView, report: { [weak self] in self?.onEvent?(.dialog($0)) }) { _, text in completionHandler(text) }
     }
 
     func webView(

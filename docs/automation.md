@@ -42,6 +42,7 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | (none) | `click`, `type`, `screenshot` | `kite click/type/screenshot` | Kept from the first version. |
 | (none) | `wait_for` | | load, navigation, selector, text, network_idle. Event-driven. |
 | (none) | `handle_dialog` | | alert / confirm / prompt / beforeunload. |
+| (none) | `dialogs` | `kite call dialogs` | The dialogs pages showed on Claude's tabs, open or answered, and how. See "How dialogs work". |
 | (none) | `list_downloads` | | Downloads since control was turned on. |
 | (none) | `sign_in` | `kite call sign_in` | Hands a login page to the user, with 1Password. See below. |
 | (none) | `handoff`, `handoff_status` | `kite call handoff` | Hands steps Claude can't do to the user, shown on the pages. See below. |
@@ -491,6 +492,21 @@ How dialogs work:
   the dialog instead of hanging.
 - An action that opens a dialog returns as soon as it opens.
 - CEF also shows its own native dialog. If the user answers that one, the tab unfreezes for Claude too.
+- Kite keeps every dialog on a tab Claude opened, touched or drives, or handed the user a step on (`DialogLog`):
+  its kind, the page's message, its origin, when, the handoff step it came during or after, and how it closed (the
+  user's OK or Cancel in Kite's sheet, Claude's `handle_dialog`, Kite's own answer for a tab that wasn't in a window,
+  or unanswered when the page moved on). Both engines report it: Chromium's JS dialog handler and WebKit's UI
+  delegate, through `PageDialogs`. Up to 20 per tab, dropped when the tab closes or control is turned off.
+- Claude hears of each dialog once, closed or open for 3 s (`DialogLog.openGrace`, so a user who answers at once
+  is reported with their answer): a waiting `handoff_status` returns for one on the handoff's tabs (its steps' and
+  those its clicks opened) or for its own connection, with the dialog first in its result; any other tool result
+  for the connection that owns the tab (the step's handoff's, or the last to act on it) carries it; and `dialogs`
+  lists a tab's. An action whose own result already said a dialog opened doesn't repeat it.
+- When Claude hears of a dialog on a step's page, the next move is Claude's, not the user's: the step waiting there
+  keeps its ring, Skip and Done, and its tag reads "Claude saw the page's alert and is looking at it" in place of
+  "Claude needs you"; the tab shows working ("Looking at the page's alert"). That lasts until Claude waits on the
+  user again (`handoff_status` with a wait, or a new handoff on the tab) or the step ends. The tab state's only hook
+  for it is `AutomationController.stepNeedingUser`.
 
 ## Pieces
 

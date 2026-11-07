@@ -449,8 +449,10 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         }
     }
 
-    /// What `handoff` and `handoff_status` tell Claude. `place` gives a tab's URL and title for steps on tabs.
-    public func report(waitedOut: Bool = false, place: (UUID) -> (url: String?, title: String)?) -> String {
+    /// What `handoff` and `handoff_status` tell Claude. `place` gives a tab's URL and title for steps on tabs. `dialog`: a
+    /// page's JavaScript dialog on the handoff's tabs is in the same result (`DialogLog`), so Claude deals with it
+    /// before it waits again.
+    public func report(waitedOut: Bool = false, dialog: Bool = false, place: (UUID) -> (url: String?, title: String)?) -> String {
         let done = steps.filter { $0.state == .done }.count
         let skipped = steps.filter { $0.state == .skipped }.count
         let left = steps.count - done - skipped
@@ -474,6 +476,11 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
                 ? "The user did every step. Read the pages now to check they took"
                 : "Skipped steps weren't done: don't do them yourself. Say what's left and why")
                 + ", then carry on at once: " + Self.carryOn)
+        } else if dialog {
+            lines.append("Deal with the page's dialog before you wait again: read the page and work out what's wrong, then "
+                + "fix it yourself or hand the user a new step (withdraw this one with handoff_status cancel if it no longer "
+                + "fits). Until you call handoff_status with id \"\(id)\" and a wait, or hand over a new step on that tab, the "
+                + "step's tag tells the user you saw the dialog and are looking at it, and the tab shows you at work.")
         } else if !blockedSteps.isEmpty {
             lines.append("The user can't do a blocked or unshown step as it is. Fix what's in the way yourself if you may (bring "
                 + "the step's page back, or what turns its control on), or withdraw this handoff (handoff_status cancel) and "
@@ -703,6 +710,10 @@ extension UserHandoff {
             public var marker: String?
             public var path: String?
         }
+
+        /// Words in place of "Claude needs you" on the tag: a page's dialog interrupted the step and Claude is looking at
+        /// it ("Claude saw the page's alert and is looking at it", `DialogLog.stepAside`).
+        public var aside: String?
 
         public init(step: Handoff.Step, why: String? = nil, scroll: Bool, probe: Bool = false, jump: Bool = false,
                     manager: String? = nil, managerReady: Bool = false, later: [Handoff.Step] = []) {
@@ -1336,8 +1347,10 @@ extension UserHandoff {
                 else if (K.fieldFocused && filled(f)) finish('value');
               }
             }
-            // A turned-off control says so first: the tag's end is cut off on a narrow page.
-            const text = (K.off ? 'Not clickable yet · ' : 'Claude needs you · ') + K.cfg.number + '. ' + K.cfg.label;
+            // A turned-off control says so first: the tag's end is cut off on a narrow page. While Claude looks at a dialog
+            // the page showed, the tag says that instead.
+            const text = (K.cfg.aside ? K.cfg.aside + ' · ' : K.off ? 'Not clickable yet · ' : 'Claude needs you · ')
+              + K.cfg.number + '. ' + K.cfg.label;
             // A new password's field: "Suggest password", which opens the password manager's own menu on it.
             const pm = !!(el && K.cfg.manager && !K.off && newPassword(el));
             if (K.pm && K.pm.hidden === pm) { K.pm.hidden = !pm; K.tagSize = null; }

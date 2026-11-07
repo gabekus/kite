@@ -23,6 +23,8 @@ extension AutomationController {
         }
         let handoff = Handoff(id: id, reason: request.reason, session: sessionFolders[connection], steps: steps)
         handoffConnections[id] = connection
+        // New steps on a tab whose step a page's dialog interrupted: the user is needed there again.
+        endDialogAsides(tabs: Set(steps.compactMap(\.tab)))
         handoffs = Handoff.pruned(handoffs + [handoff])
         saveHandoffs()
         // Take the user to the first step's tab (now, or once they stop typing in Kite): a step on a tab that isn't in
@@ -38,7 +40,7 @@ extension AutomationController {
         let blocked = handoffs.first { $0.id == id }.map { !$0.blockedSteps.isEmpty } ?? false
         let note = lead.map { HandoffLead.note($0.step, title: store.state.tab($0.tab)?.displayTitle, led: $0.now) }
         return try await handoffReport(id, wait: blocked ? 0 : request.wait, reportBlockedAfter: UserHandoff.blockedReportDelay,
-                                       note: note)
+                                       note: note, connection: connection)
     }
 
     func handoffStatus(_ id: String?, wait: Double, cancel: Bool, connection: Int) async throws -> ToolOutput {
@@ -52,18 +54,22 @@ extension AutomationController {
             update(handoff.id) { $0.finishAll(.skipped, how: "Claude withdrew it") }
             pollHandoffsSoon()
         } else {
+            // Waiting on the user again: steps a page's dialog interrupted are theirs once more.
+            if wait > 0 { endDialogAsides(handoff: handoff.id) }
             // A fresh look first, so a step Claude just unblocked (or the page did) isn't reported from an old one.
             await lookAtSteps(handoff.id, attempts: 1)
         }
-        return try await handoffReport(handoff.id, wait: cancel ? 0 : wait, reportBlockedAfter: UserHandoff.blockedReportDelay)
+        return try await handoffReport(handoff.id, wait: cancel ? 0 : wait, reportBlockedAfter: UserHandoff.blockedReportDelay,
+                                       connection: connection)
     }
 
     /// Waits up to `wait` seconds for the user to end every step, then reports. A step that has been blocked for
     /// `reportBlockedAfter` (unshown for `UserHandoff.unshownReportDelay`) ends the wait early (once per step), so
     /// Claude can fix what's in the way instead of waiting on a user who can't go on; so does a click that opens a
-    /// new tab, for Claude to carry on there.
+    /// new tab, for Claude to carry on there, and a JavaScript dialog on the handoff's tabs (`DialogLog.wakes`): the
+    /// page's alert after the user's step is usually the page refusing it.
     private func handoffReport(_ id: String, wait: Double, reportBlockedAfter delay: TimeInterval,
-                               note: String? = nil) async throws -> ToolOutput {
+                               note: String? = nil, connection: Int) async throws -> ToolOutput {
         let deadline = Date().addingTimeInterval(wait)
         var watch = HandoffBlockWatch(reported: reportedBlockedSteps)
         let openedBefore = handoffs.first { $0.id == id }?.opened.count ?? 0
@@ -71,7 +77,14 @@ extension AutomationController {
         // Any step ending wakes the wait, not only the last one, so Claude picks up on the page it led to at once.
         while Date() < deadline, let handoff = handoffs.first(where: { $0.id == id }), !handoff.isFinished,
               handoff.opened.count == openedBefore, handoff.waiting.count == waitingBefore,
-              !watch.shouldReport(handoff, delay: delay, unshownDelay: max(delay, UserHandoff.unshownReportDelay)) {
+              !watch.shouldReport(handoff, delay: delay, unshownDelay: max(delay, UserHandoff.unshownReportDelay)),
+              dialogLog.wakes(handoff, connection: connection).isEmpty {
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        // A step the page's dialog just ended: hold on until that dialog is news (answered, or open past its grace), so
+        // this report carries it and Claude reads the page now, not on its next call.
+        while wait > 0, Date() < deadline, let handoff = handoffs.first(where: { $0.id == id }),
+              !dialogLog.pending(handoff).isEmpty {
             try await Task.sleep(for: .milliseconds(250))
         }
         // A click that just ended a step may also be opening a tab: give it a moment to arrive, so the report has it.
@@ -82,10 +95,13 @@ extension AutomationController {
         guard let handoff = handoffs.first(where: { $0.id == id }) else { throw AutomationError(.notFound, "Handoff \(id) is gone.") }
         reportedBlockedSteps.formUnion(handoff.blockedSteps.map(\.id))
         if handoff.isFinished { handoffEndsTold.insert(id) }
-        var text = handoff.report(waitedOut: wait > 0 && !handoff.isFinished) { [store] tab in
+        // A page's dialog on the handoff's tabs comes first: Claude, not the user, has the next move.
+        let dialogs = dialogLog.wakes(handoff, connection: connection)
+        var text = handoff.report(waitedOut: wait > 0 && !handoff.isFinished, dialog: !dialogs.isEmpty) { [store] tab in
             store.state.tab(tab).map { (url: $0.url?.absoluteString, title: $0.displayTitle) }
         }
         if let note, !handoff.isFinished { text += "\n" + note }
+        if !dialogs.isEmpty { text = tellDialogs(dialogs, connection: connection) + "\n\n" + text }
         // What the user's steps opened (a popup from a button they pressed), so Claude carries on there.
         for tab in Set(handoff.steps.compactMap(\.tab)) {
             if let opened = openedReport(by: tab, since: handoff.created) { text += "\n\n" + opened }
@@ -587,9 +603,11 @@ extension AutomationController {
         let jump = !probe && ringJumps.remove(tab) != nil
         let later = handoffs.first { $0.id == handoffID(of: step.id) }?.steps
             .filter { $0.isWaiting && $0.tab == tab && $0.number > step.number } ?? []
-        let config = UserHandoff.RingConfig(step: step, why: why, scroll: scroll || jump, probe: probe, jump: jump,
+        var config = UserHandoff.RingConfig(step: step, why: why, scroll: scroll || jump, probe: probe, jump: jump,
                                             manager: host?.passwordManagerName, managerReady: host?.canOpenPasswordManager ?? false,
                                             later: later)
+        // A page's dialog interrupted the step and Claude is looking at it: the tag says so, in place of "Claude needs you".
+        config.aside = dialogAsides[step.id]
         guard let top = await run(config, in: nil) else { return nil }
         let held = ringFrames[tab]
         if top.found || top.done != nil {

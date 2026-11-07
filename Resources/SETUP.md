@@ -127,6 +127,13 @@ needs installing for them. Know them so you can explain them:
   field filled in and left, the page moving on), so give a step `done_when` when its done
   isn't the control's own. Each wait returns as a step ends: carry on at once, read the
   pages and fill the next one.
+- Kite tells Claude about every JavaScript dialog (alert, confirm, prompt, "Leave site?")
+  on the tabs it works in, even one the person already answered: a waiting
+  `handoff_status` returns for one, the next tool result carries any other, and the
+  `dialogs` tool lists them. An alert after the person's step ("Double check your card
+  information") usually means the page refused it: Claude reads the page, works out
+  what's wrong and fixes it or hands over a new step, while the step's tag tells the
+  person Claude is looking at it.
 - Every tab Claude opens or touches shows one state in the sidebar: working (its title
   shimmers, with a quiet line under it of what Claude is doing), needs you (orange: a
   handoff step, ringed on the page) or done (a green dot, from `tab_status` with a note of
@@ -151,8 +158,9 @@ offer to add this block to `~/.claude/CLAUDE.md` (append it; don't replace the f
   check, verifies identity or pays, and any SSN, EIN or other ID, card or bank number,
   password or one-time code. Hand that click over with handoff, wait, then fill on.
 - Handoffs: steps tab by tab, handoff_status with wait 50 until done, then carry on at
-  once. Start a multi-step job on a tab with tab_status working and a short note; mark
-  each tab done with tab_status when you finish with it.
+  once. If a page's dialog comes up after my step, read the page and work out what's
+  wrong before waiting again. Start a multi-step job on a tab with tab_status working and
+  a short note; mark each tab done with tab_status when you finish with it.
 ```
 
 ## 7. Make it theirs

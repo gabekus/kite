@@ -57,6 +57,11 @@ public struct MCPServer: Sendable {
         command for their computer) you ask in chat. Then call handoff_status with wait 50, again and again, until \
         they're done (it returns the moment they finish), and carry on at once: read the pages and fill the next \
         page's ordinary fields; don't end your turn while steps wait, or nothing tells you they're done. \
+        Kite tells you about every JavaScript dialog (alert, confirm, prompt, leave-page) on the tabs you touched or \
+        handed steps on, even one the user answered: a waiting handoff_status returns for one, and your next tool \
+        result carries any other, once (the dialogs tool lists them). After the user's step, a dialog usually means \
+        the page refused it ("Double check your card information"): read the page, work out what's wrong, and fix it \
+        or hand over a new step, rather than waiting on a user who's stuck. \
         Every tab you open or touch shows the user one state: working while your session is connected (with a line \
         of what you're doing: start a multi-step job on a tab with tab_status working and a short note of what you're \
         doing), needs you (a handoff, ringed on the page), or done: when you finish with a tab, call tab_status with \

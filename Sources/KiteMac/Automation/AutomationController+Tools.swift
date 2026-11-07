@@ -55,6 +55,8 @@ extension AutomationController {
             return try await handOff(request, connection: connection)
         case let .handoffStatus(id, wait, cancel):
             return try await handoffStatus(id, wait: wait, cancel: cancel, connection: connection)
+        case .dialogs(let tab):
+            return try dialogsReport(tab, connection: connection)
         case .batch(let steps):
             return await runBatch(steps, connection: connection)
         default:
@@ -90,6 +92,7 @@ extension AutomationController {
             switch command {
             case .handleDialog, .screenshot, .readConsole, .readNetwork: break
             default:
+                dialogLog.markOpenTold(on: tab.id)
                 throw AutomationError(.failed, "A \(dialog.kind) dialog is open in this tab: "
                     + UntrustedContent.wrap(dialog.message, source: "dialog") + "\nAnswer it with handle_dialog first.")
             }
@@ -221,7 +224,15 @@ extension AutomationController {
         case let .handleDialog(_, accept, promptText):
             guard let dialog = activities[tab.id]?.dialog else { throw AutomationError(.notFound, "No dialog is open in this tab.") }
             try await authorize(.answerDialog(kind: dialog.kind, message: dialog.message, accept: accept), tab: tab)
-            try await act().answerDialog(accept: accept, promptText: promptText)
+            // The engine takes Kite's dialog sheet down as it answers: that's Claude's answer, not the page moving on.
+            dialogLog.claudeAnswers(tab: tab.id, accept: accept)
+            do {
+                try await act().answerDialog(accept: accept, promptText: promptText)
+            } catch {
+                dialogLog.claudeAnswered(tab: tab.id, accept: nil)
+                throw error
+            }
+            dialogLog.claudeAnswered(tab: tab.id, accept: accept)
             activities[tab.id]?.dialogClosed()
             await settle(tab.id)
             return report("\(accept ? "Accepted" : "Dismissed") the \(dialog.kind) dialog.", tab.id)
@@ -710,6 +721,7 @@ extension AutomationController {
             text = AutomationReport.afterAction(action, tab: id, url: tab?.url, title: tab?.displayTitle ?? "")
         }
         if let dialog = activities[id]?.dialog {
+            dialogLog.markOpenTold(on: id)
             text += "\nA \(dialog.kind) dialog is now open: " + UntrustedContent.wrap(dialog.message, source: "dialog")
                 + "\nAnswer it with handle_dialog."
         }
