@@ -85,3 +85,10 @@ kite_check_test_launch() {
     fi
     return 0
 }
+
+# A TCP port free on 127.0.0.1 right now, for a test's page server. A fixed default port can be held by a server an
+# earlier run left behind, serving another checkout's pages: the test's own server then fails to bind and the old
+# one answers, with pages that may be missing or out of date.
+kite_free_port() {
+    python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'
+}
