@@ -50,12 +50,17 @@ final class TrafficLights {
     }
 }
 
-/// Arc keeps its traffic lights grey, even in the key window, until the pointer is on them;
-/// then all three show their colours and marks (measured in Arc 1.169: (89,90,90) at each centre
-/// while away, full colour on hover). Arc's binary dims them by appearance: 0.33 in dark, 0.1
-/// in light. Here the buttons are drawn transparent while away and plain circles stand in.
+/// Coloured while the window is focused (key in the active app), as on any Mac window. Gabe's
+/// call (6 Nov 2026): Arc keeps them grey even then until the pointer is on them, which read as
+/// Kite not having focus. Unfocused they're Arc's grey stand-ins: plain circles at Arc's dimmed
+/// opacity (0.33 dark, 0.1 light; measured in Arc 1.169), with the buttons transparent. The
+/// pointer on them shows colour and marks either way.
 private final class ButtonGroup: NSView {
     private let dim = DimmedLights()
+    private var observers: [NSObjectProtocol] = []
+    private var focused = false {
+        didSet { if focused != oldValue { update() } }
+    }
     /// Window points from the top-left, shifted to the group's top-left.
     var hoverArea: CGRect = .zero {
         didSet { updateTrackingAreas() }
@@ -76,11 +81,33 @@ private final class ButtonGroup: NSView {
     }
 
     private func update() {
+        let lit = inside || focused
         for button in subviews where button !== dim {
-            button.alphaValue = inside ? 1 : 0
+            button.alphaValue = lit ? 1 : 0
             button.needsDisplay = true
         }
-        dim.isHidden = inside
+        dim.isHidden = lit
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers = []
+        guard let window else { return }
+        let names: [(Notification.Name, AnyObject?)] = [
+            (NSWindow.didBecomeKeyNotification, window), (NSWindow.didResignKeyNotification, window),
+            (NSApplication.didBecomeActiveNotification, NSApp), (NSApplication.didResignActiveNotification, NSApp),
+        ]
+        observers = names.map { name, object in
+            NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshFocus() }
+            }
+        }
+        refreshFocus()
+    }
+
+    private func refreshFocus() {
+        focused = NSApp.isActive && window?.isKeyWindow == true
     }
 
     /// AppKit's window buttons ask their superview this to decide whether to show their marks.
