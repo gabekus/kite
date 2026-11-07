@@ -706,7 +706,8 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
             let traceKind = TraceRedaction.word("\(kinds[kind] ?? .alert)")
             onEvent?(.trace("dialog.shown", ["kind": .string(traceKind)], duration: nil, start: shown))
             pageDialog = PageDialogs.present(kinds[kind] ?? .alert, message: message, defaultText: defaultText,
-                                             origin: origin, in: browser.view) { [weak self] ok, text in
+                                             origin: origin, in: browser.view,
+                                             report: { [weak self] in self?.onEvent?(.dialog($0)) }) { [weak self] ok, text in
                 guard let self else { return completion(ok, text) }
                 onEvent?(.trace("dialog.answered", ["kind": .string(traceKind), "accepted": .bool(ok)],
                                 duration: TraceClock.monotonic() - shown.m, start: shown))

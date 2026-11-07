@@ -57,6 +57,8 @@ extension AutomationController {
             return try await handoffStatus(id, wait: wait, cancel: cancel, connection: connection)
         case .trace(let request):
             return traceReport(request, connection: connection)
+        case .dialogs(let tab):
+            return try dialogsReport(tab, connection: connection)
         case .batch(let steps):
             return await runBatch(steps, connection: connection)
         default:
@@ -80,7 +82,8 @@ extension AutomationController {
         let tab = try resolveTab(tabArgument)
         Trace.span?.set("tab", .string(tab.id.uuidString))
         markControlled(tab.id, connection: connection)
-        if !command.tool.isReadOnly { noteTouched(tab.id) }
+        if command.tool.isReadOnly { noteRead(tab.id) } else { noteTouched(tab.id) }
+        noteActivity(tab.id, ClaudeActivity.describe(command))
         guard let host else { throw AutomationError(.failed, "Kite has no window open.") }
         let page = host.automationPage(for: tab)
         guard let driver = page.automation else { throw AutomationError(.unsupported, "This tab's engine can't be automated.") }
@@ -92,6 +95,7 @@ extension AutomationController {
             switch command {
             case .handleDialog, .screenshot, .readConsole, .readNetwork: break
             default:
+                dialogLog.markOpenTold(on: tab.id)
                 throw AutomationError(.failed, "A \(dialog.kind) dialog is open in this tab: "
                     + UntrustedContent.wrap(dialog.message, source: "dialog") + "\nAnswer it with handle_dialog first.")
             }
@@ -167,6 +171,7 @@ extension AutomationController {
 
         case .click(_, let target):
             let element = try await act().locate(target)
+            refineActivity(tab.id, ClaudeActivity.clicking(element.description))
             try await authorize(.click(element.description), tab: tab)
             let actions = try act()
             try await untilDialog(tab.id) { try await actions.click(element) }
@@ -184,6 +189,7 @@ extension AutomationController {
             }
             // The kind of field and the length only, never the text (`TraceRedaction.fieldRole`).
             Trace.span?.set("field", .string(TraceRedaction.fieldRole(element.description)))
+            refineActivity(tab.id, ClaudeActivity.typing(into: element.description))
             try await authorize(.type(element.description, text: text, submit: submit), tab: tab)
             let actions = try act()
             try await untilDialog(tab.id) { try await actions.type(text, into: element, submit: submit) }
@@ -197,6 +203,7 @@ extension AutomationController {
             let element = try await act().locate(target)
             let text = value.stringValue ?? value.boolValue.map(String.init) ?? value.doubleValue.map { String(format: "%g", $0) } ?? ""
             Trace.span?.set("field", .string(TraceRedaction.fieldRole(element.description)))
+            refineActivity(tab.id, ClaudeActivity.filling(element.description))
             try await authorize(.formInput(element.description, value: text), tab: tab)
             let actions = try act()
             var result = ""
@@ -223,7 +230,15 @@ extension AutomationController {
         case let .handleDialog(_, accept, promptText):
             guard let dialog = activities[tab.id]?.dialog else { throw AutomationError(.notFound, "No dialog is open in this tab.") }
             try await authorize(.answerDialog(kind: dialog.kind, message: dialog.message, accept: accept), tab: tab)
-            try await act().answerDialog(accept: accept, promptText: promptText)
+            // The engine takes Kite's dialog sheet down as it answers: that's Claude's answer, not the page moving on.
+            dialogLog.claudeAnswers(tab: tab.id, accept: accept)
+            do {
+                try await act().answerDialog(accept: accept, promptText: promptText)
+            } catch {
+                dialogLog.claudeAnswered(tab: tab.id, accept: nil)
+                throw error
+            }
+            dialogLog.claudeAnswered(tab: tab.id, accept: accept)
             activities[tab.id]?.dialogClosed()
             await settle(tab.id)
             return report("\(accept ? "Accepted" : "Dismissed") the \(dialog.kind) dialog.", tab.id)
@@ -310,6 +325,7 @@ extension AutomationController {
             fatalError("handled above")
         case let .click(location, button, count, modifiers):
             let (point, element) = try await resolve(location)
+            refineActivity(tab.id, ClaudeActivity.describe(action, element: element?.description))
             // Right-clicks only open a menu; the rest go through the same checks as click.
             if button != .right {
                 if let element { try await authorize(.click(element.description), tab: tab) } else { try authorizeUndescribed(tab: tab) }
@@ -324,7 +340,8 @@ extension AutomationController {
             await settle(tab.id)
             return report("\(button == .left ? "" : button.rawValue.capitalized + "-")\(["", "C", "Double-c", "Triple-c"][count])licked \(location.isPoint ? "at " : "")\(describe(location)).", tab.id)
         case .hover(let location):
-            let (point, _) = try await resolve(location)
+            let (point, element) = try await resolve(location)
+            refineActivity(tab.id, ClaudeActivity.describe(action, element: element?.description))
             try await actions.hover(point)
             return report("Moved the pointer to \(describe(location)).", tab.id)
         case let .scroll(location, direction, amount):
@@ -345,6 +362,7 @@ extension AutomationController {
             return report("Pressed \(chords.map(Self.keyName).joined(separator: " "))\(times > 1 ? " ×\(times)" : "").", tab.id)
         case .type(let text):
             let focused = try await actions.focusedElement()
+            refineActivity(tab.id, ClaudeActivity.describe(action, element: focused?.description))
             try await authorize(.type(focused?.description, text: text, submit: false), tab: tab)
             try await actions.insertText(text)
             return report("Typed \(text.count) characters.", tab.id)
@@ -553,6 +571,7 @@ extension AutomationController {
         }
         claudeOpened.insert(id)
         noteTouched(id)
+        noteActivity(id, ClaudeActivity.opening(url?.absoluteString))
         markControlled(id, connection: connection)
         guard let tab = store.state.tab(id) else { throw AutomationError(.failed, "Couldn't open a tab.") }
         if let url {
@@ -723,6 +742,7 @@ extension AutomationController {
             text = AutomationReport.afterAction(action, tab: id, url: tab?.url, title: tab?.displayTitle ?? "")
         }
         if let dialog = activities[id]?.dialog {
+            dialogLog.markOpenTold(on: id)
             text += "\nA \(dialog.kind) dialog is now open: " + UntrustedContent.wrap(dialog.message, source: "dialog")
                 + "\nAnswer it with handle_dialog."
         }

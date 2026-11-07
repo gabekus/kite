@@ -84,6 +84,7 @@ extension BrowserWindowController: AutomationHost {
     func installAutomationBanner(_ automation: AutomationController) {
         pool.onPageCreated = { [weak automation] id, page in automation?.pageCreated(id, page) }
         pool.onLoadFinished = { [weak automation] id in automation?.pageFinishedLoading(id) }
+        pool.onPageDialog = { [weak automation] id, event in automation?.pageDialog(id, event) }
         pool.onTabOpened = { [weak automation] child, opener in automation?.tabOpened(child, by: opener) }
         claudeButton.automation = automation
         installClaudeControlBorder(automation)
@@ -171,7 +172,8 @@ extension BrowserWindowController: AutomationHost {
 
 extension BrowserWindowController {
     /// Claude's orange border around the page while Claude drives the tab in front, so the tab says so
-    /// with the sidebar hidden too. Above the pages, and never takes a click.
+    /// with the sidebar hidden too, and around a stalled tab's page ("Claude stopped here": orange is never shown
+    /// without something ringed on the page, `ClaudeTabState.ring`). Above the pages, and never takes a click.
     fileprivate func installClaudeControlBorder(_ automation: AutomationController) {
         let border = ClaudeControlBorderView()
         border.frame = contentFrame.bounds
@@ -182,7 +184,9 @@ extension BrowserWindowController {
 
     private func watchClaudeControlBorder(_ border: ClaudeControlBorderView, _ automation: AutomationController) {
         withObservationTracking {
-            border.isOn = store.state.selectedTab.map { automation.controlledTabIDs.contains($0.id) } ?? false
+            border.isOn = store.state.selectedTab.map { tab in
+                automation.controlledTabIDs.contains(tab.id) || automation.tabState(tab.id)?.ring == .pageOutline
+            } ?? false
         } onChange: { [weak self, weak border, weak automation] in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {

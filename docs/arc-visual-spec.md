@@ -1000,6 +1000,10 @@ Arc wasn't driven.
 - Kite: `BrowserTab.pinnedURL` (set when a tab is pinned or favorited, cleared when unpinned; old sessions take
   the current page), `BrowserState.resetTab`, `resetPinnedTabs`, `separateFromPinnedTab`, `revealTab`
   (`KiteCore/PinnedURL.swift`).
+- Kite deviates (Gabe, 5 Nov 2026: "remove the back button from the tab cuz it moves the dot and its also just
+  useless"): the row has no reset button. Arc's `TabCellState` carries one (`canResetTab`, `resetTabTitle`,
+  `resetTabIcon`), so Arc very likely draws it in the row, though it was never seen on screen. Back to Pinned URL
+  stays in the row's menu and as the hidden `resetTab` command.
 - Inferred, not observed: the navigated-away rule (Kite ignores fragment, trailing slash, `www.` and
   http/https); the reset icon (`arrow.uturn.backward`) and its place left of the close button on hover;
   "Separate From Pinned Tab" as a context-menu item (in Arc it is an alternate title of the same button, the

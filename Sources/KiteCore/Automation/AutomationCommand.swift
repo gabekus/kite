@@ -116,6 +116,8 @@ public enum AutomationCommand: Hashable, Sendable {
     case javascript(tab: String?, code: String)
     case waitFor(tab: String?, condition: WaitCondition, timeout: Double)
     case handleDialog(tab: String?, accept: Bool, promptText: String?)
+    /// The JavaScript dialogs pages showed on a tab (nil: every tab Kite logged them on), open or answered. See `DialogLog`.
+    case dialogs(tab: String?)
     case uploadFile(tab: String?, target: AutomationTarget, paths: [String])
     /// Hands a login page to the user to sign in (with their password manager), and waits. See `SignInHandoff`.
     case signIn(tab: String?, reason: String?)
@@ -186,6 +188,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case javascript
         case waitFor = "wait_for"
         case handleDialog = "handle_dialog"
+        case dialogs
         case uploadFile = "upload_file"
         case signIn = "sign_in"
         case handoff
@@ -246,6 +249,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case .javascript: .javascript
         case .waitFor: .waitFor
         case .handleDialog: .handleDialog
+        case .dialogs: .dialogs
         case .uploadFile: .uploadFile
         case .signIn: .signIn
         case .handoff: .handoff
@@ -391,6 +395,8 @@ public enum AutomationCommand: Hashable, Sendable {
         case .handleDialog:
             guard let accept = a.values["accept"]?.boolValue else { throw InvalidArguments("\"accept\" (true or false) is required.") }
             self = .handleDialog(tab: tab, accept: accept, promptText: try a.string("prompt_text"))
+        case .dialogs:
+            self = .dialogs(tab: tab)
         case .uploadFile:
             let list = a.values["paths"]?.arrayValue ?? []
             let paths = list.compactMap(\.stringValue).filter { !$0.isEmpty }

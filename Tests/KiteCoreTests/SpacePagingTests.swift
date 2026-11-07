@@ -42,3 +42,17 @@ struct SpacePagingTests {
         #expect(lit(1, 0) + lit(0, 0) + lit(2, 0) == 1)
     }
 }
+
+/// A lit symbol icon has to stand out from the greyed ones: a grey theme's accent is darker than they are.
+struct SpaceIconColorTests {
+    @Test func colourlessThemesLightIconsInTheLabelColour() {
+        #expect(Theme.arcDefault.iconColor == nil)
+        #expect(Theme(colors: [ThemeColor(hex: 0x3B4049), ThemeColor(hex: 0x1F2329)]).iconColor == nil)
+    }
+
+    @Test func colouredThemesLightIconsInTheirAccent() {
+        for theme in Theme.presets.dropFirst() where theme.colors.first != ThemeColor(hex: 0x3B4049) {
+            #expect(theme.iconColor == theme.accent)
+        }
+    }
+}

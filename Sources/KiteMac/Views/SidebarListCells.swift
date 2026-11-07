@@ -381,16 +381,18 @@ private final class Island<Content: View>: NSHostingView<Content> {
 
 // MARK: - Tab rows
 
-/// A tab's row (SwiftUI's `TabRow`): favicon, speaker, title, then the needs-you dot, unread dot, Back to
-/// Pinned URL, close and the Peek badge, on Arc's pill. With a Tidy Tabs header above it when it heads a
-/// group, and a split preview beside it while a drag offers one.
+/// A tab's row (SwiftUI's `TabRow`): favicon, speaker, title, then the needs-you dot, unread dot, close
+/// and the Peek badge, on Arc's pill. With a Tidy Tabs header above it when it heads a group, and a split
+/// preview beside it while a drag offers one. No Back to Pinned URL button, unlike Arc (Gabe, 5 Nov 2026:
+/// it pushed the dots aside on hover): that's in the row's menu and the hidden `resetTab` command.
 final class TabRowCell: SidebarRowCell {
     private let content = SidebarPassthroughView()
     private let pill = FillView()
     private let favicon = FaviconImageView(side: M.iconSize)
     private let title = SidebarLabel(size: M.tabFontSize)
+    /// While Claude works here: what it's doing, small and dim under the title (`ClaudeActivity`).
+    private let activity = SidebarLabel(size: M.activityFontSize, opacity: M.activityOpacity)
     private let close = SymbolButton(symbol: "xmark", pointSize: 9, weight: .bold)
-    private let reset = SymbolButton(symbol: "arrow.uturn.backward", pointSize: 10, weight: .semibold, label: "Back to Pinned URL")
     private let unread = DotView()
     private let needsYou = DotView()
     /// Claude is done here: green (`ClaudeTabState`).
@@ -414,6 +416,10 @@ final class TabRowCell: SidebarRowCell {
         content.addSubview(pill)
         content.addSubview(favicon)
         content.addSubview(title)
+        activity.isHidden = true
+        activity.setAccessibilityElement(true)
+        activity.setAccessibilityLabel("What Claude is doing")
+        content.addSubview(activity)
         unread.diameter = 6
         unread.alphaValue = M.tabTextOpacity
         unread.color = { _ in .labelColor }
@@ -427,8 +433,7 @@ final class TabRowCell: SidebarRowCell {
         finished.color = { _ in .systemGreen }
         finished.setAccessibilityElement(true)
         finished.setAccessibilityLabel("Claude is done")
-        for view in [finished, needsYou, unread, reset, close, peek] as [NSView] { content.addSubview(view) }
-        reset.toolTip = "Back to Pinned URL"
+        for view in [finished, needsYou, unread, close, peek] as [NSView] { content.addSubview(view) }
         addSubview(header)
         title.setAccessibilityElement(true)
     }
@@ -449,13 +454,17 @@ final class TabRowCell: SidebarRowCell {
         close.toolTip = t.isPinned ? "Unload" : "Close Tab"
         close.setAccessibilityLabel(nil)
         close.action = { actions.closeTab(id) }
-        reset.action = { actions.resetTab(id) }
         needsYou.toolTip = t.claudeNeedsYou
         finished.toolTip = t.claudeDone
         finished.setAccessibilityHelp(t.claudeDone)
         needsYou.setAccessibilityHelp(t.claudeNeedsYou)
         // One of three states: needs you (orange title and dot), working (the title shimmers), done (green dot).
         title.shimmers = t.claudeControl != nil && t.claudeNeedsYou == nil
+        // The line under the title: what Claude does while working, "Claude stopped here, ask it to pick up" when
+        // stalled; none for a handoff or done. The tooltip's last few actions only while working.
+        activity.stringValue = t.claudeActivity ?? ""
+        activity.setAccessibilityValue(t.claudeActivity)
+        toolTip = title.shimmers ? t.claudeActivityLog : nil
         if !title.shimmers { title.textColor = t.claudeNeedsYou != nil ? .claude : .labelColor }
         if let badge = t.peek { peek.show(badge) }
 
@@ -584,7 +593,7 @@ final class TabRowCell: SidebarRowCell {
             x += side + TabAudioButton.spacingAfter
         }
 
-        // Trailing, right to left: the Peek badge, close, Back to Pinned URL, unread, needs-you.
+        // Trailing, right to left: the Peek badge, close, unread, needs-you.
         let renaming = t.isRenaming
         var end = w - 6
         var trailing: [NSView] = []
@@ -598,7 +607,6 @@ final class TabRowCell: SidebarRowCell {
         }
         place(peek, width: LinkPeek.Badge.side, height: LinkPeek.Badge.side, shown: t.peek != nil && !renaming)
         place(close, width: 24, height: 24, shown: isHovered && !renaming && t.showsClose)
-        place(reset, width: 24, height: 24, shown: isHovered && t.canReset && !renaming)
         place(unread, width: 24, height: 24, shown: t.isUnread && !isHovered)
         place(needsYou, width: 24, height: 24, shown: t.claudeNeedsYou != nil && !renaming)
         place(finished, width: 24, height: 24, shown: t.claudeDone != nil && t.claudeNeedsYou == nil && !renaming)
@@ -607,7 +615,17 @@ final class TabRowCell: SidebarRowCell {
         let room = max(titleEnd - x, 0)
 
         let lineHeight = title.lineHeight
-        let textY = ((h - lineHeight) / 2).rounded(.down) + (h - lineHeight).truncatingRemainder(dividingBy: 2) / 2
+        var textY = ((h - lineHeight) / 2).rounded(.down) + (h - lineHeight).truncatingRemainder(dividingBy: 2) / 2
+        // Claude's activity line: inside the pill, under the title, the two lines centred together, so the row's
+        // height never changes; only the title rises while Claude works.
+        let showsActivity = !activity.stringValue.isEmpty && !renaming
+        activity.isHidden = !showsActivity
+        if showsActivity {
+            let block = lineHeight + activity.lineHeight
+            textY = ((h - block) / 2).rounded(.down)
+            activity.place(textRect: CGRect(x: x, y: textY + lineHeight, width: min(activity.naturalWidth, room),
+                                            height: activity.lineHeight))
+        }
         if let field = renameField {
             title.isHidden = true
             field.frame = CGRect(x: x, y: textY, width: room, height: lineHeight)

@@ -59,7 +59,9 @@ import Testing
         // No command steps: Kite can only show a step beside its control.
         #expect(handoff["inputSchema"]?["properties"]?["steps"]?["items"]?["properties"]?["command"] == nil)
         #expect(handoff["description"]?.stringValue?.contains("shows a card") == false)
-        #expect(handoff["description"]?.stringValue?.contains("Skip and Done") == true)
+        // No Done button: steps finish by themselves, and say what done looks like.
+        #expect(handoff["description"]?.stringValue?.contains("There's no Done button") == true)
+        #expect(handoff["inputSchema"]?["properties"]?["steps"]?["items"]?["properties"]?["done_when"] != nil)
         #expect(tools.contains { $0["name"]?.stringValue == "handoff_status" })
         #expect(AutomationCommand.Tool.handoff.takesTab)
         #expect(AutomationCommand.Tool.handoffStatus.isReadOnly)
@@ -176,8 +178,8 @@ import Testing
         #expect(script.contains("e.isTrusted"))
         #expect(script.contains("mode: 'closed'"))
         #expect(script.contains(UserHandoff.markerAttribute))
-        // The tag beside the ring is the only place the step shows: its words, Skip and Done, and Claude's reason.
-        #expect(script.contains("press('skip')") && script.contains("press('done')"))
+        // The tag beside the ring is the only place the step shows: its words, Skip (no Done), and Claude's reason.
+        #expect(script.contains("press('skip')") && !script.contains("press('done')"))
         let why = UserHandoff.RingConfig(step: step, why: "Only you can grant admin.", scroll: false)
         #expect(why.why == "Only you can grant admin.")
         #expect(UserHandoff.ringScript(why).contains(#""why":"Only you can grant admin.""#))
@@ -412,6 +414,74 @@ import Testing
 
     // MARK: Taking the user to the step (Gabe, 5 Nov 2026: steps on other tabs, and nothing ringed where he was)
 
+    // Finishing a step never moves the user (Gabe, 5 Nov 2026: "keep me in the same tab"): only a handoff starting does.
+    @Test func onlyAStartingHandoffBringsATabForward() {
+        #expect(HandoffLead.bringsTabForward(at: .handoffStarted))
+        #expect(!HandoffLead.bringsTabForward(at: .stepEnded))
+    }
+
+    // Every step finishes by itself: no Done button (Gabe, 5 Nov 2026: "dont even offer a done button").
+    @Test func stepsSayWhatDoneLooksLike() throws {
+        func parse(_ step: [String: JSONValue]) throws -> UserHandoff.StepRequest {
+            guard case .handoff(let request) = try AutomationCommand(tool: "handoff", arguments: ["reason": "r", "steps": [.object(step)]])
+            else { throw AutomationCommand.InvalidArguments("not a handoff") }
+            return request.steps[0]
+        }
+        #expect(try parse(["instruction": "Pay", "text": "Pay"]).doneWhen == nil)
+        #expect(try parse(["instruction": "ZIP", "selector": "#zip", "done_when": "value"]).doneWhen == .value)
+        let appears = try parse(["instruction": "Confirm", "text": "Confirm", "done_when": "appears", "appears": "Order confirmed"])
+        #expect(appears.doneWhen == .appears && appears.appears == "Order confirmed")
+        // Words alone mean appears; appears without words, or a kind Kite can't see, is refused.
+        #expect(try parse(["instruction": "Confirm", "text": "Confirm", "appears": "Thanks"]).doneWhen == .appears)
+        #expect(throws: AutomationCommand.InvalidArguments.self) { try parse(["instruction": "x", "text": "x", "done_when": "appears"]) }
+        #expect(throws: AutomationCommand.InvalidArguments.self) { try parse(["instruction": "x", "text": "x", "done_when": "whenever"]) }
+        #expect(!UserHandoff.ringFunction.contains("class=\"done\""))
+        // What the page reports reads back to Claude, and a step keeps its done_when across launches.
+        #expect(UserHandoff.describe("value") == "the user filled in the highlighted field and moved on")
+        #expect(UserHandoff.state("gone") == .done && UserHandoff.onControl("later") && !UserHandoff.onControl("navigated"))
+        #expect(UserHandoff.RingEvent(json: #"{"step":"h1.1","how":"later","later":"h1.2"}"#)?.later == "h1.2")
+        var step = Handoff.Step(id: "h1.1", number: 1, instruction: "Confirm", tab: UUID(), locator: .text("Confirm"))
+        step.doneWhen = .appears
+        step.appears = "Order confirmed"
+        let back = try JSONDecoder().decode(Handoff.Step.self, from: JSONEncoder().encode(step))
+        #expect(back.doneWhen == .appears && back.appears == "Order confirmed")
+        // The ring hears a click on a later step's control on the same tab.
+        let pay = Handoff.Step(id: "h1.2", number: 2, instruction: "Pay", tab: step.tab, locator: .selector("#pay"))
+        let config = UserHandoff.RingConfig(step: step, scroll: false, later: [pay])
+        #expect(config.doneWhen == "appears" && config.later == [.init(step: "h1.2", selector: "#pay")])
+        // Navigation: only another address, not a fragment.
+        let page = URL(string: "https://shop.example/cart?x=1#top")!
+        #expect(UserHandoff.samePage(page, URL(string: "https://shop.example/cart?x=1#pay")!))
+        #expect(!UserHandoff.samePage(page, URL(string: "https://shop.example/checkout")!))
+    }
+
+    // Gabe's Muji checkout (5 Nov 2026): billing address, card, Pay now on one tab, then /thank-you, and the handoff
+    // still said 0 of 3 done, step 1 "not on the step's page".
+    @Test func aPageThatMovesOnAfterItsPayStepEndsEveryStepThere() {
+        let checkout = UUID(), other = UUID()
+        let handoff = Handoff(id: "h1", reason: "Only you pay", steps: [
+            .init(id: "h1.1", number: 1, instruction: "Pick the billing address", tab: checkout, locator: .text("Same as shipping address")),
+            .init(id: "h1.2", number: 2, instruction: "Card number", tab: checkout, locator: .selector("#card")),
+            .init(id: "h1.3", number: 3, instruction: "Pay now", tab: checkout, locator: .text("Pay now")),
+            .init(id: "h1.4", number: 4, instruction: "Approve", tab: other, locator: .text("Approve")),
+        ])
+        #expect(handoff.stepsEndedByNavigation(on: checkout) == ["h1.1", "h1.2", "h1.3"])
+        // A tab whose last step isn't a submit: only the step it showed (the next may be on the page it went to).
+        #expect(handoff.stepsEndedByNavigation(on: other) == ["h1.4"])
+        let signUp = Handoff(id: "h2", reason: "r", steps: [
+            .init(id: "h2.1", number: 1, instruction: "Create account", tab: checkout, locator: .text("Create account")),
+            .init(id: "h2.2", number: 2, instruction: "Tick the terms", tab: checkout, locator: .text("I agree")),
+        ])
+        #expect(signUp.stepsEndedByNavigation(on: checkout) == ["h2.1"])
+        #expect(Handoff.Step(id: "x", number: 1, instruction: "Click it", locator: .text("Place order")).isSubmit)
+        #expect(!Handoff.Step(id: "x", number: 1, instruction: "Type your ZIP", locator: .selector("#zip")).isSubmit)
+        // "Payment" isn't "Pay": whole words only.
+        #expect(!Handoff.Step(id: "x", number: 1, instruction: "Payment method", locator: .text("Payment method")).isSubmit)
+        #expect(UserHandoff.movedOn(to: URL(string: "https://muji.us/checkouts/c/1/thank-you"), title: "Thank you")
+            == "the page moved on to “Thank you” (muji.us/checkouts/c/1/thank-you); check it")
+        #expect(UserHandoff.movedOn(to: URL(string: "https://muji.us/thank-you"), title: nil) == "the page moved on to muji.us/thank-you; check it")
+    }
+
     @Test func leadsToTheFirstStepOnABackgroundTab() {
         let mouser = UUID(), amazon = UUID(), tools = UUID(), mcmaster = UUID()
         var handoff = Handoff(id: "h1", reason: "Only you can solve a CAPTCHA or enter a card", steps: [
@@ -426,7 +496,7 @@ import Testing
         #expect(HandoffLead.target(handoff, front: nil, isOpen: open)?.id == "h1.1")
         // Already on a step's tab: they stay.
         #expect(HandoffLead.target(handoff, front: tools, isOpen: open) == nil)
-        // Step 1 done on Amazon: on to the next waiting step's tab, in Claude's order.
+        // The first waiting step, in Claude's order, once step 1 is done (where a handoff that starts now would lead).
         handoff.finish("h1.1", .done, how: "the user clicked the highlighted control")
         #expect(HandoffLead.target(handoff, front: amazon, isOpen: open)?.id == "h1.2")
         // A step whose tab is closed can't be gone to: the next one that's open.
