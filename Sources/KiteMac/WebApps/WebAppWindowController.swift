@@ -236,7 +236,7 @@ final class WebAppWindowController: NSWindowController, NSWindowDelegate, NSMenu
             // No prompt UI here yet: deny, as a page with no answer would get.
             request.respond(nil)
         case .favicon, .progress, .blockedCount, .crashed, .addExtension, .media, .callControls, .capturing, .permissionRequestCancelled,
-             .dialog:
+             .trace, .traceInput, .dialog:
             break
         }
     }

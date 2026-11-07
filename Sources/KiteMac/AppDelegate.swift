@@ -67,6 +67,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let tabHistory = TabHistoryStore(directory: supportDirectory.appendingPathComponent("Tab History", isDirectory: true))
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        ActionTrace.mark("did_finish_launching")
+        defer {
+            // The action trace starts once everything's up, and records the launch it just watched.
+            ActionTrace.shared.start(supportDirectory: Self.supportDirectory) { [weak self] in self?.browserControllers ?? [] }
+        }
         // On WebKit because Chromium didn't start: say so once the window is up, rather than show empty, signed-out pages.
         if Self.engineFellBack {
             DispatchQueue.main.async {
@@ -124,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.helpMenu = NSApp.mainMenu?.item(withTitle: "Help")?.submenu
         NSApp.windowsMenu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu
         WindowPresenter.show(windowController)
+        ActionTrace.mark("window_shown")
         windows = BrowserWindows(
             main: store, mainController: windowController, engine: engine, adblocker: adblocker,
             history: history, fileURL: Self.supportDirectory.appendingPathComponent("windows.json")
@@ -171,6 +177,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // tabs, so installing one doesn't pull you off the page you're on.
         ExtensionPopover.openTab = { [weak self] tab in
             guard let controller = self?.windows.currentNormal(opening: .user) else { return }
+            if case .url(let url) = tab { Trace.event("extension.opened_tab", url: url, actor: .kite) } else {
+                Trace.event("extension.opened_tab", actor: .kite)
+            }
             switch tab {
             case .url(let url): controller.store.mutateWithoutUndo { _ = $0.openTab(url: url) }
             case .page(let page): controller.pool.openTab(with: page)
@@ -616,6 +625,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var isTerminating = false
 
     func applicationWillTerminate(_ notification: Notification) {
+        ActionTrace.shared.quit()
         isTerminating = true
         claudeTasks?.stopAll()
         claudeTasks?.saveNow()

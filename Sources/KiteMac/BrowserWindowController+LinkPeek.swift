@@ -297,7 +297,7 @@ extension BrowserWindowController {
             // Kite doesn't prompt over a Peek yet (where Arc shows it there wasn't read).
             request.respond(nil)
         case .progress, .navigationState, .blockedCount, .crashed, .addExtension, .linkHover, .media, .callControls, .capturing,
-             .permissionRequestCancelled, .dialog:
+             .permissionRequestCancelled, .trace, .traceInput, .dialog:
             break
         }
     }

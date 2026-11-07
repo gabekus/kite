@@ -55,6 +55,8 @@ extension AutomationController {
             return try await handOff(request, connection: connection)
         case let .handoffStatus(id, wait, cancel):
             return try await handoffStatus(id, wait: wait, cancel: cancel, connection: connection)
+        case .trace(let request):
+            return traceReport(request, connection: connection)
         case .dialogs(let tab):
             return try dialogsReport(tab, connection: connection)
         case .batch(let steps):
@@ -78,6 +80,7 @@ extension AutomationController {
             throw AutomationError(.failed, "\(command.tool.rawValue) isn't a page tool.")
         }
         let tab = try resolveTab(tabArgument)
+        Trace.span?.set("tab", .string(tab.id.uuidString))
         markControlled(tab.id, connection: connection)
         if command.tool.isReadOnly { noteRead(tab.id) } else { noteTouched(tab.id) }
         noteActivity(tab.id, ClaudeActivity.describe(command))
@@ -184,6 +187,8 @@ extension AutomationController {
             } else {
                 throw AutomationError(.notFound, "Nothing on the page has keyboard focus. Pass a ref or selector.")
             }
+            // The kind of field and the length only, never the text (`TraceRedaction.fieldRole`).
+            Trace.span?.set("field", .string(TraceRedaction.fieldRole(element.description)))
             refineActivity(tab.id, ClaudeActivity.typing(into: element.description))
             try await authorize(.type(element.description, text: text, submit: submit), tab: tab)
             let actions = try act()
@@ -197,6 +202,7 @@ extension AutomationController {
         case let .formInput(_, target, value):
             let element = try await act().locate(target)
             let text = value.stringValue ?? value.boolValue.map(String.init) ?? value.doubleValue.map { String(format: "%g", $0) } ?? ""
+            Trace.span?.set("field", .string(TraceRedaction.fieldRole(element.description)))
             refineActivity(tab.id, ClaudeActivity.filling(element.description))
             try await authorize(.formInput(element.description, value: text), tab: tab)
             let actions = try act()
@@ -269,12 +275,15 @@ extension AutomationController {
         case let .navigate(_, string, _):
             switch string.lowercased() {
             case "back":
+                Trace.intend("back", tab: tab.id)
                 page.goBack()
             case "forward":
+                Trace.intend("forward", tab: tab.id)
                 page.goForward()
             default:
                 let url = try resolveURL(string)
                 try await authorize(.navigate(url), tab: tab)
+                Trace.intend("agent", tab: tab.id)
                 page.load(url)
             }
             await settle(tab.id, startDelay: 0.3)
@@ -371,6 +380,10 @@ extension AutomationController {
     }
 
     private func waitFor(_ condition: WaitCondition, timeout: TimeInterval, tab id: UUID, actions: PageActions) async throws -> ToolOutput {
+        try await Trace.measure("wait") { try await waitForUntraced(condition, timeout: timeout, tab: id, actions: actions) }
+    }
+
+    private func waitForUntraced(_ condition: WaitCondition, timeout: TimeInterval, tab id: UUID, actions: PageActions) async throws -> ToolOutput {
         let met: Bool
         switch condition {
         case .load:
@@ -412,7 +425,13 @@ extension AutomationController {
             let label = "Step \(index + 1) (\(step.tool.rawValue))"
             do {
                 let output = try await AutomationController.$inBatch.withValue(true) {
-                    try await run(step, connection: connection)
+                    // Each step is a record of its own under the batch's.
+                    let arguments = Self.batchStepArguments.indices.contains(index) ? Self.batchStepArguments[index] : .object([:])
+                    return try await traceCall(step.tool.rawValue, arguments: arguments, connection: connection,
+                                               actor: Trace.actor ?? .agent(client: "cli"), task: nil, parent: Trace.span?.id,
+                                               received: nil) {
+                        try await run(step, connection: connection)
+                    }
                 }
                 images += output.content.filter { if case .image = $0 { true } else { false } }
                 lines.append("\(label):\n\(output.text)")
@@ -509,6 +528,8 @@ extension AutomationController {
             spaceID = store.state.spaces[index].id
         }
         let id = store.mutateWithoutUndo { $0.openTab(url: url, in: spaceID, select: false) }
+        Trace.span?.set("tab", .string(id.uuidString))
+        if url != nil { Trace.intend("agent", tab: id) }
         switch (placement, task) {
         // A link a task opens in a named space is for the user, so it stays a plain tab there rather than
         // going in the task's folder.
@@ -729,8 +750,11 @@ extension AutomationController {
     }
 
     private func screenshotOutput(_ image: Screenshot, tab id: UUID) -> ToolOutput {
-        ToolOutput(content: [
-            .image(base64: image.data.base64EncodedString(), mimeType: image.format.mimeType),
+        let encoding = TraceClock.monotonic()
+        let base64 = image.data.base64EncodedString()
+        Trace.phase("encode", TraceClock.monotonic() - encoding)
+        return ToolOutput(content: [
+            .image(base64: base64, mimeType: image.format.mimeType),
             .text("Screenshot of tab \(id.uuidString), \(image.width)×\(image.height)\(image.scale < 1 ? " (scaled to \(Int((image.scale * 100).rounded()))% of the page)" : ""). Its pixels are the coordinates computer clicks use."),
         ])
     }

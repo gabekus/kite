@@ -154,6 +154,9 @@ public enum AutomationCommand: Hashable, Sendable {
     /// Kite's own native UI, for debugging Kite itself (Diagnostics for Claude).
     case ui(UIInspection)
 
+    /// The action trace's timings (`Trace`): the caller's own calls by default, or a session, tab or everyone's.
+    case trace(TraceRequest)
+
     /// Several tool calls in one round trip, run in order. It stops at the first error, and before any
     /// step that needs the user's OK (that step is then called on its own).
     indirect case batch(steps: [AutomationCommand])
@@ -205,6 +208,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case moveToFolder = "move_to_folder"
         case vpn
         case ui
+        case trace
         case batch
 
         /// Older or Claude-in-Chrome names that still work but aren't listed.
@@ -265,6 +269,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case .moveToFolder, .moveToClaudeFolder: .moveToFolder
         case .vpn: .vpn
         case .ui: .ui
+        case .trace: .trace
         case .batch: .batch
         }
     }
@@ -460,6 +465,8 @@ public enum AutomationCommand: Hashable, Sendable {
             }
         case .ui:
             self = .ui(try UIInspection(arguments: a.values))
+        case .trace:
+            self = .trace(try TraceRequest(a))
         case .batch:
             guard let list = a.values["steps"]?.arrayValue, !list.isEmpty else {
                 throw InvalidArguments("\"steps\" must be a list of {\"tool\": …, \"arguments\": {…}}.")
@@ -481,6 +488,53 @@ public enum AutomationCommand: Hashable, Sendable {
                 }
             })
         }
+    }
+}
+
+/// What the `trace` tool reads.
+public struct TraceRequest: Hashable, Sendable {
+    /// How far back, in seconds.
+    public var since: TimeInterval
+    public var session: String?
+    public var tab: String?
+    /// user, agent or kite.
+    public var actor: String?
+    /// Everyone's records, not just this connection's.
+    public var all: Bool
+    /// The summary only, without the timeline.
+    public var summaryOnly: Bool
+    /// Most timeline lines (the newest).
+    public var limit: Int
+
+    public static let defaultSince: TimeInterval = 15 * 60
+    public static let defaultLimit = 200
+
+    public init(since: TimeInterval = TraceRequest.defaultSince, session: String? = nil, tab: String? = nil, actor: String? = nil,
+                all: Bool = false, summaryOnly: Bool = false, limit: Int = TraceRequest.defaultLimit) {
+        self.since = since
+        self.session = session
+        self.tab = tab
+        self.actor = actor
+        self.all = all
+        self.summaryOnly = summaryOnly
+        self.limit = limit
+    }
+
+    fileprivate init(_ a: Arguments) throws {
+        var since = Self.defaultSince
+        if let text = try a.string("since"), !text.isEmpty {
+            guard let seconds = TraceReport.duration(text) else {
+                throw AutomationCommand.InvalidArguments("\"since\" is a duration like 90s, 15m, 1h or 2d.")
+            }
+            since = seconds
+        }
+        let actor = try a.string("actor")?.lowercased()
+        if let actor, !["user", "agent", "kite"].contains(actor) {
+            throw AutomationCommand.InvalidArguments("\"actor\" is user, agent or kite.")
+        }
+        self.init(since: since, session: try a.string("session").flatMap { $0.isEmpty ? nil : $0 },
+                  tab: try a.string("tab").flatMap { $0.isEmpty ? nil : $0 }, actor: actor, all: try a.bool("all"),
+                  summaryOnly: try a.bool("summary_only"), limit: try a.int("limit", in: 1...5000) ?? Self.defaultLimit)
     }
 }
 

@@ -4,6 +4,7 @@ import KiteCore
 import CEFBridge
 #endif
 
+ActionTrace.mark("main")
 MainActor.assumeIsolated {
     // Before anything opens a profile: only the installed Kite may start on the real one (exits otherwise).
     RealProfileRefusal.refuseIfNeeded()
