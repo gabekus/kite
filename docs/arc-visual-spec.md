@@ -330,6 +330,9 @@ most values can't be tied to a specific screen.
   included. Colours: close (140,26,16), minimize (143,89,28), zoom (97,197,85).
 - **Binary:** next to the standalone buttons Arc calls `setAlphaValue:`. The value is picked from
   `currentDrawingAppearance` (0.33 or 0.1), and is 1.0 on hover.
+- **Kite differs (Gabe, 6 Nov 2026):** Kite colours them whenever its window is focused (key in the active
+  app), as a normal Mac window does; grey in Arc's focused window read as Kite not having focus. Unfocused it
+  keeps Arc's grey, and the hover rectangle still colours them either way.
 
 **Tab drag** (three recordings plus a window-list poll; the recorder skips frames where only the cursor moves,
 so timings are ±0.3s)
