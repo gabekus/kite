@@ -74,6 +74,15 @@ std::optional<HistoryRead> ReadChromiumHistory(sqlite::PageSource& source, const
 // Mac's ArcImportController.historyFile(profile:in:).
 std::filesystem::path ArcHistoryFile(const std::filesystem::path& arcFolder, const std::string& profile);
 
+// When a file was last written and how big it is: compared before and after a read of one of
+// Arc's databases (History, Cookies), so a write in between is caught.
+struct FileStamp {
+    uint64_t size = 0;
+    std::filesystem::file_time_type written{};
+    bool operator==(const FileStamp&) const = default;
+};
+std::optional<FileStamp> StampOf(const std::filesystem::path& file);
+
 // Whether something has `file` open for writing (a sharing violation on a read that denies
 // writers); any failure but the file not being there counts as one. Windows only: elsewhere, false.
 bool HasLiveWriter(const std::filesystem::path& file);

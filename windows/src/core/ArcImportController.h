@@ -131,6 +131,10 @@ struct ImportOptions {
     // Arc has no named space at all, as Arc for Windows often hasn't: then they're all there
     // is, and they come over (Kite for Windows' own choice).
     std::optional<bool> includeUntitled;
+    // The app will bring Arc's cookies after the import (the Mac's "Bring sign-ins" checkbox, off
+    // unless asked; core/ArcCookieImport.h): the summary then leaves sign-ins to the app's own
+    // report rather than list them as skipped.
+    bool signIns = false;
 };
 bool IncludesUntitled(const Plan& plan, ImportOptions options);
 
@@ -151,6 +155,9 @@ struct Imported {
         std::vector<HistoryEntry> entries;
     };
     std::vector<PendingHistory> histories;
+    // For Bring sign-ins: each Arc profile folder whose cookies may come over and the Kite profile
+    // folder they go to (not one that fell back to Default).
+    std::map<std::string, std::string> signInProfiles;
     // What MergeHistories has done so far, across its passes.
     size_t historyMerged = 0, historyAdded = 0, historyDropped = 0;
 };

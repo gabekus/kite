@@ -82,23 +82,17 @@ std::string ValidUtf8(std::string text) {
     return repaired == text ? text : repaired;
 }
 
-// When a file was last written and how big it is: compared before and after a read.
-struct Stamp {
-    uint64_t size = 0;
-    fs::file_time_type written{};
-    bool operator==(const Stamp&) const = default;
-};
-std::optional<Stamp> StampOf(const fs::path& file) {
+}  // namespace
+
+std::optional<FileStamp> StampOf(const fs::path& file) {
     std::error_code error;
-    Stamp stamp;
+    FileStamp stamp;
     stamp.size = static_cast<uint64_t>(fs::file_size(file, error));
     if (error) return std::nullopt;
     stamp.written = fs::last_write_time(file, error);
     if (error) return std::nullopt;
     return stamp;
 }
-
-}  // namespace
 
 bool HasLiveWriter(const fs::path& file) {
 #ifdef _WIN32
