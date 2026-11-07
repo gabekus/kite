@@ -142,6 +142,18 @@ kite vpn watch vpn.example.com
 kite vpn reconnect [--profile NAME] [--timeout 60]
 ```
 
+## For agents: debugging Kite's own interface
+
+The `ui` tool reads and drives Kite's own windows, and it needs Diagnostics for Claude on. Turn it on yourself with
+the `diagnostics` tool (`action: "on"`, or `kite diagnostics on`), and turn it off when you're done
+(`docs/automation.md`).
+
+## Merging
+
+PRs from branches of this repo merge by themselves once they're green. `auto-merge.yml` turns on auto-merge when
+the PR opens. `main` requires one check, **All checks** (`all-checks.yml`), which waits for every other check
+the PR started. If you re-run a failed check, re-run All checks too.
+
 ## Layout
 
 ```
