@@ -45,10 +45,12 @@ extension AutomationController {
             return try moveToClaudeFolder(string, session: session, connection: connection)
         case .ui(let inspection):
             guard UIDiagnostics.isEnabled else {
-                throw AutomationError(.disabled, "Diagnostics for Claude is off. Ask the user to turn it on in the Kite menu "
-                    + "(test builds: launch with KITE_DIAGNOSTICS=1 and a KITE_SUPPORT_PATH profile).")
+                throw AutomationError(.disabled, "Diagnostics for Claude is off. Turn it on with the diagnostics tool "
+                    + "(action on), and off again when you're done.")
             }
             return try await UIDiagnostics.shared.run(inspection)
+        case .diagnostics(let on):
+            return .text(UIDiagnostics.shared.set(on))
         case let .signIn(tab, reason):
             return try await signIn(tab: tab, reason: reason, connection: connection)
         case .handoff(let request):

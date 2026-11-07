@@ -57,6 +57,8 @@ extension AutomationCommand.Tool {
             "Quiet VPN sign-in. When the user's VPN client (OpenVPN Connect, Tunnelblick) reconnects and opens its SSO/SAML sign-in page in Kite, Kite signs in on a hidden page with the user's cookies and closes it, and only opens a background tab (never taking focus) when the page needs them: a password, a code, an MFA prompt. action status (default) lists the watched hosts, the last sign-in and the hosts of links other apps opened lately; watch / unwatch with host choose which sign-in pages are handled this way (only a host the user confirmed is their VPN's); reconnect has the VPN client connect again (profile names the client's profile when it has several) and waits for the sign-in; wait waits for one. It never changes the VPN client's settings."
         case .ui:
             UIInspection.summary
+        case .diagnostics:
+            "Diagnostics for Claude, which the ui tool needs: action on turns it on, off turns it off, status (default) says whether it's on. For debugging Kite itself; turn it off again when you're done. The same switch as Kite menu → Diagnostics for Claude."
         case .trace:
             "Kite's action trace: how long each of your tool calls took and where the time went (queue, waiting on the page, the page's JavaScript, screenshots), with the events around them on one timeline (handoff steps done, page loads, tab states), and a summary: per tool p50, p95 and max, the slowest calls, time working versus waiting on the user, and how long you took to react to a finished step. By default your own calls over the last 15 minutes; session, tab, actor (user, agent, kite) or all widen it. Local only; it never holds what was typed or page text."
         case .batch:
@@ -131,6 +133,8 @@ extension AutomationCommand.Tool {
             break
         case .ui:
             return UIInspection.inputSchema
+        case .diagnostics:
+            properties = ["action": ["type": "string", "enum": ["status", "on", "off"], "description": "status (default), on or off."]]
         case .trace:
             properties = [
                 "since": ["type": "string", "description": "How far back: 90s, 15m (default), 1h, 2d."],

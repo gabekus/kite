@@ -24,6 +24,18 @@ import Testing
         #expect(try ui(["action": "trace"]).isReadOnly)
     }
 
+    @Test func diagnosticsTogglesOnOffAndStatus() throws {
+        #expect(try AutomationCommand(tool: "diagnostics", arguments: nil) == .diagnostics(on: nil))
+        #expect(try AutomationCommand(tool: "diagnostics", arguments: ["action": "status"]) == .diagnostics(on: nil))
+        #expect(try AutomationCommand(tool: "diagnostics", arguments: ["action": "on"]) == .diagnostics(on: true))
+        #expect(try AutomationCommand(tool: "diagnostics", arguments: ["action": "OFF"]) == .diagnostics(on: false))
+        #expect(throws: AutomationCommand.InvalidArguments.self) {
+            try AutomationCommand(tool: "diagnostics", arguments: ["action": "maybe"])
+        }
+        #expect(!AutomationCommand.diagnostics(on: true).needsWindow)
+        #expect(!AutomationCommand.Tool.diagnostics.isReadOnly)
+    }
+
     @Test func captureReturnsAnImageUnlessOnlyPixelsAreAsked() throws {
         #expect(try ui(["action": "capture", "region": [0, 0, 240, 100]])
             == .capture(window: nil, region: UIRect(x: 0, y: 0, width: 240, height: 100), format: .png, pixels: [], image: true, save: nil))

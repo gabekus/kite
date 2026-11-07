@@ -155,6 +155,9 @@ public enum AutomationCommand: Hashable, Sendable {
 
     /// Kite's own native UI, for debugging Kite itself (Diagnostics for Claude).
     case ui(UIInspection)
+    /// Turns Diagnostics for Claude on or off (nil: just say whether it's on), so an agent debugging Kite
+    /// doesn't need the user to flip the menu item.
+    case diagnostics(on: Bool?)
 
     /// The action trace's timings (`Trace`): the caller's own calls by default, or a session, tab or everyone's.
     case trace(TraceRequest)
@@ -210,6 +213,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case moveToFolder = "move_to_folder"
         case vpn
         case ui
+        case diagnostics
         case trace
         case batch
 
@@ -271,6 +275,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case .moveToFolder, .moveToClaudeFolder: .moveToFolder
         case .vpn: .vpn
         case .ui: .ui
+        case .diagnostics: .diagnostics
         case .trace: .trace
         case .batch: .batch
         }
@@ -473,6 +478,13 @@ public enum AutomationCommand: Hashable, Sendable {
             }
         case .ui:
             self = .ui(try UIInspection(arguments: a.values))
+        case .diagnostics:
+            switch try a.string("action")?.lowercased() ?? "status" {
+            case "status": self = .diagnostics(on: nil)
+            case "on": self = .diagnostics(on: true)
+            case "off": self = .diagnostics(on: false)
+            default: throw InvalidArguments("\"action\" must be status, on or off.")
+            }
         case .trace:
             self = .trace(try TraceRequest(a))
         case .batch:

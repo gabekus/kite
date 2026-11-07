@@ -44,6 +44,7 @@ let usage = """
                                                      Quiet VPN sign-in: sign-in pages on a watched host load on a
                                                      hidden page; reconnect has the VPN client connect again
       kite call TOOL [JSON]                          Call any MCP tool, e.g. kite call computer '{"action":"scroll"}'
+      kite diagnostics [on|off|status]               Diagnostics for Claude, which kite ui needs
       kite ui ACTION [JSON] [-o FILE]                Kite's own UI (Diagnostics for Claude): windows, tree, capture,
                                                      pointer, input, menu, key_log, trace. kite ui tree '{"match":"Sidebar"}'
                                                      (capture --in-process: Kite draws the window, no Screen Recording)
@@ -397,6 +398,9 @@ func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.
             guard let seconds = Double(timeout) else { throw CLIError("--timeout needs a number of seconds.") }
             json["timeout"] = .number(seconds)
         }
+    case "diagnostics":
+        tool = "diagnostics"
+        json["action"] = .string(args.positional.first ?? "status")
     case "ui":
         tool = "ui"
         json["action"] = .string(try first("an action (windows, tree, capture, pointer, hit, input, menu, key_log, trace)"))
