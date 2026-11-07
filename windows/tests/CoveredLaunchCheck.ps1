@@ -258,7 +258,23 @@ try {
   $recent = @($samples | Where-Object { $_.t -ge $closedAt - 6000 })
   if ($recent.Count -lt 2) { throw "too few rAF samples in the last 6 s ($($recent.Count))" }
   $ran = $recent[-1].n - $recent[0].n
-  if ($ran -ne 0) { throw "requestAnimationFrame ran $ran frames in the last $([int](($recent[-1].t - $recent[0].t) / 1000)) s while Kite was covered" }
+  if ($ran -ne 0) {
+    # What Kite did around the frame: its re-hides (blind, or for a page that said visible), what
+    # the renderer said, and the loads, from the perf log, in seconds before the close; then the
+    # page's own words on the same scale (its Date.now() against when the close was posted).
+    $perfLines = @(Get-Content (Join-Path $profileDir 'perf.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+    $frequency = [double]($perfLines | Where-Object { $_.type -eq 'header' } | Select-Object -First 1).qpcFrequency
+    $exitQpc = ($perfLines | Where-Object { $_.type -eq 'mark' -and $_.name -eq 'exit' } | Select-Object -First 1).qpc
+    if ($frequency -gt 0 -and $exitQpc) {
+      Write-Host "Kite's marks, last 8 s before it exited:"
+      $perfLines | Where-Object { $_.type -eq 'mark' -and $_.name -in @('rehide', 'page-visibility', 'load-begin', 'load-end') } |
+        ForEach-Object { [pscustomobject]@{ s = ([double]$_.qpc - [double]$exitQpc) / $frequency; line = "$($_.name) $($_.detail)" } } |
+        Where-Object { $_.s -ge -8 } | ForEach-Object { Write-Host ("  {0,7:N3} s  {1}" -f $_.s, $_.line) }
+    }
+    Write-Host "The page's words, last 8 s before the close:"
+    $words | ForEach-Object { $s = ([double]($_.Substring(1) -split ':')[0] - $closedAt) / 1000; if ($s -ge -8) { Write-Host ("  {0,7:N3} s  {1}" -f $s, $_) } }
+    throw "requestAnimationFrame ran $ran frames in the last $([int](($recent[-1].t - $recent[0].t) / 1000)) s while Kite was covered"
+  }
   Write-Host "covered launch ($Attack): the page ended hidden, rAF stopped at $($recent[-1].n) frames"
 } finally {
   if ($process -and -not $process.HasExited) { $process.Kill() }
