@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import KiteCore
 import Observation
 
@@ -319,7 +320,13 @@ final class SiteControlsView: SidebarFlippedView {
         if let permissions = model.permissions {
             for permission in SitePermission.allCases {
                 let value = permissions[permission] ?? .ask
-                let row = makeRow(key: "permission|\(permission.rawValue)", symbol: permission.symbol, title: permission.title, subtitle: value.subtitle, isOn: value == .allow)
+                // An allowed microphone shows which mic the site gets and its live level, to check it picks you up.
+                let metered = permission == .microphone && value == .allow && SystemMediaAccess.status(.microphone) == .allowed
+                let deviceName = metered ? AVCaptureDevice.default(for: .audio)?.localizedName : nil
+                let subtitle = deviceName.map { "\(value.subtitle) · \($0)" } ?? value.subtitle
+                let row = makeRow(key: "permission|\(permission.rawValue)|\(metered)", symbol: permission.symbol, title: permission.title,
+                                  subtitle: subtitle, isOn: value == .allow, trailingPadding: metered ? MicrophoneLevelMeter.size.width + 12 : 0)
+                row.showsLevelMeter = metered
                 row.action = { model.perform { model.actions.setPermission(permission, value.toggled) } }
                 row.contextMenu = {
                     let menu = NSMenu()
@@ -881,6 +888,22 @@ private final class SiteControlsRow: SiteControlsControl {
     private let symbol: String
     private let trailingPadding: CGFloat
     private var editButton: SiteControlsEdit?
+    private var levelMeter: MicrophoneLevelMeter?
+    /// The Microphone row's live input level, at the trailing edge.
+    var showsLevelMeter = false {
+        didSet {
+            guard showsLevelMeter != (levelMeter != nil) else { return }
+            if showsLevelMeter {
+                let meter = MicrophoneLevelMeter(frame: .zero)
+                addSubview(meter)
+                levelMeter = meter
+            } else {
+                levelMeter?.removeFromSuperview()
+                levelMeter = nil
+            }
+            needsLayout = true
+        }
+    }
     var isOn: Bool { didSet { if isOn != oldValue { icon.vibrant = !isOn; needsLayout = true } } }
     var subtitle: String {
         didSet {
@@ -924,6 +947,9 @@ private final class SiteControlsRow: SiteControlsControl {
         subtitleLabel.place(textRect: CGRect(x: x, y: top + titleHeight, width: min(width, subtitleLabel.naturalWidth), height: subtitleHeight))
         editButton?.frame = CGRect(x: bounds.width - 4 - 24, y: circleFrame.minY, width: 24, height: 24)
         editButton?.exactY = circleTop
+        let meterSize = MicrophoneLevelMeter.size
+        levelMeter?.frame = CGRect(x: bounds.width - 8 - meterSize.width, y: ((bounds.height - meterSize.height) / 2).pixelRounded,
+                                   width: meterSize.width, height: meterSize.height)
     }
 
     override func hoverChanged() {
