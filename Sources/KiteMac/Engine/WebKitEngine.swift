@@ -106,6 +106,13 @@ final class WebKitEngine: WebEngine {
         )
         if let state {
             page.webView.interactionState = state
+            // A state saved before the page's first load committed brings back no page: load the URL (PageRestore).
+            if PageRestore.loadsURLAfterRestoring(hasURL: url != nil, restoredCurrentItem: page.webView.backForwardList.currentItem != nil,
+                                                  restoredURL: page.webView.url != nil, restoredLoading: page.webView.isLoading),
+               let url {
+                FindTestHookRunner.logPage("restored state held no page, so loading the URL")
+                page.load(url)
+            }
         } else if let url {
             page.load(url)
         }
@@ -195,7 +202,10 @@ final class WebKitPage: NSObject, WebPage {
         set { webView.pageZoom = newValue }
     }
 
-    func load(_ url: URL) { webView.load(URLRequest(url: url)) }
+    func load(_ url: URL) {
+        webView.load(URLRequest(url: url))
+        FindTestHookRunner.logLoadAsked(webView)   // a run with a find hook only
+    }
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
     func reload() { webView.reload() }
@@ -341,7 +351,10 @@ final class WebKitPage: NSObject, WebPage {
         }
     }
 
-    func hibernationState() -> Any? { webView.interactionState }
+    /// Nil for a page with no committed page yet: its state would restore a blank tab (PageRestore).
+    func hibernationState() -> Any? {
+        PageRestore.keepsState(hasCurrentItem: webView.backForwardList.currentItem != nil) ? webView.interactionState : nil
+    }
 
     func checkBusy(_ completion: @escaping (Bool) -> Void) {
         if webView.cameraCaptureState == .active || webView.microphoneCaptureState == .active {
@@ -486,13 +499,32 @@ extension WebKitPage: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        FindTestHookRunner.logPage("finished")
         webView.evaluateJavaScript(Self.faviconScript) { [weak self] result, _ in
             guard let href = result as? String else { return }
             self?.onEvent?(.favicon(URL(string: href)))
         }
     }
 
+    // Logged on a run with a find hook only (FindTestHookRunner.logPage), to see where a headless load stops.
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        FindTestHookRunner.logPage("started")
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        FindTestHookRunner.logPage("committed")
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        FindTestHookRunner.logPage("failed before commit", error: error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        FindTestHookRunner.logPage("failed", error: error)
+    }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        FindTestHookRunner.logPage("content process ended")
         webView.reload()
     }
 }
@@ -672,7 +704,8 @@ extension WebKitPage: WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor () -> Void
     ) {
-        PageDialogs.present(.alert, message: message, origin: frame.request.url, in: webView) { _, _ in completionHandler() }
+        PageDialogs.present(.alert, message: message, origin: frame.request.url, in: webView,
+                            report: { [weak self] in self?.onEvent?(.dialog($0)) }) { _, _ in completionHandler() }
     }
 
     func webView(
@@ -681,7 +714,8 @@ extension WebKitPage: WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor (Bool) -> Void
     ) {
-        PageDialogs.present(.confirm, message: message, origin: frame.request.url, in: webView) { ok, _ in completionHandler(ok) }
+        PageDialogs.present(.confirm, message: message, origin: frame.request.url, in: webView,
+                            report: { [weak self] in self?.onEvent?(.dialog($0)) }) { ok, _ in completionHandler(ok) }
     }
 
     func webView(
@@ -692,7 +726,7 @@ extension WebKitPage: WKUIDelegate {
         completionHandler: @escaping @MainActor (String?) -> Void
     ) {
         PageDialogs.present(.prompt, message: prompt, defaultText: defaultText ?? "", origin: frame.request.url,
-                            in: webView) { _, text in completionHandler(text) }
+                            in: webView, report: { [weak self] in self?.onEvent?(.dialog($0)) }) { _, text in completionHandler(text) }
     }
 
     func webView(

@@ -1,16 +1,24 @@
 // The window controller's test runs: --smoke-test's checks and --capture's frames and the states
-// they hold (a swipe, a drag in the space bar, the space menu, the rename field). See
-// BrowserWindowController.h.
+// they hold (a swipe, a drag in the space bar, the space menu, the rename fields, a row hovered, a
+// command run, the + menu and Create a Space). See BrowserWindowController.h.
 
 #include "shell/BrowserWindowController.h"
 
 #include <algorithm>
 #include <cmath>
 
+#include "core/Favorites.h"
+#include "core/OKLab.h"
+#include "core/Profiles.h"
+#include "core/SidebarTopRow.h"
 #include "core/SpaceBar.h"
+#include "core/SpaceCreation.h"
 #include "core/SpaceEditing.h"
+#include "core/TitleBar.h"
+#include "core/Uuid.h"
 #include "shell/Capture.h"
 #include "shell/SpaceMenu.h"
+#include "shell/Text.h"
 
 namespace kite {
 
@@ -27,13 +35,20 @@ bool Inked(const Pixels& pixels, UINT fromRow = 0) {
 
 bool BrowserWindowController::RunUntil(const std::function<bool()>& done, double seconds) {
     // Only the clock's frames and the window's timers: the rest waits for the message loop, so
-    // a page that loads meanwhile can't close the window mid-test.
+    // a page that loads meanwhile can't close the window mid-test. A manual clock's frames are
+    // stepped here at 60 Hz while it runs, as its thread would post them (SmokeTest). Timers come
+    // first: a 500 Hz clock nearly always has a frame waiting, and the slide's end (a timer)
+    // would wait behind them.
     const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(seconds * 1000);
+    double nextFrame = 0;
     MSG message;
     while (!done() && GetTickCount64() < deadline) {
-        if (PeekMessageW(&message, window_.Handle(), kFrameMessage, kFrameMessage, PM_REMOVE) ||
-            PeekMessageW(&message, window_.Handle(), WM_TIMER, WM_TIMER, PM_REMOVE)) {
+        if (PeekMessageW(&message, window_.Handle(), WM_TIMER, WM_TIMER, PM_REMOVE) ||
+            PeekMessageW(&message, window_.Handle(), kFrameMessage, kFrameMessage, PM_REMOVE)) {
             DispatchMessageW(&message);
+        } else if (clock_->Manual() && clock_->Running() && FrameClock::Now() >= nextFrame) {
+            nextFrame = FrameClock::Now() + 1.0 / 60;
+            Frame(FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr), 0);  // rate unknown (0), as Filter's without --perf-log
         } else {
             Sleep(1);
         }
@@ -41,17 +56,28 @@ bool BrowserWindowController::RunUntil(const std::function<bool()>& done, double
     return done();
 }
 
+bool BrowserWindowController::BoostsBalance() const {
+    // Kite's count of boosts held is exactly this window's holders that are on: the clock's, the
+    // pages' slide's and the sidebar toggle's.
+    return FrameClock::ProcessBoosts() == int{clock_->Boosted()} + int{slideBoost_.On()} + int{toggleBoost_.On()};
+}
+
 std::wstring BrowserWindowController::RunToRest(const wchar_t* what) {
-    const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
+    const bool visible = Seen();
     const bool fades = theme_.Fading();
     if (visible && !sidebarSliding_) return std::wstring(what) + L" didn't slide the pages";
     if (!visible && (sidebarSliding_ || fades)) return std::wstring(what) + L" animated a hidden window";
-    // The clock's frames until the fade ends and the slide's timer fires (2 s at most).
+    // The display at its highest rate while the pages slide, whether or not the theme fades.
+    if (sidebarSliding_ && !(slideBoost_.On() && BoostsBalance())) return std::wstring(what) + L": the pages' slide didn't boost the display";
+    // The clock's frames until the fade ends and the slide's timer fires (2 s at most): the fade
+    // asks for frames and draws on them, the frame after its end stops the clock, and the slide
+    // ends on its timer, its boost with it.
     const size_t framesBefore = frameCount_;
     RunUntil([this] { return !clock_->Running() && !sidebarSliding_; }, 2);
     if (clock_->Running()) return std::wstring(what) + L": the frame clock never stopped";
     if (sidebarSliding_) return std::wstring(what) + L": the pages' slide never ended";
     if (fades && frameCount_ == framesBefore) return std::wstring(what) + L": the crossfade got no frames";
+    if (slideBoost_.On() || !BoostsBalance()) return std::wstring(what) + L": the display stayed boosted at rest";
     if (sidebar_->PageOffset() != 0 || pagesAnchor_ || pendingLanding_) return std::wstring(what) + L": the pages didn't come to rest";
     if (theme_.Fading() || theme_.Interactive() || theme_.from != state_.SelectedSpace().theme) {
         return std::wstring(what) + L": the theme didn't come to rest";
@@ -84,6 +110,8 @@ std::wstring BrowserWindowController::SmokeTestSwipe() {
     // The pointer over the list, and over the page beside the sidebar.
     const POINT list{std::lround(120 * scale), std::lround(200 * scale)};
     const POINT page{std::lround((kSidebarWidth + 200) * scale), std::lround(200 * scale)};
+    // And over the top row, on the sidebar but above the list.
+    const POINT header{std::lround(80 * scale), std::lround(20 * scale)};
     double stamp = FrameClock::Now();
     const auto sendAt = [&](POINT at, Phase phase, double dx, double dy, double after = 1.0 / 60) {
         stamp += after;
@@ -111,6 +139,49 @@ std::wstring BrowserWindowController::SmokeTestSwipe() {
         return L"a gesture moving over the page swiped";
     }
     sendAt(page, Phase::Ended, 0, 0);
+    // With rows enough to scroll (taken away again): a vertical gesture decided over the list is
+    // the list's to its end, its momentum included, wherever the pointer goes (the Mac asks where
+    // it is only until the gesture is decided); one whose pointer is over the page before it's
+    // decided scrolls nothing, nor does the rest of it. Only the undecided one lets the contact go
+    // (counted: the smoke test has no contact to release), and so does one decided vertical over
+    // the top row, where nothing scrolls with it. The rows are taken away by hand, not closed, so
+    // they leave nothing in Recently Closed or the archive.
+    {
+        std::vector<std::string> rows;
+        for (int i = 0; i < 40; ++i) rows.push_back(state_.OpenTab("about:blank", before, false));
+        StateChanged();
+        const float top = sidebar_->ListScroll();
+        const size_t releases = touchpad_->ReleasesAsked();
+        send(Phase::Began, 0, 0);
+        send(Phase::Changed, 0, -30);
+        const float decided = sidebar_->ListScroll();
+        const bool latched = sendAt(page, Phase::Changed, 0, -30) == Step::Pass && sendAt(page, Phase::Ended, 0, 0) == Step::Pass &&
+                             sendAt(page, Phase::Momentum, 0, -20) == Step::Pass && decided == top + 30 &&
+                             sidebar_->ListScroll() == decided + 50 && touchpad_->ReleasesAsked() == releases;
+        sendAt(page, Phase::MomentumEnded, 0, 0);
+        const float scrolled = sidebar_->ListScroll();
+        send(Phase::Began, 0, 0);
+        sendAt(page, Phase::Changed, 0, -30);
+        const bool undecidedReleased = touchpad_->ReleasesAsked() == releases + 1;
+        sendAt(page, Phase::Ended, 0, 0);
+        sendAt(page, Phase::Momentum, 0, -20);
+        const bool released = undecidedReleased && sidebar_->ListScroll() == scrolled && touchpad_->ReleasesAsked() == releases + 1;
+        sendAt(page, Phase::MomentumEnded, 0, 0);
+        // Over the top row (the sidebar, but not the list): held while undecided, released as it's
+        // decided vertical.
+        sendAt(header, Phase::Began, 0, 0);
+        const bool headerHeld = touchpad_->ReleasesAsked() == releases + 1;
+        sendAt(header, Phase::Changed, 0, -30);
+        const bool headerReleased = headerHeld && touchpad_->ReleasesAsked() == releases + 2 && sidebar_->ListScroll() == scrolled;
+        sendAt(header, Phase::Ended, 0, 0);
+        sidebar_->ScrollListBy(top - sidebar_->ListScroll());
+        Space& space = state_.spaces[index];
+        std::erase_if(space.tabs, [&](const Tab& tab) { return std::find(rows.begin(), rows.end(), tab.id) != rows.end(); });
+        StateChanged();
+        if (!latched) return L"a vertical gesture's rest over the page didn't scroll the list";
+        if (!released) return L"a gesture over the page before it was decided wasn't released, or scrolled the list";
+        if (!headerReleased) return L"a vertical gesture decided over the top row kept its contact";
+    }
 
     // Sideways: the pages and the theme follow the fingers, and a frame draws it.
     send(Phase::Began, 0, 0);
@@ -254,18 +325,21 @@ std::wstring BrowserWindowController::SmokeTestSwipeThreeSpaces() {
         if (state_.SelectedSpaceIndex() != 0) return L"a swipe past the first space moved the selection";
 
         // A fade's boost ends with it, though the clock runs on for fingers resting on the
-        // touchpad (made here by asking the touchpad for frames, as a contact taken does).
+        // touchpad (made here by asking the touchpad for frames, as a contact taken does, for
+        // longer than the check can take: it ends them itself), and stops at the next frame once
+        // they're done.
         if (state_.spaces[0].theme != state_.spaces[1].theme && touchpad_) {
             RunCommand("nextSpace");
-            touchpad_->PollFor(1.5);
+            touchpad_->PollFor(60);
             if (!theme_.Fading() || !clock_->Boosted()) return L"a space switch's crossfade didn't boost the display";
             if (!RunUntil([this] { return !theme_.Fading(); }, 2)) return L"a space switch's crossfade never ended";
             // A frame after it, for the clock to hear.
             const size_t frames = frameCount_;
-            RunUntil([&] { return frameCount_ > frames; }, 0.5);
+            if (!RunUntil([&] { return frameCount_ > frames; }, 0.5)) return L"the clock gave no frame after a crossfade under the touchpad's";
             if (!clock_->Running()) return L"the clock stopped while the touchpad wanted frames";
             if (clock_->Boosted()) return L"fingers resting on the touchpad kept a crossfade's boost";
-            if (!RunUntil([this] { return !clock_->Running() && !sidebarSliding_; }, 3)) return L"the touchpad's frames never stopped";
+            touchpad_->PollFor(0);
+            if (!RunUntil([this] { return !clock_->Running() && !sidebarSliding_; }, 2)) return L"the touchpad's frames never stopped";
             if (sidebar_->PageOffset() != 0 || pagesAnchor_) return L"the pages didn't come to rest under the touchpad's frames";
             if (std::wstring problem = selectFirst(); !problem.empty()) return problem;
         }
@@ -341,6 +415,44 @@ std::wstring BrowserWindowController::HoldSwipe(double dx) {
 }
 
 std::wstring BrowserWindowController::SmokeTest() {
+    // The clock's own thread gives frame after frame while something wants them (the compositor
+    // clock's, or DwmFlush's when its wait fails, as with the display off: 500 Hz there), here
+    // the touchpad's polling; once nothing does, its next frame stops the clock, unboosted. The
+    // 5 s allow for DwmFlush's stalls of a few hundred ms; a thread that stops ticking fails.
+    const size_t framesBefore = frameCount_;
+    if (touchpad_) {
+        touchpad_->PollFor(5);
+        clock_->Start(false);
+        const bool ticked = RunUntil([&] { return frameCount_ >= framesBefore + 3; }, 5);
+        touchpad_->PollFor(0);
+        if (!ticked) {
+            clock_->Stop();
+            return L"the frame clock gave fewer than 3 frames in 5 s";
+        }
+        if (!clock_->Running()) return L"the frame clock stopped while the touchpad wanted frames";
+    } else {
+        clock_->Start(false);
+    }
+    const size_t polled = frameCount_;
+    if (!RunUntil([&] { return frameCount_ > polled; }, 5)) {
+        clock_->Stop();
+        return L"the frame clock gave no frame in 5 s";
+    }
+    if (clock_->Running() || clock_->Boosted()) return L"a frame with nothing to animate didn't stop the frame clock";
+    // The rest steps the clock's frames in RunUntil, at 60 Hz while it runs: what's checked is
+    // when the window starts, boosts and stops it, and what it does with its frames, never
+    // whether the display is ticking. Back to the thread's frames however the checks end.
+    struct ManualClock {
+        FrameClock& clock;
+        explicit ManualClock(FrameClock& c) : clock(c) { clock.SetManual(true); }
+        ~ManualClock() { clock.SetManual(false); }
+        ManualClock(const ManualClock&) = delete;
+        ManualClock& operator=(const ManualClock&) = delete;
+    } manual(*clock_);
+    return SmokeTestWindow();
+}
+
+std::wstring BrowserWindowController::SmokeTestWindow() {
     // The command bar opens over the window, draws with text in it, and closes.
     if (!commandBar_) return L"Kite couldn't make the command bar";
     commandBar_->Show(CommandBarMode::NewTab, "", BarLook());
@@ -357,6 +469,16 @@ std::wstring BrowserWindowController::SmokeTest() {
     if (barTop < 0 || barTop >= static_cast<long>(chrome.height) || !Inked(chrome, static_cast<UINT>(barTop))) {
         return L"the space bar drew nothing";
     }
+    // The top row: its buttons, the page's states, hiding and showing the sidebar.
+    if (std::wstring problem = SmokeTestTopRow(); !problem.empty()) return problem;
+    // The favorites: a grid over the page, whose hover and selection draw nothing.
+    if (std::wstring problem = SmokeTestFavorites(); !problem.empty()) return problem;
+    // Pin Tab, renaming a tab and a folder, New Folder, Duplicate Tab, Back to Pinned URL and Reset.
+    if (std::wstring problem = SmokeTestTabEditing(); !problem.empty()) return problem;
+    // A middle click on a tab's row closes it, as its close button does.
+    if (std::wstring problem = SmokeTestMiddleClick(); !problem.empty()) return problem;
+    // The rows' and favorites' menus, on a right-click and a Ctrl+click, and their items.
+    if (std::wstring problem = SmokeTestRowMenus(); !problem.empty()) return problem;
     // And the caption buttons their glyphs.
     Pixels buttons;
     if (std::wstring problem = caption_->Draw(&buttons); !problem.empty()) return L"the caption buttons couldn't draw: " + problem;
@@ -373,10 +495,16 @@ std::wstring BrowserWindowController::SmokeTest() {
         // And editing them: drags in the bar, the menu, renaming, New Folder, Delete Space.
         if (std::wstring problem = SmokeTestSpaceEditing(); !problem.empty()) return problem;
     }
+    // Change Space Icon…'s picker.
+    if (std::wstring problem = SmokeTestIconPicker(); !problem.empty()) return L"the icon picker: " + problem;
+    // The + menu and Create a Space: New Space, typing, a theme, Create and Cancel.
+    if (std::wstring problem = SmokeTestNewSpace(); !problem.empty()) return problem;
     // The lost-GPU path, once: the renderer, swap chain and composition target are rebuilt and
     // draw again (a real device removal can't be caused from a test).
     DropCompositor();
     if (std::wstring problem = Draw(); !problem.empty()) return L"Kite couldn't rebuild its renderer: " + problem;
+    // Last, as it runs the pages' reports: Back to Pinned URL on the shown page, loaded for real.
+    if (std::wstring problem = SmokeTestLiveReset(); !problem.empty()) return problem;
     // With Chromium it waits for the first page instead, for at most 30 s.
     UINT smokeMs = 1000;
 #ifdef KITE_HAS_CEF
@@ -386,14 +514,16 @@ std::wstring BrowserWindowController::SmokeTest() {
     return {};
 }
 
-std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip) {
+std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip,
+                                              const std::optional<CaptureFind>& find) {
     // The window's own frame, read back as it's presented: at the window's scale.
     std::wstring problem = Draw(&pixels);
     if (problem.empty()) {
-        // The sidebar's surface over the backdrop, at the window's top-left.
+        // The sidebar's surface over the backdrop, at the window's top-left (off the window while
+        // it's hidden).
         Pixels chrome;
         problem = sidebar_->Draw(&chrome);
-        if (problem.empty()) ComposeOver(pixels, chrome, POINT{0, 0});
+        if (problem.empty() && sidebarShown_) ComposeOver(pixels, chrome, POINT{0, 0});
     }
     if (problem.empty()) {
         Pixels buttons;
@@ -409,6 +539,28 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
         problem = sidebar_->RenderTip(*tip, tipPixels, origin);
         if (problem.empty()) ComposeOver(pixels, tipPixels, origin);
     }
+    if (problem.empty() && iconPicker_ && iconPicker_->IsOpen()) {
+        // The icon picker's window over the browser window's, kept inside it in a capture.
+        Pixels picker;
+        POINT origin{};
+        problem = iconPicker_->Render(picker, origin);
+        if (problem.empty()) ComposeOver(pixels, picker, origin);
+    }
+    if (problem.empty() && find) {
+        // The find bar as Ctrl+F opens it over the selected tab, the query typed in and the page's
+        // report shown (no Chromium in a capture, so no page to ask).
+        if (!findBar_) return L"Kite couldn't make the find bar";
+        if (const Tab* tab = state_.SelectedTab()) findTabID_ = tab->id;
+        else return L"--find needs a selected tab";
+        findBar_->SetCard(ContentBounds());
+        findBar_->Show(FindBarDark());
+        findBar_->Type(find->query);
+        if (find->result) findBar_->ShowResult(*find->result);
+        Pixels bar;
+        POINT origin{};
+        problem = findBar_->Draw(&bar, &origin);
+        if (problem.empty()) ComposeOver(pixels, bar, origin);
+    }
     if (problem.empty() && heldMenu_) {
         // The space's menu as a right-click on its cell opens it, read back from Windows' menu
         // and put where Windows puts one with no room under the pointer: its bottom-left there.
@@ -420,6 +572,34 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
         problem = RenderSpaceMenu(window_.Handle(), SpaceMenu(state_, state_.spaces[*heldMenu_].id), screen, dark_.value_or(true),
                                   window_.Dpi(), menu);
         if (problem.empty()) ComposeOver(pixels, menu, POINT{at->x, at->y - static_cast<LONG>(menu.height)});
+    }
+    // A row's or favorite's menu, where a right-click on it opens it (W17).
+    if (problem.empty()) problem = RenderHeldRowMenu(pixels);
+    if (problem.empty() && heldSwatches_) {
+        // Choose a Theme's swatches as they show off the row, over the page.
+        if (!swatches_) return L"Kite couldn't make Choose a Theme's swatches";
+        std::vector<ThemeColor> accents;
+        for (const Theme& preset : Theme::Presets()) accents.push_back(Accent(preset));
+        Pixels popover;
+        POINT origin{};
+        problem = swatches_->Render(*heldSwatches_, window_.Dpi(), PopoverDark(), std::move(accents), popover, origin);
+        if (problem.empty()) ComposeOver(pixels, popover, origin);
+    }
+    if (problem.empty() && heldNewItemMenu_) {
+        // The + menu as a click on the button opens it: Windows' own menu, read back as it shows,
+        // its bottom's middle on the button's top. Its line goes to stderr.
+        if (!sidebar_->PlusCentre()) return L"the + button is hidden";
+        const std::vector<NewItemMenuItem> items = NewItemMenu(shortcuts_);
+        WriteUtf8(STD_ERROR_HANDLE, L"KITE_TEST_CONTEXT_MENU: " + Widen(NewItemMenuLine(items)) + L"\n");
+        const POINT top = sidebar_->PlusTop();
+        POINT screen = top;
+        ClientToScreen(window_.Handle(), &screen);
+        Pixels menu;
+        problem = RenderContextMenu(window_.Handle(), NewItemEntries(items), screen, PopoverDark(), window_.Dpi(), menu,
+                                    ContextMenuPlacement::AboveCentred);
+        if (problem.empty()) {
+            ComposeOver(pixels, menu, POINT{top.x - static_cast<LONG>(menu.width) / 2, top.y - static_cast<LONG>(menu.height)});
+        }
     }
     if (problem.empty() && barText) {
         // The bar as Ctrl+T opens it, with the text typed in.
@@ -482,11 +662,341 @@ std::wstring BrowserWindowController::HoldRename(size_t index, const std::option
     if (switches) {
         if (std::wstring problem = RunToRest(L"Rename Space"); !problem.empty()) return problem;
     }
-    if (sidebar_->Renaming() != id) return L"the rename field didn't open";
+    if (sidebar_->RenamingSpace() != id) return L"the rename field didn't open";
     if (text) sidebar_->TypeInRename(*text);
     if (focused) sidebar_->FocusRenameForCapture();
     return {};
 }
+
+std::wstring BrowserWindowController::HoldRowRename(size_t index, const std::optional<std::string>& text, bool focused) {
+    const std::vector<SidebarRow>& rows = sidebar_->Rows();
+    if (index >= rows.size() || (rows[index].kind != SidebarRow::Kind::Tab && rows[index].kind != SidebarRow::Kind::Folder)) {
+        return L"that row isn't a tab or a folder";
+    }
+    const SidebarView::RenameTarget target{rows[index].kind, rows[index].id};
+    if (target.kind == SidebarRow::Kind::Tab) BeginRenamingTab(target.id, false);
+    else BeginRenamingFolder(target.id);
+    if (sidebar_->Renaming() != target) return L"the row's rename field didn't open";
+    if (text) sidebar_->TypeInRename(*text);
+    if (focused) sidebar_->FocusRenameForCapture();
+    return {};
+}
+
+std::wstring BrowserWindowController::RunCommandForCapture(const std::string& command) {
+    if (!commands_.contains(command)) return L"there's no command " + Widen(command);
+    if (!CommandEnabled(command)) return L"the command " + Widen(command) + L" is disabled here";
+    RunCommand(command);
+    return {};
+}
+
+void BrowserWindowController::HoldPageStatus(const PageStatus& page) {
+    if (const Tab* tab = state_.SelectedTab()) pageStatus_[tab->id] = page;
+    ShowPageStatus();
+}
+
+std::wstring BrowserWindowController::HoldSidebarToggles(int times) {
+    for (int i = 0; i < times; ++i) {
+        RunCommand("toggleSidebar");
+        if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
+    }
+    return {};
+}
+
+std::wstring BrowserWindowController::HoldTopRowHover(TopRowButton button) {
+    const std::optional<POINT> at = sidebar_->TopRowCentre(button);
+    if (!at) return L"the top row has no such button";
+    SendMouse(window_.Handle(), WM_MOUSEMOVE, *at, 0);
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestTopRow() {
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    // Drawn first, so what follows shows what each change draws.
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the sidebar couldn't draw: " + problem;
+    const std::vector<TopRowItem>& items = sidebar_->TopRowItems();
+    if (items.size() != 4 || items.front().button != TopRowButton::ToggleSidebar || items.back().button != TopRowButton::Reload) {
+        return L"the top row isn't the toggle, back, forward and reload";
+    }
+    const Tab* tab = state_.SelectedTab();
+    if (!tab) return {};  // the smoke page's session always has one
+    const std::string tabID = tab->id;
+    const std::optional<PageStatus> before =
+        pageStatus_.contains(tabID) ? std::optional<PageStatus>(pageStatus_.at(tabID)) : std::nullopt;
+    const auto restore = [&] {
+        if (before) pageStatus_[tabID] = *before;
+        else pageStatus_.erase(tabID);
+        ShowPageStatus();
+    };
+    const auto item = [&](TopRowButton button) {
+        for (const TopRowItem& i : sidebar_->TopRowItems()) {
+            if (i.button == button) return i;
+        }
+        return TopRowItem{};
+    };
+    const std::wstring failure = [&]() -> std::wstring {
+        // Back turning on is an opacity: the sidebar's next pass commits it, drawing nothing.
+        size_t draws = sidebar_->TopRowSurfaceDraws();
+        const size_t commits = sidebar_->Commits();
+        HoldPageStatus(PageStatus{false, true, false});
+        if (!item(TopRowButton::Back).enabled || item(TopRowButton::Forward).enabled) return L"the page's history didn't reach the top row";
+        if (!sidebar_->CommitPending()) return L"a button turning on wasn't to be committed";
+        sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0);
+        if (sidebar_->Commits() != commits + 1 || sidebar_->CommitPending()) return L"a button turning on wasn't committed";
+        if (sidebar_->TopRowSurfaceDraws() != draws) return L"a button turning on drew its surface";
+        // Loading: reload is the X, which draws that one button.
+        HoldPageStatus(PageStatus{true, true, false});
+        if (item(TopRowButton::Reload).symbol != "xmark") return L"a loading page didn't show the X";
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the top row couldn't draw: " + problem;
+        if (sidebar_->TopRowSurfaceDraws() != draws + 1) return L"the X drew more than its button";
+        // A hover over a button draws nothing (the Mac's SymbolButton shows none; Windows' tooltip comes).
+        draws = sidebar_->TopRowSurfaceDraws();
+        if (std::wstring problem = HoldTopRowHover(TopRowButton::Back); !problem.empty()) return problem;
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the sidebar couldn't draw: " + problem;
+        if (sidebar_->TopRowSurfaceDraws() != draws) return L"hovering a top-row button drew";
+        // The first hover over a button makes the tooltips (comctl32 loads then, not at launch).
+        if (!sidebar_->TopRowHasTooltips()) return L"hovering a top-row button made no tooltip";
+        // The buttons take their presses (not the window's drag); the row between them drags.
+        const auto areaAt = [&](POINT at) {
+            RECT client{};
+            GetClientRect(window_.Handle(), &client);
+            return TitleBarAreaAt(static_cast<float>(client.right) / scale, SidebarShownWidth(), static_cast<float>(at.x) / scale,
+                                  static_cast<float>(at.y) / scale, scale);
+        };
+        const POINT toggle = *sidebar_->TopRowCentre(TopRowButton::ToggleSidebar);
+        if (areaAt(toggle) != TitleBarArea::Client || areaAt(POINT{std::lround(100 * scale), toggle.y}) != TitleBarArea::Drag) {
+            return L"the top row's buttons aren't cut out of the window's drag";
+        }
+        // A press on a disabled button (forward) does nothing.
+        const POINT forward = *sidebar_->TopRowCentre(TopRowButton::Forward);
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, forward, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, forward, 0);
+        if (!sidebarShown_ || GetCapture() == window_.Handle()) return L"a press on a disabled button did something";
+        // The toggle hides the sidebar: it slides off, the card's edge moves to the inset, and the
+        // sidebar takes no pointer.
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, toggle, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, toggle, 0);
+        if (sidebarShown_ || !toggling_) return L"the toggle didn't hide the sidebar";
+        if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
+        if (sidebar_->Left() != -static_cast<float>(kSidebarWidth)) return L"the hidden sidebar isn't off the window";
+#ifdef KITE_HAS_CEF
+        if (chromium_ && ContentBounds().left != MulDiv(static_cast<int>(sidebar_toggle::kContentInset), static_cast<int>(window_.Dpi()),
+                                                        USER_DEFAULT_SCREEN_DPI)) {
+            return L"the card didn't grow to the window's inset";
+        }
+#endif
+        if (areaAt(toggle) != TitleBarArea::Drag || OverSidebar(POINT{std::lround(120 * scale), std::lround(200 * scale)})) {
+            return L"the hidden sidebar still takes the pointer";
+        }
+        if (sidebar_->HandleMouse(WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(toggle.x, toggle.y))) return L"the hidden sidebar took a press";
+        // The system menu's item says Show Sidebar now, and shows it.
+        const auto menuTitle = [&] {
+            wchar_t title[64] = {};
+            if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) GetMenuStringW(menu, kToggleSidebarMenuID, title, 64, MF_BYCOMMAND);
+            return std::wstring(title);
+        };
+        if (!menuTitle().starts_with(L"Show Sidebar\t") || menuTitle() != ToggleSidebarMenuText()) {
+            return L"the system menu doesn't offer Show Sidebar with its shortcut";
+        }
+        // Hidden at rest it draws and commits nothing: reload's arrow coming back (the page stopped
+        // loading) and back turning off wait for the show, which draws reload alone.
+        const size_t hiddenCommits = sidebar_->Commits(), hiddenDraws = sidebar_->TopRowSurfaceDraws();
+        HoldPageStatus(PageStatus{false, false, true});
+        sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0);
+        if (std::wstring problem = Draw(); !problem.empty()) return L"the window couldn't draw: " + problem;
+        if (sidebar_->Commits() != hiddenCommits || sidebar_->TopRowSurfaceDraws() != hiddenDraws) return L"the hidden sidebar drew";
+        SendMessageW(window_.Handle(), WM_SYSCOMMAND, kToggleSidebarMenuID, 0);
+        if (!sidebarShown_ || !toggling_) return L"the system menu's Show Sidebar didn't show the sidebar";
+        if (sidebar_->TopRowSurfaceDraws() != hiddenDraws + 1 || item(TopRowButton::Reload).symbol != "arrow.clockwise") {
+            return L"the sidebar didn't draw what changed while it was hidden as it showed";
+        }
+        if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
+        if (!menuTitle().starts_with(L"Hide Sidebar\t") || menuTitle() != ToggleSidebarMenuText()) {
+            return L"the system menu doesn't offer Hide Sidebar with its shortcut";
+        }
+        // Ctrl+S's command hides it, and one caught 30 ms into the slide turns back from where it is.
+        RunCommand("toggleSidebar");
+        if (sidebarShown_ || !toggling_) return L"Toggle Sidebar didn't hide the sidebar";
+        RunUntil([] { return false; }, 0.03);
+        const float turned = sidebar_->Left();
+        RunCommand("toggleSidebar");
+        if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
+        if (!sidebarShown_ || sidebar_->Left() != 0 || !(turned < 0 && turned > -static_cast<float>(kSidebarWidth))) {
+            return L"a toggle caught mid-slide didn't turn back";
+        }
+        if (areaAt(toggle) != TitleBarArea::Client) return L"the shown sidebar's toggle isn't a button";
+        return {};
+    }();
+    restore();
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the top row couldn't draw: " + problem;
+    return failure;
+}
+#ifdef KITE_HAS_CEF
+
+void BrowserWindowController::FailSmokeFind(std::wstring problem) {
+    smokeFindProblem_ = std::move(problem);
+    smokeFind_ = SmokeFind::Done;
+    HideFindBar(false);
+    CloseWhenSmokeTestIsDone();
+}
+
+void BrowserWindowController::StartSmokeFind() {
+    if (!findBar_ || !chromium_->CanFind()) {
+        smokeFind_ = SmokeFind::Done;
+        return;
+    }
+    smokeFind_ = SmokeFind::Matching;
+    ShowFind();
+    findBar_->Type("kite SMOKE");  // case-insensitive, as the Mac's find
+}
+
+std::wstring BrowserWindowController::SmokeTestKeyboard() {
+    // One field at a time has the keyboard (and the thread's one system caret). Run once the page
+    // has loaded and been searched, so its own focus as it was made (Chromium::Show) has landed:
+    // a page taking the keyboard rightly takes it from the field.
+    ShowFind();
+    if (KeyboardOwner() != KeyboardField::Find) return L"Ctrl+F didn't give the find field the keyboard";
+    const std::string query = findBar_->Query().Query();
+    const size_t index = state_.SelectedSpaceIndex();
+    const std::string id = state_.spaces[index].id, name = state_.spaces[index].name;
+    const auto restore = [&] {
+        state_.RenameSpace(id, name);
+        StateChanged();
+    };
+    // A rename started while the find field has it takes it, and the keys go to the rename.
+    BeginRenaming(id);
+    if (KeyboardOwner() != KeyboardField::Rename || findBar_->HasKeyboard()) return L"a rename didn't take the keyboard from the find field";
+    SendMessageW(window_.Handle(), WM_CHAR, L'Q', 0);
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
+    if (sidebar_->Renaming() || state_.spaces[index].name != "Q" || findBar_->Query().Query() != query) {
+        return L"keys typed in a rename begun over the find field didn't go to the rename";
+    }
+    restore();
+    // A row's rename (W14's tab and folder renames share the space's way in) takes it too: what's
+    // typed goes to the row's field, not the query.
+    ShowFind();
+    if (const Tab* tab = state_.SelectedTab()) {
+        BeginRenamingTab(tab->id, false);
+        if (KeyboardOwner() != KeyboardField::Rename || findBar_->HasKeyboard()) return L"a tab's rename didn't take the keyboard from the find field";
+        SendMessageW(window_.Handle(), WM_CHAR, L'T', 0);
+        const auto taken = sidebar_->TakeRename();
+        if (!taken || taken->first.kind != SidebarRow::Kind::Tab || taken->second != "T" || findBar_->Query().Query() != query) {
+            return L"keys typed in a tab's rename begun over the find field didn't go to the rename";
+        }
+    }
+    // Ctrl+F ends a rename, keeping what was typed, and takes the keyboard back.
+    BeginRenaming(id);
+    sidebar_->TypeInRename("R");
+    ShowFind();
+    if (sidebar_->Renaming() || state_.spaces[index].name != "R" || KeyboardOwner() != KeyboardField::Find) {
+        return L"Ctrl+F didn't end the rename and take the keyboard";
+    }
+    restore();
+    // A press on the bar's down arrow leaves the keyboard where it was (borderless NSButtons
+    // don't become first responder); a press in its field takes it, ending the rename.
+    BeginRenaming(id);
+    for (UINT message : {WM_LBUTTONDOWN, WM_LBUTTONUP}) {
+        SendMouse(window_.Handle(), message, findBar_->ClientPointOf(FindBarView::Part::Next), message == WM_LBUTTONDOWN ? MK_LBUTTON : 0);
+    }
+    if (sidebar_->RenamingSpace() != id || findBar_->HasKeyboard()) return L"a press on the find bar's arrow took the keyboard";
+    for (UINT message : {WM_LBUTTONDOWN, WM_LBUTTONUP}) {
+        SendMouse(window_.Handle(), message, findBar_->ClientPointOf(FindBarView::Part::Field), message == WM_LBUTTONDOWN ? MK_LBUTTON : 0);
+    }
+    if (sidebar_->Renaming() || KeyboardOwner() != KeyboardField::Find) return L"a press in the find field didn't take the keyboard from the rename";
+    restore();
+    // The command bar takes it from the find field, and hands it to the page as it closes.
+    OpenCommandBar(CommandBarMode::NewTab);
+    if (KeyboardOwner() != KeyboardField::CommandBar || findBar_->HasKeyboard()) return L"the command bar didn't take the keyboard from the find field";
+    commandBar_->Hide();
+    if (KeyboardOwner() != KeyboardField::None || !findBar_->IsOpen()) return L"the command bar closing didn't leave the find bar open without the keyboard";
+    // Ctrl+F over the open command bar: its close mustn't hand the keyboard to the page, not by
+    // BlockPages' Focus (CEF's thread asks again as it runs it) and not by Chromium's own focus as
+    // the page windows are enabled again. First the page takes it from the close above, which it
+    // does on CEF's thread a moment later.
+    RunUntil([] { return false; }, 0.5);
+    // The field takes the window's focus from the page (a press in it) when the window is in front;
+    // a quiet run, which never is, checks the owner only (its pages never take the focus).
+    for (UINT message : {WM_LBUTTONDOWN, WM_LBUTTONUP}) {
+        SendMouse(window_.Handle(), message, findBar_->ClientPointOf(FindBarView::Part::FieldEnd), message == WM_LBUTTONDOWN ? MK_LBUTTON : 0);
+    }
+    const bool focused = GetFocus() == window_.Handle();
+    OpenCommandBar(CommandBarMode::NewTab);
+    ShowFind();
+    RunUntil([] { return false; }, 0.5);
+    if (KeyboardOwner() != KeyboardField::Find) return L"Ctrl+F over the command bar left the keyboard elsewhere";
+    if (focused && (GetFocus() != window_.Handle() || !findBar_->FieldFocused())) {
+        return L"Ctrl+F over the command bar: the page took the focus as the bar closed";
+    }
+    // A Shift-press in a field that has the keyboard extends from where the selection was: here
+    // from the query's end (a plain press past the text), not from its start.
+    ShowFind();
+    const size_t length = Widen(findBar_->Query().Query()).size();
+    const auto press = [&](FindBarView::Part part, WPARAM keys) {
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, findBar_->ClientPointOf(part), MK_LBUTTON | keys);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, findBar_->ClientPointOf(part), keys);
+    };
+    press(FindBarView::Part::FieldEnd, 0);
+    if (findBar_->FieldSelection() != std::pair<size_t, size_t>{length, length}) return L"a press past the query didn't put the caret at its end";
+    press(FindBarView::Part::FieldStart, MK_SHIFT);
+    if (const auto [start, end] = findBar_->FieldSelection(); end != length || start >= length) {
+        return L"a Shift-press in the find field didn't extend from the caret";
+    }
+    ShowFind();
+    return {};
+}
+
+void BrowserWindowController::SmokeTestFind(int count, int activeMatch, bool final) {
+    // A search's last report, once its first match is active (a new search reports twice: its
+    // highlights, then the step that makes the first match active).
+    if (!final || !findBar_) return;
+    const std::string label = findBar_->Query().Label();
+    switch (smokeFind_) {
+    case SmokeFind::Matching: {
+        if (activeMatch < 1) return;
+        // windows/helix/pages/smoke.html says "Kite smoke page" once in its body.
+        if (count != 1 || activeMatch != 1) return FailSmokeFind(L"\"kite SMOKE\" found " + std::to_wstring(count) + L" matches, the page has 1");
+        if (label != "1/1") return FailSmokeFind(L"the counter read \"" + Widen(label) + L"\" for 1 of 1");
+        // The page's window has its hole under the bar, and only there.
+        smokeFindFrame_ = findBar_->Frame();
+        const RECT& frame = smokeFindFrame_;
+        const POINT inside{(frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2};
+        const POINT outside{frame.left - 20, frame.bottom + 20};
+        // Its rounded corner is the page's, and the bar's opaque inside isn't.
+        const POINT corner{frame.left, frame.top};
+        if (chromium_->PageTakesClickAt(inside)) return FailSmokeFind(L"a click on the bar would reach the page");
+        if (!chromium_->PageTakesClickAt(outside)) return FailSmokeFind(L"a click on the page beside the bar wouldn't reach it");
+        if (!chromium_->PageTakesClickAt(corner)) return FailSmokeFind(L"the hole isn't rounded at the bar's corner");
+        if (std::wstring problem = SmokeTestKeyboard(); !problem.empty()) return FailSmokeFind(std::move(problem));
+        // Ctrl+F selected the query: this replaces it with one the page doesn't have.
+        smokeFind_ = SmokeFind::Missing;
+        findBar_->Type("kite zqxj");
+        return;
+    }
+    case SmokeFind::Missing: {
+        // A stale search's last report can still come; only no match counts.
+        if (count != 0) return;
+        if (label != "Not Found") return FailSmokeFind(L"the counter read \"" + Widen(label) + L"\" for no match");
+        smokeFind_ = SmokeFind::Done;
+        HideFindBar(false);
+        if (!findBar_->Query().Query().empty() || findBar_->IsOpen()) return FailSmokeFind(L"the bar didn't close");
+        // The hole goes with it, on CEF's thread.
+        const POINT inside{(smokeFindFrame_.left + smokeFindFrame_.right) / 2, (smokeFindFrame_.top + smokeFindFrame_.bottom) / 2};
+        if (!RunUntil([&] { return chromium_->PageTakesClickAt(inside); }, 2)) return FailSmokeFind(L"the page's hole stayed after the bar closed");
+        if (HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE); out && out != INVALID_HANDLE_VALUE) {
+            static constexpr char kReport[] =
+                "Kite smoke test: find in page read 1/1, then Not Found; the page's window had its rounded hole under the bar, "
+                "and lost it as the bar closed; the keyboard went to one field at a time\n";
+            DWORD written = 0;
+            WriteFile(out, kReport, static_cast<DWORD>(sizeof kReport - 1), &written, nullptr);
+        }
+        CloseWhenSmokeTestIsDone();
+        return;
+    }
+    case SmokeFind::Idle:
+    case SmokeFind::Done: return;
+    }
+}
+
+#endif  // KITE_HAS_CEF
 
 std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
     const auto ids = [&] {
@@ -585,7 +1095,7 @@ std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
     // Another app taking it doesn't end the rename (AppKit keeps a field's editing).
     if (std::wstring problem = HoldRename(index, "Elsewhere"); !problem.empty()) return problem;
     SendMessageW(window_.Handle(), WM_KILLFOCUS, 0, 0);
-    if (sidebar_->Renaming() != selected) return L"another app taking the keyboard ended the rename";
+    if (sidebar_->RenamingSpace() != selected) return L"another app taking the keyboard ended the rename";
     // The space menu opening ends it, keeping what was typed.
     if (OpenSpaceMenu(selected).empty() || sidebar_->Renaming() || state_.spaces[index].name != "Elsewhere") {
         return L"the space menu opening didn't end the rename";
@@ -603,7 +1113,7 @@ std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
     if (const std::optional<POINT> nameAt = sidebar_->HeaderNameCentre()) {
         SendMouse(window_.Handle(), WM_LBUTTONDOWN, *nameAt, MK_LBUTTON);
         SendMouse(window_.Handle(), WM_LBUTTONUP, *nameAt, 0);
-        if (sidebar_->Renaming() != selected) return L"a click on the space's name didn't rename it";
+        if (sidebar_->RenamingSpace() != selected) return L"a click on the space's name didn't rename it";
         SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
     } else {
         return L"the header has no name to click";
@@ -665,6 +1175,1229 @@ std::wstring BrowserWindowController::SmokeTestSpaceEditing() {
         if (std::wstring problem = RunToRest(L"A dropped swipe"); !problem.empty()) return problem;
         if (state_.selectedSpaceID != selected || ids() != order) return L"a dropped swipe moved the selection";
     }
+    frames_.clear();
+    return {};
+}
+
+namespace {
+
+// A click (press and release) in the icon picker's window at `at` (its client px).
+void ClickPicker(HWND picker, POINT at) {
+    SendMessageW(picker, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(at.x, at.y));
+    SendMessageW(picker, WM_LBUTTONUP, 0, MAKELPARAM(at.x, at.y));
+}
+
+}  // namespace
+
+std::wstring BrowserWindowController::HoldIconPicker(size_t index, IconPickerTab tab, std::optional<size_t> cell, std::optional<size_t> category) {
+    if (index >= state_.spaces.size()) return L"there's no such space";
+    const std::string id = state_.spaces[index].id;
+    const bool switches = state_.selectedSpaceID != id;
+    // From the header's icon (at once), after its space is selected and its page at rest.
+    if (switches) {
+        state_.SelectSpace(id);
+        SelectionMoved();
+        if (std::wstring problem = RunToRest(L"Change Space Icon"); !problem.empty()) return problem;
+    }
+    RequestIconPicker(id, false);
+    if (!iconPicker_->IsOpen()) return L"the icon picker didn't open";
+    if (iconPicker_->State()->tab != tab) {
+        const IconPickerLayout layout = LayOutIconPicker(iconPicker_->State()->tab, !state_.spaces[index].icon.empty());
+        const auto segment = static_cast<size_t>(std::find(std::begin(kIconPickerTabs), std::end(kIconPickerTabs), tab) - std::begin(kIconPickerTabs));
+        const PickerRect& r = layout.segments[segment];
+        ClickPicker(iconPicker_->Window(), iconPicker_->ContentToClient((r.left + r.right) / 2, (r.top + r.bottom) / 2));
+        if (iconPicker_->State()->tab != tab) return L"a click on the picker's tab didn't show it";
+    }
+    if (category) {
+        // A category's button in the bar along the bottom.
+        const IconPickerLayout layout = LayOutIconPicker(IconPickerTab::Emoji, !state_.spaces[index].icon.empty());
+        if (tab != IconPickerTab::Emoji || *category >= layout.categories.size()) return L"there's no such category";
+        const PickerRect& r = layout.categories[*category];
+        ClickPicker(iconPicker_->Window(), iconPicker_->ContentToClient((r.left + r.right) / 2, (r.top + r.bottom) / 2));
+        if (iconPicker_->State()->category != *category) return L"a click on the category didn't choose it";
+    }
+    if (!cell) return {};
+    const std::optional<POINT> at = iconPicker_->CellCentre(*cell);
+    if (!at) return L"the picker has no such cell";
+    const std::string before = state_.spaces[index].icon;
+    ClickPicker(iconPicker_->Window(), *at);
+    if (state_.spaces[index].icon == before) return L"a click on the picker's cell didn't change the icon";
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+    if (iconPicker_->IsOpen()) return L"Escape didn't close the picker";
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestIconPicker() {
+    const size_t index = state_.SelectedSpaceIndex();
+    const std::string id = state_.selectedSpaceID;
+    const std::string original = state_.spaces[index].icon;
+    const auto icon = [&] { return state_.spaces[index].icon; };
+    const auto open = [&] { return iconPicker_->IsOpen() && iconPicker_->SpaceID() == id; };
+    // From the space's menu: 0.15 s after it, the picker for that space, on the icon's tab.
+    state_.SetSpaceIcon(id, "");
+    StateChanged();
+    RunSpaceMenuItem(id, SpaceMenuItem::Command::ChangeIcon);
+    if (iconPicker_->IsOpen()) return L"it opened before the menu's 0.15 s";
+    if (sidebar_->IconPickerSpace() != id) return L"the header's placeholder didn't come with the menu's request";
+    if (!RunUntil(open, 2)) return L"Change Space Icon\u2026 didn't open it";
+    if (iconPicker_->State()->tab != IconPickerTab::Emoji) return L"it didn't open on the Emoji tab";
+    if (!IsWindowVisible(iconPicker_->Window())) return L"its window isn't shown";
+    // The whole catalog, but only the rows in view drawn.
+    if (iconPicker_->RowsDrawn() == 0 || iconPicker_->RowsDrawn() > 6) return L"the emoji grid drew rows out of view";
+    // The placeholder is the icon's button (the space has no icon): a click on it opens the picker
+    // again and renames nothing.
+    {
+        const std::optional<POINT> square = sidebar_->HeaderIconCentre();
+        if (!square) return L"the header has no placeholder to click";
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, *square, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, *square, 0);
+        if (!open() || sidebar_->Renaming() || sidebar_->IconPickerSpace() != id) return L"a click on the placeholder didn't open the picker again";
+    }
+    // The pointer over the grid draws nothing (the Mac's plain buttons have no hover).
+    const size_t draws = iconPicker_->Draws();
+    HWND picker = iconPicker_->Window();
+    for (size_t i = 0; i < 14; ++i) {
+        const POINT at = *iconPicker_->CellCentre(i);
+        SendMessageW(picker, WM_MOUSEMOVE, 0, MAKELPARAM(at.x, at.y));
+    }
+    if (iconPicker_->Draws() != draws) return L"moving over the grid drew";
+    // An emoji: the space has it at once, and the picker stays open with its bin.
+    ClickPicker(picker, *iconPicker_->CellCentre(2));
+    if (icon() != AllEmoji()[2] || !open()) return L"a click on an emoji didn't set it";
+    // A held cell draws only itself.
+    const POINT cellAt = *iconPicker_->CellCentre(4);
+    const size_t before = iconPicker_->Draws();
+    SendMessageW(picker, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(cellAt.x, cellAt.y));
+    if (iconPicker_->Draws() != before + 1) return L"a press on a cell drew more than the cell";
+    SendMessageW(picker, WM_LBUTTONUP, 0, MAKELPARAM(cellAt.x, cellAt.y));
+    if (icon() != AllEmoji()[4]) return L"letting go on a cell didn't set it";
+    // Search, typed as the keyboard would (the window keeps the keyboard): four grinning faces,
+    // and the third is 🤩.
+    for (const wchar_t c : std::wstring(L"grinning")) SendMessageW(window_.Handle(), WM_CHAR, c, 0);
+    if (iconPicker_->State()->query != "grinning") return L"typing didn't search";
+    ClickPicker(picker, *iconPicker_->CellCentre(2));
+    if (icon() != "\xF0\x9F\xA4\xA9") return L"a search's third emoji isn't \U0001F929";
+    // A category's button clears Search and scrolls to its first emoji; the wheel scrolls on.
+    const IconPickerLayout emoji = LayOutIconPicker(IconPickerTab::Emoji, true);
+    const PickerRect& animals = emoji.categories[1];
+    ClickPicker(picker, iconPicker_->ContentToClient((animals.left + animals.right) / 2, (animals.top + animals.bottom) / 2));
+    if (!iconPicker_->State()->query.empty() || iconPicker_->State()->scroll != 22 * icon_picker_metrics::kRowPitch) {
+        return L"Animals & Nature's button didn't scroll to it";
+    }
+    POINT wheel = iconPicker_->ContentToClient(100, emoji.grid.top + 50);
+    ClientToScreen(picker, &wheel);
+    SendMessageW(window_.Handle(), WM_MOUSEWHEEL, MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA)), MAKELPARAM(wheel.x, wheel.y));
+    if (iconPicker_->State()->scroll <= 22 * icon_picker_metrics::kRowPitch) return L"the wheel didn't scroll the grid";
+    if (iconPicker_->RowsDrawn() > 2 * 10 + 6) return L"the grid kept rows far from view";
+    // The Icon tab: a symbol, drawn as Windows draws it, set as symbol:NAME.
+    const PickerRect& iconTab = emoji.segments[1];
+    ClickPicker(picker, iconPicker_->ContentToClient((iconTab.left + iconTab.right) / 2, (iconTab.top + iconTab.bottom) / 2));
+    if (iconPicker_->State()->tab != IconPickerTab::Icon) return L"the Icon tab didn't show";
+    // Image is there, disabled.
+    const PickerRect& imageTab = emoji.segments[2];
+    ClickPicker(picker, iconPicker_->ContentToClient((imageTab.left + imageTab.right) / 2, (imageTab.top + imageTab.bottom) / 2));
+    if (iconPicker_->State()->tab != IconPickerTab::Icon) return L"the disabled Image tab showed";
+    ClickPicker(picker, *iconPicker_->CellCentre(1));
+    if (icon() != "symbol:bookmark.fill") return L"a click on a symbol didn't set it";
+    // The bin: no icon, and no bin.
+    const IconPickerLayout symbols = LayOutIconPicker(IconPickerTab::Icon, true);
+    ClickPicker(picker, iconPicker_->ContentToClient((symbols.remove->left + symbols.remove->right) / 2, (symbols.remove->top + symbols.remove->bottom) / 2));
+    if (!icon().empty() || !open()) return L"the bin didn't take the icon off";
+    // Opened again while open (the header's icon): the placeholder stays the new one's.
+    RequestIconPicker(id, false);
+    if (!open() || sidebar_->IconPickerSpace() != id) return L"opening it again lost the header's placeholder";
+    // Escape closes it.
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+    if (iconPicker_->IsOpen()) return L"Escape didn't close it";
+    if (sidebar_->IconPickerSpace()) return L"its placeholder stayed after Escape";
+    // A held cell let go elsewhere, then the mouse taken away: it goes back undimmed (its part drawn).
+    RequestIconPicker(id, false);
+    {
+        const POINT held = *iconPicker_->CellCentre(1);
+        SendMessageW(iconPicker_->Window(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(held.x, held.y));
+        const size_t drawn = iconPicker_->Draws();
+        ReleaseCapture();
+        if (iconPicker_->Draws() != drawn + 1) return L"a press the mouse was taken from didn't draw its cell undimmed";
+    }
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+    // From the header's icon, at once, on the tab of the icon it has.
+    state_.SetSpaceIcon(id, "symbol:leaf.fill");
+    StateChanged();
+    if (std::wstring problem = Draw(); !problem.empty()) return problem;
+    const std::optional<POINT> header = sidebar_->HeaderIconCentre();
+    if (!header) return L"the header has no icon";
+    SendMouse(window_.Handle(), WM_LBUTTONDOWN, *header, MK_LBUTTON);
+    SendMouse(window_.Handle(), WM_LBUTTONUP, *header, 0);
+    if (!open() || iconPicker_->State()->tab != IconPickerTab::Icon) return L"a click on the header's icon didn't open it on the Icon tab";
+    // A press elsewhere in the window (on the content card, where nothing takes it) closes it.
+    {
+        const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+        const POINT card{std::lround((kSidebarWidth + 200) * scale), std::lround(300 * scale)};
+        const std::string tab = state_.SelectedSpace().selectedTabID.value_or("");
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, card, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, card, 0);
+        if (iconPicker_->IsOpen()) return L"a press elsewhere didn't close it";
+        if (state_.SelectedSpace().selectedTabID.value_or("") != tab) return L"the press that closed it selected a tab";
+    }
+    if (sidebar_->IconPickerSpace()) return L"its placeholder stayed after it closed";
+    // Another space shown closes it (the header it hangs from goes).
+    if (state_.spaces.size() > 1) {
+        RequestIconPicker(id, false);
+        RunCommand(index + 1 < state_.spaces.size() ? "nextSpace" : "previousSpace");
+        if (iconPicker_->IsOpen()) return L"another space shown didn't close it";
+        if (std::wstring problem = RunToRest(L"A switch closing the picker"); !problem.empty()) return problem;
+        state_.SelectSpace(id);
+        SelectionMoved();
+        if (std::wstring problem = RunToRest(L"Back"); !problem.empty()) return problem;
+    }
+#ifdef KITE_HAS_CEF
+    // The keyboard is the picker's from its request: Kite's window taking the focus then (as it
+    // does in front; here its WM_SETFOCUS, with no activation) doesn't hand it on to the page
+    // (onFocus), and Kite's own focus of the page is held off meanwhile (KeepKeyboard), from the
+    // header's icon or through the menu's 0.15 s, and through a reopen or a replacement (Open
+    // closes the picker before it). Escape gives it up and hands it to the page; a deactivation
+    // or a press elsewhere gives it up and hands it to nothing (what was pressed decides).
+    if (chromium_) {
+        const auto holding = [&](const std::wstring& from, size_t handoffs, size_t releases) -> std::wstring {
+            RunUntil([] { return false; }, 0.3);
+            if (!open() || KeyboardOwner() != KeyboardField::IconPicker) return L"the keyboard isn't the picker's, " + from;
+            if (pageFocusHandoffs_ != handoffs) return L"the page was handed the keyboard, " + from;
+            if (pickerKeyboardReleases_ != releases || !chromium_->KeepsKeyboard()) return L"the picker's keyboard was let go, " + from;
+            return {};
+        };
+        const auto gaveUp = [&](const std::wstring& how, size_t handoffs, bool toPage) -> std::wstring {
+            if (iconPicker_->IsOpen() || pendingIconPicker_ || KeyboardOwner() != KeyboardField::None || chromium_->KeepsKeyboard()) {
+                return how + L" didn't give up the picker's keyboard";
+            }
+            if (pageFocusHandoffs_ != handoffs + (toPage ? 1 : 0)) {
+                return toPage ? how + L" didn't hand the keyboard to the page" : how + L" handed the keyboard to the page";
+            }
+            return {};
+        };
+        size_t handoffs = pageFocusHandoffs_;
+        testFocus_ = true;
+        RequestIconPicker(id, false);
+        testFocus_ = false;
+        size_t releases = pickerKeyboardReleases_;
+        if (std::wstring problem = holding(L"opened from the header's icon", handoffs, releases); !problem.empty()) return problem;
+        // Opened again from its button while open, then the menu's request over it.
+        RequestIconPicker(id, false);
+        if (std::wstring problem = holding(L"re-opened from its button", handoffs, releases); !problem.empty()) return problem;
+        RunSpaceMenuItem(id, SpaceMenuItem::Command::ChangeIcon);
+        if (KeyboardOwner() != KeyboardField::IconPicker || !chromium_->KeepsKeyboard()) return L"the menu's request over an open picker let its keyboard go";
+        if (!RunUntil([&] { return !pendingIconPicker_ && open(); }, 2)) return L"the menu's request over an open picker didn't open it";
+        if (std::wstring problem = holding(L"replaced through the menu", handoffs, releases); !problem.empty()) return problem;
+        SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+        if (std::wstring problem = gaveUp(L"Escape", handoffs, true); !problem.empty()) return problem;
+        // Through the menu's 0.15 s, with the window's focus taken as the request comes.
+        handoffs = pageFocusHandoffs_;
+        testFocus_ = true;
+        RunSpaceMenuItem(id, SpaceMenuItem::Command::ChangeIcon);
+        testFocus_ = false;
+        releases = pickerKeyboardReleases_;
+        if (KeyboardOwner() != KeyboardField::IconPicker || !chromium_->KeepsKeyboard()) return L"the menu's request didn't hold the keyboard for its 0.15 s";
+        if (!RunUntil(open, 2)) return L"Change Space Icon\u2026 didn't open it";
+        if (std::wstring problem = holding(L"opened through the menu", handoffs, releases); !problem.empty()) return problem;
+        // Another app coming forward closes it and hands the keyboard to nothing.
+        SendMessageW(window_.Handle(), WM_ACTIVATE, WA_INACTIVE, 0);
+        if (std::wstring problem = gaveUp(L"a deactivation", handoffs, false); !problem.empty()) return problem;
+        // A deactivation while the menu's request waits cancels it: nothing opens on the inactive window.
+        RunSpaceMenuItem(id, SpaceMenuItem::Command::ChangeIcon);
+        SendMessageW(window_.Handle(), WM_ACTIVATE, WA_INACTIVE, 0);
+        if (std::wstring problem = gaveUp(L"a deactivation during the menu's 0.15 s", handoffs, false); !problem.empty()) return problem;
+        RunUntil([] { return false; }, 0.3);
+        if (iconPicker_->IsOpen()) return L"the picker opened after a deactivation cancelled its request";
+        // A press elsewhere (the content card) closes it and hands the keyboard to nothing.
+        RequestIconPicker(id, false);
+        {
+            const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+            const POINT card{std::lround((kSidebarWidth + 200) * scale), std::lround(300 * scale)};
+            SendMouse(window_.Handle(), WM_LBUTTONDOWN, card, MK_LBUTTON);
+            SendMouse(window_.Handle(), WM_LBUTTONUP, card, 0);
+        }
+        if (std::wstring problem = gaveUp(L"a press elsewhere", handoffs, false); !problem.empty()) return problem;
+    }
+#endif
+    // A GPU lost inside Open (its redraw reports it, and the rebuild closes the picker before Open
+    // returns) is a failed open: no picker, so nothing holds the keyboard or the header's slot.
+    iconPicker_->LoseDeviceInNextOpenForTest();
+    RequestIconPicker(id, false);
+    if (iconPicker_->IsOpen()) return L"a picker lost inside its Open still showed";
+    if (KeyboardOwner() != KeyboardField::None || sidebar_->IconPickerSpace()) {
+        return L"a picker lost inside its Open kept the keyboard or the header's slot";
+    }
+#ifdef KITE_HAS_CEF
+    if (chromium_ && chromium_->KeepsKeyboard()) return L"a picker lost inside its Open kept the page off the keyboard";
+#endif
+    // And the rebuilt picker opens again, and Escape closes it.
+    RequestIconPicker(id, false);
+    if (!open() || KeyboardOwner() != KeyboardField::IconPicker) return L"the picker didn't open again after a lost GPU";
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+    if (iconPicker_->IsOpen() || KeyboardOwner() != KeyboardField::None) return L"Escape didn't close the picker after a lost GPU";
+    state_.SetSpaceIcon(id, original);
+    StateChanged();
+    frames_.clear();
+    return {};
+}
+
+std::wstring BrowserWindowController::HoldRowHover(size_t index) {
+    const std::optional<POINT> at = sidebar_->RowCentre(index);
+    if (!at) return L"there's no such row in view";
+    SendMouse(window_.Handle(), WM_MOUSEMOVE, *at, 0);
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestTabEditing() {
+    // Everything here is undone at the end: the session as it was, the pages it made closed.
+    const BrowserState before = state_;
+#ifdef KITE_HAS_CEF
+    holdPages_ = true;
+#endif
+    const auto done = [&](std::wstring problem) {
+        std::vector<std::string> made;
+        for (const Tab* tab : state_.SelectedSpace().AllTabs()) {
+            if (!before.FindTabByID(tab->id)) made.push_back(tab->id);
+        }
+        if (sidebar_->Renaming()) sidebar_->TakeRename();
+        state_ = before;
+#ifdef KITE_HAS_CEF
+        holdPages_ = false;
+#endif
+        ShowPage();
+        for (const std::string& id : made) PageGone(id);
+        StateChanged();
+        return problem;
+    };
+    const size_t space = state_.SelectedSpaceIndex();
+    const auto rowOf = [&](SidebarRow::Kind kind, const std::string& id) -> std::optional<size_t> {
+        const std::vector<SidebarRow>& rows = sidebar_->Rows();
+        for (size_t i = 0; i < rows.size(); ++i) {
+            if (rows[i].kind == kind && rows[i].id == id) return i;
+        }
+        return std::nullopt;
+    };
+    const auto typed = [&](std::wstring_view text) {
+        for (wchar_t c : text) SendMessageW(window_.Handle(), WM_CHAR, c, 0);
+    };
+
+    // Pin Tab (Ctrl+D's command): the selected tab goes to the end of the pinned items; again, to
+    // the top of Today.
+    const std::string tab = state_.OpenTab("data:text/html,pin", std::nullopt, true);
+    StateChanged();
+    if (!CommandEnabled("pinTab")) return done(L"Pin Tab is disabled with a tab selected");
+    RunCommand("pinTab");
+    const auto& pinned = state_.spaces[space].pinnedItems;
+    if (pinned.empty() || pinned.back().Id() != tab || !rowOf(SidebarRow::Kind::Tab, tab)) return done(L"Pin Tab didn't pin the tab last");
+    if (state_.FindTabByID(tab)->pinnedURL != "data:text/html,pin") return done(L"a pinned tab didn't remember its page");
+    RunCommand("pinTab");
+    if (state_.spaces[space].tabs.empty() || state_.spaces[space].tabs.front().id != tab || state_.FindTabByID(tab)->pinnedURL) {
+        return done(L"Unpin Tab didn't put the tab on top of Today");
+    }
+
+    // A double-click on its row renames it in place: a keystroke draws only the field, Return renames.
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    const auto row = rowOf(SidebarRow::Kind::Tab, tab);
+    const std::optional<POINT> at = row ? sidebar_->RowCentre(*row) : std::nullopt;
+    if (!at) return done(L"the test tab's row isn't in view");
+    // A press elsewhere first, so the row's two presses count from one.
+    SendMouse(window_.Handle(), WM_LBUTTONDOWN, POINT{0, 0}, MK_LBUTTON);
+    SendMouse(window_.Handle(), WM_LBUTTONUP, POINT{0, 0}, 0);
+    SendMouse(window_.Handle(), WM_LBUTTONDOWN, *at, MK_LBUTTON);
+    SendMouse(window_.Handle(), WM_LBUTTONUP, *at, 0);
+    if (sidebar_->Renaming()) return done(L"a single click on a tab's row renamed it");
+    SendMouse(window_.Handle(), WM_LBUTTONDOWN, *at, MK_LBUTTON);
+    SendMouse(window_.Handle(), WM_LBUTTONUP, *at, 0);
+    if (sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Tab, tab}) return done(L"a double-click on a tab's row didn't rename it");
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the tab's rename field couldn't draw: " + problem);
+    // A press in its row past the field's end (where the hidden close button would be) does nothing:
+    // the tab stays, still renaming.
+    if (const std::optional<POINT> end = sidebar_->RenameFieldEnd()) {
+        const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+        const POINT past{end->x + std::lround(4 * scale), end->y};
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, past, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, past, 0);
+        if (!state_.FindTabByID(tab)) return done(L"a press past a renamed tab's field closed the tab");
+        if (sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Tab, tab}) return done(L"a press in a renamed tab's row ended its rename");
+    } else {
+        return done(L"the tab's rename field has no place");
+    }
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the tab's rename field couldn't draw: " + problem);
+    const size_t pageDraws = sidebar_->PageDraws();
+    typed(L"Smoke");
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the tab's rename field couldn't draw: " + problem);
+    if (sidebar_->PageDraws() != pageDraws) return done(L"typing in a tab's rename drew its page, not only the field");
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
+    if (sidebar_->Renaming() || state_.FindTabByID(tab)->DisplayTitle() != "Smoke") return done(L"Return didn't rename the tab");
+#ifdef KITE_HAS_CEF
+    // A rename begun while the page has the keyboard keeps it: the window takes the focus (as it does
+    // in front; here its WM_SETFOCUS) once the field is open, so onFocus doesn't hand the keyboard on
+    // to the page, which would end the rename as it took it. A tab's (Rename Current Tab…) and a
+    // space's (Rename Space…).
+    if (chromium_) {
+        for (const bool spaceRename : {false, true}) {
+            const size_t handoffs = pageFocusHandoffs_;
+            testFocus_ = true;
+            if (spaceRename) BeginRenaming(state_.selectedSpaceID);
+            else RunCommand("renameCurrentTab");
+            testFocus_ = false;
+            if (!sidebar_->Renaming() || KeyboardOwner() != KeyboardField::Rename) return done(L"the rename didn't open");
+            if (pageFocusHandoffs_ != handoffs) {
+                return done(spaceRename ? L"Kite's window gave the page the keyboard as a space's rename opened"
+                                  : L"Kite's window gave the page the keyboard as a tab's rename opened");
+            }
+            SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+            if (sidebar_->Renaming()) return done(L"Escape didn't end the rename");
+        }
+    }
+#endif
+    // Rename Current Tab…: Escape keeps the name; a blank name goes back to the page's title.
+    RunCommand("renameCurrentTab");
+    typed(L"Not this");
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
+    if (sidebar_->Renaming() || state_.FindTabByID(tab)->DisplayTitle() != "Smoke") return done(L"Escape renamed the tab");
+    RunCommand("renameCurrentTab");
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_BACK, 0);
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
+    if (state_.FindTabByID(tab)->customTitle) return done(L"a blank name didn't take the tab's rename away");
+    // Pinning it mid-rename keeps the field on its row; its row going (into a closed folder) ends it,
+    // keeping what was typed.
+    RunCommand("renameCurrentTab");
+    typed(L"Moved");
+    RunCommand("pinTab");
+    if (sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Tab, tab}) return done(L"pinning a tab ended its rename");
+    const std::string closed = state_.CreateFolder("Closed", space);
+    state_.SetFolderExpanded(closed, false);
+    state_.MoveTabToFolder(tab, closed);
+    state_.spaces[space].selectedTabID = state_.spaces[space].tabs.empty() ? std::nullopt : std::optional(state_.spaces[space].tabs.front().id);
+    StateChanged();
+    if (sidebar_->Renaming() || state_.FindTabByID(tab)->DisplayTitle() != "Moved") return done(L"a rename whose row went didn't end, renamed");
+
+    // New Folder: "New Folder" at the end of the pinned items; renamed in its row (Return), and a
+    // blank name keeps it.
+    RunCommand("newFolder");
+    const auto* folder = pinned.empty() ? nullptr : std::get_if<Folder>(&pinned.back().value);
+    if (!folder || folder->name != "New Folder") return done(L"New Folder made no folder");
+    const std::string folderID = folder->id;
+    BeginRenamingFolder(folderID);
+    if (sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Folder, folderID}) return done(L"the folder's rename didn't open");
+    typed(L"Smoke folder");
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
+    if (!state_.FolderMatching(folderID) || state_.FolderMatching(folderID)->folder->name != "Smoke folder") return done(L"Return didn't rename the folder");
+    BeginRenamingFolder(folderID);
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_BACK, 0);
+    SendMessageW(window_.Handle(), WM_KEYDOWN, VK_RETURN, 0);
+    if (state_.FolderMatching(folderID)->folder->name != "Smoke folder") return done(L"a blank name renamed the folder");
+
+    // Duplicate Tab: a copy below the selected tab, selected.
+    const std::string original = state_.OpenTab("data:text/html,duplicate", std::nullopt, true);
+    StateChanged();
+    RunCommand("duplicate");
+    const auto& today = state_.spaces[space].tabs;
+    if (today.size() < 2 || today[0].id != original || today[1].url != "data:text/html,duplicate" || state_.SelectedTab()->id != today[1].id) {
+        return done(L"Duplicate Tab didn't put a copy below the tab");
+    }
+
+    // Back to Pinned URL: a pinned tab off its page shows the button on hover, and a click on it
+    // takes the tab home; Reset all tabs in this Space does the same for every one.
+    state_.Select(original);
+    // Reset all tabs in this Space is the space's: another pinned tab already off its page (a
+    // session's, as three-spaces.json's Docs) enables it before this one is pinned. What it should
+    // be comes from the space's pinned tabs, not from the command under test, before and after.
+    const auto spaceDrifted = [&] {
+        const auto pinnedTabs = state_.SelectedSpace().Pinned();
+        return std::any_of(pinnedTabs.begin(), pinnedTabs.end(), [](const Tab* t) { return t->HasLeftPinnedURL(); });
+    };
+    const bool drifted = spaceDrifted();
+    if (CommandEnabled("resetSpace") != drifted) return done(L"Reset all tabs in this Space didn't follow the space's pinned tabs");
+    RunCommand("pinTab");
+    if (CommandEnabled("resetTab")) return done(L"Reset was enabled for a tab on its pinned page");
+    if (spaceDrifted() != drifted || CommandEnabled("resetSpace") != drifted) {
+        return done(L"pinning a tab on its page changed Reset all tabs in this Space");
+    }
+    state_.TabAt(*state_.Location(original))->url = "data:text/html,away";
+    StateChanged();
+    if (!CommandEnabled("resetTab") || !CommandEnabled("resetSpace") || !CommandEnabled("replacePinnedTab")) {
+        return done(L"Reset wasn't enabled for a tab off its pinned page");
+    }
+    const auto pinnedRow = rowOf(SidebarRow::Kind::Tab, original);
+    const std::optional<POINT> reset = pinnedRow ? sidebar_->ResetButtonCentre(*pinnedRow) : std::nullopt;
+    if (!reset) return done(L"a pinned tab off its page has no Back to Pinned URL");
+    SendMouse(window_.Handle(), WM_MOUSEMOVE, *reset, 0);
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the hovered row couldn't draw: " + problem);
+    SendMouse(window_.Handle(), WM_LBUTTONDOWN, *reset, MK_LBUTTON);
+    SendMouse(window_.Handle(), WM_LBUTTONUP, *reset, 0);
+    if (state_.FindTabByID(original)->url != "data:text/html,duplicate") return done(L"Back to Pinned URL didn't take the tab home");
+    state_.TabAt(*state_.Location(original))->url = "data:text/html,away";
+    RunCommand("resetSpace");
+    if (state_.FindTabByID(original)->url != "data:text/html,duplicate") return done(L"Reset all tabs in this Space didn't take the tab home");
+    SendMouse(window_.Handle(), WM_MOUSELEAVE, POINT{}, 0);
+    return done({});
+}
+
+std::wstring BrowserWindowController::SmokeTestMiddleClick() {
+    // Everything here is undone at the end: the session as it was, the pages it made closed, the
+    // page that showed shown again.
+    const BrowserState before = state_;
+    const HWND window = window_.Handle();
+    const auto done = [&](std::wstring problem) {
+        SendMouse(window, WM_MOUSELEAVE, POINT{}, 0);
+        sidebar_->ClearHover();
+        if (sidebar_->Renaming()) sidebar_->TakeRename();
+        std::vector<std::string> made;
+        for (const Tab* tab : state_.SelectedSpace().AllTabs()) {
+            if (!before.FindTabByID(tab->id)) made.push_back(tab->id);
+        }
+        state_ = before;
+        ShowPage();
+        for (const std::string& id : made) PageGone(id);
+        StateChanged();
+        return problem;
+    };
+    const auto rowOf = [&](SidebarRow::Kind kind, const std::string& id) -> std::optional<size_t> {
+        const std::vector<SidebarRow>& rows = sidebar_->Rows();
+        for (size_t i = 0; i < rows.size(); ++i) {
+            if (rows[i].kind == kind && rows[i].id == id) return i;
+        }
+        return std::nullopt;
+    };
+    // Its page as Chromium has it (made or being made, not closed); without Chromium, no pages to check.
+    const auto hasPage = [&](const std::string& id) {
+#ifdef KITE_HAS_CEF
+        return !chromium_ || chromium_->HasPage(id);
+#else
+        (void)id;
+        return true;
+#endif
+    };
+    const auto pageGone = [&](const std::string& id) {
+#ifdef KITE_HAS_CEF
+        return !chromium_ || !chromium_->HasPage(id);
+#else
+        (void)id;
+        return true;
+#endif
+    };
+    // A middle click as the mouse sends it: pressed at `down`, moved to `up` and let go there.
+    const auto middleClick = [&](POINT down, POINT up) {
+        SendMouse(window, WM_MOUSEMOVE, down, 0);
+        SendMouse(window, WM_MBUTTONDOWN, down, MK_MBUTTON);
+        if (down.x != up.x || down.y != up.y) SendMouse(window, WM_MOUSEMOVE, up, MK_MBUTTON);
+        SendMouse(window, WM_MBUTTONUP, up, 0);
+    };
+
+    // A Today tab with its page on the card.
+    const std::string tab = state_.OpenTab("data:text/html,middle", std::nullopt, true);
+    StateChanged();
+    ShowPage();
+    if (!hasPage(tab)) return done(L"the middle-click test's tab got no page");
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    const auto row = rowOf(SidebarRow::Kind::Tab, tab);
+    const auto newTabRow = rowOf(SidebarRow::Kind::NewTab, state_.SelectedSpace().id);
+    const std::optional<POINT> at = row ? sidebar_->RowCentre(*row) : std::nullopt;
+    const std::optional<POINT> newTabAt = newTabRow ? sidebar_->RowCentre(*newTabRow) : std::nullopt;
+    if (!at || !newTabAt) return done(L"the middle-click test's tab or New Tab isn't in view");
+    const size_t tabsBefore = state_.SelectedSpace().AllTabs().size();
+
+    // Pressed on its row, then moved off onto New Tab and let go there: nothing closes or opens,
+    // and the press itself draws nothing.
+    SendMouse(window, WM_MOUSEMOVE, *at, 0);
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return done(L"the hovered row couldn't draw: " + problem);
+    const size_t draws = sidebar_->PageDraws();
+    SendMouse(window, WM_MBUTTONDOWN, *at, MK_MBUTTON);
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    if (sidebar_->PageDraws() != draws) return done(L"a middle press on a tab's row drew its page");
+    if (GetCapture() != window) return done(L"a middle press on a tab's row didn't take the mouse");
+    SendMouse(window, WM_MOUSEMOVE, *newTabAt, MK_MBUTTON);
+    SendMouse(window, WM_MBUTTONUP, *newTabAt, 0);
+    if (GetCapture() == window) return done(L"letting go of a middle press kept the mouse");
+    if (!state_.FindTabByID(tab) || !hasPage(tab) || state_.SelectedSpace().AllTabs().size() != tabsBefore) {
+        return done(L"a middle press moved off its row did something");
+    }
+
+    // Pressed and let go on its row: the tab closes and its page goes, as its close button does.
+    middleClick(*at, *at);
+    if (state_.FindTabByID(tab) || rowOf(SidebarRow::Kind::Tab, tab)) return done(L"a middle click on a Today tab's row didn't close it");
+    if (!pageGone(tab)) return done(L"a middle click on a Today tab's row left its page");
+    if (state_.archived.empty() || state_.archived.back().tab.id != tab) return done(L"a middle-clicked tab wasn't archived");
+
+    // Two more Today tabs (the second selected, on top) for the cases below.
+    const auto centreOf = [&](const std::string& id) -> std::optional<POINT> {
+        const auto r = rowOf(SidebarRow::Kind::Tab, id);
+        return r ? sidebar_->RowCentre(*r) : std::nullopt;
+    };
+    const std::string other = state_.OpenTab("data:text/html,middle-other", std::nullopt, true);
+    const std::string renamed = state_.OpenTab("data:text/html,middle-renamed", std::nullopt, true);
+    StateChanged();
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    std::optional<POINT> otherAt = centreOf(other), renamedAt = centreOf(renamed);
+    if (!otherAt || !renamedAt) return done(L"the middle-click test's tabs aren't in view");
+
+    // A press whose mouse capture is taken (another window takes it), or that the sidebar drops (the
+    // command bar opening), then let go on its row: nothing closes, and the mouse isn't kept.
+    SendMouse(window, WM_MOUSEMOVE, *otherAt, 0);
+    SendMouse(window, WM_MBUTTONDOWN, *otherAt, MK_MBUTTON);
+    ReleaseCapture();
+    SendMouse(window, WM_MBUTTONUP, *otherAt, 0);
+    if (!state_.FindTabByID(other) || GetCapture() == window) return done(L"a middle press that lost the mouse still closed its tab");
+    SendMouse(window, WM_MBUTTONDOWN, *otherAt, MK_MBUTTON);
+    sidebar_->ClearHover();
+    SendMouse(window, WM_MBUTTONUP, *otherAt, 0);
+    if (!state_.FindTabByID(other) || GetCapture() == window) return done(L"a middle press the sidebar dropped still closed its tab");
+
+    // A second press whose first never let go replaces it: let go on the second row, that tab
+    // closes, not the first's. (Then opened again where it was, for what follows.)
+    SendMouse(window, WM_MBUTTONDOWN, *otherAt, MK_MBUTTON);
+    SendMouse(window, WM_MBUTTONDOWN, *renamedAt, MK_MBUTTON);
+    SendMouse(window, WM_MBUTTONUP, *renamedAt, 0);
+    if (state_.FindTabByID(renamed) || !state_.FindTabByID(other) || GetCapture() == window) {
+        return done(L"a second middle press didn't replace the first");
+    }
+    if (state_.ReopenClosed(renamed) != renamed) return done(L"the middle-clicked tab didn't reopen");
+    StateChanged();
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    otherAt = centreOf(other);
+    renamedAt = centreOf(renamed);
+    if (!otherAt || !renamedAt) return done(L"the middle-click test's tabs aren't in view");
+
+    // While a tab is renamed: a middle click on its row does nothing (its close button is hidden),
+    // and one on another row ends the rename, keeping what was typed, then closes that row's tab.
+    state_.Select(renamed);
+    StateChanged();
+    RunCommand("renameCurrentTab");
+    for (wchar_t c : std::wstring_view(L"Kept")) SendMessageW(window, WM_CHAR, c, 0);
+    // In its field, and in its row left of the field (over the favicon), as a left press there.
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    const POINT renamedIcon{std::lround((sidebar_metrics::kPadding + sidebar_metrics::kIconInset) * scale), renamedAt->y};
+    for (const POINT point : {*renamedAt, renamedIcon}) {
+        middleClick(point, point);
+        if (!state_.FindTabByID(renamed) || sidebar_->Renaming() != SidebarView::RenameTarget{SidebarRow::Kind::Tab, renamed}) {
+            return done(L"a middle click on the row being renamed closed it or ended the rename");
+        }
+    }
+    middleClick(*otherAt, *otherAt);
+    if (sidebar_->Renaming() || !state_.FindTabByID(renamed) || state_.FindTabByID(renamed)->DisplayTitle() != "Kept") {
+        return done(L"a middle click on another row didn't end the rename, keeping what was typed");
+    }
+    if (state_.FindTabByID(other)) return done(L"a middle click that ended a rename didn't close its own row's tab");
+
+    // A space's cell in the bar: nothing.
+    if (const std::optional<POINT> cell = sidebar_->SpaceCellCentre(state_.SelectedSpaceIndex())) {
+        const std::string spaceID = state_.SelectedSpace().id;
+        const size_t count = state_.SelectedSpace().AllTabs().size();
+        middleClick(*cell, *cell);
+        if (state_.SelectedSpace().id != spaceID || state_.SelectedSpace().AllTabs().size() != count || GetCapture() == window) {
+            return done(L"a middle click on a space's cell did something");
+        }
+    } else {
+        return done(L"the selected space has no cell in the bar");
+    }
+
+    // A pinned tab: it unloads, as its close button does: its row stays, its page goes.
+    const std::string pinned = state_.OpenTab("data:text/html,middle-pinned", std::nullopt, true);
+    StateChanged();
+    RunCommand("pinTab");
+    ShowPage();
+    if (!hasPage(pinned)) return done(L"the middle-click test's pinned tab got no page");
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the sidebar couldn't draw: " + problem);
+    const auto pinnedRow = rowOf(SidebarRow::Kind::Tab, pinned);
+    const std::optional<POINT> pinnedAt = pinnedRow ? sidebar_->RowCentre(*pinnedRow) : std::nullopt;
+    if (!pinnedAt) return done(L"the middle-click test's pinned tab isn't in view");
+    middleClick(*pinnedAt, *pinnedAt);
+    const auto location = state_.Location(pinned);
+    if (!location || location->section != TabSection::Pinned || !rowOf(SidebarRow::Kind::Tab, pinned)) {
+        return done(L"a middle click on a pinned tab's row didn't keep it, as its close button does");
+    }
+    if (!pageGone(pinned)) return done(L"a middle click on a pinned tab's row didn't unload its page");
+
+    // A favorite (a blank one, which its close button would remove for good): nothing.
+    std::vector<Tab> grid = state_.Favorites();
+    Tab favorite;
+    favorite.id = NewUuid();
+    favorite.url = "about:blank";
+    favorite.title = "Kite middle-click favorite";
+    grid.push_back(favorite);
+    const size_t index = grid.size() - 1;
+    state_.SetFavorites(grid);
+    StateChanged();
+    if (std::wstring problem = Draw(); !problem.empty()) return done(L"the favorites couldn't draw: " + problem);
+    const std::optional<POINT> favoriteAt = sidebar_->FavoriteCentre(index);
+    if (!favoriteAt) return done(L"the middle-click test's favorite has no pane");
+    const std::optional<std::string> selected = state_.SelectedSpace().selectedTabID;
+    middleClick(*favoriteAt, *favoriteAt);
+    const std::vector<Tab> after = state_.Favorites();
+    if (after.size() != grid.size() || after.back().id != favorite.id || state_.SelectedSpace().selectedTabID != selected) {
+        return done(L"a middle click on a favorite did something");
+    }
+    if (GetCapture() == window) return done(L"a middle click on a favorite kept the mouse");
+    return done({});
+}
+
+std::wstring BrowserWindowController::SmokeTestLiveReset() {
+#ifdef KITE_HAS_CEF
+    const Tab* shown = state_.SelectedTab();
+    // The CI smoke's page (windows/helix/pages/smoke.html), whose neighbour audio.html is where it
+    // goes: a page of the same origin (file://, no network), so it stays in its renderer.
+    if (!chromium_) return {};  // a build or run without pages: nothing live to reset
+    // With pages, the smoke test runs on the CI's smoke page: anything else fails, rather than skip.
+    if (!firstPageMade_ || !shown || !shown->url || !shown->url->ends_with("/smoke.html")) {
+        return L"Back to Pinned URL's live check needs the shown tab on windows/helix/pages/smoke.html";
+    }
+    const std::string id = shown->id, home = *shown->url;
+    const bool wasPinned = state_.Location(id)->section == TabSection::Pinned;
+    // The page's reports (its address, its title) as the message loop would run them, for at most
+    // `seconds`; the window's timers go on meanwhile.
+    const auto wait = [&](const std::function<bool()>& done, double seconds) {
+        const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(seconds * 1000);
+        MSG message;
+        while (!done() && GetTickCount64() < deadline) {
+            chromium_->RunPending();
+            if (PeekMessageW(&message, window_.Handle(), WM_TIMER, WM_TIMER, PM_REMOVE)) DispatchMessageW(&message);
+            else Sleep(5);
+        }
+        return done();
+    };
+    const auto titled = [&](std::string_view prefix) {
+        const Tab* tab = state_.FindTabByID(id);
+        return tab && tab->title.starts_with(prefix);
+    };
+    const ULONGLONG closeAsked = closeAskedAt_;
+    const std::wstring problem = [&]() -> std::wstring {
+        if (!wasPinned) RunCommand("pinTab");
+        if (state_.FindTabByID(id)->pinnedURL != home) return L"pinning the shown tab didn't remember its page";
+        // Its page goes elsewhere, as a link would take it.
+        LoadInTab(id, home.substr(0, home.size() - std::string_view("smoke.html").size()) + "audio.html");
+        if (!wait([&] { return titled("audio:") && state_.CanReset(id); }, 15)) return L"the shown page didn't go elsewhere";
+        if (!CommandEnabled("resetTab")) return L"Reset Tab was disabled for the live page off its pinned page";
+        RunCommand("resetTab");
+        // Home, and done loading there (a navigation still under way would hold up the window's close).
+        const auto loaded = [&] {
+            const auto status = pageStatus_.find(id);
+            return status != pageStatus_.end() && !status->second.isLoading;
+        };
+        if (!wait([&] { return titled("Kite smoke page") && loaded(); }, 15)) return L"Back to Pinned URL didn't take the live page home";
+        if (state_.CanReset(id)) return L"the live page came home but still offers Back to Pinned URL";
+        return {};
+    }();
+    if (!wasPinned && state_.Location(id) && state_.Location(id)->section == TabSection::Pinned) RunCommand("pinTab");
+    // The first page's load may have asked the window to close while this held the loop: its
+    // deadline counts from now, when the loop gets back to it (this runs last in the smoke test).
+    if (closeAskedAt_ && closeAskedAt_ != closeAsked) closeAskedAt_ = GetTickCount64();
+    return problem;
+#else
+    return {};
+#endif
+}
+
+std::wstring BrowserWindowController::HoldFavoriteHover(size_t index) {
+    const std::optional<POINT> at = sidebar_->FavoriteCentre(index);
+    if (!at) return L"there's no such favorite";
+    SendMouse(window_.Handle(), WM_MOUSEMOVE, *at, 0);
+    return {};
+}
+
+std::wstring BrowserWindowController::HoldEmptyFavoritesHover() {
+    const FavoritesTray& tray = sidebar_->Favorites();
+    if (!tray.emptyState) return L"the favorites' empty state isn't showing";
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    // The pointer resting on the box, clear of its close button (the button's tooltip waits).
+    SendMouse(window_.Handle(), WM_MOUSEMOVE,
+              POINT{std::lround((tray.emptyFrame.left + 24) * scale), std::lround((tray.emptyFrame.top + 30) * scale)}, 0);
+    return sidebar_->FavoritesCloseShown() ? L"" : L"the empty state's close button didn't show";
+}
+
+std::wstring BrowserWindowController::ClickFavorite(size_t index) {
+    const std::optional<POINT> at = sidebar_->FavoriteCentre(index);
+    if (!at) return L"there's no such favorite";
+    std::string tabID;
+    size_t n = 0;
+    for (const FavoriteTile& tile : sidebar_->Favorites().tiles) {
+        for (const FavoritePane& pane : tile.panes) {
+            if (n++ == index) tabID = pane.tabID;
+        }
+    }
+    SendMouse(window_.Handle(), WM_MOUSEMOVE, *at, 0);
+    SendMouse(window_.Handle(), WM_LBUTTONDOWN, *at, MK_LBUTTON);
+    SendMouse(window_.Handle(), WM_LBUTTONUP, *at, 0);
+    if (!state_.SelectedTab() || state_.SelectedTab()->id != tabID) return L"the click didn't select the favorite";
+    // The pointer leaves the window, so the capture shows the selection at rest, as a session
+    // with it selected does.
+    SendMouse(window_.Handle(), WM_MOUSELEAVE, POINT{}, 0);
+    return {};
+}
+
+std::wstring BrowserWindowController::WaitForFavicons(double seconds, std::vector<std::string>& failed) {
+    if (!favicons_) return L"the capture has no favicons";
+    const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(seconds * 1000);
+    for (;;) {
+        // A draw asks for what it shows; what arrives draws again, and may ask for more (an icon at
+        // another size, a favorite's 16px icon for its colour), until a draw asks for nothing new.
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the sidebar couldn't draw: " + problem;
+        while (!favicons_->Idle() && GetTickCount64() < deadline) Sleep(5);
+        if (!favicons_->Idle()) return L"the favicons didn't arrive in time";
+        if (!favicons_->TakeResults()) break;
+        sidebar_->InvalidatePages();
+    }
+    for (const FavoriteTile& tile : sidebar_->Favorites().tiles) {
+        for (const FavoritePane& pane : tile.panes) {
+            if (pane.favicon.url && favicons_->Failed(*pane.favicon.url)) failed.push_back(*pane.favicon.url);
+        }
+    }
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestEmptyFavorites() {
+    // A fresh profile with no favorites: the empty state, until its close button dismisses it (the
+    // one-shot flag, written to the test profile), then back as it was.
+    if (!state_.Favorites().empty() || oneShotFlags_.Get(OneShotFlags::kFavoritesEmptyStateDismissed)) return {};
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the favorites couldn't draw: " + problem;
+    const FavoritesTray tray = sidebar_->Favorites();
+    if (!tray.emptyState || sidebar_->ListTop() != SidebarListTop(tray) || sidebar_->ListTop() <= sidebar_metrics::kHeaderAreaHeight) {
+        return L"a profile with no favorites doesn't show the empty state";
+    }
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    const auto client = [&](float x, float y) { return POINT{std::lround(x * scale), std::lround(y * scale)}; };
+    const std::wstring failure = [&]() -> std::wstring {
+        // The pointer over the box shows the close button: an opacity, nothing drawn.
+        const size_t draws = sidebar_->FavoriteSurfaceDraws();
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, client(tray.emptyFrame.left + 20, tray.emptyFrame.top + 20), 0);
+        if (!sidebar_->FavoritesCloseShown() || !sidebar_->CommitPending()) return L"hovering the empty state didn't show its close button";
+        sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0);
+        if (sidebar_->FavoriteSurfaceDraws() != draws) return L"hovering the empty state drew";
+        // Its close button acts only when let go over it: pressed and let go on the box, nothing.
+        const POINT close = client((tray.closeFrame.left + tray.closeFrame.right) / 2, (tray.closeFrame.top + tray.closeFrame.bottom) / 2);
+        const POINT box = client(tray.emptyFrame.left + 20, tray.emptyFrame.top + 20);
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, close, 0);
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, close, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, box, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, box, 0);
+        if (oneShotFlags_.Get(OneShotFlags::kFavoritesEmptyStateDismissed) || !sidebar_->Favorites().emptyState || GetCapture() == window_.Handle()) {
+            return L"letting go of the close button off it dismissed the empty state";
+        }
+        // Let go over it, it dismisses it: the page moves up under the address field.
+        SendMouse(window_.Handle(), WM_MOUSEMOVE, close, 0);
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, close, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, close, 0);
+        if (!oneShotFlags_.Get(OneShotFlags::kFavoritesEmptyStateDismissed) || sidebar_->Favorites().height != 0 ||
+            sidebar_->ListTop() != sidebar_metrics::kHeaderAreaHeight) {
+            return L"the empty state's close button didn't dismiss it";
+        }
+        if (!OneShotFlags::Load(options_.supportDirectory).Get(OneShotFlags::kFavoritesEmptyStateDismissed)) return L"the dismissal wasn't saved";
+        return {};
+    }();
+    sidebar_->ClearHover();
+    const std::string restored = oneShotFlags_.Set(OneShotFlags::kFavoritesEmptyStateDismissed, false);
+    sidebar_->SetFavoritesEmptyStateDismissed(false);
+    if (!restored.empty() && failure.empty()) return L"the empty state's flag couldn't be set back: " + Widen(restored);
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
+    return failure;
+}
+
+std::wstring BrowserWindowController::SmokeTestFavorites() {
+    if (std::wstring problem = SmokeTestEmptyFavorites(); !problem.empty()) return problem;
+    // Two favorites with no favicon (no network), added to the current profile's grid, then the
+    // session as it was.
+    const std::vector<Tab> before = state_.Favorites();
+    const size_t space = state_.SelectedSpaceIndex();
+    const std::optional<std::string> selected = state_.spaces[space].selectedTabID;
+    std::vector<Tab> grid = before;
+    for (const char* title : {"Kite smoke favorite", "Kite smoke favorite 2"}) {
+        Tab tab;
+        tab.id = NewUuid();
+        tab.url = "about:blank";
+        tab.title = title;
+        grid.push_back(std::move(tab));
+    }
+    const std::string first = grid[grid.size() - 2].id;
+    const size_t index = grid.size() - 2;
+    state_.SetFavorites(grid);
+    sidebar_->Update(state_, pagesAnchor_);
+    const std::wstring failure = [&]() -> std::wstring {
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the favorites couldn't draw: " + problem;
+        const FavoritesTray& tray = sidebar_->Favorites();
+        if (tray.tiles.size() != grid.size()) return L"the favorites didn't show";
+        if (sidebar_->ListTop() != SidebarListTop(tray) || sidebar_->ListTop() <= sidebar_metrics::kHeaderAreaHeight) {
+            return L"the space's page didn't start under the favorites";
+        }
+        const auto redraw = [&] { sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0); };
+        redraw();
+        // A hover is opacities, which the sidebar's next pass commits, drawing nothing.
+        const size_t draws = sidebar_->FavoriteSurfaceDraws();
+        size_t commits = sidebar_->Commits();
+        const std::vector<FavoriteLook> rest = sidebar_->FavoriteLooks();
+        const std::optional<POINT> at = sidebar_->FavoriteCentre(index);
+        if (!at) return L"the favorite has no pane";
+        if (std::wstring problem = HoldFavoriteHover(index); !problem.empty()) return problem;
+        if (!sidebar_->CommitPending()) return L"hovering a favorite wasn't to be committed";
+        redraw();
+        if (sidebar_->Commits() != commits + 1 || sidebar_->CommitPending()) return L"hovering a favorite wasn't committed";
+        if (sidebar_->FavoriteSurfaceDraws() != draws) return L"hovering a favorite drew";
+        if (!(sidebar_->FavoriteLooks()[index].fill > rest[index].fill) || sidebar_->FavoriteLooks()[index + 1] != rest[index + 1]) {
+            return L"hovering a favorite didn't brighten just its pane";
+        }
+        // The first hover over a pane makes the tooltips (comctl32 loads then, not at launch).
+        if (!sidebar_->FavoritesHaveTooltips()) return L"hovering a favorite made no tooltip";
+        // Selecting it is opacities too.
+        commits = sidebar_->Commits();
+        state_.Select(first);
+        sidebar_->Update(state_, pagesAnchor_);
+        redraw();
+        if (sidebar_->Commits() != commits + 1) return L"selecting a favorite wasn't committed";
+        if (sidebar_->FavoriteSurfaceDraws() != draws) return L"selecting a favorite drew";
+        const bool dark = !PrefersDarkForeground(state_.SelectedSpace().theme);
+        if (sidebar_->FavoriteLooks()[index] != FavoriteLookOf(true, true, dark, false)) return L"the selected favorite isn't filled white";
+        // A press between the panes is the grid's: no window drag, no row, nothing selected.
+        const FavoriteTile& tile = sidebar_->Favorites().tiles[index];
+        const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+        const POINT gap{std::lround((tile.frame.right + 2) * scale), std::lround((tile.frame.top + tile.frame.bottom) / 2 * scale)};
+        if (!sidebar_->HandleMouse(WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(gap.x, gap.y))) return L"the favorites' gap didn't take its press";
+        sidebar_->HandleMouse(WM_LBUTTONUP, 0, MAKELPARAM(gap.x, gap.y));
+        if (!state_.SelectedTab() || state_.SelectedTab()->id != first || GetCapture() == window_.Handle()) return L"a press between favorites did something";
+        return {};
+    }();
+    sidebar_->ClearHover();
+    state_.SetFavorites(before);
+    state_.spaces[space].selectedTabID = selected;
+    sidebar_->Update(state_, pagesAnchor_);
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
+    // From some favorites to none: the page back where the tray as it is now ends it, and (not
+    // dismissed) the empty state's layers made.
+    if (failure.empty() && before.empty()) {
+        const FavoritesTray& now = sidebar_->Favorites();
+        if (sidebar_->ListTop() != SidebarListTop(now) || !now.tiles.empty()) return L"the page didn't come back up when the favorites went";
+        if (now.emptyState && !sidebar_->FavoritesEmptyStateDrawn()) return L"the empty state didn't draw when the favorites went";
+    }
+    if (!failure.empty()) return failure;
+    return SmokeTestFavoritesScroll();
+}
+
+std::wstring BrowserWindowController::SmokeTestFavoritesScroll() {
+    // The list scrolled to its end under a tall grid (nine favorites, three rows), then the grid
+    // gone: the page starts higher, so it has less to scroll, and the scroll comes within it. Then
+    // the session as it was.
+    const std::vector<Tab> before = state_.Favorites();
+    const size_t space = state_.SelectedSpaceIndex();
+    const size_t tabsBefore = state_.spaces[space].tabs.size();
+    std::vector<Tab> grid = before;
+    for (int i = 0; i < 9; ++i) {
+        Tab tab;
+        tab.id = NewUuid();
+        tab.url = "about:blank";
+        tab.title = "Kite smoke favorite " + std::to_string(i + 1);
+        grid.push_back(std::move(tab));
+    }
+    // Enough of today's tabs that the list scrolls (never selected: no pages for them).
+    std::vector<std::string> added;
+    for (int i = 0; i < 30; ++i) added.push_back(state_.OpenTab("about:blank", state_.spaces[space].id, false));
+    state_.SetFavorites(grid);
+    sidebar_->Update(state_, pagesAnchor_);
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    RECT client{};
+    GetClientRect(window_.Handle(), &client);
+    const float height = static_cast<float>(client.bottom) / scale;
+    const auto maxScroll = [&] { return SidebarMaxScroll(SidebarRows(state_, space), height, scale, sidebar_->ListTop()); };
+    const std::wstring failure = [&]() -> std::wstring {
+        const POINT overList{std::lround(100 * scale), std::lround((sidebar_->ListTop() + 40) * scale)};
+        if (!sidebar_->ScrollList(overList, 100000)) return L"the list under the favorites took no scroll";
+        const float tall = sidebar_->ListScroll();
+        if (tall <= 0 || tall != maxScroll()) return L"the list under the favorites didn't scroll to its end";
+        // The grid goes (to the empty state or none): less to scroll, and the scroll within it.
+        state_.SetFavorites(before);
+        sidebar_->Update(state_, pagesAnchor_);
+        if (!(maxScroll() < tall)) return L"the page had no less to scroll without the grid";
+        if (sidebar_->ListScroll() > maxScroll()) return L"the list's scroll stayed past its end when the favorites went";
+        return {};
+    }();
+    state_.SetFavorites(before);
+    auto& tabs = state_.spaces[space].tabs;
+    std::erase_if(tabs, [&](const Tab& tab) { return std::find(added.begin(), added.end(), tab.id) != added.end(); });
+    sidebar_->Update(state_, pagesAnchor_);
+    if (tabs.size() != tabsBefore && failure.empty()) return L"the smoke test's tabs didn't go";
+    if (std::wstring problem = sidebar_->Draw(); !problem.empty() && failure.empty()) return L"the favorites couldn't draw: " + problem;
+    return failure;
+}
+
+std::wstring BrowserWindowController::HoldCreateSpace(const std::string& name, const std::string& about, std::optional<size_t> preset) {
+    // + › New Space, as its menu item runs it, its space sliding in to rest.
+    RunNewItem(NewItemMenuItem::Command::NewSpace);
+    if (!sidebar_->CreationShown()) return L"New Space didn't open Create a Space";
+    if (sidebarSliding_) {
+        if (std::wstring problem = RunToRest(L"New Space"); !problem.empty()) return problem;
+    }
+    SpaceCreationView& page = sidebar_->Creation();
+    page.Type(SpaceCreationView::Field::Name, name);
+    page.Type(SpaceCreationView::Field::About, about);
+    if (preset) {
+        // Choose a Theme pressed and let go, then the swatch, in the popover's own window (a quiet
+        // run's never shows): it stays open over the page, as the Mac's popover does.
+        const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+        const D2D1_POINT_2F row = *page.CentreOf(SpaceCreationPart::ChooseTheme);
+        const POINT at{std::lround((row.x + sidebar_->Left()) * scale), std::lround(row.y * scale)};
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, at, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, at, 0);
+        if (!swatches_ || !swatches_->IsOpen()) return L"Choose a Theme didn't open its swatches";
+        const std::optional<POINT> swatch = swatches_->SwatchPoint(*preset);
+        if (!swatch) return L"there's no such preset";
+        SendMouse(swatches_->Window(), WM_LBUTTONDOWN, *swatch, MK_LBUTTON);
+        SendMouse(swatches_->Window(), WM_LBUTTONUP, *swatch, 0);
+        if (!creation_ || !creation_->themeChosen) return L"the swatch didn't pick a theme";
+        // Its crossfade run to its end.
+        if (!RunUntil([this] { return !theme_.Fading(); }, 3)) return L"the theme's crossfade never ended";
+        BarRect theme = page.Geometry().theme;
+        theme.left += sidebar_->Left();
+        theme.right += sidebar_->Left();
+        heldSwatches_ = theme;
+    }
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestNewSpace() {
+    const auto ids = [&] {
+        std::vector<std::string> now;
+        for (const Space& space : state_.spaces) now.push_back(space.id);
+        return now;
+    };
+    const std::vector<std::string> order = ids();
+    const std::string selected = state_.selectedSpaceID;
+    const size_t selectedIndex = state_.SelectedSpaceIndex();
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    SpaceCreationView& page = sidebar_->Creation();
+    using Field = SpaceCreationView::Field;
+    const auto client = [&](SpaceCreationPart part) {
+        const D2D1_POINT_2F p = *page.CentreOf(part);
+        return POINT{std::lround((p.x + sidebar_->Left()) * scale), std::lround(p.y * scale)};
+    };
+    const auto click = [&](POINT at) {
+        SendMouse(window_.Handle(), WM_LBUTTONDOWN, at, MK_LBUTTON);
+        SendMouse(window_.Handle(), WM_LBUTTONUP, at, 0);
+    };
+    const auto type = [&](std::wstring_view text) {
+        for (wchar_t c : text) SendMessageW(window_.Handle(), WM_CHAR, c, 0);
+    };
+    const auto key = [&](UINT vk) { SendMessageW(window_.Handle(), WM_KEYDOWN, vk, 0); };
+    const auto drawn = [&]() -> std::wstring {
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"Create a Space couldn't draw: " + problem;
+        compositor_->Commit();
+        return {};
+    };
+    const auto settle = [&](const wchar_t* what) -> std::wstring { return sidebarSliding_ ? RunToRest(what) : L""; };
+    // However the test ends, the + menu goes back to Windows' own.
+    using ShowMenu = decltype(showNewItemMenu_);
+    struct Restore {
+        ShowMenu& slot;
+        ShowMenu saved;
+        ~Restore() { slot = std::move(saved); }
+    } restore{showNewItemMenu_, showNewItemMenu_};
+
+    // A click on the + button opens its menu with the Mac's items; New Space from it.
+    std::vector<NewItemMenuItem> shown;
+    NewItemMenuItem::Command pick = NewItemMenuItem::Command::NewSpace;
+    showNewItemMenu_ = [&](const std::vector<NewItemMenuItem>& items, POINT) -> std::optional<NewItemMenuItem::Command> {
+        shown = items;
+        return pick;
+    };
+    const std::optional<POINT> plus = sidebar_->PlusCentre();
+    if (!plus) return L"the + button has no place";
+    click(*plus);
+    if (shown != NewItemMenu(shortcuts_) || shown.size() != 5) return L"a click on the + button didn't open the + menu";
+    if (!creation_ || !sidebar_->CreationShown() || state_.spaces.size() != order.size() + 1) return L"New Space didn't open Create a Space";
+    const std::string draft = creation_->spaceID;
+    if (state_.selectedSpaceID != draft || state_.SpaceIndex(draft) != selectedIndex + 1) return L"New Space's space isn't right after the one it came from";
+    if (std::wstring problem = settle(L"New Space"); !problem.empty()) return problem;
+    // The bar keeps only the spaces; the name field has the keyboard (onAppear).
+    if (sidebar_->PlusCentre()) return L"Create a Space left the + button in the bar";
+    if (KeyboardOwner() != KeyboardField::Creation || page.KeyboardField() != Field::Name) return L"Create a Space's name field didn't take the keyboard";
+    if (std::wstring problem = drawn(); !problem.empty()) return problem;
+    // One system caret a thread: Tab hands it from the name field to the other and back, the losing
+    // field's DestroyCaret coming first. The window's focus is a delivered WM_SETFOCUS with no
+    // activation (a quiet run never comes to the front), and a WM_KILLFOCUS for another app after.
+    {
+        const auto caretOwner = [] {
+            GUITHREADINFO info{};
+            info.cbSize = sizeof(info);
+            return GetGUIThreadInfo(GetCurrentThreadId(), &info) ? info.hwndCaret : nullptr;
+        };
+        testFocus_ = true;
+        const size_t handoffs = pageFocusHandoffs_;
+        TakeKeyboardForCreation(Field::Name);
+        const bool named = page.FieldFocused(Field::Name) && caretOwner() == window_.Handle();
+        key(VK_TAB);
+        const bool about = page.FieldFocused(Field::About) && !page.FieldFocused(Field::Name) && caretOwner() == window_.Handle();
+        key(VK_TAB);
+        const bool back = page.FieldFocused(Field::Name) && caretOwner() == window_.Handle();
+        SendMessageW(window_.Handle(), WM_KILLFOCUS, 0, 0);
+        testFocus_ = false;
+        if (!named || !about || !back) return L"Tab between Create a Space's fields lost the system caret";
+        if (caretOwner()) return L"Create a Space's fields left a system caret without the keyboard";
+        // The window's focus coming with the field's never handed the keyboard to the page.
+        if (pageFocusHandoffs_ != handoffs || page.KeyboardField() != Field::Name) return L"the window's focus took the keyboard from the name field";
+    }
+    // Rename Space… on the space being made renames it in the page's name field (there's no header
+    // to rename in), and New Folder there leaves the keyboard where it is.
+    RunSpaceMenuItem(draft, SpaceMenuItem::Command::Rename);
+    if (sidebar_->Renaming() || KeyboardOwner() != KeyboardField::Creation || page.KeyboardField() != Field::Name) {
+        return L"Rename Space… on the space being made didn't go to the page's name field";
+    }
+    RunSpaceMenuItem(draft, SpaceMenuItem::Command::NewFolder);
+    if (sidebar_->Renaming() || KeyboardOwner() != KeyboardField::Creation) return L"New Folder on the space being made took the keyboard";
+    state_.spaces[*state_.SpaceIndex(draft)].pinnedItems.clear();
+    StateChanged();
+    // Return with no name creates nothing (Create Space is disabled).
+    key(VK_RETURN);
+    if (!creation_ || page.CanCreate()) return L"Return with no name created a space";
+    // Typing draws only the field: the first letter Create Space too (it turns on), the next not.
+    const size_t pageDraws = page.PageDraws(), fieldDraws = page.FieldDraws(), createDraws = page.CreateDraws();
+    const size_t sidebarDraws = sidebar_->PageDraws();
+    type(L"S");
+    if (page.Text(Field::Name) != "S" || page.FieldDraws() != fieldDraws + 1 || page.CreateDraws() != createDraws + 1) {
+        return L"the first letter of a name didn't draw the field and Create Space";
+    }
+    type(L"moke");
+    if (page.Text(Field::Name) != "Smoke" || page.FieldDraws() != fieldDraws + 5 || page.CreateDraws() != createDraws + 1 ||
+        page.PageDraws() != pageDraws || sidebar_->PageDraws() != sidebarDraws) {
+        return L"typing a name drew more than its field";
+    }
+    // Tab to What's it for?, which takes the keyboard.
+    key(VK_TAB);
+    if (page.KeyboardField() != Field::About) return L"Tab didn't move to the What's it for? field";
+    type(L"Smoke tests");
+    // Choose a Theme opens its swatches; one picked sets the theme (its intensity kept) and they stay open.
+    const float tint = state_.SelectedSpace().theme.tint;
+    click(client(SpaceCreationPart::ChooseTheme));
+    if (!swatches_ || !swatches_->IsOpen() || swatches_->Draws() == 0) return L"Choose a Theme didn't open its swatches";
+    const std::optional<POINT> swatch = swatches_->SwatchPoint(3);
+    if (!swatch) return L"the swatches have no fourth preset";
+    SendMouse(swatches_->Window(), WM_LBUTTONDOWN, *swatch, MK_LBUTTON);
+    SendMouse(swatches_->Window(), WM_LBUTTONUP, *swatch, 0);
+    if (PresetOf(state_.SelectedSpace().theme) != std::optional<size_t>(3) || state_.SelectedSpace().theme.tint != tint ||
+        !creation_->themeChosen || !swatches_->IsOpen()) {
+        return L"a swatch didn't set the space's theme";
+    }
+    // While they're open the swatches hold the keyboard (the page's field lets it go); Choose a Theme
+    // pressed again opens them again, keeping it; Escape closes them and nothing else, giving the
+    // keyboard back to the field that had it.
+    if (KeyboardOwner() != KeyboardField::ThemeSwatches || page.HasKeyboard()) return L"the swatches didn't take the keyboard";
+    click(client(SpaceCreationPart::ChooseTheme));
+    if (!swatches_->IsOpen() || KeyboardOwner() != KeyboardField::ThemeSwatches) return L"Choose a Theme pressed again let the swatches' keyboard go";
+    key(VK_ESCAPE);
+    if (swatches_->IsOpen() || !creation_) return L"Escape over the swatches didn't close just them";
+    if (KeyboardOwner() != KeyboardField::Creation || page.KeyboardField() != Field::About) return L"Escape over the swatches didn't give the keyboard back";
+    // A press in the page (its window tells Kite's) closes them too, handing the keyboard to nothing.
+    const size_t handoffs = pageFocusHandoffs_;
+    click(client(SpaceCreationPart::ChooseTheme));
+    SendMessageW(window_.Handle(), WM_PARENTNOTIFY, MAKEWPARAM(WM_LBUTTONDOWN, 0), MAKELPARAM(900, 300));
+    if (swatches_->IsOpen()) return L"a press in the page didn't close the swatches";
+    if (pageFocusHandoffs_ != handoffs || KeyboardOwner() != KeyboardField::None) return L"a press closing the swatches handed the keyboard on";
+    // So does the window going to the back, also handing nothing.
+    click(client(SpaceCreationPart::ChooseTheme));
+    SendMessageW(window_.Handle(), WM_ACTIVATE, WA_INACTIVE, 0);
+    if (swatches_->IsOpen() || pageFocusHandoffs_ != handoffs || KeyboardOwner() != KeyboardField::None) {
+        return L"the window going to the back didn't close the swatches, or handed the keyboard on";
+    }
+    // A failed open (a lost GPU on the way) leaves nothing holding the keyboard.
+    swatches_->LoseDeviceInOpenForTest();
+    click(client(SpaceCreationPart::ChooseTheme));
+    if (swatches_->IsOpen() || swatchesKeyboard_ || KeyboardOwner() == KeyboardField::ThemeSwatches) return L"a swatches open lost on the way kept the keyboard";
+    if (std::wstring problem = Draw(); !problem.empty()) return L"Kite couldn't rebuild after the swatches' lost GPU: " + problem;
+    // A press elsewhere in the window closes them too.
+    click(client(SpaceCreationPart::ChooseTheme));
+    click(client(SpaceCreationPart::NameField));
+    if (swatches_->IsOpen() || page.KeyboardField() != Field::Name) return L"a press in the name field didn't close the swatches and take the keyboard";
+    // The profile's pill lists the profiles (the default one at least) and sets the one picked.
+    {
+        size_t listed = 0;
+        const auto saved = showProfileMenu_;
+        showProfileMenu_ = [&](const std::vector<ContextMenuEntry>& entries, POINT) -> std::optional<size_t> {
+            listed = entries.size();
+            return 0;
+        };
+        click(client(SpaceCreationPart::ProfilePill));
+        showProfileMenu_ = saved;
+        if (listed != AllProfiles(state_).size() || listed == 0 || SpaceProfile(state_.SelectedSpace())) {
+            return L"the profile's pill didn't list the profiles and keep the default one";
+        }
+        click(client(SpaceCreationPart::NameField));
+    }
+    // Return creates it: named, described, right after the one it came from, selected, and the page gone.
+    key(VK_RETURN);
+    const auto index = state_.SpaceIndex(draft);
+    if (creation_ || sidebar_->CreationShown() || !index || state_.spaces[*index].name != "Smoke" ||
+        SpaceAbout(state_.spaces[*index]) != std::optional<std::string>("Smoke tests") || state_.selectedSpaceID != draft) {
+        return L"Return didn't create the space";
+    }
+    if (KeyboardOwner() == KeyboardField::Creation || !sidebar_->PlusCentre()) return L"creating the space left the page's keyboard or hid the + button";
+    state_.DeleteSpace(draft);
+    state_.SelectSpace(selected);
+    SelectionMoved();
+    if (std::wstring problem = settle(L"Back from the made space"); !problem.empty()) return problem;
+
+    // Escape cancels: the space goes and the one it came from shows again.
+    RunCommand("newSpace");
+    if (!creation_ || !sidebar_->CreationShown()) return L"the newSpace command didn't open Create a Space";
+    if (std::wstring problem = settle(L"New Space"); !problem.empty()) return problem;
+    type(L"Not this");
+    key(VK_ESCAPE);
+    if (creation_ || ids() != order || state_.selectedSpaceID != selected) return L"Escape didn't cancel Create a Space";
+    if (std::wstring problem = settle(L"Cancel"); !problem.empty()) return problem;
+
+    // Another space selected: the page goes (the creation stays); New Space again goes back to it,
+    // its fields empty again (the Mac's @State goes with its view). Then the Cancel button.
+    RunNewItem(NewItemMenuItem::Command::NewSpace);
+    if (std::wstring problem = settle(L"New Space"); !problem.empty()) return problem;
+    type(L"Away");
+    state_.SelectSpace(selected);
+    SelectionMoved();
+    if (sidebar_->CreationShown() || !creation_ || KeyboardOwner() == KeyboardField::Creation) return L"another space selected didn't hide Create a Space";
+    if (std::wstring problem = settle(L"Away from Create a Space"); !problem.empty()) return problem;
+    RunCommand("newSpace");
+    if (!sidebar_->CreationShown() || state_.spaces.size() != order.size() + 1 || !page.Text(Field::Name).empty()) {
+        return L"New Space with a page open didn't go back to it";
+    }
+    if (std::wstring problem = settle(L"Back to Create a Space"); !problem.empty()) return problem;
+    if (std::wstring problem = drawn(); !problem.empty()) return problem;
+    click(client(SpaceCreationPart::Cancel));
+    if (creation_ || ids() != order || state_.selectedSpaceID != selected) return L"Cancel didn't cancel Create a Space";
+    if (std::wstring problem = settle(L"Cancel"); !problem.empty()) return problem;
+
+    // Create Space, clicked, once there's a name; the command bar opening takes the keyboard first.
+    RunNewItem(NewItemMenuItem::Command::NewSpace);
+    if (std::wstring problem = settle(L"New Space"); !problem.empty()) return problem;
+    if (std::wstring problem = drawn(); !problem.empty()) return problem;
+    click(client(SpaceCreationPart::Create));
+    if (!creation_) return L"Create Space with no name created a space";
+    OpenCommandBar(CommandBarMode::NewTab);
+    if (KeyboardOwner() != KeyboardField::CommandBar || page.HasKeyboard()) return L"the command bar didn't take the keyboard from Create a Space";
+    commandBar_->Hide();
+    click(client(SpaceCreationPart::NameField));
+    if (KeyboardOwner() != KeyboardField::Creation) return L"a press in the name field didn't take the keyboard back";
+    type(L"Clicked");
+    const std::string made = creation_->spaceID;
+    click(client(SpaceCreationPart::Create));
+    if (creation_ || !state_.SpaceIndex(made) || state_.spaces[*state_.SpaceIndex(made)].name != "Clicked") return L"Create Space didn't create the space";
+    state_.DeleteSpace(made);
+    state_.SelectSpace(selected);
+    SelectionMoved();
+    if (std::wstring problem = settle(L"Back from the made space"); !problem.empty()) return problem;
+
+    // Delete Space on the space being made cancels it.
+    RunNewItem(NewItemMenuItem::Command::NewSpace);
+    if (std::wstring problem = settle(L"New Space"); !problem.empty()) return problem;
+    RunSpaceMenuItem(creation_->spaceID, SpaceMenuItem::Command::Delete);
+    if (creation_ || ids() != order || state_.selectedSpaceID != selected) return L"Delete Space on the space being made didn't cancel it";
+    if (std::wstring problem = settle(L"Delete Space"); !problem.empty()) return problem;
+
+    // The + menu's New Folder and New Tab run theirs; New Split is disabled.
+    const size_t pinned = state_.spaces[selectedIndex].pinnedItems.size();
+    pick = NewItemMenuItem::Command::NewFolder;
+    click(*sidebar_->PlusCentre());
+    if (state_.spaces[selectedIndex].pinnedItems.size() != pinned + 1) return L"the + menu's New Folder made no folder";
+    state_.spaces[selectedIndex].pinnedItems.pop_back();
+    StateChanged();
+    pick = NewItemMenuItem::Command::NewTab;
+    click(*sidebar_->PlusCentre());
+    if (!commandBar_->IsOpen()) return L"the + menu's New Tab didn't open the command bar";
+    commandBar_->Hide();
+    if (shown[3].command != NewItemMenuItem::Command::NewSplit || shown[3].enabled) return L"New Split isn't disabled";
+    if (ids() != order || state_.selectedSpaceID != selected) return L"the + menu left the spaces changed";
     frames_.clear();
     return {};
 }

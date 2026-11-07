@@ -92,6 +92,10 @@ public enum AutomationCommand: Hashable, Sendable {
     case tabsCreate(url: String?, active: Bool, placement: TabPlacement)
     case tabsClose(tab: String)
     case switchTab(tab: String)
+    /// Claude says what a tab's state is: working there, or done (with what it did). Needs-you is a handoff's.
+    case tabStatus(tab: String?, state: ClaudeTabState.Declared.Kind, note: String?)
+    /// The user's ordinary form details (`FormProfile`): read, change (the user allows it), or check an address.
+    case formProfile(FormProfile.Request)
     /// `newTab` opens the URL in a new background tab. "back" and "forward" move through history.
     case navigate(tab: String?, url: String, newTab: Bool)
     case resizeWindow(width: Int, height: Int)
@@ -112,6 +116,8 @@ public enum AutomationCommand: Hashable, Sendable {
     case javascript(tab: String?, code: String)
     case waitFor(tab: String?, condition: WaitCondition, timeout: Double)
     case handleDialog(tab: String?, accept: Bool, promptText: String?)
+    /// The JavaScript dialogs pages showed on a tab (nil: every tab Kite logged them on), open or answered. See `DialogLog`.
+    case dialogs(tab: String?)
     case uploadFile(tab: String?, target: AutomationTarget, paths: [String])
     /// Hands a login page to the user to sign in (with their password manager), and waits. See `SignInHandoff`.
     case signIn(tab: String?, reason: String?)
@@ -122,6 +128,8 @@ public enum AutomationCommand: Hashable, Sendable {
 
     // Debugging
     case readConsole(tab: String?, pattern: String?, onlyErrors: Bool, limit: Int, clear: Bool)
+    /// An extension's background worker's console (by name or id) instead of a tab's.
+    case readExtensionConsole(extension: String, pattern: String?, onlyErrors: Bool, limit: Int, clear: Bool)
     case readNetwork(tab: String?, urlPattern: String?, limit: Int, clear: Bool)
     /// Kite's HAR-style log across tabs, from a cursor. `query.tab` nil means every tab.
     case networkLog(query: NetworkLog.Query)
@@ -148,6 +156,9 @@ public enum AutomationCommand: Hashable, Sendable {
     /// Kite's own native UI, for debugging Kite itself (Diagnostics for Claude).
     case ui(UIInspection)
 
+    /// The action trace's timings (`Trace`): the caller's own calls by default, or a session, tab or everyone's.
+    case trace(TraceRequest)
+
     /// Several tool calls in one round trip, run in order. It stops at the first error, and before any
     /// step that needs the user's OK (that step is then called on its own).
     indirect case batch(steps: [AutomationCommand])
@@ -164,6 +175,8 @@ public enum AutomationCommand: Hashable, Sendable {
         case tabsCreate = "tabs_create"
         case tabsClose = "tabs_close"
         case switchTab = "switch_tab"
+        case tabStatus = "tab_status"
+        case formProfile = "form_profile"
         case navigate
         case resizeWindow = "resize_window"
         case readPage = "read_page"
@@ -177,6 +190,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case javascript
         case waitFor = "wait_for"
         case handleDialog = "handle_dialog"
+        case dialogs
         case uploadFile = "upload_file"
         case signIn = "sign_in"
         case handoff
@@ -196,6 +210,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case moveToFolder = "move_to_folder"
         case vpn
         case ui
+        case trace
         case batch
 
         /// Older or Claude-in-Chrome names that still work but aren't listed.
@@ -221,6 +236,8 @@ public enum AutomationCommand: Hashable, Sendable {
         case .tabsCreate: .tabsCreate
         case .tabsClose: .tabsClose
         case .switchTab: .switchTab
+        case .tabStatus: .tabStatus
+        case .formProfile: .formProfile
         case .navigate: .navigate
         case .resizeWindow: .resizeWindow
         case .readPage: .readPage
@@ -234,11 +251,12 @@ public enum AutomationCommand: Hashable, Sendable {
         case .javascript: .javascript
         case .waitFor: .waitFor
         case .handleDialog: .handleDialog
+        case .dialogs: .dialogs
         case .uploadFile: .uploadFile
         case .signIn: .signIn
         case .handoff: .handoff
         case .handoffStatus: .handoffStatus
-        case .readConsole: .readConsole
+        case .readConsole, .readExtensionConsole: .readConsole
         case .readNetwork: .readNetwork
         case .networkLog: .networkLog
         case .networkRequest: .networkRequest
@@ -253,6 +271,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case .moveToFolder, .moveToClaudeFolder: .moveToFolder
         case .vpn: .vpn
         case .ui: .ui
+        case .trace: .trace
         case .batch: .batch
         }
     }
@@ -295,6 +314,18 @@ public enum AutomationCommand: Hashable, Sendable {
             self = .tabsClose(tab: try a.required("tab"))
         case .switchTab:
             self = .switchTab(tab: try a.required("tab"))
+        case .formProfile:
+            self = .formProfile(try FormProfile.parse(a.values))
+        case .tabStatus:
+            let name = try a.required("state").lowercased()
+            guard let state = ClaudeTabState.Declared.Kind(rawValue: name) else {
+                throw InvalidArguments("\"state\" is working or done. A tab that needs the user is a handoff.")
+            }
+            let note = try a.string("note")?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard (note?.count ?? 0) <= ClaudeTabState.maxNoteLength else {
+                throw InvalidArguments("\"note\" is at most \(ClaudeTabState.maxNoteLength) characters.")
+            }
+            self = .tabStatus(tab: tab, state: state, note: note.flatMap { $0.isEmpty ? nil : $0 })
         case .navigate:
             let url = try a.required("url")
             let newTab = try a.bool("new_tab")
@@ -366,6 +397,8 @@ public enum AutomationCommand: Hashable, Sendable {
         case .handleDialog:
             guard let accept = a.values["accept"]?.boolValue else { throw InvalidArguments("\"accept\" (true or false) is required.") }
             self = .handleDialog(tab: tab, accept: accept, promptText: try a.string("prompt_text"))
+        case .dialogs:
+            self = .dialogs(tab: tab)
         case .uploadFile:
             let list = a.values["paths"]?.arrayValue ?? []
             let paths = list.compactMap(\.stringValue).filter { !$0.isEmpty }
@@ -377,9 +410,17 @@ public enum AutomationCommand: Hashable, Sendable {
             self = .handoff(try UserHandoff.parse(a.values, tab: tab))
         case .handoffStatus:
             let wait = try a.double("wait") ?? 0
-            guard wait >= 0, wait <= UserHandoff.maxWait else { throw InvalidArguments("\"wait\" is 0 to \(Int(UserHandoff.maxWait)) seconds.") }
-            self = .handoffStatus(id: try a.string("id").flatMap { $0.isEmpty ? nil : $0 }, wait: wait, cancel: try a.bool("cancel"))
+            guard wait >= 0, wait.isFinite else { throw InvalidArguments("\"wait\" is 0 to \(Int(UserHandoff.maxWait)) seconds.") }
+            // Longer waits time out in MCP clients first: they're held to the most that reliably returns.
+            self = .handoffStatus(id: try a.string("id").flatMap { $0.isEmpty ? nil : $0 }, wait: min(wait, UserHandoff.maxWait),
+                                  cancel: try a.bool("cancel"))
         case .readConsole:
+            if let name = try a.string("extension")?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
+                guard tab == nil else { throw InvalidArguments("Pass \"tab\" or \"extension\", not both.") }
+                self = .readExtensionConsole(extension: name, pattern: try a.pattern("pattern"), onlyErrors: try a.bool("only_errors"),
+                                             limit: try a.int("limit", in: 1...1000) ?? Self.defaultLogLimit, clear: try a.bool("clear"))
+                return
+            }
             self = .readConsole(tab: tab, pattern: try a.pattern("pattern"), onlyErrors: try a.bool("only_errors"),
                                 limit: try a.int("limit", in: 1...1000) ?? Self.defaultLogLimit, clear: try a.bool("clear"))
         case .readNetwork:
@@ -432,6 +473,8 @@ public enum AutomationCommand: Hashable, Sendable {
             }
         case .ui:
             self = .ui(try UIInspection(arguments: a.values))
+        case .trace:
+            self = .trace(try TraceRequest(a))
         case .batch:
             guard let list = a.values["steps"]?.arrayValue, !list.isEmpty else {
                 throw InvalidArguments("\"steps\" must be a list of {\"tool\": …, \"arguments\": {…}}.")
@@ -453,6 +496,53 @@ public enum AutomationCommand: Hashable, Sendable {
                 }
             })
         }
+    }
+}
+
+/// What the `trace` tool reads.
+public struct TraceRequest: Hashable, Sendable {
+    /// How far back, in seconds.
+    public var since: TimeInterval
+    public var session: String?
+    public var tab: String?
+    /// user, agent or kite.
+    public var actor: String?
+    /// Everyone's records, not just this connection's.
+    public var all: Bool
+    /// The summary only, without the timeline.
+    public var summaryOnly: Bool
+    /// Most timeline lines (the newest).
+    public var limit: Int
+
+    public static let defaultSince: TimeInterval = 15 * 60
+    public static let defaultLimit = 200
+
+    public init(since: TimeInterval = TraceRequest.defaultSince, session: String? = nil, tab: String? = nil, actor: String? = nil,
+                all: Bool = false, summaryOnly: Bool = false, limit: Int = TraceRequest.defaultLimit) {
+        self.since = since
+        self.session = session
+        self.tab = tab
+        self.actor = actor
+        self.all = all
+        self.summaryOnly = summaryOnly
+        self.limit = limit
+    }
+
+    fileprivate init(_ a: Arguments) throws {
+        var since = Self.defaultSince
+        if let text = try a.string("since"), !text.isEmpty {
+            guard let seconds = TraceReport.duration(text) else {
+                throw AutomationCommand.InvalidArguments("\"since\" is a duration like 90s, 15m, 1h or 2d.")
+            }
+            since = seconds
+        }
+        let actor = try a.string("actor")?.lowercased()
+        if let actor, !["user", "agent", "kite"].contains(actor) {
+            throw AutomationCommand.InvalidArguments("\"actor\" is user, agent or kite.")
+        }
+        self.init(since: since, session: try a.string("session").flatMap { $0.isEmpty ? nil : $0 },
+                  tab: try a.string("tab").flatMap { $0.isEmpty ? nil : $0 }, actor: actor, all: try a.bool("all"),
+                  summaryOnly: try a.bool("summary_only"), limit: try a.int("limit", in: 1...5000) ?? Self.defaultLimit)
     }
 }
 

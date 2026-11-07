@@ -142,7 +142,8 @@ is mid-draw. Keys that arrive before the bar opens open it
   and `HTCLOSE`, so Snap Layouts appear over maximize (checked on Gabe's PC with a
   real pointer). The band above the
   content card and the sidebar's top row (down to the address field) drag
-  the window (`core/TitleBar`). The card starts under the buttons, 32pt
+  the window (`core/TitleBar`), but for the top row's buttons, which take
+  their presses (W12). With the sidebar hidden the whole band drags. The card starts under the buttons, 32pt
   down, since a Chromium child window over the buttons would take their
   clicks. A maximized window keeps its client area on the screen and leaves
   a pixel for an auto-hiding taskbar (asked of Explorer once per monitor, and
@@ -165,8 +166,10 @@ visibility: they report `hidden` and stop drawing, and `visible` when
 they're back. They keep their size, as on the Mac, so a tab switch doesn't
 resize and reflow them. That leans on Chromium's window layout, so `--smoke-test` fails
 if the widget isn't found; W10's off-screen pages replace it with `WasHidden`.
-A Kite window that's covered rather than minimized still draws its page
-(Chromium's occlusion tracking covers only its own top-level windows).
+A covered Kite (and a locked, display-off or other-desktop one) hides its
+shown page the same way (P2, "A window no one can see draws nothing" below):
+Chromium's own occlusion tracker covers only its top-level windows, never
+these child-window pages, and Kite turns it off (P12b).
 `windows/helix/pages/popup-opener.html` logs the page's `visibilityState`,
 resizes and opener messages in its title to check all this (on Gabe's PC,
 not in CI). CEF runs its own UI
@@ -289,6 +292,145 @@ the Mac has, so Kite leaves it to a fix in CEF (cancel the request when the fram
 is deleted). Popups were said to log it too; one that opens from a click wasn't
 reproduced here, since that needs a real click.
 
+## The sidebar's top row
+
+W12 ports the top of the Mac's `SidebarHeaderView` (`core/SidebarTopRow.h`,
+`shell/SidebarTopRowView`): the sidebar toggle, then back, forward and reload
+at the far end, 32pt buttons 2pt apart ending 6pt short of the sidebar's edge,
+on the row at y 7.5 (ArcMetrics.Sidebar). As SymbolButtons they're SF Symbols at
+15pt in labelColor at 0.6, and back, forward and reload at 0.125 while disabled
+(back and forward from the page's history, reload with a tab); reload is the X
+while the page loads, keeping its "Reload" tooltip. Like the Mac's they show no
+hover or press of their own, take the click that brings the window forward, and
+are cut out of the window's drag. Their tooltips are Windows' own: a comctl32
+tooltip made on the first hover over a button (so comctl32 doesn't load at
+launch), the window's mouse messages relayed to it (`TTM_RELAYEVENT`, no
+subclass of the window), with the system's delay and light look. What a page
+reports comes from CEF's `OnLoadingStateChange` (the Mac's navigation state)
+and goes with the page.
+
+- **Where the row starts.** The Mac's toggle sits at x 71, just right of the
+  traffic lights (their cluster runs from 12 to 72, centred on y 24 against the
+  row's 23.5). Windows has nothing on the left (its caption buttons stay top-right,
+  W3b, 138pt wide at the window's right edge, well clear of the sidebar's 234),
+  so the toggle starts 6pt in, the same inset the navigation buttons keep from the
+  sidebar's other edge: its ink starts at x 13.5, about where the Mac's first
+  traffic light does. The row's height and everything right of the toggle are the
+  Mac's. `top_row_metrics::kToggleX` is the one number to change for another
+  choice (the Mac's 71 is `kMacToggleX`).
+- **Symbols.** sidebar.left, reload's arrow.clockwise and the X are Kite's own
+  geometry (core's `TopRowShape`), measured from the Mac's 15pt renders
+  (review/w9d-mac and review/w12-mac): Segoe's Refresh opens at one o'clock with
+  a corner arrowhead, where SF's opens at the top, its arc running into a chevron
+  there. The X is two crossed strokes of reload's weight, 11pt across, an
+  estimate until a Mac capture holds the loading state. Back and forward are
+  Segoe Fluent Icons' (Segoe MDL2 Assets' on Windows 10) Back and Forward, scaled
+  to cover the Mac's measured ink and centred on it.
+- **Each button is a `FadedLayer`** (shell/FadedLayer.h, shared with the space
+  bar's icons): turning one on or off is an effect group's opacity, committed on
+  the sidebar's next pass with nothing drawn; the X draws only reload's surface,
+  and a hover draws nothing (the smoke test counts the surfaces drawn and the
+  commit).
+- **Not yet:** the compact layout under 212pt (no toggle, a More menu,
+  HeaderLayout), which comes with resizing the sidebar (it's 240 until then);
+  View › Show Toolbar and Developer Mode's reload options; and the hover reveal
+  of a hidden sidebar (SidebarPeek), a checkpoint of its own.
+
+**Hiding the sidebar** (View › Hide Sidebar, Ctrl+S as the Mac's ⌘S, or the
+toggle; the `toggleSidebar` command) is the Mac's `updateSidebar`: the sidebar
+slides off the window's left edge, and back, over 0.08 s on (0.25, 0.46, 0.45,
+0.94), a DirectComposition animation of its root visual's offset (a toggle caught
+mid-slide turns back from where it is), with the compositor clock boosted while
+it runs (`FrameClock::BoostWithoutFrames`; no frames of Kite's). The card's
+leading edge goes from the sidebar's 240 to the 10pt inset. As on the Mac the
+state isn't saved (a launch shows the sidebar), a hidden sidebar takes no pointer
+or touchpad swipe and draws nothing at rest (what changes meanwhile draws as it
+shows again), a space switch doesn't slide its pages, and Rename Space shows it
+first. The page is a child window, which no compositor property moves, so until
+W10's off-screen pages it moves once: as a show begins and as a hide ends (the
+card keeps the sidebar's edge while it slides off, so a tab switch or a resize
+meanwhile doesn't put the page over it). Chromium moves it on CEF's thread, a
+little after that. The Mac's page slides with the card, kept at the wider width
+meanwhile. A rename open in the header ends as the sidebar hides, keeping what
+was typed.
+
+- **A pointer's way back.** Windows has no menu bar yet and no hover reveal, and
+  the toggle leaves with the sidebar, so Show Sidebar / Hide Sidebar is also in
+  the window's system menu (Alt+Space, or a right-click on the band above the
+  card), retitled for what it will do, as Import from Arc is there (W15). Until
+  SidebarPeek lands that, and Ctrl+S, are the only ways to bring a hidden sidebar
+  back.
+
+`kitecore sidebar [--page back,forward,loading] [--hidden]` prints the row and the
+card's edge; `kitecore click X Y --page …` says what a click on a button runs.
+Captures: `--page-status` and `--toggle-sidebar N` (main.cpp); a hover draws
+nothing, which the smoke test checks.
+
+## The favorites grid
+
+W13 ports the Mac's favorites tray (`FavoritesTrayView`, `FavoriteTileView`,
+`FavoritePaneView` and `FavoritesEmptyStateView` in SidebarFavorites.swift,
+`FavoritesTrayLayout`; core's `core/Favorites.h`, `shell/FavoritesView`): the
+current space's profile's favorites (`favoritesByProfile`), between the address
+field and the space's page, which starts under them. Tiles are 47pt high and 8pt
+apart, at most four a row, as many as square tiles fit and then the rows balanced
+(5 are 3 + 2, 9 are 3 × 3), with 8pt above and below; a favorite split is one
+tile, its panes 2pt apart. The grid stays put while the pages slide, under the
+space bar and the pages (the Mac's subview order), which also get the pointer
+first. An unselected pane is the address field's white wash (0.10, 0.20 hovered;
+3.5 times on a light theme); the selected one is white at 0.45 (0.8 light) with
+its favicon's colour over it at 0.2 (0.3 hovered; none, 0.1 hovered on a light
+theme) and a 2pt ring of that colour. The colour is NSImage.dominantColor's (the
+fullest of twelve hue bins in the icon drawn 16px a side) half way to white as
+`NSColor.blended(withFraction:of:)` mixes it: in calibrated RGB (Apple's Generic
+RGB, gamma 1.8), not sRGB, which is what makes YouTube's ring (255, 149, 150) and
+not (255, 129, 129). That mix is `core/ColorSpaces.h`'s `BlendCalibrated` (alpha
+too), with sRGB's transfer function, shared with the OKLab maths and the backdrop.
+A grey or missing favicon has no colour: the pane is just white, the globe in its
+middle (Segoe's globe fills its em square, so it's set at
+the favicon's 18pt, the Mac's 36px at 2×; the rows' globes with it). A click
+selects the favorite (released inside the pane, not after a 4pt drag, not the
+click that brings the window forward), the window's whole band is the tray's (no
+window drag, no row), and a pane's tooltip is the tab's title (comctl32's, as the
+top row's: `shell/RelayedTooltips`, their tools placed from where the sidebar
+rests). Ctrl+1–9 count the favorites first, a split once (`SidebarStops`,
+unchanged from W8).
+
+- **The empty state.** With no favorites, Arc's dashed box ("Drag to add
+  Favorites" over "Favorites keep your most used sites and apps close", 59pt in
+  a 240pt sidebar, so the space's header sits near y 157), until its close button
+  (shown while the pointer is over the box) dismisses it. That's a one-shot flag
+  (`core/OneShotFlags.h`): the Mac keeps it in UserDefaults on a real profile and
+  in the profile's `One-Shot Flags.plist` on a test one; Windows has no
+  UserDefaults, so every profile keeps it in that file, a binary property list in
+  the Mac's format (`Tests/Fixtures/one-shot-flags.plist`, which both test suites
+  read). The box's lines are as DirectWrite wraps them (the Mac's two at 240pt).
+  The close button's X is Kite's own two strokes (`favorites_empty::CloseShape`),
+  6.2pt across with 1pt strokes for the Mac's 8pt bold xmark, centred in its 18pt
+  box at 0.5: an estimate, since a Mac reference can't hover
+  (`--empty-favorites-hover` shows it on Windows).
+- **Each pane is up to four `FadedLayer`s** (the wash, the tint, the ring and the
+  favicon; the tint and ring only once there's a colour) in a visual of its own,
+  each drawn once at full strength and faded by its effect group, so a hover or a
+  selection is opacities the sidebar's next pass commits, with nothing drawn (the
+  smoke test counts the layers drawn and the commit). A favicon arriving draws
+  only its pane's icon layer, and, once its 16px icon gives the colour, its tint
+  and ring; a pane whose favicon changes draws its icon and tint again
+  (`FavoriteRedrawFor`). The empty state's box is one layer and its close button
+  another, whose opacity the hover sets.
+- **Captures.** `--favicons` fetches the favicons as the window does (a capture
+  otherwise has none, so no network), waits for them, and names any favorite's
+  that didn't load (the globe shows, as on the Mac); `--favorite-hover N` and
+  `--favorite-click N` hold a pane hovered or clicked. `kitecore sidebar` gives
+  `favorites` (columns, height, `listTop`, each tile and pane with its frame, the
+  empty state and its close button), and `kitecore click` on a pane selects it,
+  on the close button dismisses the empty state.
+- **Not yet:** dragging tiles and the drop gap (W18b, which also shows the tray
+  while a drag is on with no favorites), the preview cards over a
+  hovered favorite (FavoritePreviewCard, W38), accessibility for the panes (W35c),
+  and hiding the tray while Create a Space shows (the Mac's `creating`, W9f).
+  Corners are circular rather than continuous, as in the rest of the sidebar.
+
 ## Shortcuts
 
 Kite's shortcuts (W8) are the Mac's menu commands, by the same ids, with Ctrl in
@@ -302,7 +444,7 @@ would take typing keys is ignored and the command keeps its default, as the
 Mac ignores an unsafe one. An override with no shortcut removes the command's
 shortcut (a priority-only change keeps it in the file, as the Mac writes it). A
 few commands also take the keys Windows users expect, without showing them:
-Ctrl+F4, F5, Ctrl+F5, Shift+F5, F12, Ctrl+Shift+I, Ctrl+U, Alt+Left and
+Ctrl+F4, F3, Shift+F3, F5, Ctrl+F5, Shift+F5, F12, Ctrl+Shift+I, Ctrl+U, Alt+Left and
 Alt+Right; like the Mac's hidden alternates (⌘← for Back), they stay when the
 command is rebound or its shortcut removed, unless another command's shortcut
 takes them.
@@ -334,6 +476,67 @@ focused Developer Tools window, and Print (Ctrl+P): with CEF 156 on Windows 11,
 once the print dialog is cancelled CEF never prints again and Chromium's
 shutdown hangs, so Print waits until that's fixed.
 
+## Find in page
+
+Ctrl+F opens the Mac's find bar (W21, `shell/FindBarView`, ported from `FindBar.swift` with Ask
+on Page off, which is Arc's `FindInPageView`): 300 × 32pt, 10pt in from the content card's
+top-right corner and narrower in a narrow card, with the magnifier, the query field ("Find in
+page…"), the n/N counter ("Not Found" in red), the previous and next arrows, a divider and close,
+in Arc's popover colours and shadow, light or dark as the app's appearance (the session's
+`pageAppearance`, else Windows' apps' mode). It appears and goes without animation. Every
+keystroke searches at once (no debounce, as on the Mac): `CefBrowserHost::Find`, and a new search
+steps once more so its first match is active, as the Mac's `ChromiumEngine.find`; each
+`OnFindResult` fills the counter. Return and Shift+Return, the arrows, Ctrl+G and Ctrl+Shift+G
+(and Windows' F3 and Shift+F3) step through the matches, or open the bar when it's closed or
+empty; Esc or close ends the search (`StopFinding`, the active match left selected) and gives the
+page the keyboard. Like every Edit › Find item on the Mac these are Prefer Websites, so a page that
+uses Ctrl+F keeps it. The bar closes when the shown tab changes (another tab, a closed tab, a
+space switch) and stays through a navigation, as the Mac's. With no page, Ctrl+F beeps; a page
+still being made (Ctrl+F straight after a new tab) opens the bar, and its search runs once the
+page exists.
+
+The bar is a small surface in the overlay target, in a page layer under the command bar's
+(`Compositor::PageOverlay`), so it draws over the page's child window and typing redraws only the
+bar. The page keeps taking input everywhere else: its window gets a region with a hole the bar's
+shape, its 5pt corners rounded (`Chromium::SetOverlayHole`, `SetWindowRgn` on CEF's thread, in the
+same task as the page's placement and without its own repaint when a move follows), so the bar's
+clicks fall through to Kite's window. `--smoke-test` checks with `ChildWindowFromPointEx` that a
+click on the bar misses the page, one beside it or on its corner doesn't, and that the hole goes
+with the bar. Whatever moves the content card has to put the bar back in its corner and the hole
+under it (`FindBarView::SetCard`, then `UpdateFindHole`): the window's resize and the sidebar's
+toggle (`MovePage`) do, and split view will have to.
+
+One of Kite's fields has the keyboard at a time (`KeyboardOwner`, `GiveKeyboard`), as one field
+editor does on the Mac and as Windows has one system caret a thread: the command bar while it's
+open, else a space's rename, else the find field. Opening the command bar takes it from both, a
+rename takes it from the find field, and Ctrl+F or a press in the find field ends a rename
+(keeping what was typed). The field is the first responder from Ctrl+F or a press in it until
+another field or the page takes the keyboard; a press on the arrows or close leaves it where it
+was, as a borderless NSButton never becomes first responder. Losing it collapses the selection
+and drops the undo history, as the Mac's field editor leaves a field. While the find field has
+the keyboard, a navigation doesn't move it to the page, and activating Kite doesn't either; nor
+does Ctrl+F over the open command bar as it closes (Kite sets that it keeps the keyboard before the
+bar closes, CEF's thread asks again before focusing the page, and Chromium's own focus as the page
+windows are enabled again is declined). A press in the field that already has the keyboard only
+moves the caret (Shift extends the selection). Not yet: closing the command bar gives the keyboard
+to the page even when the find field had it before, where the Mac's first responder would return
+to the field; it waits for knowing what the Mac does after a row is committed.
+
+The field is `shell/TextField`, the one-line field the command bar's field and the rename field
+are to share (W21b): `shell/TextEditing` and `shell/TextLine` (from W9d), undo and redo as the
+Mac's field editor groups them (`core/TextUndo`: a run of typing is one undo; Ctrl+Z, Ctrl+Y and
+Ctrl+Shift+Z), the caret and drag selection, the hidden system caret, Windows' IME composition
+window at the caret, and the caret's blink on a visual of its own (view timer 0x4B47), which runs
+only while the field has the keyboard and stops after Windows' caret timeout. `--smoke-test` finds
+in `windows/helix/pages/smoke.html` after it loads (1/1, then Not Found). `--capture … --find TEXT
+[--find-result ACTIVE/TOTAL]` captures the bar; a capture runs without Chromium, so the page's
+report is given. `kitecore find` prints the query's search, counter, Ask on Page's mode
+(`--ask`, kept from the Mac's tests though Windows has no ask card yet) and frame, and `kitecore
+undo` replays a field's edits through `core/TextUndo`. Not yet: the
+buttons' tooltips and accessibility names, Use Selection to Find (Ctrl+E) and Jump to Selection,
+Ask on Page's card, and an inline IME composition (Windows' composition window draws it, as in
+the command bar).
+
 ## Spaces
 
 Switching spaces (W9a) is the Mac's `sync()`: the title bar's dark mode, the
@@ -363,7 +566,7 @@ SF Symbol and picture icons (W9b2) draw in the bar and the page header
 Apple's systems, so the Icon tab's 56 symbols, "briefcase" and "photo" each
 have a stand-in glyph in Segoe Fluent Icons, or Segoe MDL2 Assets where Fluent
 isn't installed, picked by eye from every glyph each font has and checked
-against both fonts' character maps, except ten drawn as shapes (below). A
+against both fonts' character maps, except fourteen drawn as shapes (below). A
 symbol fills its glyph's outline, centred on its ink, at the size that makes
 Segoe's briefcase glyph ink the Mac's briefcase width, 14.65pt at 12.5 (one
 factor for every symbol; edge to edge, as a glyph's outline is measured, from
@@ -380,7 +583,9 @@ Fluent has one weight where the Mac's symbols are semibold (the placeholder's
 "photo" is regular on the Mac); several stand-ins are outlines of filled
 symbols, cloud and cloud.fill share a glyph, and nine have no such object in
 either font (bookmark, paw, bed, cutlery, dumbbell, bandage, baseball, takeaway
-bag, theatre masks), which W9b4 draws as Kite's own shapes (see below); glyphs
+bag, theatre masks), which W9b4 draws as Kite's own shapes (see below), as the W9e/W9f UI gate
+draws four whose stand-in was the wrong shape (the database drum, the code sign, the scroll, the
+tram; their bar and header boxes scaled from the Icon tab's, not yet measured); glyphs
 are centred on their ink where the Mac centres the symbol's image (checked only
 for the briefcase's glyph, within 0.25pt, before W9b5 drew the briefcase); no
 Mac capture shows a symbol Segoe draws, so the calibration's 14.65pt is checked
@@ -406,12 +611,12 @@ space; the pointer over another space's cell shows its rounded backing, a small
 visual of its own that moves with the pointer and the scroll, so hovering and
 scrolling draw nothing. The Library and + symbols are drawn from the Mac's
 measured archivebox and plus (Segoe Fluent's glyphs differ in size and shape),
-and the emoji is set so it draws the Mac's 14.5pt, centred on its ink. Cells sit
+and the emoji is set so it draws the Mac's 14.5pt, centred on its ink; the header's at the same factor, 17.4pt of ink at 15 as the Mac's systemFont(ofSize: 15) draws (W9e: 36px at 2x, where Segoe's own 15pt inked 30). Cells sit
 on whole pixels at every scale (core snaps them), so they draw where they take
 clicks. Known differences: in the 2pt where two cells overlap only the later
 cell's backing shows (the Mac shows both).
 
-The nine (W9b4) are Kite's own simple shapes (`core/SymbolShape.h`), not
+The nine (W9b4), and the UI gate's four, are Kite's own simple shapes (`core/SymbolShape.h`), not
 Apple's outlines: each is filled figures in the bar's 12.5pt about the icon's
 centre, in layers joined or cut in order (so the front theatre mask cuts a gap
 round itself in the one behind), drawn by the same painter through one Direct2D
@@ -481,28 +686,38 @@ selection's redraw and the page swap. A gesture is the swipe's when its first
 movement is more sideways than vertical; one that starts vertically scrolls the
 list for its whole length, momentum included, and a swipe's own momentum is
 swallowed (`core/SpaceSwipeGesture.h`, `kitecore space swipe DX [SECONDS]`). Until
-the swipe begins, each event asks where the pointer is then, as the Mac's
-`isOverSidebar`: a vertical gesture scrolls the list under it. A swipe can catch the
-pages mid-settle and carries on from where they are. Windows'
-wheel messages carry no gesture phases, so the touchpad's contact is taken on
+the gesture is decided (its began, and its movement until the first that has some),
+each event asks where the pointer is then, as the Mac's `isOverSidebar`; a vertical
+gesture decided over the list scrolls it to its end, momentum included, wherever the
+pointer goes after: the gesture stays with the list it was decided under. One decided
+vertical elsewhere on the sidebar (the top row, the header, the space bar) has nothing
+of Kite's to scroll, so its contact is released at once. A swipe can catch the pages
+mid-settle and carries on from where they are. Windows' wheel messages carry no
+gesture phases, so the touchpad's contact is taken on
 `DM_POINTERHITTEST` by a DirectManipulation viewport on manual updates
 (`shell/TouchpadInput.h`, Chromium's way). The frame clock steps it once a frame
 while the gesture or its momentum runs, at the display's highest rate, and while the
 fingers rest before moving, unboosted and for 10 s at most; each frame draws the
-backdrop only when the swipe moved. A gesture whose pointer is off the sidebar
-before it's the swipe's (over the page, or the command bar opened), and a contact
-that rests past 10 s, are released (`ReleaseContact`), so the rest is the system's
-wheel messages for whatever is under the pointer. Core's `TouchpadPhases` turns the viewport's
-statuses and content reports into the Mac's phases and sends the viewport back over
-its content's middle after a gesture that moved it, the next gesture counting from
-there however late DirectManipulation applies it (its tests replay the sequences:
+backdrop only when the swipe moved. The pages' settle after a release runs on the
+compositor with the compositor clock boosted, as a keyboard switch's slide
+(`FrameClock::BoostWithoutFrames`), so a settle with no crossfade (two spaces in the
+same theme) is at the display's highest rate too, as the Mac's settle on its clock
+is. A gesture whose pointer is off the sidebar before it's decided (over the page,
+or the command bar opened), and a contact that rests past 10 s, are released
+(`ReleaseContact`), so the rest is the system's wheel messages for whatever is under
+the pointer. Core's `TouchpadPhases` turns the viewport's statuses and content
+reports into the Mac's phases and sends the viewport back over its content's middle
+after a gesture that moved it, the next gesture counting from there however late
+DirectManipulation applies it (its tests replay the sequences:
 momentum, fingers down mid-momentum, the system taking the viewport, the reset's own
 pass). `--capture FILE --swipe DX` holds a swipe DX points in, and the smoke test
-feeds the same handler a vertical gesture, one whose pointer has moved over the page,
-a swipe that lands, one caught mid-settle, a short one that stays and a flick back;
-then, with a third space added for it, a keyboard switch overtaking a landing, a
-space selected under the swipe, a release in a hidden window (it lands at once), the
-rubber band before the first space and a crossfade's boost ending while the
+feeds the same handler a vertical gesture, one whose pointer has moved over the page
+before it's decided, a vertical one that carries on over the page (still the list's,
+its momentum too, and its contact kept), one decided vertical over the top row
+(released), a swipe that lands, one caught mid-settle, a short one that stays and a
+flick back; then, with a third space added for it, a keyboard switch overtaking a
+landing, a space selected under the swipe, a release in a hidden window (it lands at
+once), the rubber band before the first space and a crossfade's boost ending while the
 touchpad's frames go on; and with the other spaces set aside, both ways on one
 space. `--frame-log` also records every status, content report, release and poll,
 for a run on a real touchpad. Known differences:
@@ -511,6 +726,12 @@ for a run on a real touchpad. Known differences:
   way its natural scrolling is set).
 - A mouse's sideways wheel or Shift and the wheel never pages spaces (the Mac's
   doesn't either), it scrolls the bar's strip.
+- Fingers that rest on the touchpad over the sidebar for 10 s without moving lose
+  their contact (`TouchpadInput`'s `kLongestRest`), so the frame clock doesn't poll
+  DirectManipulation for as long as a hand lies there; moving after that, they're
+  the system's wheel messages, which scroll the list (or, sideways over the space
+  bar, its strip) but never page. The Mac has no
+  such cap: fingers can rest as long as they like and still swipe.
 - Only a contact that comes down over the sidebar can page: one that comes down over
   the page is Chromium's (the hit test goes to its window), and its wheel messages
   have no phases to page with, so a pointer that moves onto the sidebar before the
@@ -554,7 +775,7 @@ A right-click on a cell or the space's header opens the space's menu with the Ma
 order and words (`SpaceMenu`): Change Space Icon…, Rename Space…, What's This Space For?…,
 Edit Theme Color…, Set Profile ▸, then New Folder and Live Folders ▸, then Delete Space
 (disabled for the last space). Rename Space…, or a click on the current space's name, opens
-the header's name field (`shell/SpaceRenameField`, the Mac's SpaceRenameField and Done): the
+the header's name field (`shell/RenameField`, the Mac's SpaceRenameField and Done): the
 name all selected in the header's 13pt semibold, 2pt into the field as in AppKit's field
 editor, over the editor's textBackgroundColor (#1E1E1E dark, white light, square, from 3pt
 before the field to 1pt past its end and 22pt tall, as the Mac's capture draws it), "Space Name" when
@@ -580,17 +801,172 @@ them), on Windows 10 1903 and later only, set as the menu opens and put back to 
 it closes (the mode is the whole process's; docs/windows-architecture.md); without them it's
 light. The question before Delete Space is a task dialog (Common Controls 6, which the
 manifest now asks for), always light, where the Mac has a sheet. Disabled until their
-checkpoints: Change Space Icon… (the icon picker, W9e), What's This Space For?… and Edit Theme
+checkpoints: What's This Space For?… and Edit Theme
 Color… (their dialogs, and the theme editor), Set Profile and Live Folders (Windows can't move
-a space's pages to another profile or keep live folders yet). Not yet: the + button's menu and
-Arc's Create a Space page, which New Space opens (W9f; `kitecore space new` makes the space
-they'd leave), Undo, and the rename's caret in `--capture` (its own visual, as the command
-bar's). `--capture FILE --space-drag N,X` holds space N's cell dragged to X points along the
+a space's pages to another profile or keep live folders yet). Not yet: Undo, and the rename's
+caret in `--capture` (its own visual, as the command bar's). `--capture FILE --space-drag N,X` holds space N's cell dragged to X points along the
 bar, `--space-drop N,X` lets it go there and settle, `--space-menu N` reads back space N's menu
 (PrintWindow of this machine's own Windows menu, so it differs by Windows version, theme and
 monitor scale, without DWM's rounded corners and shadow, resampled from its monitor's scale
 to the capture's) and puts its bottom-left on the cell's centre, and `--rename-space N` opens
 space N's name field drawn as with the keyboard (a quiet capture's window never has it).
+
+Change Space Icon… (W9e) is the Mac's SpaceIconPicker (`core/SpaceIconPicker.h`,
+`shell/SpaceIconPickerView`): from the space's menu (its space selected, then 0.15 s on, as
+openPicker(after: 0.15)) or a click on the header's icon (at once), a popover 272pt wide hangs
+under the header's icon with its arrow on the icon's middle, centred on it and kept 4pt inside
+the screen. Its tabs are Emoji, Icon and Image, with the bin (Remove Icon) beside them once the
+space has an icon; it opens on the tab the icon came from. Emoji: Search, then the Mac's
+EmojiCatalog (1101 emoji in eight categories, 7 to a row 33.5 apart, 33pt rows, 5 rows showing)
+and the category bar, whose buttons clear Search and scroll their first emoji's row to the top.
+The catalog is generated from the Swift file (`windows/scripts/gen-emoji-catalog.py`), split into
+characters as Swift's chars() does, with each code point's Unicode name, so Search matches what
+the Mac's ICU Any-Name transform gives ("\n{grinning face}"; a flag is its two letters, so
+"united" finds none). Icon: the 56 symbols, 8 to a row 31 apart, at 16pt in labelColor, drawn
+by the sidebar's painter as the bar and the header draw them (Segoe glyphs and Kite's nine
+shapes). A pick sets the icon at once (the bar's cell and the header draw it, and it's saved)
+and leaves the popover open; replacing a picture deletes its file once no space shows it
+(SpaceIconImages.discard). While the picker is open an icon-less header keeps the icon's slot,
+a dashed 24pt square, to hang it from, from the request on (a menu's 0.15 s included). A
+right-click on the header's icon opens the space's menu, as one on the rest of the header does
+(`HeaderMenuSpace`); a press on the header's icon, or its placeholder, is the icon button's,
+which opens the picker again. It closes on Escape, a press anywhere else in the window, the page
+or another app taking the keyboard, the command bar, another space shown, the sidebar hidden
+(Change Space Icon… shows a hidden sidebar first), the list scrolled (the header it hangs from
+moves), and the window moving, resizing or minimizing.
+
+It's a window of its own (`shell/PopoverWindow`, which Choose a Theme's swatches share: owned, never activated, so the browser window keeps the keyboard and
+passes Search its keys; in W21's model the keyboard is `KeyboardField::IconPicker`'s from the request,
+the menu's 0.15 s included, until it closes, so the window taking the focus never hands it to the page), drawn by DirectComposition in its own target: the frame and controls in
+one surface (the Icon tab's grid too), the emoji grid in a virtual surface as tall as its rows,
+in a clip, scrolled by moving it. Only the rows in view draw, as they come into view, and rows
+more than 10 from view are trimmed away; a held cell draws only itself; moving over the grid
+draws nothing; nothing runs while it's idle but Search's caret blink, which Windows' caret
+timeout ends; each emoji's text layout is made once, by the emoji, so a search reuses them. Its
+redraws' failures report a lost GPU, which rebuilds everything as the caption buttons' do. It
+lays out at its own monitor's scale (WM_DPICHANGED, and its window's DPI checked as it opens) and stays on the anchor's monitor.
+A capture draws it at the window's scale, whatever its monitor's. Like Choose a Theme's, it's in Kite's appearance (the
+Appearance setting, else Windows' apps' mode), as NSPopover takes NSApp's, not the space's theme's: the UI gate's Mac
+picker is dark over a light theme on a dark Mac; it follows Windows' mode changing while it's open. Its emoji ink 21pt
+in their 33.5pt cells, as Apple Color Emoji's 22pt do, and NSPopover's arrow is 13pt deep. The Icon tab's
+stand-ins are each fitted to the Mac's ink (core's IconTabInkFor: the box's sides' geometric mean, the middle, and a
+stroke for weight where Segoe's stand-in is an outline and SF's is filled). Four whose Segoe stand-in was the wrong
+shape (the database drum, the code sign, the scroll, the tram) are Kite's own shapes (core/SymbolShape), and book.fill
+is Segoe's open book (E736), as the Mac's is open. Against the reference's 28 (columns 5-8) every side of every box is
+within 13% of the Mac's and 26 areas within 15% (square.on.square.fill's and book.fill's outlines reach 0.78 and 0.84
+of SF's filled ones at the 2pt stroke the table allows; moon.fill's box sits 8% small to keep its heavier crescent's
+area to 1.07). Columns 1-4 are unverified against the Mac: its capture can't show them (the popover hangs past the
+window's left edge), so they take the 28's median box, and a ".fill" over an outline stand-in is stroked to the
+measured .fill symbols' filled share of their box (so cloud.fill and cloud differ). The four new shapes' bar and
+header boxes are the Icon tab's scaled, not yet measured there. The category bar's and the bin's symbols take 0.78 of
+the bar's factor, the car and the bin stroked for SF's weight (core's BarGlyphFitFor). In the dark, the segmented control and the search field
+are one bezel and the knob, the divider and the popover's fill and edge are the gate's (as white over the fill, the Mac's
+alphas: its in-process capture draws the material unblurred, 75, where Windows' fill is 44) (all measured in the UI
+gate, review/w9e-mac).
+Replacing a picture deletes its file on the UI thread, as the Mac does: one DeleteFile of a name
+core checked, an exception to the no-file-I/O rule (docs/windows-architecture.md) that only a
+Mac profile's picture icon can reach. Emoji are Segoe UI Emoji's colour glyphs, centred on their ink. `kitecore space icon-picker ID [--tab] [--category
+N] [--query TEXT] [--scroll PT] [--pick N]` prints the grid model and picks a cell headless;
+`--hit X,Y` and `--place` print what a point hits (the later of two overlapping cells) and where
+the popover goes. `--capture FILE --icon-picker N,emoji|icon[,CATEGORY]` holds space N's picker
+open on that tab, with a category's button clicked (kept inside the window, so the capture has
+all of it), and `--pick-icon N,TAB,CELL` clicks a cell and closes
+it with Escape.
+
+Known differences: the Image tab (a picture of your own: choose a file, drop one, paste) is
+there, disabled, and a picture icon opens on Emoji: Windows has the pieces (the file dialog,
+WIC, the clipboard, OLE drops) but writing the picture belongs on a worker and a drop target on
+the window meets Chromium's, which want their own checkpoint. In the light the segmented control, the field and the
+knob are estimates (no light reference yet), and in either the popover's corners and the arrow's width (no shadow, a
+straight-sided arrow; the Mac's in-process capture draws its popover's material as a plain rectangle, so the gate
+couldn't measure them); a held button dims to
+50% (SwiftUI's plain style dims; not measured); the categories' and the bin's tooltips aren't
+shown; there's no scroller (macOS shows an overlay one while scrolling); a press outside goes
+on to what it's over; the popover closes when the window moves, where NSPopover moves with it;
+the category bar's rosette is Segoe's certificate medal (neither font has a rosette); the
+header's icon has no "Change Space Icon" tooltip yet. Segoe UI Emoji has no country flags, so
+52 of the Flags category's 59 cells (and a flag icon from a Mac profile, in the bar and the
+header) draw as the two letters of their regional indicators, each clipped to its 33.5pt cell
+(the pairs fit: `--icon-picker 1,emoji,7`); and Windows 10's Segoe UI Emoji lacks Unicode 13
+and 14's emoji (🫠, 🥲, 🫶, 🪴 and others), which draw as its fallback boxes there.
+
+The bar's + button and Create a Space (W9f) are the Mac's NewItemMenu, SpaceCreationView and
+BrowserStore's beginNewSpace, finishNewSpace and cancelNewSpace (`core/SpaceCreation.h`). A click
+on + (on release over it, the click that brings the window forward too) opens its menu over the
+button: New Space, New Folder, a line, New Split and New Tab with their shortcuts as the profile's
+keys run them (Ctrl+T; New Split's the Mac's ⌘L made Ctrl+L, disabled until split views, W36).
+It's Windows' own menu through `shell/ContextMenu`, where the Mac's is a SwiftUI popover with
+icons. New Space, from the menu or the `newSpace` command (Spaces › New Space… on the Mac, with
+no default key; a keybindings.json can give it one), shows the sidebar and inserts a nameless
+space with no icon right after the current one (W9d's `InsertSpace`), selected, with its theme
+and profile, so the pages slide to it and its theme shows live; it's saved soon, as the Mac's
+draft is. While its space is selected, Arc's Create a Space page (`shell/SpaceCreationView`)
+takes the place of the address field, the favorites and the pages under the top row, and the
+bar keeps only the spaces. The page: three cards fanned out, "Create a Space" and its line, the
+name field ("Space name…") and Kite's "What's it for? (for Claude)", the profile with its pill,
+Choose a Theme, then Create Space (#2C4AFC, at half strength until there's a name) and Cancel,
+laid out from ArcMetrics.SpaceCreation (the name field's top on Arc's y 237 in a 820pt window).
+The name field takes the keyboard as the page appears (`KeyboardField::Creation`, through
+GiveKeyboard: the find field and a rename let it go first, and the command bar closes); Tab moves
+between the fields, Return in either creates when there's a name (the space named and its
+`about` cleaned as Space.cleanAbout does), Escape and Cancel delete the draft and select the space
+it came from. Another space selected hides the page (its fields go with it, as the Mac's @State
+does); New Space again goes back to it. Delete Space on the draft cancels it, and Rename Space… on
+it goes to the page's name field (the Mac renames its hidden header). A draft left at quit or by a
+crash goes when the session loads (Kite.exe and kitecore), as the Mac's dropUnnamedEmptySpaces
+drops every nameless space with no tabs, Delete Space's rules each time. The profile pill lists
+the profiles and sets the draft's. Choose a Theme opens the theme editor's preset row (`shell/ThemeSwatchesView`): a popover of
+its own window (`shell/PopoverWindow`, the icon picker's) off the row's trailing edge, with the
+editor's chevrons and its seven 24pt swatches; a swatch sets the space's colours and grain, its
+intensity kept, and the popover stays open. In W21's keyboard model it holds the keyboard while
+it's open (`KeyboardField::ThemeSwatches`, as the Mac's popover is the key window), the page's
+field letting it go; Choose a Theme pressed again opens it again, keeping it. It closes as a
+transient popover does, by the controller's one rule for both popovers: Escape gives the keyboard
+back to the field that had it; a press anywhere else in the window or in the page, the window
+going to the back, moving, resizing or minimizing hand it to nothing; anything else taking the
+keyboard closes it; and every close, a failed or lost open included, lets the keyboard go.
+Change Space Icon… is disabled on the draft (its header, where the picker hangs, is under the
+page). The page is its own visuals in the sidebar's root: the page's surface (drawn
+as it opens, and again only for a new size, scale, appearance or profile), each field's (a
+keystroke draws only its field) and Create Space's (drawn again only as it turns on or off); the
+carets are TextField's visuals, so nothing runs while it's idle but the focused field's blink.
+`kitecore click` on the + button prints its menu, `space plus-menu` prints it, `space create
+[--about TEXT] [--theme N] [--away] [--cancel|--delete-draft] NAME` runs the page step by step,
+`space new [--about TEXT] [--theme N] NAME` fills it in and creates, and `space create-page
+[HEIGHT] [--hit X,Y] [--swatch X,Y]` prints the page's layout, the bar while it's open, the
+swatches, and what a press lands on. `--capture FILE --new-item-menu` reads back the
++ menu over its button, and `--create-space NAME [--create-space-about TEXT] [--create-space-theme
+N]` holds the page with its fields typed in and, with N, the swatches open and preset N clicked.
+
+Known differences for W9f:
+- The + menu is a Win32 menu without the popover's icons, in Kite's appearance as the Mac's
+  NSPopover is (not the space's).
+- Choose a Theme's popover holds only the theme editor's presets (its colour grid, intensity and
+  grain come with the theme editor), in the picker's popover fill and edge (NSPopover's material,
+  the same grey as the Mac's picker), no shadow, kept inside the monitor's work area, in Kite's
+  appearance (not the space's, as NSPopover; it follows Windows' mode changing while it's open),
+  with NSPopover's 13pt arrow. Its swatches match the Mac's theme editor's row (the UI gate). As it opens Kite's window takes the keyboard, so a
+  press in the page (its own window) closes it.
+- The profile pill changes the draft's profile only while the draft has no tabs (a tab opened in it
+  with Ctrl+T); the Mac's moves the pages, which Windows can't yet, as the space menu's Set Profile.
+- Cancel with the draft the only space left (the others deleted meanwhile) beeps and keeps the
+  page: Delete Space refuses the last space, and the Mac's would end the page and leave the
+  nameless space for the next launch to drop.
+- Rename Space… on the draft goes to the page's name field, and Change Space Icon… is disabled on
+  the draft space (its header, where the picker hangs, is under the page; the Mac's opens the
+  picker on a header no one sees).
+- The help tags (the about field's and the profile's info button) and the + button's tooltip
+  aren't shown yet, and Undo New Space waits for undo (W16).
+- The UI gate (review/w9f-mac) set what the page measured: a disabled Create Space at half again
+  (SwiftUI's disabled plain button); the field that has the page's keyboard (in an inactive window
+  too) keeps placeholderTextColor's placeholder and the other shows it at half the label's; typed
+  text in textColor (black in the light); and Choose a Theme's brush bold for the weight of SF's
+  filled one. Still different: Windows' text inks about 15-30% lighter than SF Pro's at the same
+  weight (up to 43% for dark text on a light theme), and Segoe UI runs about 5% narrower, across
+  Kite, not only here; that's a Kite-wide text-weight checkpoint of its own (DirectWrite's
+  grayscale enhanced contrast doesn't close it: under 5%, dark-on-light only). In a dark space the
+  Mac's capture inks Profile's face.smiling filled (its code asks for the outline, which it inks in
+  a light space), and Windows' stays the outline; baselines are where SF's are.
 
 ## Saving the session
 
@@ -624,6 +1000,91 @@ folder of its own. `Kite.exe --save-log` is the live check: a quiet window that
 logs each save and its UI-thread cost. Not yet: the Mac's `syncPinnedURLs` in
 its page-event path (a pinned tab that had no page adopting the first address
 it reports), which comes with pinning.
+
+## Downloads
+
+Chromium's downloads (W20a) follow the Mac's engine (`KCBrowser.mm`'s download
+handler, `DownloadsModel`, `DownloadLocation`): each page's client is CEF's
+`CefDownloadHandler`. A download saves into its profile's folder (Settings ›
+Profiles › Download location, kept in `session.json`'s `profileSettings` by the
+profile's dataStoreID, as on the Mac; a chosen folder that has gone falls back),
+under the name Chromium suggests made safe for Windows (`core/Downloads.h`'s
+`SafeDownloadName`: its last part, no drive or stream, no device names, no
+trailing dots or spaces, 255 UTF-16 units at most), numbered "name 2.ext" when
+the folder has one or another download holds it (names compared as NTFS
+compares them, `CompareStringOrdinal` ignoring case; 1000 tries at most), and
+shortened, as Chrome does, so the whole path stays within `MAX_PATH` (Alloy
+writes the target itself, with no `.crdownload` beside it: checked on the PC); a profile set to Ask gets Chromium's Save As dialog
+there. The folder and the free name are found on CEF's file thread (a chosen
+folder can be a slow network share), where `core/Downloads.h`'s
+`DownloadReservations` finds and holds a name in one step, so a burst of
+same-name downloads gets a path each (ten at once, checked on the PC with
+`KITE_TEST_AUTOMATIC_DOWNLOADS=http://127.0.0.1:PORT`, since without a click
+Chromium allows a page one); no lock is held while the disk is asked. A Chrome Web Store package
+(its MIME type or a .crx name, from Google's extension hosts over https; the
+Mac takes the MIME type from any host) is cancelled and never listed: nothing on
+Windows installs extensions yet (W27a), where the Mac hands it to Chromium's
+installer. Chromium marks each finished file as from the internet itself (its
+quarantine writes the `Zone.Identifier` stream, `ZoneId=3` with `HostUrl`), and
+`--save-log` reads each finished file's mark back. Once a page's browser is
+gone Chromium may stop reporting its downloads (it hands them to another page
+of the profile only if one is there as it goes: a page that starts a download
+and closes itself, run on the PC, went both ways). So a page with a download
+running isn't closed until it's done: the page cap and memory pressure skip it,
+and a page Kite closes (its tab closed, unloaded, or another profile now) or
+that closes itself (its window kept past `DoClose`) is parked: hidden, muted,
+moved to about:blank (its camera, microphone, sound and scripts go with the
+page; the download, the profile's, goes on: checked on the PC with
+`KITE_TEST_CLOSE_TAB_MS`, which gives a `--save-log` run's page a click's user
+activation and then closes its tab), opening no popups or tabs, and showing no
+dialogs (its Leave Page is answered Leave, as the Mac's closed pages answer it;
+checked with a page that asks). Its tab goes as before. It closes once its
+downloads are done, or have made no progress for 10 minutes (then they're
+cancelled), checked once a minute by a window timer that runs only while a page
+is parked; closing the window closes them all. The `KITE_TEST_*` switches act
+only in a `--save-log` run on a test profile. Chromium's reports reach
+Kite's thread folded together, one per download per wake however often Chromium
+reports (about twice a second), and go through `core/DownloadsModel.h`'s rules:
+a finished download is final, an ended incognito session takes no more, and
+downloads.json is written 0.2 s after a download starts or finishes and 5 s
+after a progress tick, which never pushes back a save already waiting.
+downloads.json is the Mac's file (`Tests/Fixtures/downloads-v1.json`, which both
+suites read), read at launch and written by `core/DownloadsWriter.h`'s worker as
+the session's writer does (atomically, skipping unchanged bytes), so the UI
+thread touches no file; a download that starts before the read is in waits for
+it, and the list read joins under it. An unreadable file is moved aside, and
+one with items Kite can't read is copied aside first, as on the Mac. Quitting
+waits for the session's, history's and downloads.json's last writes within one
+10 s deadline (downloads.json's handed over first, so it runs alongside the
+other two on its own worker), and logoff within one of 3 s. A progress report
+costs Kite's UI thread about 8 μs (the model and the timer; nothing is drawn:
+the Library comes with W20b), measured by `--save-log`, which logs Chromium's
+reports, those that reached Kite, their cost and downloads.json's writes.
+Closing the window with downloads running asks first, the Mac's "Downloads in
+progress" (`shell/QuitDialog.h`, a task dialog where the Mac draws its own
+alert); Close Kite cancels them. It's asked as the window closes, before its
+pages do, where
+the Mac asks at terminate: closing the window is quitting here. A quiet run logs
+`KITE_TEST_MODAL: dialog: Downloads in progress | [Close Kite, Keep browsing]`
+and closes, as the Mac's test-safe run answers, and a profile set to Ask has its
+download cancelled with `KITE_TEST_MODAL: save panel: <name>`. Downloads go to
+`KITE_TEST_DOWNLOADS_PATH` (absolute; Kite refuses a relative one) on a test
+profile (any but `%LOCALAPPDATA%\Kite`), as the Mac honours it with
+`KITE_SUPPORT_PATH`, and a quiet run without it uses `<support>\Downloads`,
+never the user's. A finished download flashes the taskbar button while Kite is
+behind, the Mac's Dock bounce. `kitecore downloads` lists the file, `downloads
+apply` replays the engine's reports through the same rules, and `downloads
+location` shows and sets each profile's folder and Ask; kitecore never writes
+over a downloads.json item it can't read. Known differences: parking (the Mac
+removes a closed page's view and keeps no page for its downloads); a name that would make the path longer than
+`MAX_PATH` is shortened even where Windows' long paths are on; logging off or
+shutting down doesn't ask (Windows ends Kite there; its downloads read as
+interrupted next launch, as a download cut off by quitting does on the Mac; a
+follow-up: answer `WM_QUERYENDSESSION` with `ShutdownBlockReasonCreate`'s
+"Downloads in progress" and ask). Not yet: the Library's Downloads page and its actions (W20b;
+its Remove must cancel a running download first, as the Mac's does), the
+progress badge and the download's flight (W20c), Tidy Downloads, incognito
+windows (W29b), and the Settings pane that changes the location (W31a).
 
 ## History
 
@@ -797,6 +1258,137 @@ Known differences from the Mac's history import:
 - Two rows that are one URL once normalized are one page: the newer row's visit
   and title (the older title when the newer has none) and the higher count.
 
+## Pinning, renaming and folders
+
+Pin Tab (Ctrl+D, the Mac's ⌘D, Arc's Use Both priority) moves the selected tab to the end of its
+space's pinned items, or a pinned tab (from any folder) to the top of its space's Today; a split
+moves as one, its panes in order. A pinned tab or favorite remembers the page it was pinned at
+(`pinnedURL`, `BrowserState::SyncPinnedURLs`, run after every change and as a session loads, as
+the Mac's store and decoder do: never Kite's own pages or about:blank, and unpinned tabs lose
+theirs). One that has left that page (`Tab::HasLeftPinnedURL`: a fragment, a trailing slash,
+"www." and http/https don't count) shows Back to Pinned URL (arrow.uturn.backward, Segoe's Undo
+glyph) on hover, left of the close button, which sends it home and loads its page if it has
+one. These commands have the Mac's ids and no default shortcut, so keybindings.json can bind
+them: New Folder… (`newFolder`, "New Folder" at the end of the selected space's pinned items;
+as on the Mac it doesn't open the folder's rename), Duplicate Tab (`duplicate`, a copy below
+the tab in Today, or at Today's top for a pinned tab or favorite, selected), Rename Current
+Tab… (`renameCurrentTab`), Reset all tabs in this Space (`resetSpace`), Reset Tab to Original
+URL (`resetTab`), Replace Pin with Current Page (`replacePinnedTab`) and Add to Favorites
+(`toggleFavorite`). Each is enabled as the Mac's validateMenuItem has it (a tab selected, or
+one off its pinned page), and a disabled one's key passes on.
+
+A double-click on a tab's row (on the second press, as the Mac's mouseDown) or Rename Current
+Tab… opens the row's name field (`shell/RenameField`, W9d's header field generalized): the
+title all selected in the row's 14pt, "Keep it short and sweet!" when empty, over the field
+editor's background, with no Done; Return renames (a blank name goes back to the page's title),
+Escape doesn't, and leaving it keeps what was typed, as does its row going (another space shown,
+the tab moved into a closed folder: `SidebarShowsRow`, one walk to the row). A press elsewhere in the
+renamed row does nothing and the field keeps editing (the Mac's row hides its close and Back to
+Pinned URL while it renames, and its tap ignores a renaming row). A row that only moves
+(Pin Tab mid-rename) keeps its field, still editing, as the Mac's list moves a row by its id
+(SidebarList.apply's moveRow), keeping its cell and field. A double-click on a split pane's row does
+nothing (the Mac's split is one SplitRowCell, with no doubleTapped). A folder's field is the same in its 14pt semibold with no
+placeholder, and a blank name keeps the old one. The fields are visuals in their page, clipped to
+the list, so a keystroke draws only the field (the smoke test checks the page doesn't draw). A
+favorite or a split's pane has no row to rename in: the Mac's Rename Tab… dialog for those, and
+for a hidden sidebar, comes with ArcDialog (W19), a beep until then. A folder's rename comes in by
+its menu's Rename… (W17), as on the Mac.
+
+`kitecore tab pin|favorite|rename|duplicate|reset|reset-all|separate|reveal|pinned-url|replace-pin`
+and `kitecore folder new|rename|delete|move` (a folder by id or name) do the same headless;
+`kitecore sidebar` gives each tab row's `canReset` and `renamed`, `kitecore shown KIND ID` whether
+the page lists a row, and `click … --double` is a double-click's second press.
+`--capture FILE --rename-row N` opens row N's field (from 1, as `sidebar` lists the selected
+space's rows), `--hover-row N` rests the pointer on row N, and `--run-command ID` runs a command
+first (`pinTab` on a pinned tab is the "after unpin" state). The rows' menus (W17, below) rename,
+delete and fill folders from the window; a folder is filled by kitecore until W18a's drag. Not yet:
+Undo (W16: `EditState` is where it records), the command bar's command rows (the commands are there
+to bind, not to search), Back to Pinned URL's tooltip, and the "Pin Tab"/"Unpin Tab" retitling of
+the shortcut (the tab's menu has it).
+
+## The sidebar's row menus
+
+A right-click on a tab's row, a folder's row or a favorite's pane opens its menu (W17), ported
+from the Mac's TabRowCell, FolderRowCell and FavoritePaneView menus (SidebarListCells.swift,
+SidebarFavorites.swift) with their items, order, words, separators and enabled states
+(`core/SidebarContextMenu.h`, which also has SidebarContextMenu.swift's edits: Archive Other Tabs /
+Below / Above, a folder's Duplicate, New Nested Folder…, Turn “Name” into Space, and LinkFormat's
+Markdown links). As on the Mac, a Ctrl+click is a right-click there (and on a space's cell or its
+header, the space's menu), opening the menu when it's let go over the row it pressed; the empty
+sidebar, the divider and the address field have none, and the gaps between pills take nothing. New
+Tab has no menu: a right-click there opens nothing and a Ctrl+click is spent (the Mac's mouseDown
+hands it to rightMouseDown, which finds no menu), never opening the command bar. A right-click on
+one of a row's own buttons (a tab's close or Back to Pinned URL, the header's chevron and, with W9e,
+its icon) passes the menu up to the row, as AppKit's buttons pass rightMouseDown on; a Ctrl+click
+presses the button instead, as the Mac's SymbolButtons (controlClickShowsMenu false) and the
+header's icon button do. Rows and panes don't take a Ctrl+click that brings the window forward (they
+don't accept first mouse); the space bar's cells do. Known trade-off: Ctrl+click as the Mac's
+Control-click spends the gesture a ⌘-click's Windows counterpart would use for selecting several
+rows, which Kite doesn't have; if multi-select comes, it needs another gesture (Shift+click, say).
+
+- **A tab's:** Add to Favorites, Pin Tab or Unpin Tab, Back to Pinned URL and Separate From
+  Pinned Tab (a pinned tab off its page), Edit Pinned Page ▸ (Edit…, Replace Pinned URL with
+  Current; a pinned tab with a pinned URL), Copy Link and Copy link as Markdown (greyed out with
+  no page), Rename… (the row's field), then Add Split View on the tab on screen or Open in Split
+  View on another, Duplicate, Move to ▸ (the spaces), then Close Tab (Unload Tab when pinned) and,
+  for a Today tab, Archive Other Tabs, Archive Tabs Below and Archive Tabs Above, each greyed out
+  with nothing on its side.
+- **A folder's:** Duplicate (not for Claude's folders), Delete, New Nested Folder… (made open at
+  the folder's end, its rename opened), Turn “Name” into Space (a plain folder with tabs, never one
+  named Claude), Copy All Links and Copy All Links as Markdown (greyed out with no links), Rename….
+  Delete asks first in Arc's words ("Delete your “Name” folder?", "Deleting this folder will
+  archive the tabs inside it.", Delete Folder and Cancel; a task dialog, always light, as Delete
+  Space's), then archives the tabs inside, their pages closing (the selection, if it was there,
+  goes to the space's first tab). A live folder's menu is Refresh (disabled: live folders don't
+  refresh on Windows yet; its status line, filters and Repositories ▸ aren't built) and Delete Live
+  Folder, which works as the Mac's does without its refresher: it asks Arc's question ("Delete your
+  GitHub Live Folder?", "You can restore this folder at any time by right-clicking the sidebar.",
+  Delete and Cancel), then removes the folder and its tabs unarchived and records the source in the
+  session's `liveFoldersTurnedOff`, so a live folder the Mac made isn't stuck on Windows.
+- **A favorite's:** Remove from Favorites, Edit Pinned Page ▸ (with a pinned URL), Copy Link (always
+  enabled, as the Mac's), Unload Tab.
+
+The menu is Windows' own, through `shell/ContextMenu` (W9d's machinery, moved out of SpaceMenu for
+both): TrackPopupMenuEx on the right button's release (a Ctrl+click's on the left button's), dark
+in a dark space through uxtheme's ordinals 135 and 136 as the space's menu is. It's built as it
+opens, from the session as it is then, and nothing is kept while it's closed; a rename open ends
+first, keeping what was typed. Disabled until their checkpoints: Edit Pinned Page › Edit… (Arc's
+dialog, W19), Add Split View and Open in Split View (W36), Move to ▸ and its spaces (moving between
+spaces and profiles, with Arc's cross-profile warning: W18b), and a live folder's Refresh. Never shown, as on a Mac
+where nothing plays and Claude drives no tab: Stop Claude, Mute Tab / Unmute Tab (Windows doesn't
+follow pages' sound yet) and the Peek badge. Not yet: the split row's menu (Windows shows no split
+rows), Tidy Tabs' Remove header, the "Archived N tabs" and "Folder deleted" toasts (W16), Undo
+(W16), and a keyboard way in (the Mac has none: its sidebar never takes the keyboard, so the Menu
+key and Shift+F10 open nothing there until the sidebar's accessibility, W35c).
+
+`kitecore menu tab|favorite TAB_ID|folder FOLDER` prints a menu as `space menu` prints the space's,
+with its `line` in the Mac's KITE_TEST_CONTEXT_MENU format; `--pick TITLE` (or "Submenu ▸ Item")
+runs an item as the window does. `kitecore click X Y --button right` says which menu a right-click
+there opens. `--capture FILE --row-menu N` (a row from 1, as `sidebar` lists them) and
+`--favorite-menu N` (a pane from 1) open one as a right-click on its middle does, read back from
+Windows' menu like `--space-menu`'s, and print its line to stderr.
+
+## Middle-click to close (a Windows addition)
+
+A middle click on a tab's row in the sidebar closes that tab, as Chrome, Edge and Arc for Windows
+do: Today's tabs, pinned tabs and tabs in folders. It does what the row's close button does (and
+Ctrl+W for the selected tab): Today's tab is archived and its page closes; a pinned tab, in a
+folder or not, unloads, keeping its row while its page closes (the button's tooltip on the Mac
+says "Unload"); one that closes for good (a split's pane, or one with no page) goes. A tab in one
+of Claude's folders has no close button unless it closes for good, and without one it takes no
+middle click. It acts on release inside the row it went down on, so a press moved off the row, or
+one the mouse capture was taken from, closes nothing. The press itself draws nothing. While
+something is renamed, a middle press goes as a left press does: in the field, or elsewhere in the
+renamed tab's or folder's row, it does nothing and the field keeps editing (the row's close button
+is hidden then); anywhere else it ends the rename, keeping what was typed. A middle click on
+a favorite, a folder, the header, New Tab, the space bar, the top row or empty sidebar does
+nothing: a favorite is a tile, not a tab row, and has no close button to stand in for. A page's
+own middle clicks (a link opening in a background tab, autoscroll) are Chromium's, in the page's
+window, and unchanged. Known difference: the Mac has none (no sidebar middle click, and its
+`ui input` refuses middle clicks). `core/Sidebar`'s `SidebarMiddlePressAt` and
+`SidebarMiddleRelease` decide it, and `kitecore click X Y --button middle` does it headless,
+printing the close's `outcome` (`removed` or `unloaded`, as a close button's click now does too).
+
 ## Refresh rate
 
 Kite renders at whatever the display supports (60Hz, 120/144Hz laptops, 240 to
@@ -824,7 +1416,17 @@ Windows that means:
   DirectComposition's estimate of when it reaches the screen
   (`GetFrameStatistics`), as the Mac's `FrameClock.targetTimestamp`. What a
   compositor property can do (the pages' slide) is an `IDCompositionAnimation`
-  instead, with no frames of Kite's.
+  instead, with no frames of Kite's, the compositor clock boosted while it runs
+  (`FrameClock::BoostWithoutFrames`, one per animation: the pages' slide, the
+  sidebar's hide and show), as the Mac's clock asks for the screen's top rate
+  while it runs the settle. With the display off, the compositor clock's wait
+  fails at once (`STATUS_GRAPHICS_PRESENT_OCCLUDED`) and the thread falls back on
+  `DwmFlush`, which paces it at DWM's displayless 500 Hz with stalls of a few
+  hundred ms. So the smoke test checks the thread first (3 frames within 5 s
+  while the touchpad polls, and once it's done the next frame stops the clock),
+  then steps the clock's frames itself at 60 Hz (`FrameClock::SetManual`): its
+  frame-clock checks are of when Kite starts, boosts and stops the clock and what
+  each frame does, never of whether the display is ticking.
 - **Swap chains** are flip-model (`DXGI_SWAP_EFFECT_FLIP_DISCARD`) composition
   swap chains with a frame-latency waitable object, so frames present on the
   next vblank of a high-refresh or variable-refresh (G-Sync/FreeSync) display
@@ -832,12 +1434,188 @@ Windows that means:
   a 60Hz timer.
 - **DirectComposition animations** run at the compositor's rate.
 - The windowed CEF fallback (child HWND) renders at the monitor's rate on its own.
-- **Chromium's Energy Saver** caps pages at 30fps on battery below 20% by
-  default. As on the Mac (`KCRuntime.mm`), Kite sets
-  `performance_tuning.battery_saver_mode.state` to 0 unless the user turns it
-  on (`Chromium::SetEnergySaverEnabled`). `--smoke-test` reads it back, which
-  proves Kite set it only on a fresh profile: Local State keeps a value an
-  earlier run wrote.
+- **Chromium's Energy Saver** caps pages at 30fps on battery below 20%. As on
+  the Mac (`KCRuntime.mm`, on by default since 9e19088c, as in Chrome), Kite
+  sets `performance_tuning.battery_saver_mode.state` to 1 unless the user turns
+  it off (`Chromium::SetEnergySaverEnabled`); every launch sets it, so Local
+  State's value from an earlier run doesn't stick. Nothing turns it off on
+  Windows yet: the Mac's toggle (Settings › Advanced › Kite, and the Kite menu)
+  and its stored choice (`chromiumEnergySaver` in UserDefaults) come with
+  Settings (W31). `--smoke-test` reads it back and fails unless it's 1. That's
+  Chromium's own default too, so CI's smoke writes a Local State with it off (0)
+  first, and a 1 then shows that Kite set it.
+- **A window no one can see draws nothing** (`shell/Occlusion.h`, P2), as the
+  Mac's AppKit occlusion stops a covered window's page and its `ThemeView`
+  crossfade. Kite counts as hidden while the session is locked
+  (`WTSRegisterSessionNotification`), the display is off
+  (`GUID_SESSION_DISPLAY_STATUS`; dimmed still shows), its window is cloaked on
+  another virtual desktop (`DWMWA_CLOAKED`), or opaque windows cover it (fewer
+  than 64 of its pixels left, `core/Occlusion.h`). Then the shown page's widget
+  is hidden as when minimized, so Chromium stops drawing it, and a theme
+  crossfade lands at once with the frame clock stopped (`Seen()` in the browser
+  window). Covered is worked out as Chromium's `NativeWindowOcclusionTrackerWin`
+  does: out-of-context WinEvent hooks and an `EnumWindows` pass that subtracts
+  the windows above Kite's from its rect.
+  - **What covers.** A window covers only when nothing about it says it may be
+    see-through. These never cover: layered windows with alpha or a colour
+    key, click-through, acrylic, cloaked, minimized and tool windows, owned
+    popups, and windows with a shaped or empty region. Nor do windows drawn by
+    DirectComposition without a class known to be opaque (Chromium's and
+    Electron's `Chrome_WidgetWin_1`, and `ApplicationFrameWindow` for UWP
+    frames). That rules out the full-monitor `Windows.UI.Core.CoreWindow` the
+    emoji panel and touch keyboard use. WezTerm and Windows Terminal never
+    cover, since their opacity settings leave no trace in their styles.
+  - **The class list's caveats.** A transparent Electron window (a
+    `Chrome_WidgetWin_1` drawn with alpha, not layered) counts as opaque, and so
+    does a UWP app whose `ApplicationFrameWindow` hosts an in-app acrylic (host
+    backdrop) brush. Zen (acrylic), WezTerm and Windows Terminal never cover,
+    even at full opacity, so a Kite under them earns no savings.
+  - **What counts as seen.** It errs towards visible: Kite in front (a window
+    of Kite's process is the foreground window when a verdict arrives, asked of
+    Windows then; `WM_ACTIVATEAPP` clears covered at once), a window being dragged over or near a
+    visible Kite or off a covered one (until the pass after the drop), or a
+    taskbar thumbnail, Alt+Tab or Task View up. So does a screen recorder that
+    runs only to record (OBS, XSplit, Bandicam, Camtasia's recorder,
+    ScreenToGif, Zoom's sharing host), but not ones that stay resident (Windows
+    11's Snipping Tool, ShareX, Snagit, Loom), which would switch covered
+    detection off for good. Chromium makes no recorder exception at all.
+  - **Hooks.** They run on their own thread, so other apps' windows never wake
+    Kite's UI thread. Each one is on only while it can change the verdict:
+    none while locked, display-off, minimized or on another desktop; while
+    Kite is in front, only foreground changes and drags (a drag that starts in
+    front comes too soon after the foreground change for a hook made then).
+    System-wide hooks are kept only for events a person causes at a person's
+    rate: an app coming forward, a drag, a minimize, a desktop switch. Per
+    thread, the shell's shows on its preview threads (the taskbars' and the
+    hosts of Alt+Tab and Task View) while Kite is covered, and their hides
+    while one of those is up: never Explorer's whole process, where renaming
+    a file or typing in Win+R raises a caret's show per key (File Explorer's
+    windows each run on a thread of their own). Moves, z-order, state changes, shows, hides and destroys aren't
+    hooked otherwise, not even for the windows over Kite. Measured: a caret
+    raises a show, a hide and a move on every key (in the app being typed in,
+    usually the one over Kite), a tooltip a show and a hide, every Win32 menu
+    a create and a destroy (it's a window made each time it opens: 23.5
+    context switches a second covered, for menus twice a second), and a moving
+    window tens of moves a second, at 5 to 8 context switches each, past the
+    watcher's 20 a second. And a maximize or restore raises only
+    `LOCATIONCHANGE`, never a `STATECHANGE`. So a window newly over a visible
+    Kite without coming forward is found at the next pass (it costs rendering,
+    never a blank), and a closed occluder by the heartbeat. Kite's own move or
+    resize pokes the thread once, when it ends (`WM_EXITSIZEMOVE`).
+  - **Heartbeat.** What uncovers a covered Kite without an event (a
+    restore-down, Win+Arrow, a FancyZones snap, leaving full screen, a monitor
+    change, a window closed, hidden or turning translucent) is found by a
+    heartbeat that runs only while Kite is covered. Twice a second it re-reads
+    the windows that covered it with user32 alone (`IsWindow`, visible,
+    minimized, maximized, its owner, `GetWindowRect`, the style, the extended
+    style and layered alpha), and runs a pass on any change. Every 4 s it runs
+    a whole pass, asking DWM afresh too, for z-order changes, new windows and
+    a cloak or backdrop change. It's the watcher's MsgWait timeout, not a
+    timer, and stops when Kite is uncovered. The first `WM_SETCURSOR` or
+    `WM_MOUSEMOVE` to reach a covered Kite asks for a pass too. A drop, and a
+    monitor, work-area or scale change, get a second pass 0.3 s later, once
+    snaps and refits have settled. What it costs, measured per thread in
+    kiteperf's covered phase: the browser process makes 5 to 8 more context
+    switches a second than a build without P2, all of them on the occlusion
+    watcher (the unnamed thread that starts in Kite.dll,
+    `Occlusion::ThreadMain`; Chromium's threads are unchanged), which makes 7
+    to 9. About 6.5 of those are the twice-a-second wake itself and about 2.5
+    the whole pass's DWM questions every 4 s, more while another window
+    animates (measured: 15 to 21 with a window moving 60 times a second, 7 to
+    11 without the whole pass's DWM questions).
+  - **DWM's answers** (a window's frame, backdrop and cloak, each a round trip
+    to dwm.exe) are cached per window by its rect, and asked again for every
+    window when they could be stale: the end of a lock or display-off, the
+    pointer on a covered Kite, Kite's activation, any cloak event, and the
+    heartbeat's whole passes.
+  - **Chromium's own tracker is off** (P12b, docs/windows-native-occlusion.md):
+    Kite's browser process gets `--disable-features=CalculateNativeWinOcclusion`, merged
+    into CEF's own `disable-features` (`core/ChromiumSwitches.h`; `kitecore
+    chromium-switches` prints the result). In CEF 156 that tracker can't see Kite's pages
+    (child windows), so it never hid a covered Kite, and its thread woke about 1,800 times a
+    second (18 ms/s of CPU) whenever any app's window animated anywhere on the desktop. What
+    it did do for Kite, hide the pages on lock and display off, Kite's own occlusion does.
+    `--smoke-test` fails unless the feature, named in the check, is off and not also on, and
+    CEF's own features are all still there (`chromium_switches::FeatureProblem`). On a test profile,
+    `--chromium-switches "--enable-features=CalculateNativeWinOcclusion"` turns it back on
+    (the A/B tool, and a check after a CEF update: Chromium's main maps a child widget to its
+    root window, so a later CEF's tracker may see Kite).
+  - **A page Kite hides stays hidden.** Chromium can show a page whose windows Kite hid before
+    it had drawn: a page made while Kite can't be seen (Kite opened behind other windows, a new
+    or woken tab, a navigation to another renderer) went `hidden`, then `visible` about 0.4 s
+    after its load, and ran rAF at 350 fps behind hidden windows, with the verdict unchanged.
+    So each tab's main frame reports whether it reads as visible (`kite.pageVisibility`, as its
+    script context is made and on each trusted `visibilitychange`; `VisibilityReporter`).
+    - **The page's report is only a speed-up.** It's set up before the page's scripts run:
+      its listener is the first capture listener on `window`, so it runs before any the page
+      adds (one calling `stopImmediatePropagation`), and it reads the state with
+      `Document.prototype`'s own getter on the document, both kept from then, so redefining
+      `visibilityState` changes nothing it reads. But `document.open()` drops every listener
+      on the document and the window, Kite's too, and a compromised renderer can say anything.
+    - **So Kite also re-hides on its own.** After anything the browser sees that might make
+      Chromium show a page (its browser made, its placement going hidden, a main frame's load
+      starting or ending; never a subframe's), a page Kite has hidden then is re-hidden at
+      0.5, 1, 1.5, 2, 3 and 6 s, asking nothing of the page. A new one of these restarts the
+      schedule rather than adding to it, so a page has one step pending at a time, but a step
+      due within 0.5 s stays and the schedule goes on from the new anchor after it, so anchors
+      coming faster than that can't put the first re-hide off for good. They're
+      anchors, not causes: what makes Chromium show such a page isn't known. It was seen 0.4 to
+      1.3 s after one of them, `document.open()` pages and a page whose load never ends
+      included, and a re-hide just before that show puts it off: it came 0.3 to 0.7 s after the
+      last re-hide.
+    - **And asks.** After each step, and every 0.25 s after that until the next step or re-hide
+      starts it over, Kite asks the page's renderer for its visibility (`kite.askVisibility`);
+      at most 40 asks per anchor, enough for the whole schedule and some 4 s after it. The
+      reporter answers through the getter and document it kept, which a page's redefinitions
+      and `document.open()` don't reach. A `visible` answer is re-hidden at once. While the
+      renderer answers, the asks decide: a step re-hides blindly only if the renderer hasn't
+      said `hidden` in the last 0.5 s (and asks at once otherwise), so a renderer that's silent
+      (or lies) still gets the blind steps, and one that answers isn't shown for a frame or two
+      at every step for nothing.
+    - **The re-hide.** For a page Kite has hidden, Kite shows its host and widget windows
+      without activating them and hides them again at once, on CEF's thread (a few ms):
+      hiding an already hidden window tells Chromium nothing, and this hide it reads like any
+      other. For that instant the host has an empty window region and is at the bottom of
+      Kite's child windows, so nothing of it can show, even over the page being viewed with
+      Kite in front (child windows link in at the bottom as they're made and Layout never
+      moves them, so an older tab's host can be above a newer shown one). Measured with
+      `PrintWindow(PW_RENDERFULLCONTENT)`, DWM's own picture of the window: a shown red page
+      gave 50,310 red samples, none with an empty region on its host, all of them again
+      after.
+    - **Throttled.** The instant shows its own `visible` (a frame or two of rAF), so a report
+      within 0.25 s of a re-hide is looked at again after it, and a page gets at most 16
+      re-hides in any 10 s, whatever its renderer says (two navigations' schedules and their
+      reports fit; a second navigation's late steps were seen to run).
+    - **Checked.** `windows/tests/CoveredLaunchCheck.ps1` (CI runs it under a cover of its
+      own, plain and with each of six attacks: a capture listener stopping
+      `visibilitychange`, a spoofed `visibilityState`, `document.open()` after load (alone,
+      with that listener, and in a page whose load never ends), and an iframe pointed somewhere
+      new every 150 ms): a Kite opened covered ends with its page `hidden` and rAF stopped.
+  - **Off for test runs.** `--smoke-test` and `--frame-log` run without
+    occlusion, so their checks of the slide and the crossfade can't pass
+    unseen, and so does `--perf-control` until kiteperf asks for it in its
+    covered phase: kiteperf opens Kite behind other windows, so its other
+    phases would measure whatever the desktop happened to cover.
+    `--occlusion-log FILE` (test profiles) writes each verdict and the
+    thread's counters.
+  - **Known gaps.** A covered Kite uncovered without an event shows its card
+    until the heartbeat sees it, or the pointer reaches it. That's up to half
+    a second for what the half-second check reads (an occluder moved, resized,
+    minimized, restored, hidden, closed, or made translucent or
+    click-through), and up to 4 s, the next whole pass, for what it doesn't:
+    an occluder sent behind Kite without a foreground change, a window region
+    set on it (`SetWindowRgn`), or its backdrop switched to acrylic. A Kite
+    captured as a window by an app not on the recorder list (a meeting app
+    sharing it while covered) shows its card. While a recorder runs, a covered
+    Kite draws (the verdict is visible, so there's no heartbeat); the watcher
+    waits on the recorder's process, and its exit runs a pass. The re-hide schedule's anchors
+    aren't what makes Chromium show a page Kite hid, and that cause isn't known: a page it
+    shows more than 6 s after the last anchor (a browser made, a placement going hidden, a
+    main-frame load starting or ending), with Kite's listener gone (`document.open()`) or its
+    renderer lying, draws until the next anchor or verdict change. None was seen; every show
+    measured came 0.4 to 1.3 s after an anchor. A page that keeps making anchors (navigating
+    itself over and over) is asked about itself every 0.25 s, and re-hidden blindly about every
+    half second only while its renderer is silent; past 16 re-hides in 10 s it waits.
 
 ## Measuring performance
 
@@ -872,7 +1650,9 @@ behind other windows, without asking for the focus, and never shows a dialog, as
 - `--perf-control`: requests by `WM_COPYDATA` (`dwData` 'KPRF', a UTF-8 JSON object):
   `{"command":ID}` runs a shortcut's command by its id (`kitecore shortcuts`), `{"mark":NAME}`
   logs a mark, `{"open":URL}` opens an http or https page in a tab, `{"input":"move","x":X,
-  "y":Y,"qpc":Q}` posts a pointer move at client pixels, and `{"input":"leave"}` takes it away.
+  "y":Y,"qpc":Q}` posts a pointer move at client pixels, `{"input":"leave"}` takes it away, and
+  `{"occlusion":"on"}` or `"off"` starts or stops watching whether the window can be seen
+  (off under `--perf-control` until asked).
   A request is checked and queued, and the answer is 1, or 0 for one Kite can't run; it then
   runs from the message loop, so the sender isn't held and its dispatch is timed like any
   other. While a posted pointer is over the window the system's `WM_MOUSELEAVE` is ignored,
@@ -881,7 +1661,10 @@ behind other windows, without asking for the focus, and never shows a dialog, as
   (`OnBeforeCommandLineProcessing`), from an allow-list (`shell/PerfProtocol.h`): the GPU
   backend and rasterization (always in the sandboxed GPU process), throttling and backgrounding,
   the renderer limit, and four features that can be turned off by name, to measure Kite with one
-  and without. Nothing that weakens the sandbox, site isolation or web security, opens a
+  and without; and `--enable-features=CalculateNativeWinOcclusion`, which turns Chromium's
+  native occlusion tracker back on (off by default, P12b) and takes it out of
+  `disable-features`, so it's never both. One switch turning a feature on and another turning
+  it off is refused. Nothing that weakens the sandbox, site isolation or web security, opens a
   debugging port, or changes a path or a launched process. Chromium reads nothing else of
   Kite.exe's command line.
 
@@ -919,7 +1702,9 @@ frame intervals from one clock, p50/p99 and missed, and switch-to-present); swit
 reload (every 0.5 s for 10 s); hover (pointer moves posted at 120 Hz for 10 s over the rows:
 moves sent, committed and move-to-present); titleTick (a page that retitles itself every
 second, 20 s); anim (a CSS and requestAnimationFrame page selected, 10 s), hiddenAnim (the
-same in a background tab, 20 s), covered (under kiteperf's own black window, 20 s) and
+same in a background tab, 20 s), covered (under kiteperf's own black window, with Kite's
+occlusion turned on for the phase and off after it, 20 s; a Kite without the request, like a
+build from before P2, refuses it and is measured as it is) and
 minimized (20 s); then one `WM_CLOSE` and the time until every process is gone. `--phases`
 runs some of them (open and settle always first); `--scenario idle` stops after idle,
 `startup` after the first page, and `smoke` (CI) is a few seconds each of open, idle,

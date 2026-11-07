@@ -46,6 +46,10 @@ jobs:
       - name: Make the cached build incremental
         if: runner.environment == 'github-hosted'
         run: scripts/ci-restore-mtimes.sh
+      # Every script that launches Kite goes through scripts/lib/test-kite.sh: a fresh test profile, never the
+      # real one, and never the installed Kite's bundle ID. Seconds, no build.
+      - name: Check Kite launch scripts
+        run: scripts/check-launch-guards.sh
       - name: Test (WebKit build, no CEF download)
         run: swift test
       - name: Save build cache (main only, so every PR starts from main's build)

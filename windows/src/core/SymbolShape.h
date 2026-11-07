@@ -1,7 +1,8 @@
 #pragma once
 // The SF Symbols that neither Segoe icon font has an object for (bookmark, paw, bed, cutlery,
-// dumbbell, bandage, baseball, takeaway bag, theatre masks), and the briefcase, whose Segoe
-// glyph is a plain case, drawn as Kite's own geometry: simple original shapes, each sized and
+// dumbbell, bandage, baseball, takeaway bag, theatre masks), the four whose Segoe stand-in is the
+// wrong shape (a database drum, the code sign, a scroll, a tram: the W9e/W9f UI gate), and the
+// briefcase, whose Segoe glyph is a plain case, drawn as Kite's own geometry: simple original shapes, each sized and
 // placed to the ink box the Mac's symbol makes at the same point size, with its inked area and
 // weight (numbers measured from the Mac's renders, docs/windows.md). Nothing here is Apple's
 // outline or fitted to it.
@@ -92,6 +93,10 @@ private:
     bool open_ = false;
     ShapePoint current_;
 };
+
+// A straight stroke from `a` to `b`, `half` its width either side, with round ends: a rounded
+// rectangle round the line (the top row's X and reload's chevron, the empty favorites' close button).
+void AddStroke(ShapeBuilder& builder, ShapePoint a, ShapePoint b, float half);
 
 // The bounds of the added layers' figures (a cut that trims an edge isn't counted), which the
 // header's placement centres. For tests: whether (x, y) is inked, and the inked area in square

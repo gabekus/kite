@@ -41,26 +41,39 @@ add_library(KiteCoreWin STATIC
   src/core/ArcImport.cpp
   src/core/ArcImportController.cpp
   src/core/ArcImportFiles.cpp
+  src/core/ColorSpaces.cpp
   src/core/CommandBar.cpp
+  src/core/ChromiumSwitches.cpp
   src/core/CommandLine.cpp
+  src/core/Downloads.cpp
+  src/core/DownloadsModel.cpp
+  src/core/DownloadsWriter.cpp
+  src/core/Favorites.cpp
   src/core/Files.cpp
+  src/core/FindBar.cpp
   src/core/History.cpp
   src/core/HistoryStore.cpp
   src/core/Json.cpp
   src/core/KeyBindings.cpp
   src/core/Models.cpp
   src/core/OKLab.cpp
+  src/core/OneShotFlags.cpp
+  src/core/ProfileSettings.cpp
   src/core/SessionBackups.cpp
   src/core/SessionSaveDelay.cpp
   src/core/SessionStore.cpp
   src/core/SessionWriter.cpp
   src/core/StoreFile.cpp
   src/core/SpaceBar.cpp
+  src/core/SpaceCreation.cpp
   src/core/SpaceEditing.cpp
   src/core/SpaceIcon.cpp
+  src/core/SpaceIconPicker.cpp
   src/core/SymbolShape.cpp
   src/core/TextMatch.cpp
   src/core/PictureLoads.cpp
+  src/core/PinnedTree.cpp
+  src/core/PinnedURL.cpp
   src/core/Plist.cpp
   src/core/Profiles.cpp
   src/core/SiteSearch.cpp
@@ -69,8 +82,12 @@ add_library(KiteCoreWin STATIC
   src/core/SpaceSwipeGesture.cpp
   src/core/TouchpadPhases.cpp
   src/core/LiveTabPolicy.cpp
+  src/core/Occlusion.cpp
   src/core/Sidebar.cpp
+  src/core/SidebarContextMenu.cpp
+  src/core/SidebarTopRow.cpp
   src/core/TabClosing.cpp
+  src/core/TabEditing.cpp
   src/core/SupportDirectory.cpp
   src/core/ThemeBackdrop.cpp
   src/core/TitleBar.cpp
@@ -135,34 +152,51 @@ if(WIN32)
     src/shell/BackdropTest.cpp
     src/shell/BrowserWindowController.cpp
     src/shell/BrowserWindowController+Chromium.cpp
+    src/shell/BrowserWindowController+NewSpace.cpp
     src/shell/BrowserWindowController+Spaces.cpp
+    src/shell/BrowserWindowController+SidebarMenus.cpp
+    src/shell/BrowserWindowController+Tabs.cpp
     src/shell/BrowserWindowController+Tests.cpp
     src/shell/BrowserWindowControllerArcImport.cpp
     src/shell/CaptionButtonsView.cpp
     src/shell/Capture.cpp
     src/shell/CommandBarView.cpp
     src/shell/Compositor.cpp
+    src/shell/FadedLayer.cpp
     src/shell/Favicons.cpp
+    src/shell/FavoritesView.cpp
+    src/shell/FindBarView.cpp
     src/shell/FrameClock.cpp
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
     src/shell/MemoryPressure.cpp
+    src/shell/Occlusion.cpp
     src/shell/PerfLog.cpp
+    src/shell/PopoverWindow.cpp
     src/shell/QuietRun.cpp
+    src/shell/QuitDialog.cpp
+    src/shell/RelayedTooltips.cpp
+    src/shell/RenameField.cpp
     src/shell/Renderer.cpp
+    src/shell/SidebarTopRowView.cpp
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
+    src/shell/SpaceCreationView.cpp
     src/shell/SpaceIconPainter.cpp
+    src/shell/SpaceIconPickerView.cpp
     src/shell/SpaceMenu.cpp
-    src/shell/SpaceRenameField.cpp
+    src/shell/ContextMenu.cpp
+    src/shell/SidebarMenus.cpp
     src/shell/SpaceTipView.cpp
+    src/shell/ThemeSwatchesView.cpp
     src/shell/TextEditing.cpp
+    src/shell/TextField.cpp
     src/shell/TextLine.cpp
     src/shell/TouchpadInput.cpp
     resources/Version.rc
     ${KITE_SHADER_HEADERS}
   )
-  set(KITE_SHELL_LIBRARIES KiteCoreWin user32 dwmapi shell32 ole32 uuid windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp comctl32)
+  set(KITE_SHELL_LIBRARIES KiteCoreWin user32 dwmapi shell32 ole32 uuid windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp comctl32 advapi32 wtsapi32)
 
   # Chromium (CEF), from windows/scripts/fetch-cef.ps1. Without it (no download yet, or the
   # MinGW check, which can't link CEF's MSVC wrapper) Kite.exe builds without pages.
@@ -197,14 +231,16 @@ if(WIN32)
     # Every helper maps Kite.dll, renderers under win32k lockdown, where user32 (or anything that
     # loads it) fails the process: everything but kernel32 and libcef.dll is delay-loaded, so only
     # the browser process loads it. Control Flow Guard and CET shadow stacks, as Chromium's own
-    # binaries have. tests/KiteBinariesTest.cmake checks all three. comctl32 is for Delete Space's
-    # task dialog, gdi32 for --space-menu's read-back: only the window's process calls them
-    # (user32 loads gdi32 for itself, so delaying Kite's import of it is safe: no call of Kite's
-    # to it comes before the window, or from a loader callback).
+    # binaries have. tests/KiteBinariesTest.cmake checks all three. comctl32 is for the task
+    # dialogs (Delete Space's question, the quit's "Downloads in progress") and the top row's
+    # tooltips (made on the first hover over a button), gdi32 for
+    # --space-menu's read-back: only the window's process calls them (user32 loads gdi32 for
+    # itself, so delaying Kite's import of it is safe: no call of Kite's to it comes before the
+    # window, or from a loader callback).
     target_compile_options(Kite PRIVATE /guard:cf)
     target_link_options(Kite PRIVATE /guard:cf /CETCOMPAT
       /DELAYLOAD:user32.dll /DELAYLOAD:dwmapi.dll /DELAYLOAD:shell32.dll /DELAYLOAD:ole32.dll /DELAYLOAD:advapi32.dll
-      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll
+      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll /DELAYLOAD:wtsapi32.dll
       /DELAYLOAD:comctl32.dll /DELAYLOAD:gdi32.dll)
     set_target_properties(Kite PROPERTIES
       RUNTIME_OUTPUT_DIRECTORY "${KITE_OUT}"
@@ -319,24 +355,34 @@ add_executable(KiteCoreTests
   tests/ArcHistoryImportTests.cpp
   tests/ArcImportTests.cpp
   tests/ArcImportFilesTests.cpp
+  tests/ChromiumSwitchesTests.cpp
   tests/CommandBarTests.cpp
   tests/CommandLineTests.cpp
+  tests/DownloadsTests.cpp
+  tests/FavoritesTests.cpp
+  tests/FindBarTests.cpp
   tests/HistoryTests.cpp
   tests/JsonTests.cpp
   tests/KeyBindingsTests.cpp
   tests/ModelTests.cpp
   tests/LiveTabPolicyTests.cpp
+  tests/OcclusionTests.cpp
   tests/SessionSaveTests.cpp
+  tests/SidebarContextMenuTests.cpp
   tests/SidebarTests.cpp
+  tests/SidebarTopRowTests.cpp
   tests/SpaceBarTests.cpp
+  tests/SpaceCreationTests.cpp
   tests/SpaceEditingTests.cpp
   tests/SpaceIconTests.cpp
+  tests/SpaceIconPickerTests.cpp
   tests/PictureLoadsTests.cpp
   tests/SpaceSwipeTests.cpp
   tests/SpaceSwipeGestureTests.cpp
   tests/TouchpadPhasesTests.cpp
   tests/SymbolShapeTests.cpp
   tests/TabClosingTests.cpp
+  tests/TabEditingTests.cpp
   tests/SupportDirectoryTests.cpp
   tests/ThemeBackdropTests.cpp
   tests/ThemeTests.cpp
@@ -373,12 +419,13 @@ target_link_libraries(gen-theme-golden PRIVATE KiteCoreWin)
 # The session fixture shared with the Mac test suite.
 target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../Tests/Fixtures"
                                                KITE_STATES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/helix/states"
+                                               KITE_MAC_PICKER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../Sources/KiteMac/Views/SpaceIconPicker.swift"
                                                KITE_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
                                                KITE_ARC_FIXTURE_DIR="${KITE_ARC_FIXTURE_DIR}")
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)
-add_test(NAME history-bench COMMAND history-bench 300)
 add_test(NAME chromium-ignores-kites-command-line
   COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/shell/Chromium.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ChromiumSettingsCheck.cmake)
+add_test(NAME history-bench COMMAND history-bench 300)
 add_test(NAME kitecore-cli
   COMMAND ${CMAKE_COMMAND} -DKITECORE=$<TARGET_FILE:kitecore> -DWORK=${CMAKE_CURRENT_BINARY_DIR}/kitecore-cli-test
           -DARC_LOCAL_APP_DATA=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/arc-windows

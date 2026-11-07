@@ -1,0 +1,77 @@
+{
+  "state": {
+    "adblockAllowedHosts": [],
+    "allowsJavaScriptFromAppleEvents": false,
+    "archiveAfter": "never",
+    "archived": [],
+    "blocksAds": true,
+    "darkPageHosts": [],
+    "darkPages": "matchSystem",
+    "devModeReloadState": "reload",
+    "developerModeEnabledForHosts": [],
+    "favorites": [],
+    "hasSeenLiveFolderIntro": false,
+    "liveFoldersTurnedOff": [],
+    "pageAppearance": "automatic",
+    "recentlyClosed": [],
+    "searchEngine": "duckDuckGo",
+    "selectedSpaceID": "5F0C9A2B-1D3E-4F6A-9B8C-7D6E5F4A3B21",
+    "showsToolbar": false,
+    "siteSearchDefaultsSeeded": 1,
+    "siteSearches": [],
+    "spaces": [
+      {
+        "icon": "🏠",
+        "id": "5F0C9A2B-1D3E-4F6A-9B8C-7D6E5F4A3B21",
+        "name": "Personal",
+        "pinnedItems": [
+          {
+            "tab": {
+              "_0": {
+                "id": "C1B2C3D4-0002-4C00-8000-00000000A002",
+                "lastActiveAt": 783000000,
+                "pinnedURL": "https://example.org/",
+                "title": "Example Domain",
+                "url": "https://example.org/"
+              }
+            }
+          },
+          {
+            "tab": {
+              "_0": {
+                "id": "C1B2C3D4-0001-4C00-8000-00000000A001",
+                "lastActiveAt": 782999000,
+                "pinnedURL": "https://example.com/",
+                "title": "Elsewhere",
+                "url": "https://example.com/elsewhere"
+              }
+            }
+          }
+        ],
+        "selectedTabID": "C1B2C3D4-0002-4C00-8000-00000000A002",
+        "tabs": [
+          {
+            "id": "C1B2C3D4-0003-4C00-8000-00000000A003",
+            "lastActiveAt": 782990000,
+            "title": "Example Domain",
+            "url": "https://example.net/"
+          }
+        ],
+        "theme": {
+          "colors": [
+            {
+              "b": 0.1,
+              "g": 0.1,
+              "r": 0.1
+            }
+          ],
+          "grain": 0,
+          "tint": 0.44
+        }
+      }
+    ],
+    "spacesWithCollapsedPinnedSections": [],
+    "warnsBeforeQuitting": false
+  },
+  "version": 1
+}

@@ -7,7 +7,8 @@
 // A symbol is its glyph in Segoe Fluent Icons (Segoe MDL2 Assets where Fluent isn't installed),
 // filled from the glyph's outline in the colour it's given, centred on its ink, at a size made so
 // Segoe's briefcase glyph inks as wide as the Mac's semibold briefcase (14.65pt at 12.5): the
-// same factor for every symbol, so they keep their sizes relative to each other. The nine neither
+// same factor for every symbol, so they keep their sizes relative to each other (the picker's Icon
+// tab instead fits each to the Mac's ink: DrawFitted, core's IconTabInkFor). The nine neither
 // font has, and the briefcase, are Kite's own shapes (core/SymbolShape.h), placed by core's
 // PlaceDrawnSymbol, which need neither font.
 // A picture is core's PictureFrameAt (the Mac's rounded square), the stored PNG's centred square
@@ -45,6 +46,10 @@
 
 namespace kite {
 
+// A drawn symbol's geometry (core/SymbolShape.h: its layers joined and cut in order, in the shape's
+// points), on `d2d`; null when it can't be made.
+Microsoft::WRL::ComPtr<ID2D1Geometry> MakeShapeGeometry(ID2D1Factory* d2d, const SymbolShape& shape);
+
 class SpaceIconPainter {
 public:
     struct Pictures {
@@ -74,7 +79,12 @@ public:
     // bar, 15 in the header): a symbol in `symbol`, filled with `brush`. `dark` is the
     // appearance, for the missing picture's placeholder.
     void Draw(ID2D1DeviceContext* context, ID2D1SolidColorBrush* brush, const SpaceIconLook& look, D2D1_POINT_2F centre, float size,
-              float scale, D2D1_COLOR_F symbol, bool dark);
+              float scale, D2D1_COLOR_F symbol, bool dark, float stroke = 0);
+    // The Icon tab's: `look`'s symbol (a glyph or Kite's own shape) scaled so its ink's box has the
+    // geometric mean of `width` and `height` for its sides' (core's IconTabInkFor), the ink's middle
+    // at `centre`, its outline also stroked `stroke` points wide, in `color`.
+    void DrawFitted(ID2D1DeviceContext* context, ID2D1SolidColorBrush* brush, const SpaceIconLook& look, D2D1_POINT_2F centre, float width,
+                    float height, float stroke, D2D1_COLOR_F color);
     // Keeps only the pictures named here (the spaces' icons now).
     void Retain(const std::set<std::string>& names);
     // Drops what belongs to the device: the pictures' bitmaps (their decoded pixels stay), and
@@ -112,7 +122,7 @@ private:
     std::pair<Face*, const Outline*> OutlineOf(const SymbolGlyph& glyph);
     const Outline* OutlineIn(Face& face, char16_t codePoint);
     void DrawSymbol(ID2D1DeviceContext* context, ID2D1SolidColorBrush* brush, const SymbolGlyph& glyph, D2D1_POINT_2F centre, float size,
-                    D2D1_COLOR_F color);
+                    D2D1_COLOR_F color, float stroke = 0);
     // A drawn symbol's geometry (its layers joined and cut in order), made once per factory;
     // null when it can't be made (tried again with the next factory).
     ID2D1Geometry* ShapeGeometry(const SymbolShape& shape);

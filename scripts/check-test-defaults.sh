@@ -12,9 +12,11 @@ if [[ "$ID" == dev.gabek.Kite ]]; then
     exit 1
 fi
 
-PROFILE="$(mktemp -d /tmp/k.XXXX)"
-[[ -d "$PROFILE" ]] || { echo "FAIL: no profile directory" >&2; exit 1; }
+# shellcheck source=lib/test-kite.sh
+source "$ROOT/scripts/lib/test-kite.sh"
+PROFILE="$(kite_test_profile)"
 KEY="kiteTestDefaultsProbe$RANDOM$RANDOM"
+kite_check_test_launch "$APP" "$PROFILE" || exit 1
 
 KITE_SUPPORT_PATH="$PROFILE" KITE_DIAGNOSTICS=1 KITE_TEST_BLOCK_VIEWS_WINDOWS=1 TYPESAFE_API_KEY=dummy \
     KITE_TEST_DEFAULTS_PROBE="$KEY" "$APP/Contents/MacOS/Kite" >"$PROFILE/kite.log" 2>&1 &

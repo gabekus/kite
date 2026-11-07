@@ -35,6 +35,13 @@ final class PagePool {
     /// Installs started from Google's "Add to Kite" buttons, by extension id.
     private var extensionInstalls: [String: BackgroundExtensionInstall] = [:]
 
+    /// A private window's pool: nothing its pages do is traced.
+    var isPrivate = false
+    /// Loads under way, for the trace's `page.load` (when each started, and why).
+    fileprivate var traceLoads: [UUID: TraceLoad] = [:]
+    /// Each tab's open permission prompt, from when it showed.
+    fileprivate var tracePrompts: [UUID: (t: Double, m: Double)] = [:]
+
     init(engine: WebEngine, store: BrowserStore) {
         self.engine = engine
         self.store = store
@@ -47,6 +54,8 @@ final class PagePool {
     var onTabOpened: ((_ child: UUID, _ opener: UUID) -> Void)?
     /// Called when a tab's page stops loading.
     var onLoadFinished: ((UUID) -> Void)?
+    /// A tab's page showed a JavaScript dialog, or it closed (for Claude: `DialogLog`).
+    var onPageDialog: ((UUID, PageDialogEvent) -> Void)?
     /// A tab's page started (true) or finished (false) loading (the install icon checks the page).
     var onLoadingChanged: ((UUID, WebPage, Bool) -> Void)?
     /// A link clicked in tab `UUID` opens in Arc's Peek card (`LinkPeek`); nil opens it as a new tab.
@@ -68,6 +77,7 @@ final class PagePool {
     /// Answers tab `id`'s permission request: true allows, false blocks ("Not Now"), nil dismisses.
     func answerPermissionRequest(_ id: UUID, allow: Bool?) {
         guard let request = permissionRequests.removeValue(forKey: id) else { return }
+        tracePermissionAnswered(id, allow: allow)
         request.respond(allow)
         onPermissionRequestsChanged?()
     }
@@ -180,10 +190,19 @@ final class PagePool {
         // A tab on one of Kite's own pages gets a blank page; the window draws the page over it.
         let url = InternalPage(tab.url) == nil ? tab.url : nil
         // History saved when the page hibernated, here or in a linked window, or before Kite last quit.
-        let restoring = savedState.removeValue(forKey: tab.id) ?? shared?.takeSavedState(tab.id, excluding: self)
-            ?? url.flatMap { historyFiles?.load(tab: tab.id, url: $0, profile: engine.profileDirectory) }
+        var source = PageRestore.Source.none
+        var restoring = savedState.removeValue(forKey: tab.id)
+        if restoring != nil { source = .thisWindow }
+        if restoring == nil, let state = shared?.takeSavedState(tab.id, excluding: self) { restoring = state; source = .anotherWindow }
+        if restoring == nil, let state = url.flatMap({ historyFiles?.load(tab: tab.id, url: $0, profile: engine.profileDirectory) }) {
+            restoring = state
+            source = .file
+        }
+        FindTestHookRunner.logPageMade(hasURL: url != nil, restoredFrom: source)   // a run with a find hook only
         let page = engine.makePage(url: url, restoring: restoring)
         register(page, id: tab.id)
+        // The engine started the load before the page was registered: its first "loading" went to no one.
+        recordLoadingAtRegistration(page, id: tab.id)
         pageProfiles[tab.id] = engine.profileDirectory
         // Before the engine asks for the first document's scripts.
         page.themeCSS = themeCSS(forTabs: [tab.id])[tab.id] ?? nil
@@ -270,6 +289,7 @@ final class PagePool {
         let id = UUID()
         register(page, id: id)
         pageProfiles[id] = profileDirectory ?? currentEngine.profileDirectory
+        recordLoadingAtRegistration(page, id: id)
         return id
     }
 
@@ -323,6 +343,7 @@ final class PagePool {
         store.mutateWithoutUndo { state in
             if let from = opener ?? source { state.openTab(id: newID, url: url, openedBy: from) } else { state.openTab(id: newID, url: url) }
         }
+        recordLoadingAtRegistration(page, id: newID)
         if let from = opener ?? source { onTabOpened?(newID, from) }
     }
 
@@ -347,6 +368,17 @@ final class PagePool {
     func register(existing page: WebPage, id: UUID, profileDirectory: String?) {
         register(page, id: id)
         pageProfiles[id] = profileDirectory
+        recordLoadingAtRegistration(page, id: id)
+    }
+
+    /// A page made before this pool listened to it (by the engine in `makePage`, or by a Peek, a popup or Little
+    /// Kite) may already be loading, and its first "loading" event went to no one (PageRegistration): record it now,
+    /// as that event would have, or a slow load shows reload instead of the X. Back and forward aren't on WebPage,
+    /// so they come with the page's next navigation event.
+    private func recordLoadingAtRegistration(_ page: WebPage, id: UUID) {
+        guard PageRegistration.loadingToRecord(pageIsLoading: page.isLoading, recorded: store.pages[id]?.isLoading) == true else { return }
+        store.updatePage(id) { $0.isLoading = true }
+        onLoadingChanged?(id, page, true)
     }
 
     func discard(_ id: UUID, keepHistory: Bool) {
@@ -388,7 +420,12 @@ final class PagePool {
     }
 
     private func saveHistory(of id: UUID) {
-        guard historyFiles != nil, let page = pages[id], let state = page.hibernationState() as? Data else { return }
+        guard historyFiles != nil, let page = pages[id] else { return }
+        // No state (a page with nothing committed yet, PageRestore): an older file would restore what's gone.
+        guard let state = page.hibernationState() as? Data else {
+            historyFiles?.remove(tab: id)
+            return
+        }
         writeHistory(state, of: id, profile: pageProfiles[id])
     }
 
@@ -419,6 +456,7 @@ final class PagePool {
     }
 
     private func handle(_ event: PageEvent, from id: UUID) {
+        if !isPrivate { trace(event, from: id) }
         switch event {
         case .title(let title):
             store.pageTitleChanged(id, title)
@@ -521,6 +559,10 @@ final class PagePool {
             guard permissionRequests[id]?.id == requestID else { return }
             permissionRequests[id] = nil
             onPermissionRequestsChanged?()
+        case .trace, .traceInput:
+            break
+        case .dialog(let event):
+            onPageDialog?(id, event)
         }
     }
 
@@ -535,7 +577,7 @@ final class PagePool {
 
     /// Hibernates tabs unless they're playing media or using the camera or mic. A busy tab is remembered
     /// (`busyIDs`) and the live-tab limit picks again without it, so the next oldest goes instead.
-    private func hibernate(_ ids: [UUID]) {
+    private func hibernate(_ ids: [UUID], reason: String = "tab_limit") {
         // A window is asking its pages whether it may close: none may go unasked meanwhile.
         guard !holdsPages else { return }
         for id in ids where !isLinkedToPopup(id) {
@@ -552,6 +594,7 @@ final class PagePool {
                     return
                 }
                 busyIDs.remove(id)
+                if !isPrivate { Trace.event("tab.discarded", tab: id, url: store.state.tab(id)?.url, actor: .kite, ["reason": .string(reason)]) }
                 discard(id, keepHistory: true)
             }
         }
@@ -581,7 +624,7 @@ final class PagePool {
         source.setEventHandler { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.hibernate(self.pages.keys.filter { !self.visibleIDs.contains($0) })
+                self.hibernate(self.pages.keys.filter { !self.visibleIDs.contains($0) }, reason: "memory_pressure")
             }
         }
         source.resume()
@@ -638,4 +681,85 @@ extension Notification.Name {
     static let kitePageFinishedLoading = Notification.Name("KitePageFinishedLoading")
     /// A browser window put pages on screen (a tab came forward there, or a split changed).
     static let kitePagesShown = Notification.Name("KitePagesShown")
+}
+
+// MARK: Action trace
+
+/// A load under way in a tab, for its `page.load` record.
+struct TraceLoad {
+    var start: (t: Double, m: Double)
+    var cause: String
+    var actor: TraceActor
+    /// When the person started asking for it (the command bar opening), for `intent_ms`.
+    var since: Double?
+    var committed = false
+}
+
+extension PagePool {
+    /// The trace's page events: a load starting, committing and finishing (with why it started, how long it took,
+    /// and from the command bar opening), the renderer crashing, permission prompts, dialogs, and what the page's
+    /// trace script saw (clicks, fields, scrolls, timings). Never in a private window.
+    fileprivate func trace(_ event: PageEvent, from id: UUID) {
+        guard Trace.isEnabled else { return }
+        let url = store.state.tab(id)?.url
+        let session = store.traceLayout?.tabs[id]?.session
+        switch event {
+        case .navigationState(let isLoading, _, _):
+            let was = store.pages[id]?.isLoading == true
+            if isLoading, !was || traceLoads[id] == nil {
+                let intent = Trace.takeIntent(tab: id)
+                let actor = intent.map { TraceActor.named($0.actor) } ?? ActionTrace.actor(forTab: id)
+                let load = TraceLoad(start: TraceClock.now(), cause: intent?.cause ?? (actor == .user ? "page" : "agent"), actor: actor,
+                                     since: intent?.since)
+                traceLoads[id] = load
+                Trace.event("page.load_started", tab: id, url: url, actor: actor, start: load.start, session: session,
+                            ["cause": .string(load.cause)])
+            } else if !isLoading, let load = traceLoads.removeValue(forKey: id) {
+                let now = TraceClock.monotonic()
+                var attrs: [String: JSONValue] = ["cause": .string(load.cause), "engine": .string(engine(forTab: id).name)]
+                if let pid = pages[id]?.processIdentifier { attrs["pid"] = .number(Double(pid)) }
+                if let since = load.since { attrs["intent_ms"] = .number(((now - since) * 10).rounded() / 10) }
+                if store.pages[id]?.crashCode != nil { attrs["crashed"] = true }
+                Trace.event("page.load", tab: id, url: url, actor: load.actor, duration: now - load.start.m, start: load.start,
+                            session: session, attrs)
+            }
+        case .url(let new):
+            if var load = traceLoads[id], !load.committed {
+                load.committed = true
+                traceLoads[id] = load
+                Trace.event("page.commit", tab: id, url: new, actor: load.actor, session: session,
+                            ["since_start_ms": .number(((TraceClock.monotonic() - load.start.m) * 10).rounded() / 10)])
+            } else if traceLoads[id] == nil, new != url {
+                // A page that changes its address without loading (pushState).
+                Trace.event("page.url_changed", tab: id, url: new, actor: ActionTrace.actor(forTab: id), session: session)
+            }
+        case .crashed(let code):
+            traceLoads[id] = nil
+            Trace.event("page.crashed", tab: id, url: url, actor: .kite, session: session,
+                        ["code": .number(Double(code)), "engine": .string(engine(forTab: id).name)])
+        case .permissionRequest(let request):
+            tracePrompts[id] = TraceClock.now()
+            Trace.event("permission.prompt", tab: id, url: url, actor: .kite, session: session,
+                        ["permissions": .array(request.permissions.map { .string(TraceRedaction.word("\($0)")) })])
+        case let .trace(name, attrs, duration, start):
+            Trace.event(name, tab: id, url: url, actor: ActionTrace.actor(forTab: id), duration: duration, start: start,
+                        session: session, attrs)
+        case .traceInput(let payload):
+            guard let input = TracePageInput.parse(payload) else { return }
+            let actor = ActionTrace.actor(forTab: id, grace: false)
+            Trace.event(input.name, tab: id, url: url, actor: actor, duration: input.duration,
+                        start: input.duration.map { (TraceClock.wall() - $0, TraceClock.monotonic() - $0) }, session: session, input.attrs)
+            // A link clicked here starts this tab's next load.
+            if input.link != nil, input.attrs["new_tab"] == nil { Trace.$actor.withValue(actor) { Trace.intend("link", tab: id) } }
+        default:
+            break
+        }
+    }
+
+    fileprivate func tracePermissionAnswered(_ id: UUID, allow: Bool?) {
+        guard !isPrivate, let shown = tracePrompts.removeValue(forKey: id) else { return }
+        Trace.event("permission.answered", tab: id, url: store.state.tab(id)?.url, actor: allow == nil ? .kite : .user,
+                    duration: TraceClock.monotonic() - shown.m, start: shown,
+                    ["answer": .string(allow.map { $0 ? "allow" : "block" } ?? "dismiss")])
+    }
 }

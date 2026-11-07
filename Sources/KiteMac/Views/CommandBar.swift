@@ -402,6 +402,21 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
 
     /// Learns picks, so what was typed leads to the same tab next time.
     private func commit(_ item: CommandSuggestion) {
+        // What kind of result was picked, its rank and the query's length; never the query or the result.
+        if !store.isPrivate, Trace.isEnabled {
+            let kind = switch item {
+            case .open: "open"
+            case .search: "search"
+            case .siteSearch: "site_search"
+            case .switchTab: "switch_tab"
+            case .history: "history"
+            case .command: "command"
+            case .instantLinks: "instant_links"
+            default: "other"
+            }
+            Trace.event("command_bar.picked", ["kind": .string(kind), "rank": .number(Double((items.firstIndex(of: item) ?? -1) + 1)),
+                                               "query_len": .number(Double(typed.count)), "results": .number(Double(items.count))])
+        }
         // Not in a Site Search, whose query is for the site, nor while a completion shows (no pick leads then).
         if site == nil, completed == nil {
             let tab: UUID? = if case .switchTab(let tab) = item { tab.id } else { nil }

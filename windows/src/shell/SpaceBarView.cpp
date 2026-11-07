@@ -158,7 +158,12 @@ void SpaceBarView::ReleaseGpu() {
     flatCaps_.Reset();
 }
 
-void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark) {
+void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark, bool creating) {
+    // Create a Space leaves only the spaces in the bar: the end buttons go (and come back).
+    if (creating != creating_) {
+        creating_ = creating;
+        dirty_ = true;
+    }
     if (cells == cells_ && dark == dark_) return;
     const bool reshaped = cells.size() != cells_.size();
     // The same spaces in another order (a drop, a move) also stops a slide's relighting, whose
@@ -487,6 +492,9 @@ D2D1_COLOR_F SpaceBarView::Primary(float alpha) const {
 }
 
 void SpaceBarView::DrawBar(ID2D1DeviceContext* context) {
+    // On Create a Space Arc leaves only the spaces in the bar (SpaceBarView.apply: the Library
+    // button's alpha 0, the + button hidden).
+    if (creating_) return;
     // Arc's Library button and + menu: labelColor at SymbolButton's 70%, each symbol faded as a
     // whole (an image's alphaValue), so where its strokes meet the ink doesn't double.
     brush_->SetColor(Primary(1));
@@ -572,27 +580,7 @@ ComPtr<ID2D1CommandList> SpaceBarView::RecordIcon(const SpaceCell& cell, HRESULT
 
 std::wstring SpaceBarView::DrawLayer(Layer& layer, UINT width, UINT height, const Compositor::Content& content, bool readBack,
                                      HRESULT& hr, bool& fresh) {
-    if (!layer.visual) {
-        fresh = true;
-        if (FAILED(hr = compositor_->Device()->CreateVisual(layer.visual.GetAddressOf())) ||
-            FAILED(hr = compositor_->Device()->CreateEffectGroup(layer.effect.GetAddressOf())) ||
-            FAILED(hr = layer.visual->SetEffect(layer.effect.Get()))) {
-            layer = Layer{};
-            return HResultMessage(L"creating a space cell's visual", hr);
-        }
-    }
-    if (!layer.surface) {
-        if (FAILED(hr = compositor_->Device()->CreateVirtualSurface(width, height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED,
-                                                                     layer.surface.GetAddressOf())) ||
-            FAILED(hr = layer.visual->SetContent(layer.surface.Get()))) {
-            layer.surface.Reset();
-            return HResultMessage(L"creating a space cell's surface", hr);
-        }
-    } else if (FAILED(hr = layer.surface->Resize(width, height))) {
-        return HResultMessage(L"resizing a space cell's surface", hr);
-    }
-    layer.pixels = Pixels{};
-    return compositor_->DrawSurface(perf::View::SpaceBar, layer.surface.Get(), width, height, dpi_, content, readBack ? &layer.pixels : nullptr, hr);
+    return DrawFadedLayer(*compositor_, perf::View::SpaceBar, layer, width, height, dpi_, content, readBack, hr, fresh);
 }
 
 std::wstring SpaceBarView::DrawCell(size_t index, CellGpu& gpu, bool readBack, bool& fresh) {

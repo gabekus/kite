@@ -58,12 +58,19 @@ final class ExtensionTabsBridge {
     private var targetIDs: [ObjectIdentifier: String] = [:]
     private var lookingUpTargets: Set<ObjectIdentifier> = []
     private var lastState: String?
+    /// Each extension's worker console since launch, by `chrome-extension://<id>`, kept
+    /// across worker restarts, so Claude can see why an extension's button failed.
+    private var logs: [String: TabActivity] = [:]
+    /// Each extension's name, by origin.
+    private var names: [String: String] = [:]
+    private static let live = NSHashTable<ExtensionTabsBridge>.weakObjects()
     private var updateScheduled = false
     private var observers: [NSObjectProtocol] = []
     private var healthCheck: Timer?
 
     init(host: ExtensionTabsHost) {
         self.host = host
+        Self.live.add(self)
         for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
                      NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -182,6 +189,56 @@ final class ExtensionTabsBridge {
         send(session, "Runtime.addBinding", ["name": ExtensionTabsScript.bindingName])
         send(session, "Runtime.enable")
         inject(session)
+        learnName(session)
+    }
+
+    /// Asked again when the worker's context starts: attached early, `chrome` isn't there yet.
+    private func learnName(_ session: String) {
+        guard let origin = origins[session], names[origin] == nil else { return }
+        send(session, "Runtime.evaluate", ["expression": Self.nameExpression, "returnByValue": true]) { [weak self] result, error in
+            guard error == nil, let name = (result?["result"] as? [String: Any])?["value"] as? String, !name.isEmpty else { return }
+            self?.names[origin] = name
+        }
+    }
+
+    /// The extension's name, its `__MSG_…__` placeholder resolved.
+    private static let nameExpression = """
+        (() => { const n = chrome.runtime.getManifest().name || ''; const m = /^__MSG_(.+)__$/.exec(n);
+                 return m ? (chrome.i18n.getMessage(m[1]) || n) : n; })()
+        """
+
+    // MARK: Worker consoles
+
+    private func log(_ session: String, _ method: String, _ params: [String: Any]) {
+        guard let origin = origins[session],
+              let data = try? JSONSerialization.data(withJSONObject: params), let json = try? JSONValue.decode(data) else { return }
+        logs[origin, default: TabActivity()].ingest(method: method, params: json)
+    }
+
+    /// An extension's worker console (by name, id or origin) from whichever profile has it; nil if none does.
+    static func consoleReport(extension query: String, pattern: String?, onlyErrors: Bool, limit: Int, clear: Bool) -> String? {
+        let wanted = query.lowercased()
+        for bridge in live.allObjects {
+            let origins = Set(bridge.origins.values).union(bridge.logs.keys)
+            let matches: (String) -> Bool = { origin in
+                let id = URL(string: origin)?.host ?? origin
+                let name = bridge.names[origin]?.lowercased() ?? ""
+                return id == wanted || origin == wanted || name == wanted || (!name.isEmpty && name.contains(wanted))
+            }
+            guard let origin = origins.sorted().first(where: matches) else { continue }
+            let name = bridge.names[origin] ?? origin
+            let report = bridge.logs[origin]?.consoleReport(pattern: pattern, onlyErrors: onlyErrors, limit: limit, showTimes: true,
+                                                           empty: "No console messages from \(name)'s worker since Kite started.")
+                ?? "No console messages from \(name)'s worker since Kite started."
+            if clear { bridge.logs[origin]?.clearConsole() }
+            return "\(name) (\(origin)), background worker:\n" + report
+        }
+        return nil
+    }
+
+    /// The extensions whose workers Kite is attached to, for an error that names none.
+    static var knownExtensions: [String] {
+        live.allObjects.flatMap { bridge in Set(bridge.origins.values).map { bridge.names[$0] ?? $0 } }.sorted()
     }
 
     private func inject(_ session: String) {
@@ -210,7 +267,11 @@ final class ExtensionTabsBridge {
         switch message["method"] as? String {
         case "Runtime.executionContextCreated":
             // The worker started again with a fresh global scope.
+            if let origin = origins[session], logs[origin] != nil { logs[origin]?.noteConsole("The worker started again.") }
             inject(session)
+            learnName(session)
+        case "Runtime.consoleAPICalled", "Runtime.exceptionThrown":
+            log(session, message["method"] as! String, params)
         case "Runtime.bindingCalled" where params["name"] as? String == ExtensionTabsScript.bindingName:
             guard let payload = (params["payload"] as? String)?.data(using: .utf8),
                   let call = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
@@ -283,6 +344,8 @@ final class ExtensionTabsBridge {
 
     private func pushState(force: Bool) {
         guard helperReady else { return }
+        // A name asked for too early (the worker hadn't set up `chrome` yet) is asked again.
+        for session in Set(sessions.values) where !session.isEmpty { learnName(session) }
         let state = currentState()
         guard force || state != lastState else { return }
         lastState = state

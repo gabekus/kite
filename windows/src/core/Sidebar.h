@@ -31,12 +31,17 @@ constexpr float kHeaderHeight = 36;
 constexpr float kListTopSpacer = 3;
 constexpr float kHeaderIconSize = 26;
 constexpr float kHeaderIconTop = 5;
+constexpr float kHeaderIconX = 13;  // the header's icon button, from the sidebar's left
 constexpr float kRowPitch = 41;
 constexpr float kPillHeight = 36;
 constexpr float kIconInset = 9;  // the favicon's leading edge in the pill
 constexpr float kDividerRowHeight = 25;
 constexpr float kCloseButtonSize = 24;      // a tab's close button (SidebarRowCell's place(close))
 constexpr float kCloseButtonEndInset = 6;  // from the pill's end
+// Back to Pinned URL (TabRowCell's reset): 24pt, left of the close button (place(reset)), the
+// trailing gap (iconTextGap) after each.
+constexpr float kResetButtonSize = 24;
+constexpr float kTrailingGap = 8;
 }  // namespace sidebar_metrics
 
 // View → Collapse Pinned Tabs, per space: the Mac's spacesWithCollapsedPinnedSections, which
@@ -85,6 +90,10 @@ struct SidebarRow {
     bool pinned = false;
     bool selected = false;
     bool showsClose = true;  // its close button shows on hover (BrowserState::ShowsCloseButton)
+    // A pinned tab off its pinned page (Tab::HasLeftPinnedURL): Back to Pinned URL shows on hover
+    // (SidebarSpaceList's canReset).
+    bool canReset = false;
+    bool renamed = false;  // shows its own name (Tab::customTitle) over its page's title
     FaviconSource favicon;
     // Folder.
     bool expanded = true;
@@ -104,29 +113,36 @@ struct SidebarRow {
 std::vector<SidebarRow> SidebarRows(const BrowserState& state, size_t space);
 
 // Where the space's page sits, in points from the sidebar's top, for a sidebar `height` tall:
-// under the header and above the space bar (the Mac's list scroll view). It scrolls up to
+// from `listTop` (under the header, and the favorites when there are any: core/Favorites.h's
+// SidebarListTop) down to the space bar (the Mac's list scroll view). It scrolls up to
 // SidebarMaxScroll, so its last row can reach the bottom.
-float SidebarListBottom(float height);
+float SidebarListBottom(float height, float listTop = sidebar_metrics::kHeaderAreaHeight);
 float SidebarContentHeight(const std::vector<SidebarRow>& rows);
 float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height);
 // The scroll limit on a display `scale` px a point, floored to whole pixels: scrolling stays
-// on the pixel grid at the bottom too.
-float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height, float scale);
+// on the pixel grid at the bottom too (a `scale` of 0 leaves it unfloored, as the two-argument one).
+float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height, float scale,
+                       float listTop = sidebar_metrics::kHeaderAreaHeight);
 
-// What's under a point of a sidebar `width`×`height` points scrolled `scroll` down (the Mac's
+// What's under a point of a sidebar `width`×`height` points scrolled `scroll` down, its page
+// starting at `listTop` (the Mac's
 // hitTest and acceptsPress): the address field's text button, a row's pill (tabs, folders, New
-// Tab), the space header (all of its cell) or its chevron (Collapse Pinned Tabs, while the space has
-// pinned items), or a tab's close button. The divider and the space around pills take nothing.
+// Tab), the space header (all of its cell), its icon (Change Space Icon, while the space has one)
+// or its chevron (Collapse Pinned Tabs, while the space has pinned items), or a tab's close
+// button. The divider and the space around pills take nothing.
 struct SidebarHit {
-    enum class Target { None, AddressField, Row, PinnedChevron, CloseButton };
+    // New targets go last: kitecore's click names them in this order (and checks the count).
+    enum class Target { None, AddressField, Row, PinnedChevron, CloseButton, ResetButton, HeaderIcon };
     Target target = Target::None;
-    size_t row = 0;  // Row, PinnedChevron and CloseButton: which row
+    size_t row = 0;  // Row, PinnedChevron, CloseButton and ResetButton: which row
     bool operator==(const SidebarHit&) const = default;
 };
-SidebarHit SidebarHitTest(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y);
+SidebarHit SidebarHitTest(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y,
+                          float listTop = sidebar_metrics::kHeaderAreaHeight);
 // The row whose bounds hold a point (its whole height across the list, as the Mac's cell), for
 // a release that ends a press on it: a click is a tap only when it lets go inside its row.
-std::optional<size_t> SidebarRowAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y);
+std::optional<size_t> SidebarRowAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y,
+                                   float listTop = sidebar_metrics::kHeaderAreaHeight);
 
 // A press in the sidebar, held by what it pressed (not where: rows can move under it, as a
 // Mac row cell stays its item's), and what letting go does (the Mac's mouseUp, tapped(at:)
@@ -140,21 +156,55 @@ struct SidebarPress {
 };
 // Nothing when the point takes no presses. An activating click (the window was in the
 // background) presses only what accepts first mouse on the Mac: the address field, the
-// chevron and a close button, not the rows.
+// chevron, the header's icon and a close button, not the rows.
 std::optional<SidebarPress> SidebarPressAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x,
-                                           float y, int clicks, bool activating = false);
+                                           float y, int clicks, bool activating = false,
+                                           float listTop = sidebar_metrics::kHeaderAreaHeight);
 struct SidebarTap {
-    enum class Action { None, EditAddress, TogglePinnedSection, SelectTab, SetFolderExpanded, NewTab, CloseTab };
+    // New actions go last, as Target's.
+    enum class Action { None, EditAddress, TogglePinnedSection, SelectTab, SetFolderExpanded, NewTab, CloseTab, ResetTab, ChangeIcon };
     Action action = Action::None;
     std::string id;         // the tab, folder or space
     bool expanded = false;  // SetFolderExpanded: open (true) or closed
     bool operator==(const SidebarTap&) const = default;
 };
-// Letting go of `press` at a point of the sidebar as it is now: the field, the chevron and a
-// close button act when it ends over them; a row taps when it ends inside its bounds, on a single click (the
-// second click of a double-click renames instead, which comes later). The space's header
-// takes no tap yet (a click on its name renames).
+// Letting go of `press` at a point of the sidebar as it is now: the field, the chevron, a close
+// button, Back to Pinned URL and the header's icon (the icon picker, SpaceHeaderRowCell.openPicker)
+// act when it ends over them; a row taps when it ends inside its bounds, on a single click (the
+// second click of a double-click renames instead: SidebarRenameOnPress). The space's header takes
+// no tap (a click on its name renames).
 SidebarTap SidebarRelease(const SidebarPress& press, const std::vector<SidebarRow>& rows, float width, float height, float scroll,
-                          float x, float y);
+                          float x, float y, float listTop = sidebar_metrics::kHeaderAreaHeight);
+// The tab a press renames as it goes down: the second press of a double-click on a tab's row
+// (SidebarRowCell.mouseDown's clickCount == 2, TabRowCell.doubleTapped). Folders don't.
+std::optional<std::string> SidebarRenameOnPress(const SidebarPress& press);
+
+// A middle click on a tab's row closes it, as the tab's close button does (Windows' convention,
+// Chrome's and Edge's; a Windows addition: the Mac has none). The press: on a tab's pill, its
+// buttons included, when the row has a close button (BrowserState::ShowsCloseButton; a tab in
+// one of Claude's folders has none, so it takes no middle press); nothing on a folder, the header,
+// New Tab or the divider. Held by the tab, as a left press is.
+std::optional<SidebarPress> SidebarMiddlePressAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x,
+                                                 float y, float listTop = sidebar_metrics::kHeaderAreaHeight);
+// Letting go of it: CloseTab when the release is inside the pressed tab's row (its bounds, as a
+// left tap's), wherever that row is now; nothing once it's moved off the row, or the row went.
+SidebarTap SidebarMiddleRelease(const SidebarPress& press, const std::vector<SidebarRow>& rows, float width, float height, float scroll,
+                                float x, float y, float listTop = sidebar_metrics::kHeaderAreaHeight);
+
+// Where a tab's trailing buttons sit in its row, as TabRowCell.layout places them right to left
+// (close, then Back to Pinned URL), for a sidebar `width` wide: each one's left and right in
+// sidebar points (none for one that doesn't show: only while `hovered`), and where its title ends.
+struct TabRowTrailing {
+    std::optional<std::pair<float, float>> close, reset;
+    float titleEnd = 0;
+};
+TabRowTrailing TabRowTrailingOf(const SidebarRow& row, float width, bool hovered);
+
+// Whether space `space`'s page lists the row (by kind and id) as the session is now, as
+// SidebarRows would, without building them: what a rename in it needs to stay open. A header is
+// its space's; a tab or folder is in that space and not under a closed folder or a collapsed
+// pinned section (but for the selected tab, which shows through both); the divider shows with
+// anything to divide; New Tab always. One walk down to the row.
+bool SidebarShowsRow(const BrowserState& state, size_t space, SidebarRow::Kind kind, const std::string& id);
 
 }  // namespace kite

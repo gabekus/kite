@@ -149,6 +149,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         self.adblocker = adblocker
         self.isIncognito = incognito
         self.pool = PagePool(engine: engine, store: store)
+        // A private window's pages are never traced.
+        pool.isPrivate = incognito
         if let sharedPages { pool.join(sharedPages) }
         // Incognito tabs leave no history on disk.
         if !incognito { pool.historyFiles = AppDelegate.tabHistory }
@@ -535,6 +537,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         // Unclipped (macOS 14's default), its visible rect, and so its tracking area, would be the whole window.
         sidebarHoverZone.clipsToBounds = true
+        sidebarHoverZone.reportsOnRebuild = true
         sidebarHoverZone.isActive = true
         peekZone.onHover = { [weak self] inside in
             guard let self, !inside, !resizingSidebar else { return }
@@ -1255,10 +1258,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         store.hideCommandBar()
         switch suggestion {
-        case .open(let url), .search(_, let url), .siteSearch(_, _, let url):
-            open(url, mode: mode)
+        case .open(let url):
+            open(url, mode: mode, cause: "command_bar")
+        case .search(_, let url), .siteSearch(_, _, let url):
+            open(url, mode: mode, cause: "search")
         case .history(let entry):
-            open(entry.url, mode: mode)
+            open(entry.url, mode: mode, cause: "command_bar_history")
         case .switchTab(let tab):
             store.mutate { $0.select(tab: tab.id) }
         case .command(let command):
@@ -1269,14 +1274,23 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
     }
 
-    private func open(_ url: URL, mode: CommandBarMode) {
+    private func open(_ url: URL, mode: CommandBarMode, cause: String = "command_bar") {
         if mode == .editCurrent, let id = store.state.selectedTab?.id {
             store.mutate { $0.update(tab: id) { $0.url = url } }
+            traceIntent(cause, tab: id)
             // kite:// pages are drawn by the window, never loaded.
             if InternalPage(url) == nil { pool.loadedPage(id)?.load(url) }
         } else {
-            store.mutate { $0.openTab(url: url) }
+            let id = store.mutate { $0.openTab(url: url) }
+            traceIntent(cause, tab: id)
         }
+    }
+
+    /// The next load in `tab` comes from the user's command (the trace's navigation cause, and its time from the
+    /// command bar opening to a ready page).
+    private func traceIntent(_ cause: String, tab: UUID?) {
+        guard let tab, !isIncognito else { return }
+        Trace.intend(cause, tab: tab, since: cause.hasPrefix("command_bar") || cause == "search" ? store.commandBarOpened : nil)
     }
 
     /// Archive Tab without asking the page: automation (Claude's tabs_close), AppleScript and the tab
@@ -1346,6 +1360,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         if page.isLoading {
             page.stopLoading()
         } else {
+            traceIntent("reload", tab: store.state.selectedTab?.id)
             page.reload()
         }
     }
@@ -1373,8 +1388,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         store.mutate { $0.toggleDeveloperMode(for: url) }
     }
 
-    @objc func goBack(_ sender: Any?) { shownPage?.goBack() }
-    @objc func goForward(_ sender: Any?) { shownPage?.goForward() }
+    @objc func goBack(_ sender: Any?) {
+        traceIntent("back", tab: store.state.selectedTab?.id)
+        shownPage?.goBack()
+    }
+    @objc func goForward(_ sender: Any?) {
+        traceIntent("forward", tab: store.state.selectedTab?.id)
+        shownPage?.goForward()
+    }
 
     // View › Developer, like Arc 1.171.
     @objc func showDevTools(_ sender: Any?) { showDevTools(on: .last) }

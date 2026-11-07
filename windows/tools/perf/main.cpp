@@ -137,7 +137,9 @@ DWORD PidOf(HWND hwnd) {
 // MARK: The cover
 
 // A black window over Kite's, never activated and never topmost: it goes just above Kite in the
-// z-order, so it covers Kite and nothing of anyone else's.
+// z-order, so it covers Kite and nothing of anyone else's. Not a tool window, which Kite's
+// occlusion never counts as covering (they can be larger than what they draw); WS_EX_NOACTIVATE
+// keeps it off the taskbar.
 HWND MakeCover(HWND kite) {
     static const ATOM atom = [] {
         WNDCLASSEXW wc{sizeof wc};
@@ -150,7 +152,7 @@ HWND MakeCover(HWND kite) {
     if (!atom) return nullptr;
     RECT r{};
     GetWindowRect(kite, &r);
-    HWND cover = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"KiteperfCover", L"kiteperf cover", WS_POPUP, r.left, r.top,
+    HWND cover = CreateWindowExW(WS_EX_NOACTIVATE, L"KiteperfCover", L"kiteperf cover", WS_POPUP, r.left, r.top,
                                  r.right - r.left, r.bottom - r.top, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!cover) return nullptr;
     HWND above = GetWindow(kite, GW_HWNDPREV);
@@ -509,7 +511,13 @@ void Run::Scenario() {
     RunPhase("covered", [&](Phase& phase) {
         HWND cover = MakeCover(kite_);
         phase.extra["coverMade"] = cover != nullptr;
+        // Kite's occlusion, off under --perf-control so the other phases don't hang on what the
+        // desktop covers, is on for this phase. A Kite without it (before P2) refuses, and is
+        // measured as it is.
+        const bool occlusion = Send("{\"occlusion\":\"on\"}");
+        phase.extra["occlusion"] = occlusion;
         WaitFor(20);
+        if (occlusion) Request("{\"occlusion\":\"off\"}");
         if (cover) DestroyWindow(cover);
     });
     WaitFor(1);

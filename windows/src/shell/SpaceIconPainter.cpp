@@ -280,7 +280,7 @@ std::pair<SpaceIconPainter::Face*, const SpaceIconPainter::Outline*> SpaceIconPa
 }
 
 void SpaceIconPainter::DrawSymbol(ID2D1DeviceContext* context, ID2D1SolidColorBrush* brush, const SymbolGlyph& glyph, D2D1_POINT_2F centre,
-                                  float size, D2D1_COLOR_F color) {
+                                  float size, D2D1_COLOR_F color, float stroke) {
     const auto [face, outline] = OutlineOf(glyph);
     if (!outline) return;
     // From the outline's em to points, its ink's middle on `centre`.
@@ -292,6 +292,40 @@ void SpaceIconPainter::DrawSymbol(ID2D1DeviceContext* context, ID2D1SolidColorBr
                           D2D1::Matrix3x2F::Translation(centre.x, centre.y) * transform);
     brush->SetColor(color);
     context->FillGeometry(outline->geometry.Get(), brush);
+    if (stroke > 0) context->DrawGeometry(outline->geometry.Get(), brush, stroke / scale);
+    context->SetTransform(transform);
+}
+
+void SpaceIconPainter::DrawFitted(ID2D1DeviceContext* context, ID2D1SolidColorBrush* brush, const SpaceIconLook& look, D2D1_POINT_2F centre,
+                                  float width, float height, float stroke, D2D1_COLOR_F color) {
+    UseFactoryOf(context);
+    if (look.kind != SpaceIconLook::Kind::Symbol || !look.glyph || width <= 0 || height <= 0) return;
+    // Kite's own shape where the symbol has one, else its glyph's outline: either way its ink's box.
+    ID2D1Geometry* geometry = nullptr;
+    D2D1_RECT_F ink{};
+    if (look.glyph->drawn) {
+        if (const auto placement = PlaceDrawnSymbol(look.text, kSymbolShapeSize)) {
+            geometry = ShapeGeometry(*placement->shape);
+            if (geometry && FAILED(geometry->GetBounds(nullptr, &ink))) geometry = nullptr;
+        }
+    }
+    if (!geometry) {
+        const auto [face, outline] = OutlineOf(*look.glyph);
+        if (!outline) return;
+        geometry = outline->geometry.Get();
+        ink = outline->ink;
+    }
+    const float w = ink.right - ink.left, h = ink.bottom - ink.top;
+    if (w <= 0 || h <= 0) return;
+    const float scale = std::sqrt(width * height / (w * h));
+    const float midX = (ink.left + ink.right) / 2, midY = (ink.top + ink.bottom) / 2;
+    D2D1_MATRIX_3X2_F transform{};
+    context->GetTransform(&transform);
+    context->SetTransform(D2D1::Matrix3x2F::Translation(-midX, -midY) * D2D1::Matrix3x2F::Scale(scale, scale) *
+                          D2D1::Matrix3x2F::Translation(centre.x, centre.y) * transform);
+    brush->SetColor(color);
+    context->FillGeometry(geometry, brush);
+    if (stroke > 0) context->DrawGeometry(geometry, brush, stroke / scale);
     context->SetTransform(transform);
 }
 
@@ -322,8 +356,9 @@ ComPtr<ID2D1PathGeometry> LayerPath(ID2D1Factory* d2d, const ShapeLayer& layer) 
 // pixel at the header's 15pt (1.2x the shape) on a 4x screen, inside Direct2D's default quarter.
 constexpr float kShapeTolerance = 0.04f;
 
-// The shape's layers joined and cut in order; null if Direct2D fails at any step.
-ComPtr<ID2D1Geometry> JoinedLayers(ID2D1Factory* d2d, const SymbolShape& shape) {
+}  // namespace
+
+ComPtr<ID2D1Geometry> MakeShapeGeometry(ID2D1Factory* d2d, const SymbolShape& shape) {
     ComPtr<ID2D1Geometry> joined;
     for (const ShapeLayer& layer : shape.layers) {
         ComPtr<ID2D1PathGeometry> path = LayerPath(d2d, layer);
@@ -345,14 +380,12 @@ ComPtr<ID2D1Geometry> JoinedLayers(ID2D1Factory* d2d, const SymbolShape& shape) 
     return joined;
 }
 
-}  // namespace
-
 ID2D1Geometry* SpaceIconPainter::ShapeGeometry(const SymbolShape& shape) {
     if (auto it = shapes_.find(&shape); it != shapes_.end()) return it->second.Get();
     if (!d2d_) return nullptr;
     // Kept even when it fails, so a failure isn't retried every frame (the next factory tries).
     ComPtr<ID2D1Geometry>& made = shapes_[&shape];
-    made = JoinedLayers(d2d_.Get(), shape);
+    made = MakeShapeGeometry(d2d_.Get(), shape);
     // Said once per factory, as the failure is kept; the caller draws the symbol's glyph instead
     // where it has one.
     if (!made) OutputDebugStringW(L"Kite: a drawn space symbol's geometry couldn't be made\n");
@@ -450,7 +483,7 @@ void SpaceIconPainter::Prepare(ID2D1DeviceContext* context, const SpaceIconLook&
 }
 
 void SpaceIconPainter::Draw(ID2D1DeviceContext* context, ID2D1SolidColorBrush* brush, const SpaceIconLook& look, D2D1_POINT_2F centre,
-                            float size, float scale, D2D1_COLOR_F symbol, bool dark) {
+                            float size, float scale, D2D1_COLOR_F symbol, bool dark, float stroke) {
     UseFactoryOf(context);
     if (look.kind == SpaceIconLook::Kind::Symbol) {
         if (look.glyph && look.glyph->drawn) {
@@ -463,13 +496,14 @@ void SpaceIconPainter::Draw(ID2D1DeviceContext* context, ID2D1SolidColorBrush* b
                                       D2D1::Matrix3x2F::Translation(centre.x + placement->dx, centre.y + placement->dy) * transform);
                 brush->SetColor(symbol);
                 context->FillGeometry(geometry, brush);
+                if (stroke > 0) context->DrawGeometry(geometry, brush, stroke / placement->scale);
                 context->SetTransform(transform);
             } else if (look.glyph->fluent || look.glyph->mdl2) {
                 // The geometry couldn't be made (logged): the symbol's glyph, where it has one.
-                DrawSymbol(context, brush, *look.glyph, centre, size, symbol);
+                DrawSymbol(context, brush, *look.glyph, centre, size, symbol, stroke);
             }
         } else if (look.glyph) {
-            DrawSymbol(context, brush, *look.glyph, centre, size, symbol);
+            DrawSymbol(context, brush, *look.glyph, centre, size, symbol, stroke);
         }
         return;
     }

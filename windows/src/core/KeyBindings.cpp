@@ -301,6 +301,19 @@ const std::vector<ShortcutCommand>& ShortcutCommands() {
     static const std::vector<ShortcutCommand> commands = [] {
         std::vector<ShortcutCommand> c{
             {"newTab", "New Tab…", Ctrl("t")},
+            // The Tabs menu: Pin Tab (retitled Unpin Tab for a pinned one), New Folder…, and the
+            // command bar's Duplicate Tab and Rename Current Tab… (hidden from the Mac's menu bar).
+            {"pinTab", "Pin Tab", Ctrl("d")},
+            {"newFolder", "New Folder…", std::nullopt},
+            {"duplicate", "Duplicate Tab", std::nullopt},
+            {"renameCurrentTab", "Rename Current Tab…", std::nullopt},
+            // Reset all tabs in this Space; Arc's resetTab binding (hidden, no menu item) and its
+            // command-bar action replacePinnedTab.
+            {"resetSpace", "Reset all tabs in this Space", std::nullopt},
+            {"resetTab", "Reset Tab to Original URL", std::nullopt},
+            {"replacePinnedTab", "Replace Pin with Current Page", std::nullopt},
+            // The Spaces menu's command-bar Add to Favorites (Remove from Favorites for a favorite).
+            {"toggleFavorite", "Add to Favorites", std::nullopt},
             {"reopenClosedTab", "Restore Last Closed Tab", CtrlShift("t"), {}},
             {"importFromArc", "Import from Arc…", std::nullopt},
             {"openLocation", "Open Location…", std::nullopt},
@@ -310,7 +323,13 @@ const std::vector<ShortcutCommand>& ShortcutCommands() {
             // Print (⌘P) waits for printing that survives a cancelled dialog: after Windows 11's
             // print dialog is dismissed, CEF 156 never prints again and Chromium's shutdown hangs.
             {"copyCurrentURL", "Copy URL", CtrlShift("c")},
+            // Edit › Find. F3 and Shift+F3 are Windows' own Find Next and Previous.
+            {"find", "Find…", Ctrl("f")},
+            {"findNext", "Find Next", Ctrl("g"), {Bare("f3")}},
+            {"findPrevious", "Find Previous", CtrlShift("g"), {KeyShortcut("f3", {Modifier::Shift})}},
             {"collapsePinnedSection", "Collapse Pinned Tabs", std::nullopt},
+            // The Mac's View › Hide Sidebar (Show Sidebar while it's hidden).
+            {"toggleSidebar", "Hide Sidebar", Ctrl("s")},
             {"stopLoading", "Stop Loading", Ctrl(".")},
             {"reloadPage", "Refresh the Page", Ctrl("r"), {Bare("f5")}},
             {"forceReloadPage", "Force Refresh the Page", CtrlShift("r"), {Ctrl("f5"), KeyShortcut("f5", {Modifier::Shift})}},
@@ -323,7 +342,10 @@ const std::vector<ShortcutCommand>& ShortcutCommands() {
             const std::string digit(1, static_cast<char>('0' + n));
             c.emplace_back(n == 9 ? "lastTab" : "tab" + digit, n == 9 ? "Last Tab" : "Tab " + digit, Ctrl(digit));
         }
-        // The Spaces menu. The Mac's Space n is ⌃n, which is Ctrl+n here (Tab n), so it's Alt+n.
+        // The Spaces menu. New Space… (Create a Space, W9f) has no shortcut, as on the Mac: a
+        // keybindings.json (Arc's own, imported) can give it one. The Mac's Space n is ⌃n, which is
+        // Ctrl+n here (Tab n), so it's Alt+n.
+        c.emplace_back("newSpace", "New Space…", std::nullopt);
         c.emplace_back("nextSpace", "Next Space", CtrlShift("s"), std::vector<KeyShortcut>{CtrlAlt("right")});
         c.emplace_back("previousSpace", "Previous Space", CtrlAlt("left"), std::vector<KeyShortcut>{});
         for (int n = 1; n <= 9; ++n) {
@@ -344,6 +366,16 @@ std::optional<KeyShortcut> WindowsShortcut(const KeyShortcut& shortcut) {
     std::vector<Modifier> modifiers;
     for (Modifier m : shortcut.modifiers) modifiers.push_back(m == Modifier::Command ? Modifier::Control : m);
     return KeyShortcut(shortcut.key, std::move(modifiers));
+}
+
+std::optional<KeyShortcut> MenuShortcut(const ShortcutMap& table, std::string_view command) {
+    std::optional<KeyShortcut> first;
+    for (const auto& [shortcut, target] : table) {
+        if (!target.command || target.command->id != command) continue;
+        if (target.command->shortcut == shortcut) return shortcut;
+        if (!first) first = shortcut;
+    }
+    return first;
 }
 
 ShortcutMap ShortcutTable(const KeyBindings& bindings) {

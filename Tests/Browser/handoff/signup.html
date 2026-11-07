@@ -1,0 +1,45 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Handoff: a new password</title>
+<!-- A sign-up form: the step on its new-password field offers the password manager's suggested password on the tag.
+     A sign-in form's current-password field doesn't. No real site: nothing here is sent anywhere. -->
+<style>body{font:14px system-ui;margin:40px} form{display:grid;gap:8px;width:260px;margin-bottom:40px}</style>
+<form id="signup" onsubmit="return false">
+  <h3>Create your account</h3>
+  <input id="email" type="email" autocomplete="email" placeholder="Email">
+  <input id="newpw" type="password" autocomplete="new-password" placeholder="Choose a password">
+  <button id="create">Create account</button>
+</form>
+<form id="signin" onsubmit="return false">
+  <h3>Sign in</h3>
+  <input id="curpw" type="password" autocomplete="current-password" placeholder="Password">
+  <button id="login">Sign in</button>
+</form>
+<!-- A card field a site draws its own box over: the input has no size, so a selector for it rings nothing. -->
+<div id="ccbox" style="width:260px;border:1px solid #999;padding:6px">Card number <input id="hiddencc" style="width:0;height:0;border:0;padding:0"></div>
+<script>
+// Which element has focus and what keys reached it, without its value: the test checks Kite focused the field and
+// pressed ↓ there (the key the password manager's own menu opens on), and never read the password.
+window.keys = [];
+document.addEventListener('keydown', (e) => window.keys.push((e.target.id || e.target.tagName) + ':' + e.key + ':' + e.isTrusted), true);
+window.focused = () => (document.activeElement && document.activeElement.id) || '';
+// The tag's box beside control ID (its host is the only element there: the shadow root is closed).
+window.tagBox = (id) => {
+  const r = document.getElementById(id).getBoundingClientRect(), y = r.top + r.height / 2;
+  let left = null, right = null;
+  for (let x = Math.ceil(r.right); x < innerWidth; x++) {
+    const hit = document.elementFromPoint(x, y);
+    if (hit && hit.tagName === 'KITE-HANDOFF') { if (left === null) left = x; right = x; }
+  }
+  const scale = innerWidth > 1280 ? 1280 / innerWidth : 1;
+  return JSON.stringify({ left, right, y, scale });
+};
+// Whether anything of Kite's handoff shows anywhere on the page (a 10px grid): no card or tag stands in for a step.
+window.anyHandoff = () => {
+  for (let y = 0; y < innerHeight; y += 10) for (let x = 0; x < innerWidth; x += 10) {
+    const hit = document.elementFromPoint(x, y);
+    if (hit && hit.tagName === 'KITE-HANDOFF') return 'at ' + x + ',' + y;
+  }
+  return 'none';
+};
+</script>

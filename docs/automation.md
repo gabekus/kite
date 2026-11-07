@@ -42,9 +42,12 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | (none) | `click`, `type`, `screenshot` | `kite click/type/screenshot` | Kept from the first version. |
 | (none) | `wait_for` | | load, navigation, selector, text, network_idle. Event-driven. |
 | (none) | `handle_dialog` | | alert / confirm / prompt / beforeunload. |
+| (none) | `dialogs` | `kite call dialogs` | The dialogs pages showed on Claude's tabs, open or answered, and how. See "How dialogs work". |
 | (none) | `list_downloads` | | Downloads since control was turned on. |
 | (none) | `sign_in` | `kite call sign_in` | Hands a login page to the user, with 1Password. See below. |
 | (none) | `handoff`, `handoff_status` | `kite call handoff` | Hands steps Claude can't do to the user, shown on the pages. See below. |
+| (none) | `tab_status` | `kite call tab_status` | Claude says a tab is done (green dot) or what it's working on. See "Tab states" below. |
+| (none) | `form_profile` | `kite call form_profile` | The user's ordinary form details (name, company, email, phone, addresses). See below. |
 | (none) | `vpn` | `kite vpn` | Quiet VPN sign-in and reconnect. See the README. |
 | (none) | `list_spaces`, `switch_space`, `create_space`, `describe_space`, `pin_tab`, `create_folder`, `move_to_folder` | `kite spaces`, `kite describe-space` | Kite's own organization. |
 | `gif_creator`, `shortcuts_*`, `switch_browser` | not yet | | |
@@ -117,6 +120,7 @@ names the device pixel whose top-left it is, so a point on a rect's top or left 
 | `tree` | Views with frames, `NSVisualEffectView` material and blending, layer fill, corner radius and curve, border, shadow, text colour and font, hidden and alpha; SwiftUI's accessibility elements (role, id, label, frame, selected) inside hosting views; with `layers`, Core Animation sublayers. `root` starts at a node path, `match` lists matching nodes flat, `depth` and `max_nodes` bound it. |
 | `capture` | The window's pixels as on screen, even when covered or in the background, in sRGB. `region` crops at full resolution, `pixels` reads colours as hex, `save` writes a PNG. `source` picks the path, and the output names the one that ran: `screen` (ScreenCaptureKit, exact; needs Screen Recording, and fails rather than asking for it), `in-process` (Kite draws the window itself: views, the Metal theme, the pages from Chromium; blurred materials come out unblurred and the output lists their frames), or `auto`, the default: ScreenCaptureKit when Screen Recording is already granted (it never asks), else the in-process render. |
 | `pointer` | Synthetic mouse moves (`points`, or `from`/`to`/`steps`, with optional `modifiers` held, e.g. `"shift"`) sent to the window only. At each point: the view hit, cursor rects, tracking areas (flagged when inactive because Kite is in the background), and the cursor Kite sets. Identical points fold into runs. |
+| `hit` | The view a click at `point` would reach, by AppKit's own hit test from the window's frame view (what a mouse down takes), then each of its superviews, one per line as `PATH CLASS [x,y w×h]` (`-` where the tree has no path). Nothing is sent: no event, hover or move. The Mac reference captures check every click against it. |
 | `input` | One synthetic event for the window: `keys`, `text`, `click` (with `button`, `count`, `modifiers`), a drag (`from`/`to`) or `scroll` (`dx`, `dy`; add `phase` for a trackpad scroll with gesture phases: `gesture` sends began, `steps` changed events and ended, or `began`/`changed`/`ended`/`cancelled` one at a time to hold a gesture mid-way. Phased scrolls go through swipe-to-navigate first, as real ones do, and the result says what it decided), or `flags` (a modifier change: `"ctrl"` holds ⌃ until `"none"`, for what watches a modifier being let go, like the ⌃Tab switcher). With Kite in front keys take AppKit's exact path; in the background they take the same steps by hand (view key equivalents, menu bar, first responder). Says where each key went. |
 | `menu` | Every menu item: path, shortcut, action and target, id, enabled, hidden. Flags shortcuts with no ⌘/⌃/⌥/fn ("FIRES WHILE TYPING", the emoji-on-e bug) and two enabled items on one shortcut. |
 | `key_log` | The last keys pressed in Kite: window, first responder chain, input source, and any menu item each one fired. Plain typing shows only its kind (letter, digit), unless it fired a menu item. |
@@ -131,12 +135,18 @@ What works with Kite in the background (checked on a test build behind other win
   window behind the user's windows; capture, tree, pointer and trace all work on a covered window.
 - Test-safe windows: on a `KITE_DIAGNOSTICS=1` run every Kite window and panel (browser windows, Settings,
   onboarding, About, Essential Keyboard Shortcuts and its View All list, Little Kite, web apps, Task Manager,
-  hover cards, popovers) goes through `WindowPresenter` (`WindowPresentation` in KiteCore decides). It never
-  makes a window key or activates Kite. A shown window goes at normal level directly above Kite's frontmost
-  window, which is behind the other apps' windows, so Kite's own stacking order matches real use (code that looks
-  for Kite's front window finds the newest); Kite's first window goes to the back, and child windows and popovers
-  go just above their parent or anchor. Floating levels (Stay On Top, the Essential Keyboard Shortcuts window)
-  aren't applied: Kite keeps the level asked for, so Stay On Top's checkmark still follows it.
+  hover cards, and panels that hang off a window) goes through `WindowPresenter` (`WindowPresentation` in KiteCore
+  decides). It never makes a window key or activates Kite. A shown window goes at normal level directly above
+  Kite's frontmost window, which is behind the other apps' windows, so Kite's own stacking order matches real use
+  (code that looks for Kite's front window finds the newest); Kite's first window goes to the back, and child
+  windows and panels that hang off a window go just above their parent or anchor. `NSPopover`s aren't decided by
+  `WindowPresentation`: they're AppKit's own child windows of their anchor's window, and
+  `WindowPresenter.show(_:relativeTo:of:preferredEdge:)` shows them as AppKit does on every run (behind the user's
+  windows with their parent; showing one doesn't activate Kite or take the keyboard from another app). The guard
+  below counts every `.show(relativeTo`, so none bypasses that route. The Share menu (`NSSharingServicePicker`)
+  goes through `WindowPresenter.showSharingPicker`, which a test-safe run skips with a `KITE_TEST_MODAL:` line.
+  SidebarTestHook's ready line reports where its popover went. Floating levels (Stay On Top, the Essential
+  Keyboard Shortcuts window) aren't applied: Kite keeps the level asked for, so Stay On Top's checkmark still follows it.
   About Kite: AppKit creates its panel and orders it front in one call, so Kite finds it as the window that
   appeared (its class only breaks a tie) and moves it behind in the same main-thread turn; if it can't tell which
   window is the panel, every window that appeared goes to the back.
@@ -221,12 +231,27 @@ What works with Kite in the background (checked on a test build behind other win
   its query the way the field takes a keystroke: the field's string value, then the search its text-change
   delegate runs (`FindBar.setQuery`). No key events and no input method; Return is never pressed, so Ask on Page
   never asks. It writes `KITE_TEST_FIND: ready: open, empty`, or `KITE_TEST_FIND: ready: "text", found, 2
-  matches, active 1, counter "1/2"` for each find result (WebKit reports found or not, no counts), and gives up
-  with a line after 30 s without a load. A real profile ignores both (`FindTestHook`). It writes
-  `KITE_TEST_FIND: armed: …` when it starts waiting, and the give-up line says what it saw (loads, the selected
-  tab's loading and progress, whether the window is visible). With either hook a WebKit page's window occlusion
-  detection is off, as with `KITE_TEST_CONTEXT_MENU`: the test window is covered, and WebKit stops a covered
-  window's page, which then never finishes loading (W21's first headless run timed out on all three states).
+  matches, active 1, counter "1/2"` for each find result (WebKit reports found or not, no counts). A real profile
+  ignores both (`FindTestHook`). It writes `KITE_TEST_FIND: armed: …` when it starts waiting. After 20 s without a
+  load it writes what it saw (loads, the selected tab's loading and progress, the web view's own state, how often
+  its content process ended, whether the window is visible, ordered in and on a screen, and how many screens),
+  opens the bar anyway and writes `KITE_TEST_FIND: ready (fallback, the page never loaded): …`. A query then shows
+  no result. With a find hook, WebKit's navigation milestones go to stderr as `KITE_TEST_FIND: page: started` (and
+  `committed`, `finished`, `failed (domain code)`, `content process ended`), and a page's window occlusion detection
+  is off, as with `KITE_TEST_CONTEXT_MENU`. Pages on the headless Mac runner have so far never loaded at all: the
+  page area of every reference it took is blank.
+- The sidebar's popovers and Create a Space without clicks: on a test-safe run, `KITE_TEST_ICON_PICKER=name` opens
+  Change Space Icon…'s picker for the one space named exactly `name`, as the space menu does
+  (`requestIconPicker`), and `KITE_TEST_NEW_SPACE=1` opens + › New Space's Create a Space page (`beginNewSpace`).
+  With it, `KITE_TEST_NEW_SPACE_NAME=text` sets the name field's value (its binding, no key events) and
+  `KITE_TEST_NEW_SPACE_THEME=n` (1–7) picks the theme editor's preset `n` for the draft as its swatch does (the
+  intensity kept) and opens the theme editor from Choose a Theme's own row. Exact values only (a flag is `1`, a
+  name one short line); anything else, or the picker beside the page, turns them off, and a real profile ignores
+  them (`SidebarTestHook`). Nothing is pressed, activated or fronted. It writes `KITE_TEST_SIDEBAR: armed: …`, then
+  `KITE_TEST_SIDEBAR: ready: app active no; popover key no, level 0, parent the main window; …` (or `no popover`)
+  once the state is up, or `failed: …` after 10 s or when the main window went first. It keeps watching after that
+  and writes `changed: …` if the state goes (a transient popover closes, the page ends) or Kite becomes active. An
+  in-process `kite ui capture` draws an open popover (a child window) over the window.
 - `menu`: AppKit ignores fn when matching a key against the menu bar, so a system item on fn E (Emoji &
   Symbols) or fn F (Enter Full Screen) fires on a plain "e" or "f" that reaches the menu bar, and is flagged.
 
@@ -321,37 +346,120 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
   shows **Stop**; the folder's and the tab's menus have **Stop Claude**. While the tab in front is Claude's, the
   page gets a 2pt orange border, so it shows with the sidebar hidden too. Stop revokes the tab: it ends its event
   collection and fails pending confirmations and waits.
-- **Handing steps to the user (`handoff`, `handoff_status`).** When Claude stops because the user must act
-  (its safety check or the user's rules forbid the step, the choice is theirs, a secret only they hold, a command on
-  their Mac), it calls `handoff` with `reason` (why it stopped) and `steps`. Each step has an `instruction` and either
-  a tab and its control (`ref`, `selector`, or the control's visible `text`), a tab alone, a `command` for the
-  terminal, or nothing (a note); `why` overrides the reason for one step. Kite shows them where they happen:
-  - **The ring.** On the tab's page, the control gets a 2pt ring in Claude's orange, which pulses four times and then holds still, with a tag above it:
-    "Claude needs you · 1. Approve Apple". It scrolls into view once, and follows the control frame by frame only while it moves (a scroll, a resize, a change to the page, a transition or animation ending), so a waiting ring costs the page nothing. A move none of those announce (a transition still running, a scroller inside a shadow root) is caught by the ring's next look, within 2 s. Steps on one tab come one after another. The
+- **Handing steps to the user (`handoff`, `handoff_status`).** When Claude stops because the user must act on a page
+  (its safety check or the user's rules forbid the step, the choice is theirs, a secret only they hold), it calls
+  `handoff` with `reason` (why it stopped) and `steps`. Each step has an `instruction`, a tab (default the call's, or
+  the front tab) and its control (`ref`, `selector`, or the control's visible `text`); `why` overrides the reason for
+  one step. Kite shows a step only beside its control on the page: there's no card over the page (Gabe, 5 Nov 2026:
+  "only inline with highlighted elements"). So a step without a control (a note, a tab alone) or a `command` for the
+  terminal is refused, and Claude asks for those in its chat. Steps like that saved by an older Kite are skipped
+  when it loads them ("Kite no longer shows steps without a control on a page"). Kite shows them where they happen:
+  - **The ring.** On the tab's page, the control gets a 2pt ring in Claude's orange, which pulses four times and then holds still, with a tag beside it:
+    "Claude needs you · 1. Approve Apple", then **Skip** (grey, "Not clickable yet · …", while the control
+    is turned off). Resting the pointer on the tag shows Claude's reason. The tag is the only part that takes clicks;
+    a press on it doesn't reach the page, so a menu that closes on a press outside stays open. It scrolls into view once, and follows the control frame by frame only while it moves (a scroll, a resize, a change to the page, a transition or animation ending), so a waiting ring costs the page nothing. A move none of those announce (a transition still running, a scroller inside a shadow root) is caught by the ring's next look, within 2 s. Steps on one tab come one after another. The
     ring lives in a closed shadow root on a host that takes no clicks, run in an isolated world
     (`Page.createIsolatedWorld`, `kite-handoff`), so the page's scripts can't see, restyle or fake it. A click (or a
     change) inside the control with `isTrusted` ends the step; it reports through `Runtime.addBinding`, scoped to that
-    world, so a click that navigates away still counts. A ref is marked with `data-kite-handoff` when Claude calls,
+    world, so a click that navigates away still counts. There's no **Done** button: every step finishes by itself, at
+    the moment it's done (Gabe, 5 Nov 2026: "dont even offer a done button, kite / claude should be smart enough and
+    setup to auto detect this instantly"). Each step has a `done_when` (`UserHandoff.DoneWhen`), by the control unless
+    Claude says: `click` for a button, link or box; `value` for a field: it holds a value and focus leaves it for
+    somewhere else on the page (not another app), or Enter, or Tab with a value; for a payment field in another
+    site's frame (Stripe, Braintree, NMI's Collect.js), whose value Kite can't read, focus has been in the ringed frame
+    and moves on (another field or frame, a press elsewhere); `navigation`; `gone`; `appears` (words that weren't on
+    the page when the step began show up). Whatever it says, a step the user saw ringed is also done when its tab goes
+    to another page (`Page.frameNavigated`, or the address changing within the page), when its control goes away and
+    nothing takes its place for 300 ms (the form was sent or replaced), when the page opens a dialog
+    (`Page.javascriptDialogOpening`; the dialog itself reaches Claude with the dialog capture work on
+    `claude/dialogs-to-agent`, `handoffDialogOpened` is its hook), and when the user clicks a later step's control on
+    the same tab (every waiting step there up to it is done). When the page moves on and the tab's last waiting step is a
+    submit or pay button (Pay, Place order, Submit, Confirm, Buy, Check out), every waiting step on the tab is done, and
+    Claude reads "the page moved on to “Thank you” (…/thank-you); check it", never NOT SHOWN (Gabe's Muji checkout, 5 Nov
+    2026: billing address, card and Pay now all done, the tab on /thank-you, and the handoff still said 0 of 3). A step
+    Kite never rang isn't ended by a navigation: it may be on the next page (Approve after Create account). The moment a step ends its tab shimmers again ("Claude is
+    picking up"), Claude's `handoff_status` wait returns, and the tab's next step gets the ring. A ref is marked with `data-kite-handoff` when Claude calls,
     and its label finds it again if the page redraws it; `text` matches buttons, links, labels and other controls,
-    exact first. Kite looks at the pages when a tab comes forward (in any normal window) or closes, a step tab's
+    exact first. Skip reports through the same binding, also only on a trusted press. Kite looks at the pages when a tab comes forward (in any normal window) or closes, a step tab's
     address changes (a load, or a single-page app's route), a browser window becomes key or visible, Kite comes to
     the front, or the ring hears a click; a look that finds the control missing is followed by one more after
     1.5 s, so a page left is noticed. Between those it looks twice a second only while a step's page is on screen in
     a visible window, so the ring follows a page that redraws, and only for a day after the handoff
-    (`UserHandoff.watchLimit`): older steps keep their card, dot and ring but wait for one of those events, so steps
-    left waiting cost an idle Kite nothing. Only the top frame is searched.
-  - **The sidebar.** A tab with a step waiting gets an orange dot at its row's end (tooltip: the step); a folded
-    folder holding one gets the dot too.
-  - **The card.** Over the bottom centre of the page: Claude's mark, "Claude needs you", the session, "Step n of m",
-    the reason, the step, and **Skip**, **Next** and **Done**; a terminal step shows its command with **Copy**. ⋯ has
-    Dismiss All Steps. The chevron folds it to a pill ("Claude needs you · 3 steps"). A step on another open tab shows
-    nothing at the bottom (the sidebar's dot already marks that tab); the pill shows only for a step the sidebar
-    can't (one outside the browser, or on a closed tab), and brings it up. sign_in's pill takes precedence on its tab.
-    Kite bounces its Dock icon once if it isn't in front.
-  - **Back to Claude.** `handoff` returns at once (or after `wait` seconds, up to 600) with an id. `handoff_status`
+    (`UserHandoff.watchLimit`): older steps keep their dot and ring but wait for one of those events, so steps
+    left waiting cost an idle Kite nothing. The top frame and same-origin frames are searched first; when the control
+    isn't there, frames of another origin are probed (up to 24, drawing nothing) and the first that has it gets the
+    ring and tag, drawn inside that frame. A frame of the same site runs in the tab's own process (Apple's sign-in
+    form, idmsa.apple.com on appleid.apple.com) and gets Kite's world through the tab's own session; a cross-site
+    frame runs in a renderer of its own, reached through the session Kite auto-attaches to it (`FrameSessions`, which
+    also carries the ad blocker's frame scriptlets), with its Runtime domain on so its binding reports a click that
+    navigates the frame away. Refs don't reach into cross-site frames (read_page can't read them), so Claude names
+    such a control by its text or a selector.
+  - **Taking the user there** (`HandoffLead`; Gabe, 5 Nov 2026: steps on Amazon, ToolsToday and McMaster while he
+    was on Mouser, and "its not highlighted"). When a handoff starts, Kite brings the first waiting step's tab to the
+    front of its window (switching space), scrolls the control into view and pulses the ring. Only then: finishing a
+    step, or the whole handoff, never changes the tab or space in front (Gabe, 5 Nov 2026: "when i hit the final step
+    of a claude action it seems to take me to another tab.. dont.. keep me in the same tab"). The next step's tab turns
+    orange in the sidebar, its control ringed for when they go there; a tab the page opens from their click (a payment
+    popup) still opens as the site has it. It waits while
+    the user is typing or clicking in Kite (a key in the last 4 s, a click, scroll or pointer move in the last 1.5 s,
+    or the command bar open), so the page never switches under their hands, and it never activates Kite or raises its
+    window over another app's: the tab is simply in front when they look. Once per handoff, and a lead still waiting
+    when the user ends a step is dropped: a user who goes elsewhere afterwards isn't pulled back. `handoff`'s result says where Kite took them.
+  - **Suggest password.** On a new password's field (`autocomplete="new-password"`, two password fields, or a
+    sign-up form), the tag also has **Suggest password**: Kite clicks the field (a trusted click, which its own ring
+    ignores) so the password manager's inline menu opens there with its suggestion, which the user picks. Kite never
+    reads the field. When the manager isn't added to the space's profile, or 1Password's elements
+    (`com-1password-button`, `com-1password-menu`) don't come up, the tag says so.
+  - **The sidebar.** A tab with a step waiting gets an orange title and an orange dot at its row's end (tooltip: the
+    step); a folded folder holding one gets the dot too.
+  - **A step the page can't show.** When Kite can't find the control of the step a tab shows (after three looks
+    half a second apart when Claude calls, or later, once it's been missing for 5 s: `UserHandoff.unshownReportDelay`),
+    or the tab has left the step's page or closed, the user sees nothing but the sidebar dot: no card or tag stands
+    in for it (Gabe: no box over the page, ever). Claude hears it: the step is reported `NOT SHOWN` with why (a
+    selector that matches only a hidden element says so: a field the site draws its own box over), and `handoff` returns at once, or a waiting `handoff_status` returns early (once per
+    step), so Claude points the step at a control that's there, brings the page back, or withdraws it. Only the step to
+    do now counts: one behind an earlier waiting step may be waiting for that step to bring its control up.
+  - Kite bounces its Dock icon once if it isn't in front when steps arrive.
+  - **Back to Claude.** `handoff` returns at once (or after `wait` seconds, cut to 50: MCP clients time a call out
+    at about 60 s, and a wait that times out never hears the user finish) with an id. A wait returns the moment any
+    step ends (it used to wait for every step); a handoff that ends while Claude does something else is reported on its
+    next tool call. The moment a step ends, its tab goes back to working in the sidebar, "Claude is picking up", as a
+    touch from the handoff's connection (`Handoff.tabsPickedUp`), and the next step's tab turns orange; nothing waits
+    on Claude's next tool call (Gabe, 5 Nov 2026: "as soon as i do what claude tells me from the highlight, it should
+    go back to the cranking state with shiny text"). The report
+    tells Claude to read the pages at once and fill the next page's ordinary fields. `handoff_status`
     (`id`, default the session's latest; `wait`; `cancel` to withdraw the rest) lists each step as done, skipped or
-    waiting, how it ended ("the user clicked the highlighted control", "pressed Done", "skipped it", "closed the
-    tab"), and each tab's URL now. Handoffs are saved in the profile (`Claude Handoffs.json`) on every step the user or Claude ends, so steps still waiting come back after Kite quits or restarts: the card and sidebar dots at once, the ring when the tab's page loads (a ref's mark is gone after a reload, so its label finds the control). Kite keeps handoffs for a week, and the last 20 finished ones for `handoff_status`; Claude can ask about one by id from a new connection.
+    waiting, how it ended ("the user clicked the highlighted control", "filled in the highlighted field and moved on", "skipped it"), what's in the
+    way of a waiting one (turned off, or not shown), and each tab's URL now. A click on a step's control that opens a
+    tab ends a wait too, and the report names the tab. Handoffs are saved in the profile (`Claude Handoffs.json`) on every step the user or Claude ends, so steps still waiting come back after Kite quits or restarts: the sidebar dots at once, the ring when the tab's page loads (a ref's mark is gone after a reload, so its label finds the control). Kite keeps handoffs for a week, and the last 20 finished ones for `handoff_status`; Claude can ask about one by id from a new connection.
+- **Tab states (`tab_status`).** Every tab Claude opened or touched (any tool call, reads included), and every tab in
+  a Claude folder, shows exactly one of three states in the sidebar (`ClaudeTabState`; Gabe, 5 Nov 2026: a Mouser
+  cart tab showed nothing, so done, stalled and needed looked the same): **working**, while the connection that
+  touched it is open, whichever tab Claude is on now (the title shimmers, a gradient mask animated by the render
+  server, a steady accent tint with Reduce Motion, and the ring around the favicon); **needs
+  you**, a handoff step (orange title and dot, the step's control ringed on the page); **done**, when Claude calls
+  `tab_status` with `done` and a note (a green dot, the note as its tooltip). A tab that isn't done when the
+  connection that touched it closes (the session ended, or Kite restarted) turns orange too, "Claude stopped here":
+  its row's line says "Claude stopped here, ask it to pick up" and its page gets the orange outline Kite draws while
+  Claude drives a tab. Orange never shows without a ring on the page (`ClaudeTabState.ring`; Gabe, 5 Nov 2026: "its
+  orange with no highlight - this should NEVER HAPPEN"), and nothing floats over the page. A tab Claude touched and
+  left for two minutes (its control lapsing) while still connected stays working, its line "Waiting on Claude"
+  unless Claude said what's next, and the connection's next tool result names it. Acting on a done tab again makes
+  it working; reading it doesn't. The tab's menu has Clear Claude's Mark. The records are kept with the session
+  (`BrowserState.claudeTabs`, by tab id, with the session folder), so the states outlive a relaunch (Gabe, 5 Nov
+  2026: five Claude-folder tabs showed nothing after Kite restarted for an update).
+- **What Claude is doing (`ClaudeActivity`).** While a tab is working, a second line under its title (11pt, dimmed,
+  one line, cut off at the end) says what Claude is doing there: its `tab_status` working note, else Kite's words for
+  its last tool call while it drives the tab ("Typing in Zip Code", "Clicking Proceed to checkout", "Reading the
+  page"; a field's name, never what's typed), else "Waiting on Claude". The two lines share the 36pt pill, so no
+  row's height changes. The row's tooltip lists the last five actions with their times. A stalled tab's line is
+  "Claude stopped here, ask it to pick up"; a handoff or a done tab has none.
+- **Form details (`form_profile`).** One place for the user's ordinary form details: name, company, email, phone
+  and named addresses ("home", "makerspace"), in the profile folder's `Form Profile.json` (mode 0600, never synced).
+  Claude reads them (`get`), checks an address a page shows against one (`check`: case, punctuation, the usual
+  abbreviations and ZIP+4 don't count; a `MISMATCH` lists each field), and asks to change them (`set`): Kite shows the
+  change on a sheet and saves it only when the user presses Save, stamping the address confirmed. Card, account and
+  ID numbers, passwords and codes are refused, by key and by shape. Kite doesn't check addresses with USPS itself.
 - **Sign-in handoff (`sign_in`).** Claude never types or sees passwords. When a page needs the user signed in,
   Claude calls `sign_in` and waits. Kite brings the tab to the front, opens 1Password's popup over it, and shows a
   pill at the bottom of the page: "Claude is waiting for you to sign in to *site*" with 1Password, Cancel and **Done**. 1Password fills the
@@ -384,6 +492,21 @@ How dialogs work:
   the dialog instead of hanging.
 - An action that opens a dialog returns as soon as it opens.
 - CEF also shows its own native dialog. If the user answers that one, the tab unfreezes for Claude too.
+- Kite keeps every dialog on a tab Claude opened, touched or drives, or handed the user a step on (`DialogLog`):
+  its kind, the page's message, its origin, when, the handoff step it came during or after, and how it closed (the
+  user's OK or Cancel in Kite's sheet, Claude's `handle_dialog`, Kite's own answer for a tab that wasn't in a window,
+  or unanswered when the page moved on). Both engines report it: Chromium's JS dialog handler and WebKit's UI
+  delegate, through `PageDialogs`. Up to 20 per tab, dropped when the tab closes or control is turned off.
+- Claude hears of each dialog once, closed or open for 3 s (`DialogLog.openGrace`, so a user who answers at once
+  is reported with their answer): a waiting `handoff_status` returns for one on the handoff's tabs (its steps' and
+  those its clicks opened) or for its own connection, with the dialog first in its result; any other tool result
+  for the connection that owns the tab (the step's handoff's, or the last to act on it) carries it; and `dialogs`
+  lists a tab's. An action whose own result already said a dialog opened doesn't repeat it.
+- When Claude hears of a dialog on a step's page, the next move is Claude's, not the user's: the step waiting there
+  keeps its ring, Skip and Done, and its tag reads "Claude saw the page's alert and is looking at it" in place of
+  "Claude needs you"; the tab shows working ("Looking at the page's alert"). That lasts until Claude waits on the
+  user again (`handoff_status` with a wait, or a new handoff on the tab) or the step ends. The tab state's only hook
+  for it is `AutomationController.stepNeedingUser`.
 
 ## Pieces
 

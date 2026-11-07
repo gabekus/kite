@@ -5,16 +5,36 @@
 //   kitecore [--profile DIR] state
 //   kitecore [--profile DIR] resolve TEXT...
 //   kitecore [--profile DIR] suggest TEXT... [--current]
+//   kitecore [--profile DIR] find TEXT... [--result ACTIVE/TOTAL] [--width W] [--ask [--conversation]]
+//                                       the find bar with TEXT typed: what it asks the page, its
+//                                       counter for that report, Ask on Page's mode, and its
+//                                       frame (core/FindBar.h)
+//   kitecore [--profile DIR] undo STEP...
+//                                       a field's undo grouping (core/TextUndo.h): type:TEXT,
+//                                       back, paste:TEXT, move, undo, redo
 //   kitecore [--profile DIR] sidebar [SPACE_ID]
 //   kitecore [--profile DIR] collapse SPACE_ID
 //   kitecore [--profile DIR] open TEXT... [--space ID] [--background]
 //   kitecore [--profile DIR] select TAB_ID
+//   kitecore [--profile DIR] tab pin|favorite|duplicate|reset|separate|reveal|replace-pin TAB_ID
+//   kitecore [--profile DIR] tab rename TAB_ID [NAME...]|pinned-url TAB_ID URL|reset-all
+//   kitecore [--profile DIR] folder new [SPACE_ID]|rename FOLDER NAME...|delete FOLDER|move TAB_ID FOLDER
+//   kitecore [--profile DIR] shown header|tab|folder|divider|newTab ID [SPACE_ID]
+//   kitecore [--profile DIR] menu tab|favorite TAB_ID|folder FOLDER [--pick TITLE...]
 //   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
 //   kitecore [--profile DIR] space swipe DX [SECONDS]
-//   kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...
+//   kitecore [--profile DIR] space menu ID [--creating DRAFT]|rename ID NAME...|icon ID ICON|delete ID|folder ID
+//   kitecore [--profile DIR] space new [--about TEXT] [--theme N] NAME...
+//   kitecore [--profile DIR] space create [--about TEXT] [--theme N] [--away] [--cancel|--delete-draft] [NAME...]
+//   kitecore [--profile DIR] space plus-menu|create-page [HEIGHT] [--hit X,Y] [--swatch X,Y]
 //   kitecore [--profile DIR] space move ID PLACE|drag ID X [Y]
+//   kitecore [--profile DIR] space icon-picker ID [--tab emoji|icon] [--category N] [--query TEXT] [--scroll PT] [--hit X,Y] [--place L,T,R,B,SL,ST,SR,SB] [--pick N]
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
 //   kitecore [--profile DIR] backups
+//   kitecore [--profile DIR] downloads [list]
+//   kitecore [--profile DIR] downloads apply REPORT...
+//   kitecore [--profile DIR] downloads clear|remove ID
+//   kitecore [--profile DIR] downloads location [PROFILE [FOLDER|ask|folder|downloads]]
 //   kitecore save-schedule KIND@SECONDS... [--at SECONDS]
 //   kitecore save-bench [TABS]
 //   kitecore [--profile DIR] history list|search TEXT... [--limit N]|add URL [TITLE...] [--at SECONDS]
@@ -23,6 +43,8 @@
 //   kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]
 //   kitecore [--profile DIR] arc-cookies [PATH|--auto]
 //   kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY
+//   kitecore occlusion WINDOW [--monitor RECT]... [OCCLUDER...]
+//   kitecore chromium-switches [--existing-enable LIST] [--existing-disable LIST] [--NAME[=VALUE]...]
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
 // an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
@@ -33,9 +55,58 @@
 // `sidebar` prints what the sidebar shows for a space (default the selected one): the address
 // field's text and the space page's rows, top to bottom, with their place in points, then the
 // space bar's cells (in the bar's points, for a 240pt sidebar, exact: the window snaps them to
-// its pixels, under 1px from these at a fractional scale). `click` in the bar's 50pt along the
-// bottom selects the space whose cell it hits.
-// `collapse` is View → Collapse / Expand Pinned Tabs for a space.
+// its pixels, under 1px from these at a fractional scale). Its `favorites` are the grid over the
+// page: its columns, its height with its gaps, where the page's rows start (`listTop`: their `top`s
+// are from there), and each tile with its panes and their frames, in sidebar points; with none,
+// the empty state (until the profile's One-Shot Flags.plist says it was dismissed).
+// `click` in the bar's 50pt along the bottom selects the space whose cell it hits; on a favorite's
+// pane, it selects that favorite (in the space you're in); on the empty state's close button, it
+// dismisses it (the one-shot flag, written to the profile).
+// On the bar's + button, `click` prints its menu (and runs nothing: the window shows it).
+// `--creating DRAFT` (sidebar, click, space menu) says Create a Space is open making space DRAFT,
+// as the window would have it (kitecore keeps no page between runs): the + button is hidden and
+// the draft's menu can't change its icon (SpaceMenu with the creation).
+// `space new` is + › New Space with Create a Space's fields filled in and Create Space pressed:
+// the space right after the selected one, selected, with its theme (or preset N, from 1, its
+// intensity kept) and profile, and what it's for. `space create` runs the page step by step and
+// prints each: the draft space it opens and whether its page shows, the theme picked, with
+// --away the space it came from selected again (the page hidden, the creation kept), then Create
+// Space (or Cancel, or --delete-draft, the draft deleted by another path and the creation over, or
+// a blank name, which leaves the draft as the window would while the page is open; the next load
+// drops it, as the Mac's does). `space plus-menu` prints the + menu as the profile's shortcuts
+// show it, `space create-page` the page's layout and words for a 240pt sidebar HEIGHT tall
+// (default 820), the bar while it's open and Choose a Theme's swatches; --hit X,Y says what a
+// press there lands on (sidebar points; the pill and Cancel at their measured sizes estimated) and
+// --swatch X,Y which swatch a press in the popover's body takes.
+// `collapse` is View → Collapse / Expand Pinned Tabs for a space. `click … --double` is the
+// second press of a double-click there (a tab's row renames, in the window). `click … --button middle`
+// is a middle click (pressed and let go at the point): on a tab's row it closes the tab as its close
+// button does (a Windows addition, not the Mac's), printing whether it went ("removed") or, pinned,
+// only unloaded; anywhere else, nothing. A close button's click prints the same `outcome`.
+// `click … --button right` is a right-click (or a Ctrl+click, the Mac's ⌃-click) there: it prints the
+// menu the window opens (`kind` space, tab, folder or favorite, its `id` and `line`, and `button`
+// on one of a row's own buttons, which a Ctrl+click presses instead), or `none`.
+// `menu` prints a tab's, folder's or favorite's menu as `space menu` prints the space's (each
+// item's title, enabled and submenu, a submenu's items too) and its `line`, as the Mac's
+// KITE_TEST_CONTEXT_MENU logs one; with --pick it runs the item of that title ("Submenu ▸ Item" for
+// one in a submenu) as the window does and prints what it did (exit 6 for a disabled or missing
+// one): Delete prints the question the window asks first and goes on as if Delete Folder was
+// pressed; Rename… and New Nested Folder… print that the window opens a rename; the Copy items
+// print what they'd copy.
+// The tab edits (Tabs and the command bar's commands, and the sidebar's buttons): `tab pin` is Pin
+// Tab / Unpin Tab (Ctrl+D) and prints where the tab is now (pinned or unpinned, or favorite);
+// `favorite` is Add to / Remove from Favorites, likewise; `rename` renames it (no NAME, or a blank
+// one, goes back to the page's title) and prints what its row shows; `duplicate` prints the copy's
+// id; `reset` is Back to Pinned URL and prints the URL it goes to (exit 6 when it hasn't left its
+// pinned page); `reset-all` is Reset all tabs in this Space, a line "ID URL" for each (exit 6 for
+// none); `separate` is Separate From Pinned Tab and prints the new tab's id; `reveal` is Reveal Tab
+// in Sidebar and prints its row's id; `pinned-url` is Edit Pinned Page › Edit… and `replace-pin` is
+// Replace Pin with Current Page, each printing the pinned URL (exit 6 when refused). `folder new`
+// is New Folder (in the selected space, or SPACE_ID's) and prints its id; FOLDER is a folder's id or
+// name (any case, the selected space's first); `rename` prints its name (a blank one keeps it);
+// `delete` archives what's in it and prints those tabs' ids; `move` puts a tab at the end of a
+// folder (pinning it; exit 6 for a favorite). `shown` says whether a space's page (the selected
+// one's by default) lists that row now: "yes" or "no".
 // `space swipe` is two fingers sideways over the sidebar: the content dragged DX points (positive
 // towards the previous space) at a steady pace over SECONDS (default 0.25), an event every
 // 1/60 s, then let go. It prints where the pages were at the release (offset, the theme's
@@ -50,6 +121,15 @@
 // presses its cell in the 240pt bar, drags to X (and Y, default the bar's middle) in bar points
 // and prints the strip there (the open slot, each cell's left, the ghost's), then lets go,
 // prints the slot it lands in and moves it there.
+// `space icon-picker` is Change Space Icon…'s popover for space ID as it opens (on its icon's
+// tab), then with a tab chosen, a category's button pressed (N from 0), TEXT searched and the
+// emoji grid scrolled PT points, in that order: it prints the tabs, the categories, the grid
+// (columns, rows, the rows the scroll view shows, every cell's icon, and the frames of the cells
+// in view), the bin's glyph and the popover's height. --hit says what the content's point X,Y
+// is over (later cells win where frames overlap); --place puts the popover under an anchor
+// L,T,R,B on a screen SL,ST,SR,SB (points) and prints its frame and arrow.
+// --pick N clicks cell N (from 0): the space gets that icon (saved), and the picture its old
+// icon showed, if nothing shows it now, is named as the file the window deletes.
 // `backups` lists the profile's session backups (Backups/session.<stamp>[.kind].json), newest
 // first as Restore Data orders them, with what each holds; it works when session.json doesn't
 // read. `save-schedule` replays changes (soon@0 pageEvent@0.5 ...: a sidebar change or a page's
@@ -58,6 +138,18 @@
 // `save-bench` writes a session of TABS tabs (default 200) the way the app does, in a temp
 // folder of its own (never a profile), and prints what it cost: the copy on the UI thread (μs),
 // the encoding and the atomic write on the writer's thread, medians of 25 runs.
+// `downloads` lists downloads.json as Kite would show it after a launch (nothing live), newest
+// first, with each item's file name and subtitle; it never moves an unreadable file aside.
+// `downloads apply` replays the engine's reports (each a JSON object with the Mac bridge's keys:
+// id, context, incognito, profileDirectory, url, path, state, receivedBytes, totalBytes, speed)
+// through the app's rules (core/DownloadsModel.h) onto that list, writes it, and prints what each
+// report did and when the app would save. `clear` drops the finished ones, `remove` one item.
+// `downloads location` prints a profile's download settings (default: every profile's) and the
+// folder its downloads go to (`usesDownloadsFolder` for the user's Downloads, which Kite.exe looks
+// up); with a FOLDER (stored absolute; the Downloads folder's own path, given as FOLDER, is
+// stored as that path, since kitecore doesn't look the folder up: `downloads` stores none) it
+// saves there, `ask` asks every time, `folder` stops asking, `downloads` goes back to the
+// Downloads folder (Settings › Profiles › Download location).
 // `history` reads and changes a profile's browsing history (history.json, or with --chromium a
 // Chromium profile folder's Kite History.json, as the Mac's HistoryStore keeps them): `list` is
 // every page, last visited first; `search` the command bar's ranking (--limit, default 4); `add`
@@ -86,6 +178,16 @@
 // has a DPAPI key and an app-bound one. Counts only, never a cookie's name, value or host.
 // `profile` lists, makes, renames and deletes Kite profiles (core/Profiles.h). A deleted one's
 // folder name is free again once its Chromium folder is gone, which kitecore never deletes.
+// `occlusion` is shell/Occlusion's sum: how many of the window's pixels show on the monitors
+// (default one 1920×1080 at 0,0) past the occluders, and whether that's covered. Rects are
+// screen pixels LEFT,TOP,RIGHT,BOTTOM.
+// `chromium-switches` prints what Kite.exe adds to Chromium's browser-process command line
+// (core/ChromiumSwitches.h) for --chromium-switches' entries (Kite.exe also checks them against
+// its allow-list, shell/PerfProtocol.h; this doesn't), given the enable-features and
+// disable-features CEF already has (default none): `switches` in the order they're appended,
+// the resulting `enableFeatures` and `disableFeatures`, and `problem`, what --smoke-test would
+// say of those lists ("" for nothing). With no entries, Kite's defaults: Chromium's native
+// occlusion tracker off.
 
 #include <algorithm>
 #include <charconv>
@@ -96,30 +198,46 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "core/ArcCookieImport.h"
 #include "core/ArcImportController.h"
+#include "core/ChromiumSwitches.h"
 #include "core/CommandBar.h"
+#include "core/Downloads.h"
 #include "core/Files.h"
+#include "core/DownloadsModel.h"
+#include "core/Favorites.h"
 #include "core/History.h"
 #include "core/HistoryStore.h"
+#include "core/FindBar.h"
+#include "core/TextUndo.h"
 #include "core/KeyBindings.h"
+#include "core/ProfileSettings.h"
+#include "core/StoreFile.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
+#include "core/Occlusion.h"
+#include "core/OneShotFlags.h"
 #include "core/Profiles.h"
 #include "core/SessionSaveDelay.h"
 #include "core/SessionStore.h"
 #include "core/SessionWriter.h"
 #include "core/Sidebar.h"
+#include "core/SidebarContextMenu.h"
+#include "core/SidebarTopRow.h"
 #include "core/SpaceBar.h"
+#include "core/SpaceCreation.h"
 #include "core/SpaceEditing.h"
+#include "core/SpaceIconPicker.h"
 #include "core/SpaceSwipeGesture.h"
 #include "core/StoreFile.h"
 #include "core/SupportDirectory.h"
 #include "core/ThemeBackdrop.h"
+#include "core/TitleBar.h"
 #include "core/URLInput.h"
 #include "core/Unicode.h"
 #include "core/Uuid.h"
@@ -140,12 +258,19 @@ int Usage() {
         "usage: kitecore [--profile DIR] state\n"
         "       kitecore [--profile DIR] resolve TEXT...\n"
         "       kitecore [--profile DIR] suggest TEXT... [--current]\n"
-        "       kitecore [--profile DIR] sidebar [SPACE_ID]\n"
+        "       kitecore [--profile DIR] find TEXT... [--result ACTIVE/TOTAL] [--width W] [--ask [--conversation]]\n"
+        "       kitecore [--profile DIR] undo type:TEXT|back|paste:TEXT|move|undo|redo...\n"
+        "       kitecore [--profile DIR] sidebar [SPACE_ID] [--page back,forward,loading] [--hidden]\n"
         "       kitecore [--profile DIR] collapse SPACE_ID\n"
-        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]]\n"
+        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]] [--page back,forward,loading] [--double] [--button left|middle|right]\n"
         "       kitecore [--profile DIR] open TEXT... [--space ID] [--background]\n"
         "       kitecore [--profile DIR] select TAB_ID\n"
         "       kitecore [--profile DIR] tab next|prev|NUMBER\n"
+        "       kitecore [--profile DIR] tab pin|favorite|duplicate|reset|separate|reveal|replace-pin TAB_ID\n"
+        "       kitecore [--profile DIR] tab rename TAB_ID [NAME...]|pinned-url TAB_ID URL|reset-all\n"
+        "       kitecore [--profile DIR] folder new [SPACE_ID]|rename FOLDER NAME...|delete FOLDER|move TAB_ID FOLDER\n"
+        "       kitecore [--profile DIR] menu tab|favorite TAB_ID|folder FOLDER [--pick TITLE...]\n"
+        "       kitecore [--profile DIR] shown header|tab|folder|divider|newTab ID [SPACE_ID]\n"
         "       kitecore [--profile DIR] shortcuts\n"
         "       kitecore [--profile DIR] close TAB_ID\n"
         "       kitecore [--profile DIR] reopen [TAB_ID]\n"
@@ -153,19 +278,57 @@ int Usage() {
         "       kitecore [--profile DIR] evict MAX [--shown TAB_ID] [--popup POPUP_ID=OPENER_ID]... TAB_ID=LAST_SHOWN...\n"
         "       kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]\n"
         "       kitecore [--profile DIR] space swipe DX [SECONDS]\n"
-        "       kitecore [--profile DIR] space menu ID|rename ID NAME...|icon ID ICON|delete ID|folder ID|new NAME...\n"
+        "       kitecore [--profile DIR] space menu ID [--creating DRAFT]|rename ID NAME...|icon ID ICON|delete ID|folder ID\n"
+        "       kitecore [--profile DIR] space new [--about TEXT] [--theme N] NAME...\n"
+        "       kitecore [--profile DIR] space create [--about TEXT] [--theme N] [--away] [--cancel|--delete-draft] [NAME...]\n"
+        "       kitecore [--profile DIR] space plus-menu|create-page [HEIGHT] [--hit X,Y] [--swatch X,Y]\n"
         "       kitecore [--profile DIR] space move ID PLACE|drag ID X [Y]\n"
+        "       kitecore [--profile DIR] space icon-picker ID [--tab emoji|icon] [--category N] [--query TEXT] [--scroll PT] [--hit X,Y]\n"
+        "                [--place L,T,R,B,SL,ST,SR,SB] [--pick N]\n"
         "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n"
         "       kitecore [--profile DIR] backups\n"
+        "       kitecore [--profile DIR] downloads [list]\n"
+        "       kitecore [--profile DIR] downloads apply REPORT...\n"
+        "       kitecore [--profile DIR] downloads clear|remove ID\n"
+        "       kitecore [--profile DIR] downloads location [PROFILE [FOLDER|ask|folder|downloads]]\n"
         "       kitecore save-schedule KIND@SECONDS... [--at SECONDS]\n"
         "       kitecore save-bench [TABS]\n"
         "       kitecore [--profile DIR] history list|search TEXT... [--limit N]|add URL [TITLE...] [--at SECONDS]\n"
         "                |merge FILE|remove URL...|remove-since SECONDS|all|clear [--chromium PROFILE]\n"
         "       kitecore history chromium-date MICROSECONDS\n"
         "       kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]\n"
-        "       kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY\n",
+        "       kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY\n"
+        "       kitecore chromium-switches [--existing-enable LIST] [--existing-disable LIST] [--NAME[=VALUE]...]\n",
         stderr);
     return kUsage;
+}
+
+// The profile's keybindings.json as Kite reads it at launch (none in the profile: the defaults);
+// none for a file that doesn't read.
+std::optional<KeyBindings> ReadKeyBindings(const std::filesystem::path& profile) {
+    std::ifstream in(profile / "keybindings.json", std::ios::binary);
+    if (!in) return KeyBindings{};
+    const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    return KeyBindings::FromText(text);
+}
+
+json::Value NewItemMenuJson(const std::vector<NewItemMenuItem>& menu) {
+    json::Array items;
+    for (const NewItemMenuItem& item : menu) {
+        if (item.command == NewItemMenuItem::Command::Separator) {
+            items.emplace_back(json::Object{{"separator", true}});
+            continue;
+        }
+        json::Object o{{"title", item.title}, {"enabled", item.enabled}};
+        if (!item.shortcut.empty()) o.emplace("shortcut", item.shortcut);
+        items.emplace_back(std::move(o));
+    }
+    return json::Object{{"items", json::Value(std::move(items))}, {"line", NewItemMenuLine(menu)}};
+}
+
+json::Value Frame(const BarRect& r) {
+    return json::Object{{"left", static_cast<double>(r.left)}, {"top", static_cast<double>(r.top)},
+                        {"width", static_cast<double>(r.Width())}, {"height", static_cast<double>(r.Height())}};
 }
 
 std::string Join(const std::vector<std::string>& words, size_t from) {
@@ -287,8 +450,141 @@ void AddLook(json::Object& o, const SpaceIconLook& look, LookIn in = LookIn::Bar
     if (look.kind == SpaceIconLook::Kind::Symbol) o.emplace("accent", Hex(look.accent));
 }
 
+// "LEFT,TOP,RIGHT,BOTTOM" in screen pixels; nullopt unless it's four whole numbers.
+std::optional<occlusion::Rect> ParseRect(const std::string& text) {
+    int32_t v[4] = {};
+    const char* at = text.data();
+    const char* end = text.data() + text.size();
+    for (int i = 0; i < 4; ++i) {
+        auto [next, error] = std::from_chars(at, end, v[i]);
+        if (error != std::errc() || (i < 3 ? next == end || *next != ',' : next != end)) return std::nullopt;
+        at = next + (i < 3 ? 1 : 0);
+    }
+    return occlusion::Rect{v[0], v[1], v[2], v[3]};
+}
+
 // Ids typed in either case, like UUID(uuidString:).
 std::string Id(const std::string& text) { return NormalizeUuid(text).value_or(text); }
+
+// A menu's items for `menu` and `click --button right`: each title, whether it's enabled,
+// whether it's a submenu (with its items), separators as {"separator": true}.
+json::Value MenuItemsJson(const std::vector<SidebarMenuItem>& menu) {
+    json::Array items;
+    for (const SidebarMenuItem& item : menu) {
+        if (item.command == SidebarMenuItem::Command::Separator) {
+            items.emplace_back(json::Object{{"separator", true}});
+            continue;
+        }
+        json::Object entry{{"title", item.title}, {"enabled", item.enabled}, {"submenu", item.submenu}};
+        if (item.submenu) entry.emplace("items", MenuItemsJson(item.items));
+        items.emplace_back(std::move(entry));
+    }
+    return json::Value(std::move(items));
+}
+
+const char* OutcomeName(CloseOutcome outcome);
+
+// What the window does for a row menu's item (BrowserWindowController::RunRowMenuItem), on the
+// session: what it did goes in `out`. The items that need the window (a rename field, the
+// clipboard) say so and what they'd do. Empty on success.
+std::string RunMenuItem(BrowserState& state, const std::string& id, const SidebarMenuItem& item, json::Object& out) {
+    using C = SidebarMenuItem::Command;
+    using R = BrowserState::ArchiveTabsRelative;
+    const auto where = [&] {
+        const TabSection section = state.Location(id)->section;
+        return std::string(section == TabSection::Pinned ? "pinned" : section == TabSection::Unpinned ? "unpinned" : "favorite");
+    };
+    const auto ids = [](const std::vector<Tab>& tabs) {
+        json::Array list;
+        for (const Tab& tab : tabs) list.emplace_back(tab.id);
+        return json::Value(std::move(list));
+    };
+    switch (item.command) {
+    case C::AddToFavorites:
+    case C::RemoveFromFavorites:
+    case C::TogglePin:
+        if (item.command == C::TogglePin) state.TogglePin(id);
+        else state.ToggleFavorite(id);
+        out.emplace("now", where());
+        return {};
+    case C::BackToPinnedURL: {
+        const auto url = state.ResetTab(id);
+        if (!url) return "nothing to reset";
+        out.emplace("url", *url);
+        return {};
+    }
+    case C::SeparateFromPinnedTab: {
+        const auto made = state.SeparateFromPinnedTab(id);
+        if (!made) return "nothing to separate";
+        out.emplace("id", *made);
+        return {};
+    }
+    case C::ReplacePinnedURL:
+        if (!state.ReplacePinnedURLWithCurrent(id)) return "nothing to replace";
+        out.emplace("pinnedURL", *state.FindTabByID(id)->pinnedURL);
+        return {};
+    case C::CopyLink:
+        if (const Tab* tab = state.FindTabByID(id); tab->url) out.emplace("copy", *tab->url);
+        return {};
+    case C::CopyLinkAsMarkdown:
+        out.emplace("copy", MarkdownLink(*state.FindTabByID(id)).value_or(""));
+        return {};
+    case C::RenameTab:
+    case C::RenameFolder: out.emplace("window", std::string("rename")); return {};
+    case C::DuplicateTab: out.emplace("id", *state.Duplicate(id)); return {};
+    case C::CloseTab: out.emplace("outcome", std::string(OutcomeName(state.Close(id)))); return {};
+    case C::ArchiveOthers: out.emplace("archived", ids(state.ArchiveTabs(R::Others, id))); return {};
+    case C::ArchiveBelow: out.emplace("archived", ids(state.ArchiveTabs(R::Below, id))); return {};
+    case C::ArchiveAbove: out.emplace("archived", ids(state.ArchiveTabs(R::Above, id))); return {};
+    case C::DuplicateFolder: {
+        const auto copy = state.DuplicateFolder(id);
+        if (!copy) return "it can't be duplicated";
+        out.emplace("id", *copy);
+        return {};
+    }
+    case C::DeleteFolder:
+    case C::DeleteLiveFolder: {
+        // The window asks first; here it's as if its Delete Folder (or a live folder's Delete) was
+        // pressed. A folder's tabs are archived; a live folder's go unarchived.
+        const FolderDeletion deletion = FolderDeletionOf(state, id);
+        out.emplace("asks", json::Object{{"title", deletion.title}, {"message", deletion.message}, {"confirm", deletion.confirm}});
+        if (deletion.live) {
+            json::Array removed;
+            for (const std::string& tab : state.DeleteLiveFolder(id)) removed.emplace_back(tab);
+            out.emplace("removed", json::Value(std::move(removed)));
+        } else {
+            out.emplace("archived", ids(state.DeleteFolder(id)));
+        }
+        return {};
+    }
+    case C::NewNestedFolder: {
+        const auto nested = state.CreateNestedFolder(id);
+        if (!nested) return "no such folder";
+        out.emplace("id", *nested);
+        out.emplace("window", std::string("rename"));
+        return {};
+    }
+    case C::TurnFolderIntoSpace: {
+        const auto space = state.TurnFolderIntoSpace(id);
+        if (!space) return "it can't become a space";
+        out.emplace("space", *space);
+        return {};
+    }
+    case C::CopyAllLinks: out.emplace("copy", LinkList(TabsIn(state.FolderByID(id)->items))); return {};
+    case C::CopyAllLinksAsMarkdown: out.emplace("copy", MarkdownLinkList(TabsIn(state.FolderByID(id)->items))); return {};
+    default: return "it isn't ported yet";  // disabled, so never picked
+    }
+}
+
+// What closing a tab did, as `close` and a click's `outcome` print it.
+const char* OutcomeName(CloseOutcome outcome) {
+    switch (outcome) {
+    case CloseOutcome::Removed: return "removed";
+    case CloseOutcome::Unloaded: return "unloaded";
+    case CloseOutcome::NotFound: return "notFound";
+    }
+    return "notFound";
+}
 
 std::optional<double> ParseSeconds(const std::string& text) {
     double value = 0;
@@ -316,6 +612,79 @@ json::Value BackupsSummary(const SessionBackups& backups) {
         rows.push_back(json::Value(std::move(o)));
     }
     return json::Value(json::Object{{"directory", PathUtf8(backups.Directory())}, {"backups", json::Value(std::move(rows))}});
+}
+
+json::Value DownloadsSummary(const DownloadList& list) {
+    json::Array items;
+    for (const DownloadItem& item : list.Items()) {
+        json::Value encoded = Encode(item);
+        json::Object o = *encoded.AsObject();
+        o.emplace("fileName", item.FileName());
+        o.emplace("subtitle", download_text::Subtitle(item));
+        if (auto fraction = item.Fraction()) o.emplace("fraction", *fraction);
+        items.push_back(json::Value(std::move(o)));
+    }
+    json::Object root{{"items", json::Value(std::move(items))}, {"active", list.Active().size()}};
+    if (auto fraction = list.ActiveFraction()) root.emplace("activeFraction", *fraction);
+    return json::Value(std::move(root));
+}
+
+// downloads.json's commands that touch only it (`location` reads the session too, below).
+int DownloadsCommand(const std::vector<std::string>& args, const std::filesystem::path& support) {
+    const std::filesystem::path file = support / "downloads.json";
+    auto read = downloads_file::ReadOnly(file);
+    if (!read) {
+        std::fprintf(stderr, "kitecore: downloads.json doesn't read; left as it is\n");
+        return kLoadFailed;
+    }
+    const std::string action = args.size() > 1 ? args[1] : "list";
+    // Writing the list back would lose the items it couldn't read (a newer Kite's, say): only
+    // looking is allowed then. Kite.exe copies such a file aside before it saves.
+    if (read->dropped > 0 && action != "list") {
+        std::fprintf(stderr, "kitecore: %zu of downloads.json's items don't read; not writing over them\n", read->dropped);
+        return kLoadFailed;
+    }
+    DownloadsModel model;
+    model.Restore(read->list, true, 0);
+    json::Array reports;
+    if (action == "list" && args.size() <= 2) {
+        std::puts(json::Write(DownloadsSummary(model.List())).c_str());
+        return kOk;
+    } else if (action == "apply" && args.size() > 2) {
+        for (size_t i = 2; i < args.size(); ++i) {
+            auto parsed = json::Parse(args[i]);
+            auto* value = std::get_if<json::Value>(&parsed);
+            auto update = value ? DownloadUpdate::FromInfo(*value) : std::nullopt;
+            if (!update) {
+                std::fprintf(stderr, "kitecore: not a download report: %s\n", args[i].c_str());
+                return kUsage;
+            }
+            // A second apart, so the save delays read as the app's timer would arm them: a save
+            // due by then has fired.
+            const double now = static_cast<double>(i - 2);
+            if (auto due = model.Schedule().DueAt(); due && *due <= now) model.Schedule().Saved();
+            const auto outcome = model.Apply(*update, now);
+            json::Object o{{"applied", outcome.applied}, {"isNew", outcome.isNew}};
+            if (outcome.applied) o.emplace("id", outcome.item.id);
+            if (outcome.save) o.emplace("saveAfter", *outcome.save);
+            reports.push_back(json::Value(std::move(o)));
+        }
+    } else if (action == "clear" && args.size() == 2) {
+        model.ClearFinished(0);
+    } else if (action == "remove" && args.size() == 3) {
+        if (!model.List().Find(Id(args[2]))) return kNotFound;
+        model.Remove(Id(args[2]), 0);
+    } else {
+        return Usage();
+    }
+    if (std::string error = store_file::WriteAtomically(file, downloads_file::Encode(model.List())); !error.empty()) {
+        std::fprintf(stderr, "kitecore: %s\n", error.c_str());
+        return kSaveFailed;
+    }
+    json::Value summary = DownloadsSummary(model.List());
+    if (!reports.empty()) summary.AsObject()->emplace("reports", json::Value(std::move(reports)));
+    std::puts(json::Write(summary).c_str());
+    return kOk;
 }
 
 // The changes `save-schedule` replays: KIND@SECONDS, in time order.
@@ -623,6 +992,55 @@ int main(int argc, char** argv) {
         return SaveBenchCommand(tabs);
     }
 
+    if (args[0] == "chromium-switches") {
+        // Needs no profile: the switches Kite.exe gives Chromium (core/ChromiumSwitches.h).
+        std::string enable, disable;
+        std::vector<std::string> requested;
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--existing-enable" || args[i] == "--existing-disable") {
+                if (i + 1 >= args.size()) return Usage();
+                (args[i] == "--existing-enable" ? enable : disable) = args[i + 1];
+                ++i;
+                continue;
+            }
+            if (!args[i].starts_with("--") || args[i].size() == 2 || args[i][2] == '=') return Usage();
+            requested.push_back(args[i].substr(2));
+        }
+        json::Array switches;
+        const std::string cefEnable = enable, cefDisable = disable;
+        for (const std::string& entry : chromium_switches::BrowserSwitches(requested, enable, disable)) {
+            // Appended in order, each replacing a switch of its name: the lists as Chromium reads them.
+            if (entry.starts_with("enable-features=")) enable = entry.substr(16);
+            if (entry.starts_with("disable-features=")) disable = entry.substr(17);
+            switches.push_back(json::Value(entry));
+        }
+        std::puts(json::Write(json::Object{{"switches", json::Value(std::move(switches))},
+                                           {"enableFeatures", json::Value(enable)},
+                                           {"disableFeatures", json::Value(disable)},
+                                           {"problem", json::Value(chromium_switches::FeatureProblem(requested, cefEnable, cefDisable, enable, disable))}})
+                      .c_str());
+        return kOk;
+    }
+
+    if (args[0] == "occlusion") {
+        // Needs no profile: the sum shell/Occlusion runs over the screen's windows.
+        if (args.size() < 2) return Usage();
+        const auto window = ParseRect(args[1]);
+        if (!window) return Usage();
+        std::vector<occlusion::Rect> monitors, occluders;
+        for (size_t i = 2; i < args.size(); ++i) {
+            const bool monitor = args[i] == "--monitor";
+            if (monitor && ++i >= args.size()) return Usage();
+            const auto rect = ParseRect(args[i]);
+            if (!rect) return Usage();
+            (monitor ? monitors : occluders).push_back(*rect);
+        }
+        if (monitors.empty()) monitors.push_back({0, 0, 1920, 1080});
+        const int64_t visible = occlusion::VisiblePixels(*window, monitors, occluders);
+        std::puts(json::Write(json::Object{{"visiblePixels", visible}, {"covered", occlusion::Covered(visible)}}).c_str());
+        return kOk;
+    }
+
     auto resolved = ResolveSupportDirectory(profile ? profile : EnvironmentPath("KITE_SUPPORT_PATH"), EnvironmentPath("LOCALAPPDATA"));
     if (auto* error = std::get_if<SupportDirectoryError>(&resolved)) {
         std::fprintf(stderr, "kitecore: %s\n", error->message.c_str());
@@ -641,6 +1059,8 @@ int main(int argc, char** argv) {
         std::puts(json::Write(BackupsSummary(store.Backups())).c_str());
         return kOk;
     }
+    const std::filesystem::path support = std::get<std::filesystem::path>(resolved);
+    if (args[0] == "downloads" && (args.size() == 1 || args[1] != "location")) return DownloadsCommand(args, support);
 
     BrowserState state;
     // kitecore never moves the user's session aside: an unreadable one is reported and left.
@@ -650,13 +1070,129 @@ int main(int argc, char** argv) {
         return kLoadFailed;
     }
     const bool existed = std::holds_alternative<BrowserState>(loaded);
+    // The profile's one-shot flags (the favorites' empty state, dismissed or not).
+    OneShotFlags flags = OneShotFlags::Load(std::get<std::filesystem::path>(resolved));
     state = existed ? std::move(std::get<BrowserState>(loaded)) : BrowserState::MakeDefault();
+    // As Kite.exe loads it: a Create a Space page left open (a nameless, empty space) goes
+    // (dropUnnamedEmptySpaces), saved with the command's change when it makes one.
+    DropUnnamedEmptySpaces(state);
+
+    // The page the selected tab shows, as Chromium would report it (kitecore has no pages): what the
+    // top row shows (sidebar, click). And the sidebar hidden (View › Hide Sidebar, which the session
+    // doesn't keep): where the card's edge is.
+    PageStatus page;
+    bool hidden = false;
+    int clicks = 1;
+    bool middle = false, right = false;
+    if (args[0] == "sidebar" || args[0] == "click") {
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--hidden" && args[0] == "sidebar") {
+                hidden = true;
+            } else if (args[i] == "--double" && args[0] == "click") {
+                clicks = 2;
+            } else if (args[i] == "--button" && args[0] == "click" && i + 1 < args.size()) {
+                if (args[i + 1] == "middle") middle = true;
+                else if (args[i + 1] == "right") right = true;
+                else if (args[i + 1] != "left") return Usage();
+                args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
+            } else if (args[i] == "--page" && i + 1 < args.size()) {
+                std::string_view rest = args[i + 1];
+                while (!rest.empty()) {
+                    const std::string_view word = rest.substr(0, rest.find(','));
+                    if (word == "back") page.canGoBack = true;
+                    else if (word == "forward") page.canGoForward = true;
+                    else if (word == "loading") page.isLoading = true;
+                    else if (word != "none") return Usage();
+                    rest = rest.size() > word.size() ? rest.substr(word.size() + 1) : std::string_view{};
+                }
+                args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
+            } else {
+                continue;
+            }
+            args.erase(args.begin() + static_cast<std::ptrdiff_t>(i));
+            --i;
+        }
+    }
+
+    // Create a Space open, as the window would have it (--creating DRAFT): what the sidebar's and
+    // the space's menus show for it.
+    std::optional<SpaceCreation> creating;
+    if (args[0] == "sidebar" || args[0] == "click" || args[0] == "space") {
+        for (size_t i = 1; i + 1 < args.size(); ++i) {
+            if (args[i] != "--creating") continue;
+            const std::string draft = Id(args[i + 1]);
+            if (!state.SpaceIndex(draft)) return kNotFound;
+            creating = SpaceCreation{draft, state.selectedSpaceID, false};
+            args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i + 2));
+            break;
+        }
+    }
 
     const std::string& command = args[0];
     const SearchEngine engine = SearchEngineFromRaw(state.searchEngine).value_or(SearchEngine::Google);
     bool changed = false;
 
-    if (command == "state") {
+    if (command == "downloads" && args.size() >= 2 && args.size() <= 4) {
+        // Where a profile's downloads go, as a normal launch of Kite.exe on it resolves them (the
+        // same test-profile rule). The user's Downloads folder itself is Kite.exe's to look up
+        // (the shell's known folders, outside kitecore's layer): it's named, not resolved, here.
+        const std::filesystem::path defaultFolder = DefaultDownloadFolder(
+            EnvironmentPath("KITE_TEST_DOWNLOADS_PATH"), IsTestProfile(support, EnvironmentPath("LOCALAPPDATA")), false, support, {});
+        std::vector<std::string> profiles{BrowserState::kDefaultProfile};
+        if (auto list = state.extra.find("profiles"); list != state.extra.end() && list->second.AsArray()) {
+            for (const auto& entry : *list->second.AsArray()) {
+                if (const json::Value* directory = entry.Find("directory"); directory && directory->AsString()) profiles.push_back(*directory->AsString());
+            }
+        }
+        if (args.size() >= 3 && std::find(profiles.begin(), profiles.end(), args[2]) == profiles.end()) {
+            std::fprintf(stderr, "kitecore: no profile in the folder \"%s\"\n", args[2].c_str());
+            return kNotFound;
+        }
+        if (args.size() == 4) {
+            const std::string& choice = args[3];
+            state.UpdateSettings(args[2], [&](ProfileSettings& settings) {
+                if (choice == "ask") {
+                    settings.promptsForDownload = true;
+                } else if (choice == "folder") {
+                    settings.promptsForDownload = false;
+                } else if (choice == "downloads") {
+                    settings.downloadDirectory.reset();
+                    settings.promptsForDownload = false;
+                } else {
+                    // DownloadLocation.setFolder: the folder Kite saves into anyway is stored as
+                    // none; any other is kept absolute (a relative one would follow the caller).
+                    std::error_code error;
+                    const std::filesystem::path chosen =
+                        std::filesystem::absolute(std::filesystem::path(std::u8string(choice.begin(), choice.end())), error).lexically_normal();
+                    std::error_code same;
+                    if (!defaultFolder.empty() && std::filesystem::equivalent(chosen, defaultFolder, same) && !same) settings.downloadDirectory.reset();
+                    else settings.downloadDirectory = PathUtf8(chosen);
+                    settings.promptsForDownload = false;
+                }
+            });
+            changed = true;
+        }
+        json::Array rows;
+        for (const std::string& directory : profiles) {
+            if (args.size() >= 3 && directory != args[2]) continue;
+            const ProfileSettings settings = state.Settings(directory);
+            const std::filesystem::path folder = settings.DownloadFolder(defaultFolder, [](const std::string& path) {
+                std::error_code error;
+                return std::filesystem::is_directory(std::filesystem::path(std::u8string(path.begin(), path.end())), error);
+            });
+            json::Object row{{"profile", directory},
+                             {"name", state.ProfileName(directory)},
+                             {"promptsForDownload", settings.promptsForDownload},
+                             {"includesSearchSuggestions", settings.includesSearchSuggestions}};
+            // A folder chosen or a test's own; else the user's Downloads folder, by name.
+            if (folder.empty()) row.emplace("usesDownloadsFolder", true);
+            else row.emplace("folder", PathUtf8(folder));
+            if (settings.downloadDirectory) row.emplace("downloadDirectory", *settings.downloadDirectory);
+            rows.push_back(json::Value(std::move(row)));
+        }
+        std::puts(json::Write(json::Value(std::move(rows))).c_str());
+        if (!changed) return kOk;
+    } else if (command == "state") {
         std::puts(json::Write(Summary(state)).c_str());
         return kOk;
     } else if (command == "shortcuts" && args.size() == 1) {
@@ -698,6 +1234,85 @@ int main(int argc, char** argv) {
         auto url = url_input::Resolve(Join(args, 1), engine);
         if (!url) return kNotFound;
         std::puts(url->c_str());
+        return kOk;
+    } else if (command == "find") {
+        // The find bar (Ctrl+F) with TEXT typed: its placeholder, the search it asks the page for,
+        // the counter for a page report ACTIVE/TOTAL (0/0 for none, as Kite.exe's --find-result),
+        // whether Return would ask instead (Ask on Page, --ask, in a conversation with
+        // --conversation; Windows has no Ask on Page yet), and its frame in a window WIDTH points wide.
+        std::vector<std::string> words;
+        std::optional<FindResult> result;
+        double width = 1280;
+        bool ask = false, conversation = false;
+        const auto whole = [](std::string_view text, auto& value) {
+            const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+            return !text.empty() && error == std::errc() && end == text.data() + text.size();
+        };
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--result" && i + 1 < args.size()) {
+                const std::string_view report = args[++i];
+                const size_t slash = report.find('/');
+                int active = -1, total = -1;
+                if (slash == std::string_view::npos || !whole(report.substr(0, slash), active) || !whole(report.substr(slash + 1), total) ||
+                    active < 0 || total < active || (total > 0 && active < 1)) {
+                    return Usage();
+                }
+                result = FindResult{total > 0, total, active};
+            } else if (args[i] == "--width" && i + 1 < args.size()) {
+                if (!whole(args[++i], width) || !(width >= 1 && width <= 8192)) return Usage();
+            } else if (args[i] == "--ask") {
+                ask = true;
+            } else if (args[i] == "--conversation") {
+                conversation = true;
+            } else {
+                words.push_back(args[i]);
+            }
+        }
+        FindQuery query;
+        query.askEnabled = ask;
+        const FindQuery::Search search = query.TextChanged(Join(words, 0));
+        if (result) query.Show(*result);
+        const FindBarFrame frame = FindBarFrameIn(title_bar::kSidebarWidth, title_bar::kContentTop, width - sidebar_toggle::kContentInset,
+                                                  find_bar_style::ForAskEnabled(ask));
+        json::Object o{{"placeholder", ask_on_page::Placeholder(ask, conversation)},
+                       {"search", json::Object{{"text", search.text}, {"forward", search.forward}, {"findNext", search.findNext}}},
+                       {"label", query.Label()},
+                       {"notFound", query.LabelIsNotFound()},
+                       {"askMode", ask_on_page::IsAskMode(ask, query.Query(), query.Matches(), conversation)},
+                       {"frame", json::Object{{"left", frame.left}, {"top", frame.top}, {"width", frame.width}, {"height", frame.height}}}};
+        std::puts(json::Write(json::Value(std::move(o))).c_str());
+        return kOk;
+    } else if (command == "undo") {
+        // A text field's undo (core/TextUndo, as Kite's fields group it): STEP is type:TEXT (a
+        // keystroke a character), back (Backspace), paste:TEXT, move (the caret moved), undo or
+        // redo; prints the text after each step.
+        TextUndo<std::string> history;
+        std::string text;
+        json::Array texts;
+        for (size_t i = 1; i < args.size(); ++i) {
+            const std::string_view step = args[i];
+            if (step.starts_with("type:")) {
+                for (const std::u32string& character : unicode::Characters(step.substr(5))) {
+                    history.Record(text, TextUndo<std::string>::Kind::Typing);
+                    text += unicode::Encode(character);
+                }
+            } else if (step == "back") {
+                if (text.empty()) continue;
+                history.Record(text, TextUndo<std::string>::Kind::Typing);
+                text.resize(text.size() - unicode::Encode(unicode::Characters(text).back()).size());
+            } else if (step.starts_with("paste:")) {
+                history.Record(text, TextUndo<std::string>::Kind::Other);
+                text += step.substr(6);
+            } else if (step == "move") {
+                history.BreakTyping();
+            } else if (step == "undo" || step == "redo") {
+                if (auto to = step == "undo" ? history.Undo(text) : history.Redo(text)) text = *to;
+            } else {
+                return Usage();
+            }
+            texts.emplace_back(text);
+        }
+        std::puts(json::Write(json::Value(std::move(texts))).c_str());
         return kOk;
     } else if (command == "suggest") {
         CommandBarMode mode = CommandBarMode::NewTab;
@@ -748,6 +1363,9 @@ int main(int argc, char** argv) {
                 o.emplace("depth", row.depth);
                 o.emplace("pinned", row.pinned);
                 o.emplace("selected", row.selected);
+                // Back to Pinned URL on hover: a pinned tab off its pinned page.
+                o.emplace("canReset", row.canReset);
+                if (row.renamed) o.emplace("renamed", true);
                 if (row.favicon.url) o.emplace("favicon", *row.favicon.url);
                 break;
             case SidebarRow::Kind::Folder:
@@ -793,7 +1411,66 @@ int main(int argc, char** argv) {
             cell.emplace("tip", std::move(t));
             bar.emplace_back(std::move(cell));
         }
+        // The top row over the address field (sidebar points), for the page given with --page, and
+        // where the sidebar and the card's leading edge sit, shown or hidden (window points).
+        json::Array topRow;
+        for (const TopRowItem& item : LayOutTopRow(240, TopRowModelOf(state, page))) {
+            json::Object button{{"button", std::string(TopRowButtonName(item.button))},
+                                {"symbol", item.symbol},
+                                {"tooltip", item.tooltip},
+                                {"enabled", item.enabled},
+                                {"opacity", static_cast<double>(item.Opacity())},
+                                {"left", static_cast<double>(item.frame.left)},
+                                {"top", static_cast<double>(item.frame.top)},
+                                {"width", static_cast<double>(item.frame.Width())},
+                                {"height", static_cast<double>(item.frame.Height())}};
+            button.emplace("command", TopRowCommand(item.button));
+            topRow.emplace_back(std::move(button));
+        }
+        // The favorites over the page (FavoritesTrayView), for a 240pt sidebar.
+        const FavoritesTray tray =
+            LayOutFavorites(state, *space, 240, flags.Get(OneShotFlags::kFavoritesEmptyStateDismissed));
+        const auto frameOf = [](json::Object& o, const BarRect& r) {
+            o.emplace("left", static_cast<double>(r.left));
+            o.emplace("top", static_cast<double>(r.top));
+            o.emplace("width", static_cast<double>(r.Width()));
+            o.emplace("height", static_cast<double>(r.Height()));
+        };
+        json::Array tiles;
+        for (const FavoriteTile& tile : tray.tiles) {
+            json::Array panes;
+            for (const FavoritePane& pane : tile.panes) {
+                json::Object p{{"id", pane.tabID}, {"title", pane.title}, {"selected", pane.selected}};
+                if (pane.favicon.url) p.emplace("favicon", *pane.favicon.url);
+                // Its fill at rest, with no favicon colour known (kitecore decodes no icons).
+                const FavoriteLook look = FavoriteLookOf(pane.selected, false, !PrefersDarkForeground(state.spaces[*space].theme), false);
+                p.emplace("fill", static_cast<double>(look.fill));
+                frameOf(p, pane.frame);
+                panes.emplace_back(std::move(p));
+            }
+            json::Object t{{"id", tile.id}, {"split", tile.split}, {"panes", json::Value(std::move(panes))}};
+            if (tile.split) t.emplace("vertical", tile.vertical);
+            frameOf(t, tile.frame);
+            tiles.emplace_back(std::move(t));
+        }
+        json::Object favorites{{"columns", tray.columns},
+                               {"height", static_cast<double>(tray.height)},
+                               {"listTop", static_cast<double>(SidebarListTop(tray))},
+                               {"tiles", json::Value(std::move(tiles))}};
+        if (tray.emptyState) {
+            json::Object empty{{"title", std::string(favorites_empty::kTitle)}, {"subtitle", std::string(favorites_empty::kSubtitle)}};
+            frameOf(empty, tray.emptyFrame);
+            json::Object close{{"tooltip", std::string(favorites_empty::kCloseTooltip)}};
+            frameOf(close, tray.closeFrame);
+            empty.emplace("close", json::Value(std::move(close)));
+            favorites.emplace("emptyState", json::Value(std::move(empty)));
+        }
         json::Object out{{"address", AddressFieldText(state)},
+                         {"topRow", json::Value(std::move(topRow))},
+                         {"favorites", json::Value(std::move(favorites))},
+                         {"shown", !hidden},
+                         {"sidebarLeft", static_cast<double>(SidebarLeft(!hidden, 240))},
+                         {"cardLeft", static_cast<double>(CardLeft(!hidden, 240))},
                          {"rows", json::Value(std::move(rows))},
                          {"spaceBar", json::Object{{"fits", layout.fits}, {"cells", json::Value(std::move(bar))}}}};
         std::puts(json::Write(json::Value(std::move(out))).c_str());
@@ -807,12 +1484,94 @@ int main(int argc, char** argv) {
             if (error != std::errc() || end != args[i].data() + args[i].size()) return Usage();
         }
         const auto rows = SidebarRows(state, state.SelectedSpaceIndex());
+        const std::vector<TopRowItem> topRow = LayOutTopRow(240, TopRowModelOf(state, page));
+        const FavoritesTray tray =
+            LayOutFavorites(state, state.SelectedSpaceIndex(), 240, flags.Get(OneShotFlags::kFavoritesEmptyStateDismissed));
+        const float listTop = SidebarListTop(tray);
         // The space bar along the bottom: a click on a space's cell selects it (pressed and let
         // go at the point, as the window's).
-        if (values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) {
+        if (right) {
+            // A right-click (or a Ctrl+click, the Mac's ⌃-click): the menu the window opens there,
+            // as the window asks (SidebarView::MenuTargetAt): a space's cell, a favorite's pane, then
+            // the page's header (the space's menu), a tab's row or a folder's. Nothing changes.
+            json::Object out{{"target", std::string("none")}};
+            const auto put = [&](const char* kind, const std::string& id, const std::string& line) {
+                out["target"] = json::Value(std::string("menu"));
+                out.emplace("kind", std::string(kind));
+                out.emplace("id", id);
+                out.emplace("line", line);
+            };
+            const float x = values[0], y = values[1];
+            if (x >= 0 && x < 240 && y >= SpaceBarTop(values[2]) && y < values[2]) {
+                const std::vector<SpaceCell> cells = SpaceCells(state);
+                const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
+                if (const auto press = SpaceBarPressAt(layout, cells, x, y - SpaceBarTop(values[2]))) {
+                    put("space", press->spaceID, SpaceMenuLine(SpaceMenu(state, press->spaceID, creating)));
+                }
+            } else if (x >= 0 && x < 240 && InFavorites(tray, 240, x, y)) {
+                if (const auto pane = FavoritePressAt(tray, x, y); pane && pane->target == FavoritePress::Target::Pane) {
+                    put("favorite", pane->tabID, SidebarMenuLine(FavoriteMenu(state, pane->tabID)));
+                }
+            } else if (x >= 0 && x < 240 && !TopRowItemAt(topRow, x, y)) {
+                if (const auto target = SidebarMenuTargetAt(rows, 240, values[2], values[3], x, y, listTop)) {
+                    switch (target->kind) {
+                    case SidebarMenuTarget::Kind::Space: put("space", target->id, SpaceMenuLine(SpaceMenu(state, target->id, creating))); break;
+                    case SidebarMenuTarget::Kind::Tab: put("tab", target->id, SidebarMenuLine(TabMenu(state, target->id))); break;
+                    case SidebarMenuTarget::Kind::Folder: put("folder", target->id, SidebarMenuLine(FolderMenu(state, target->id))); break;
+                    case SidebarMenuTarget::Kind::Favorite:
+                    case SidebarMenuTarget::Kind::None: break;  // New Tab: no menu
+                    }
+                    // On one of the row's buttons, which a Ctrl+click presses instead.
+                    if (target->button) out.emplace("button", true);
+                }
+            }
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (middle) {
+            // A middle click (Windows' close-a-tab click): a tab's row closes as its close button
+            // does; anything else (the top row, the bar, a favorite, a folder, the header) takes nothing.
+            const auto press = values[0] >= 0 && values[0] < 240 && !TopRowItemAt(topRow, values[0], values[1]) &&
+                                       !(values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) &&
+                                       !InFavorites(tray, 240, values[0], values[1])
+                                   ? SidebarMiddlePressAt(rows, 240, values[2], values[3], values[0], values[1], listTop)
+                                   : std::nullopt;
+            json::Object out{{"target", std::string(press ? "row" : "none")}};
+            if (press) {
+                out.emplace("id", press->id);
+                const SidebarTap tap = SidebarMiddleRelease(*press, rows, 240, values[2], values[3], values[0], values[1], listTop);
+                out.emplace("action", std::string(tap.action == SidebarTap::Action::CloseTab ? "closeTab" : "none"));
+                if (tap.action == SidebarTap::Action::CloseTab) {
+                    out.emplace("outcome", std::string(OutcomeName(state.Close(tap.id))));
+                    changed = true;
+                }
+            }
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (const auto button = values[0] >= 0 && values[0] < 240 ? TopRowItemAt(topRow, values[0], values[1]) : std::nullopt) {
+            // A top-row button: the command the window runs (nothing for a disabled one). Toggle
+            // Sidebar and the page's commands are the window's, so nothing here changes.
+            const TopRowItem& item = topRow[*button];
+            json::Object out{{"target", std::string("topRow")}, {"button", std::string(TopRowButtonName(item.button))}, {"enabled", item.enabled}};
+            out.emplace("action", item.enabled ? TopRowCommand(item.button) : std::string("none"));
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) {
             const std::vector<SpaceCell> cells = SpaceCells(state);
             const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
             const float x = values[0], y = values[1] - SpaceBarTop(values[2]);
+            // Create a Space hides the + button: a click there takes nothing.
+            if (creating && layout.plus.Contains(x, y)) {
+                std::puts(json::Write(json::Object{{"target", std::string("none")}}).c_str());
+                return kOk;
+            }
+            if (layout.plus.Contains(x, y)) {
+                // The + button: its menu, which the window shows (nothing runs here).
+                const auto bindings = ReadKeyBindings(std::get<std::filesystem::path>(resolved));
+                if (!bindings) {
+                    std::fputs("kitecore: unreadable keybindings.json\n", stderr);
+                    return kLoadFailed;
+                }
+                json::Object out{{"target", std::string("plus")}, {"menu", NewItemMenuJson(NewItemMenu(ShortcutTable(*bindings)))}};
+                std::puts(json::Write(json::Value(std::move(out))).c_str());
+                return kOk;
+            }
             const auto press = SpaceBarPressAt(layout, cells, x, y);
             json::Object out{{"target", std::string(press ? "spaceCell" : "none")}};
             if (press) {
@@ -824,21 +1583,58 @@ int main(int argc, char** argv) {
                 }
             }
             std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (InFavorites(tray, 240, values[0], values[1])) {
+            // The tray's band: a pane's press selects its favorite on release (FavoritePaneView's
+            // mouseUp), the empty state's close button dismisses it; the rest takes the press and
+            // does nothing.
+            const auto press = FavoritePressAt(tray, values[0], values[1]);
+            const bool close = press && press->target == FavoritePress::Target::CloseEmptyState;
+            json::Object out{{"target", std::string(close ? "favoritesClose" : press ? "favorite" : "favorites")}};
+            if (press) {
+                if (!close) out.emplace("id", press->tabID);
+                const FavoriteTap tap = FavoriteRelease(*press, tray, values[0], values[1]);
+                out.emplace("action", std::string(tap.action == FavoriteTap::Action::SelectTab           ? "selectTab"
+                                                  : tap.action == FavoriteTap::Action::DismissEmptyState ? "dismissEmptyState"
+                                                                                                         : "none"));
+                if (tap.action == FavoriteTap::Action::SelectTab) {
+                    state.Select(tap.tabID);
+                    changed = true;
+                } else if (tap.action == FavoriteTap::Action::DismissEmptyState) {
+                    if (const std::string problem = flags.Set(OneShotFlags::kFavoritesEmptyStateDismissed, true); !problem.empty()) {
+                        std::fprintf(stderr, "kitecore: %s\n", problem.c_str());
+                        return kLoadFailed;
+                    }
+                }
+            }
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else {
-            const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], 1);
-            static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron", "closeButton"};
-            static constexpr const char* kActions[] = {"none",      "editAddress", "togglePinnedSection", "selectTab", "setFolderExpanded",
-                                                       "newTab",    "closeTab"};
+            const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], clicks, false, listTop);
+            // In the enums' order, one name each (the last enumerator's index plus one).
+            static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron", "closeButton", "resetButton", "headerIcon"};
+            static constexpr const char* kActions[] = {"none",   "editAddress", "togglePinnedSection", "selectTab", "setFolderExpanded",
+                                                       "newTab", "closeTab",    "resetTab",            "changeIcon"};
+            static_assert(std::size(kTargets) == static_cast<size_t>(SidebarHit::Target::HeaderIcon) + 1);
+            static_assert(std::size(kActions) == static_cast<size_t>(SidebarTap::Action::ChangeIcon) + 1);
             json::Object out{{"target", std::string(kTargets[static_cast<int>(press ? press->target : SidebarHit::Target::None)])}};
             if (press) {
                 if (!press->id.empty()) out.emplace("id", press->id);
-                const SidebarTap tap = SidebarRelease(*press, rows, 240, values[2], values[3], values[0], values[1]);
+                // The second press of a double-click on a tab's row opens its rename field as it goes
+                // down (the window's); its release taps nothing.
+                if (SidebarRenameOnPress(*press)) out.emplace("pressed", std::string("renameTab"));
+                const SidebarTap tap = SidebarRelease(*press, rows, 240, values[2], values[3], values[0], values[1], listTop);
                 out.emplace("action", std::string(kActions[static_cast<int>(tap.action)]));
                 switch (tap.action) {
                 case SidebarTap::Action::SelectTab: state.Select(tap.id); changed = true; break;
                 case SidebarTap::Action::SetFolderExpanded: state.SetFolderExpanded(tap.id, tap.expanded); changed = true; break;
                 case SidebarTap::Action::TogglePinnedSection: TogglePinnedSection(state, tap.id); changed = true; break;
-                case SidebarTap::Action::CloseTab: state.Close(tap.id); changed = true; break;
+                case SidebarTap::Action::CloseTab:
+                    out.emplace("outcome", std::string(OutcomeName(state.Close(tap.id))));
+                    changed = true;
+                    break;
+                case SidebarTap::Action::ResetTab:
+                    if (const auto url = state.ResetTab(tap.id)) out.emplace("url", *url);
+                    changed = true;
+                    break;
                 default: break;  // the command bar's, in the window
                 }
             }
@@ -868,6 +1664,126 @@ int main(int argc, char** argv) {
         if (!state.Location(id)) return kNotFound;
         state.Select(id);
         changed = true;
+    } else if (command == "tab" && args.size() >= 2 && !(args.size() == 2 && (args[1] == "next" || args[1] == "prev" ||
+                                                                          (args[1].size() == 1 && args[1][0] >= '1' && args[1][0] <= '9')))) {
+        // The tab edits (see the top of this file).
+        const std::string& action = args[1];
+        if (action == "reset-all" && args.size() == 2) {
+            const auto reset = state.ResetPinnedTabs();
+            if (reset.empty()) return kRefused;
+            for (const auto& [id, url] : reset) std::printf("%s %s\n", id.c_str(), url.c_str());
+        } else {
+            if (args.size() < 3) return Usage();
+            const std::string id = Id(args[2]);
+            if (!state.Location(id)) return kNotFound;
+            const auto where = [&] {
+                const TabSection section = state.Location(id)->section;
+                return section == TabSection::Pinned ? "pinned" : section == TabSection::Unpinned ? "unpinned" : "favorite";
+            };
+            if (action == "pin" && args.size() == 3) {
+                state.TogglePin(id);
+                std::puts(where());
+            } else if (action == "favorite" && args.size() == 3) {
+                state.ToggleFavorite(id);
+                std::puts(where());
+            } else if (action == "rename") {
+                state.RenameTab(id, Join(args, 3));
+                std::puts(state.FindTabByID(id)->DisplayTitle().c_str());
+            } else if (action == "duplicate" && args.size() == 3) {
+                std::puts(state.Duplicate(id)->c_str());
+            } else if (action == "reset" && args.size() == 3) {
+                const auto url = state.ResetTab(id);
+                if (!url) return kRefused;
+                std::puts(url->c_str());
+            } else if (action == "separate" && args.size() == 3) {
+                const auto made = state.SeparateFromPinnedTab(id);
+                if (!made) return kRefused;
+                std::puts(made->c_str());
+            } else if (action == "reveal" && args.size() == 3) {
+                const auto row = state.RevealTab(id);
+                if (!row) return kRefused;
+                std::puts(row->c_str());
+            } else if (action == "pinned-url" && args.size() >= 4) {
+                if (!state.EditPinnedURL(id, Join(args, 3))) return kRefused;
+                std::puts(state.FindTabByID(id)->pinnedURL->c_str());
+            } else if (action == "replace-pin" && args.size() == 3) {
+                if (!state.ReplacePinnedURLWithCurrent(id)) return kRefused;
+                std::puts(state.FindTabByID(id)->pinnedURL->c_str());
+            } else {
+                return Usage();
+            }
+        }
+        changed = true;
+    } else if (command == "folder" && args.size() >= 2) {
+        const std::string& action = args[1];
+        if (action == "new" && args.size() <= 3) {
+            const auto space = args.size() == 3 ? state.SpaceIndex(Id(args[2])) : std::optional<size_t>(state.SelectedSpaceIndex());
+            if (!space) return kNotFound;
+            std::puts(state.CreateNewFolder(*space).c_str());
+        } else if (action == "rename" && args.size() >= 4) {
+            const auto found = state.FolderMatching(args[2]);
+            if (!found) return kNotFound;
+            const std::string id = found->folder->id;
+            state.RenameFolder(id, Join(args, 3));
+            std::puts(state.FolderByID(id)->name.c_str());
+        } else if (action == "delete" && args.size() == 3) {
+            const auto found = state.FolderMatching(args[2]);
+            if (!found) return kNotFound;
+            const std::string id = found->folder->id;
+            for (const Tab& tab : state.DeleteFolder(id)) std::puts(tab.id.c_str());
+        } else if (action == "move" && args.size() == 4) {
+            const std::string tab = Id(args[2]);
+            const auto location = state.Location(tab);
+            const auto found = state.FolderMatching(args[3]);
+            if (!location || !found) return kNotFound;
+            // Favorites stay where they are (moveTab(_:toFolder:)).
+            if (location->section == TabSection::Favorite) return kRefused;
+            if (!state.MoveTabToFolder(tab, std::string(found->folder->id))) return kNotFound;
+        } else {
+            return Usage();
+        }
+        changed = true;
+    } else if (command == "menu" && args.size() >= 3) {
+        // A row's menu as the window shows it (core/SidebarContextMenu.h), and with --pick an item
+        // of it run as the window runs it (the Mac's KITE_TEST_CONTEXT_MENU pick).
+        std::optional<std::string> pick;
+        if (args.size() >= 5 && args[3] == "--pick") pick = Join(args, 4);
+        else if (args.size() != 3) return Usage();
+        static const std::map<std::string, SidebarMenuKind> kinds{
+            {"tab", SidebarMenuKind::Tab}, {"folder", SidebarMenuKind::Folder}, {"favorite", SidebarMenuKind::Favorite}};
+        const auto kind = kinds.find(args[1]);
+        if (kind == kinds.end()) return Usage();
+        std::string id = Id(args[2]);
+        if (kind->second == SidebarMenuKind::Folder) {
+            const auto found = state.FolderMatching(args[2]);
+            if (!found) return kNotFound;
+            id = found->folder->id;
+        }
+        const std::vector<SidebarMenuItem> menu = SidebarMenu(state, kind->second, id);
+        if (menu.empty()) return kNotFound;
+        if (!pick) {
+            std::puts(json::Write(json::Object{{"items", MenuItemsJson(menu)}, {"line", SidebarMenuLine(menu)}}).c_str());
+            return kOk;
+        }
+        const SidebarMenuItem* item = PickSidebarMenuItem(menu, *pick);
+        if (!item) return kRefused;
+        json::Object out{{"picked", item->title}};
+        if (const std::string problem = RunMenuItem(state, id, *item, out); !problem.empty()) {
+            std::fprintf(stderr, "kitecore: %s\n", problem.c_str());
+            return kRefused;
+        }
+        std::puts(json::Write(json::Value(std::move(out))).c_str());
+        changed = true;
+    } else if (command == "shown" && (args.size() == 3 || args.size() == 4)) {
+        static const std::map<std::string, SidebarRow::Kind> kinds{{"header", SidebarRow::Kind::Header},   {"tab", SidebarRow::Kind::Tab},
+                                                                   {"folder", SidebarRow::Kind::Folder},   {"divider", SidebarRow::Kind::Divider},
+                                                                   {"newTab", SidebarRow::Kind::NewTab}};
+        const auto kind = kinds.find(args[1]);
+        if (kind == kinds.end()) return Usage();
+        const auto space = args.size() == 4 ? state.SpaceIndex(Id(args[3])) : std::optional<size_t>(state.SelectedSpaceIndex());
+        if (!space) return kNotFound;
+        std::puts(SidebarShowsRow(state, *space, kind->second, Id(args[2])) ? "yes" : "no");
+        return kOk;
     } else if (command == "tab" && args.size() == 2) {
         // Ctrl+Alt+Down/Up and Ctrl+1–9 in the selected space: prints the tab now selected.
         if (args[1] == "next" || args[1] == "prev") {
@@ -886,7 +1802,7 @@ int main(int argc, char** argv) {
         // Ctrl+W on a tab: prints whether it was removed (and archived) or only unloaded.
         const CloseOutcome outcome = state.Close(Id(args[1]));
         if (outcome == CloseOutcome::NotFound) return kNotFound;
-        std::puts(outcome == CloseOutcome::Removed ? "removed" : "unloaded");
+        std::puts(OutcomeName(outcome));
         changed = true;
     } else if (command == "reopen" && args.size() <= 2) {
         // Ctrl+Shift+T, or Undo Archive Tab for one tab: prints the tab that came back.
@@ -981,7 +1897,7 @@ int main(int argc, char** argv) {
             if (!state.SpaceIndex(id)) return kNotFound;
             state.SelectSpace(id);
         } else if (action == "menu" && args.size() == 3) {
-            const std::vector<SpaceMenuItem> menu = SpaceMenu(state, Id(args[2]));
+            const std::vector<SpaceMenuItem> menu = SpaceMenu(state, Id(args[2]), creating);
             if (menu.empty()) return kNotFound;
             json::Array items;
             for (const SpaceMenuItem& item : menu) {
@@ -998,6 +1914,138 @@ int main(int argc, char** argv) {
             if (!state.SpaceIndex(id)) return kNotFound;
             state.RenameSpace(id, Join(args, 3));
             std::puts(state.spaces[*state.SpaceIndex(id)].name.c_str());
+        } else if (action == "icon-picker" && args.size() >= 3) {
+            auto picker = OpenIconPicker(state, Id(args[2]));
+            if (!picker) return kNotFound;
+            std::optional<size_t> pickIndex;
+            auto number = [](const std::string& text, auto& out) {
+                auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), out);
+                return error == std::errc() && end == text.data() + text.size();
+            };
+            std::optional<IconPickerTab> tab;
+            std::optional<size_t> category;
+            std::optional<std::string> query;
+            std::optional<float> scroll;
+            std::vector<float> hitAt, placeAt;
+            // Comma-separated numbers, exactly `count` of them.
+            auto numbers = [&](const std::string& text, size_t count, std::vector<float>& out) {
+                out.clear();
+                size_t start = 0;
+                while (true) {
+                    const size_t comma = text.find(',', start);
+                    float v = 0;
+                    if (!number(text.substr(start, comma == std::string::npos ? std::string::npos : comma - start), v) || !std::isfinite(v)) return false;
+                    out.push_back(v);
+                    if (comma == std::string::npos) break;
+                    start = comma + 1;
+                }
+                return out.size() == count;
+            };
+            for (size_t i = 3; i < args.size(); ++i) {
+                if (i + 1 >= args.size()) return Usage();
+                const std::string& flag = args[i];
+                const std::string& value = args[++i];
+                if (flag == "--tab" && (value == "emoji" || value == "icon")) {
+                    tab = value == "emoji" ? IconPickerTab::Emoji : IconPickerTab::Icon;
+                } else if (flag == "--category") {
+                    size_t n = 0;
+                    if (!number(value, n) || n >= EmojiCategories().size()) return Usage();
+                    category = n;
+                } else if (flag == "--query") {
+                    query = value;
+                } else if (flag == "--scroll") {
+                    float pt = 0;
+                    if (!number(value, pt) || !std::isfinite(pt)) return Usage();
+                    scroll = pt;
+                } else if (flag == "--hit") {
+                    if (!numbers(value, 2, hitAt)) return Usage();
+                } else if (flag == "--place") {
+                    if (!numbers(value, 8, placeAt)) return Usage();
+                } else if (flag == "--pick") {
+                    size_t n = 0;
+                    if (!number(value, n)) return Usage();
+                    pickIndex = n;
+                } else {
+                    return Usage();
+                }
+            }
+            if (tab) SelectIconPickerTab(*picker, *tab);
+            if (category) SelectIconPickerCategory(*picker, *category);
+            if (query) SetIconPickerQuery(*picker, *query);
+            const std::vector<std::string> cells = IconPickerCells(*picker);
+            if (scroll) ScrollIconPicker(*picker, *scroll - picker->scroll, cells.size());
+            const Space& space = state.spaces[*state.SpaceIndex(picker->spaceID)];
+            const IconPickerLayout layout = LayOutIconPicker(picker->tab, !space.icon.empty());
+            json::Array tabs, categories, icons;
+            for (const IconPickerTab t : kIconPickerTabs) {
+                tabs.emplace_back(json::Object{{"title", std::string(IconPickerTabTitle(t))},
+                                               {"enabled", IconPickerTabAvailable(t)},
+                                               {"selected", t == picker->tab}});
+            }
+            if (picker->tab == IconPickerTab::Emoji) {
+                for (size_t i = 0; i < EmojiCategories().size(); ++i) {
+                    const EmojiCategory& c = EmojiCategories()[i];
+                    char glyph[8];
+                    std::snprintf(glyph, sizeof glyph, "%04X", static_cast<unsigned>(c.glyph.fluent));
+                    categories.emplace_back(json::Object{{"name", c.name}, {"symbol", c.symbol}, {"glyph", std::string(glyph)},
+                                                         {"selected", i == picker->category}});
+                }
+            }
+            for (const std::string& icon : cells) icons.emplace_back(icon);
+            const auto [first, end] = IconPickerVisibleRows(layout, cells.size(), picker->scroll);
+            json::Object out{{"space", picker->spaceID},
+                             {"tab", std::string(IconPickerTabTitle(picker->tab))},
+                             {"tabs", json::Value(std::move(tabs))},
+                             {"remove", layout.remove.has_value()},
+                             {"height", static_cast<double>(layout.height)},
+                             {"columns", static_cast<double>(layout.columns)},
+                             {"rows", static_cast<double>(IconPickerRows(cells.size(), layout.columns))},
+                             {"cells", json::Value(std::move(icons))}};
+            if (picker->tab == IconPickerTab::Emoji) {
+                out.emplace("query", picker->query);
+                out.emplace("category", static_cast<double>(picker->category));
+                out.emplace("categories", json::Value(std::move(categories)));
+                out.emplace("scroll", static_cast<double>(picker->scroll));
+                out.emplace("visibleRows", json::Array{json::Value(static_cast<double>(first)), json::Value(static_cast<double>(end))});
+            }
+            {
+                // The frames of the cells in view, in the content's points.
+                json::Array frames;
+                const float shownScroll = picker->tab == IconPickerTab::Emoji ? picker->scroll : 0;
+                const size_t from = first * layout.columns, to = std::min(cells.size(), end * layout.columns);
+                const size_t visibleTo = picker->tab == IconPickerTab::Emoji ? to : cells.size();
+                for (size_t i = picker->tab == IconPickerTab::Emoji ? from : 0; i < visibleTo; ++i) {
+                    const PickerRect f = IconPickerCellFrame(layout, i, shownScroll);
+                    frames.emplace_back(json::Array{json::Value(static_cast<double>(f.left)), json::Value(static_cast<double>(f.top)),
+                                                    json::Value(static_cast<double>(f.right)), json::Value(static_cast<double>(f.bottom))});
+                }
+                out.emplace("frames", json::Value(std::move(frames)));
+                char glyph[8];
+                std::snprintf(glyph, sizeof glyph, "%04X", static_cast<unsigned>(RemoveIconGlyph().fluent));
+                out.emplace("removeGlyph", std::string(glyph));
+            }
+            if (hitAt.size() == 2) {
+                static constexpr const char* kHitTargets[] = {"none", "tab", "remove", "search", "cell", "category"};
+                static_assert(std::size(kHitTargets) == static_cast<size_t>(IconPickerHit::Target::Category) + 1);
+                const IconPickerHit hit = IconPickerHitTest(layout, *picker, cells.size(), hitAt[0], hitAt[1]);
+                out.emplace("hit", json::Object{{"target", std::string(kHitTargets[static_cast<int>(hit.target)])},
+                                                {"index", static_cast<double>(hit.index)}});
+            }
+            if (placeAt.size() == 8) {
+                const IconPickerPlacement p = PlaceIconPicker(PickerRect{placeAt[0], placeAt[1], placeAt[2], placeAt[3]}, layout.width, layout.height,
+                                                              PickerRect{placeAt[4], placeAt[5], placeAt[6], placeAt[7]});
+                out.emplace("placement", json::Object{{"left", static_cast<double>(p.left)}, {"top", static_cast<double>(p.top)},
+                                                      {"width", static_cast<double>(p.width)}, {"height", static_cast<double>(p.height)},
+                                                      {"arrowX", static_cast<double>(p.arrowX)}});
+            }
+            if (!pickIndex) {
+                std::puts(json::Write(json::Value(std::move(out))).c_str());
+                return kOk;
+            }
+            if (*pickIndex >= cells.size()) return kNotFound;
+            const std::optional<IconPick> pick = PickSpaceIcon(state, picker->spaceID, cells[*pickIndex]);
+            out.emplace("picked", json::Object{{"icon", pick->icon}, {"discard", pick->discard ? json::Value(*pick->discard) : json::Value()}});
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else if (action == "icon" && args.size() == 4) {
             const std::string id = Id(args[2]);
             if (!state.SpaceIndex(id)) return kNotFound;
@@ -1020,10 +2068,148 @@ int main(int argc, char** argv) {
             state.DeleteSpace(id);
             out.emplace("selected", state.selectedSpaceID);
             std::puts(json::Write(json::Value(std::move(out))).c_str());
-        } else if (action == "new" && args.size() >= 3) {
-            const auto id = NewSpace(state, Join(args, 2));
-            if (!id) return Usage();
-            std::puts(id->c_str());
+        } else if ((action == "new" || action == "create") && args.size() >= 2) {
+            // Create a Space's fields, then the name: --about TEXT and --theme N (a preset, from 1).
+            std::string about;
+            std::optional<size_t> preset;
+            bool cancel = false, away = false, deleteDraft = false;
+            size_t i = 2;
+            for (; i < args.size(); ++i) {
+                if (args[i] == "--about" && i + 1 < args.size()) {
+                    about = args[++i];
+                } else if (args[i] == "--theme" && i + 1 < args.size()) {
+                    size_t n = 0;
+                    const std::string& text = args[++i];
+                    auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), n);
+                    if (error != std::errc() || end != text.data() + text.size() || n == 0 || n > Theme::Presets().size()) return Usage();
+                    preset = n - 1;
+                } else if (args[i] == "--cancel" && action == "create") {
+                    cancel = true;
+                } else if (args[i] == "--away" && action == "create") {
+                    away = true;
+                } else if (args[i] == "--delete-draft" && action == "create") {
+                    deleteDraft = true;
+                } else {
+                    break;
+                }
+            }
+            const std::string name = Join(args, i);
+            if (action == "new") {
+                if (i >= args.size()) return Usage();
+                const auto id = NewSpace(state, name, about, preset);
+                if (!id) return Usage();
+                std::puts(id->c_str());
+            } else {
+                // The page, step by step, as the window runs it.
+                std::optional<SpaceCreation> creation;
+                const std::string id = BeginNewSpace(state, creation);
+                json::Object out{{"space", id}, {"returnTo", creation->returnTo}, {"after", state.spaces[*state.SpaceIndex(id) - 1].id}};
+                out.emplace("shown", ShowsCreation(state, creation));
+                if (preset) ChooseSpaceTheme(state, creation, id, *preset);
+                out.emplace("themeChosen", creation->themeChosen);
+                out.emplace("canCreate", CanCreateSpace(name));
+                if (away) {
+                    state.SelectSpace(creation->returnTo);
+                    CreationFollowsState(state, creation);
+                    out.emplace("shownAway", ShowsCreation(state, creation));
+                }
+                std::string outcome = "open";  // a blank name: Create Space is disabled
+                if (deleteDraft) {
+                    state.DeleteSpace(id);
+                    CreationFollowsState(state, creation);
+                    outcome = creation ? "open" : "gone";
+                } else if (cancel) {
+                    outcome = CancelNewSpace(state, creation) ? "cancelled" : "refused";
+                } else if (FinishNewSpace(state, creation, name, about)) {
+                    outcome = "created";
+                }
+                out.emplace("outcome", outcome);
+                out.emplace("selected", state.selectedSpaceID);
+                if (const auto index = state.SpaceIndex(id)) {
+                    const Space& space = state.spaces[*index];
+                    out.emplace("name", space.name);
+                    if (const auto said = SpaceAbout(space)) out.emplace("about", *said);
+                    if (const auto matched = PresetOf(space.theme)) out.emplace("preset", static_cast<double>(*matched + 1));
+                    out.emplace("tint", static_cast<double>(space.theme.tint));
+                    out.emplace("profile", state.ProfileName(state.ProfileDirectory(*index)));
+                }
+                std::puts(json::Write(json::Value(std::move(out))).c_str());
+            }
+        } else if (action == "plus-menu" && args.size() == 2) {
+            const auto bindings = ReadKeyBindings(std::get<std::filesystem::path>(resolved));
+            if (!bindings) {
+                std::fputs("kitecore: unreadable keybindings.json\n", stderr);
+                return kLoadFailed;
+            }
+            std::puts(json::Write(NewItemMenuJson(NewItemMenu(ShortcutTable(*bindings)))).c_str());
+            return kOk;
+        } else if (action == "create-page" && args.size() >= 2) {
+            float height = 820;
+            std::optional<std::pair<float, float>> hit, swatchAt;
+            const auto point = [](const std::string& text) -> std::optional<std::pair<float, float>> {
+                const size_t comma = text.find(',');
+                if (comma == std::string::npos) return std::nullopt;
+                float x = 0, y = 0;
+                auto [xEnd, xError] = std::from_chars(text.data(), text.data() + comma, x);
+                auto [yEnd, yError] = std::from_chars(text.data() + comma + 1, text.data() + text.size(), y);
+                if (xError != std::errc() || yError != std::errc() || xEnd != text.data() + comma || yEnd != text.data() + text.size()) {
+                    return std::nullopt;
+                }
+                return std::pair{x, y};
+            };
+            for (size_t i = 2; i < args.size(); ++i) {
+                if ((args[i] == "--hit" || args[i] == "--swatch") && i + 1 < args.size()) {
+                    const auto at = point(args[i + 1]);
+                    if (!at) return Usage();
+                    (args[i] == "--hit" ? hit : swatchAt) = at;
+                    ++i;
+                } else {
+                    auto [end, error] = std::from_chars(args[i].data(), args[i].data() + args[i].size(), height);
+                    if (error != std::errc() || end != args[i].data() + args[i].size() || !(height > 0 && height <= 16384)) return Usage();
+                }
+            }
+            namespace M = space_creation_metrics;
+            const SpaceCreationLayout l = LayOutSpaceCreation(240, height);
+            const auto row = [&](const BarRect& frame, std::string_view title, std::string_view placeholder) {
+                json::Object o{{"frame", Frame(frame)}};
+                if (!title.empty()) o.emplace("title", std::string(title));
+                if (!placeholder.empty()) o.emplace("placeholder", std::string(placeholder));
+                return json::Value(std::move(o));
+            };
+            json::Object fields{{"name", row(l.nameField, "", M::kNamePlaceholder)}, {"about", row(l.aboutField, "", M::kAboutPlaceholder)}};
+            json::Array swatches;
+            const ThemeSwatchesLayout s = LayOutThemeSwatches(Theme::Presets().size());
+            for (size_t i = 0; i < s.swatches.size(); ++i) {
+                swatches.emplace_back(json::Object{{"accent", Hex(Accent(Theme::Presets()[i]))}, {"frame", Frame(s.swatches[i])}});
+            }
+            const SwatchesPlacement placed = PlaceThemeSwatches(l.theme, s);
+            json::Object out{
+                {"page", Frame(l.page)},
+                {"illustration", Frame(l.illustration)},
+                {"title", row(l.title, M::kTitle, "")},
+                {"subtitle", row(l.subtitle, M::kSubtitle, "")},
+                {"fields", json::Value(std::move(fields))},
+                {"rows", json::Array{row(l.name, "", ""), row(l.about, "", ""), row(l.profile, M::kProfileTitle, ""), row(l.theme, M::kThemeTitle, "")}},
+                {"profile", state.ProfileName(state.SelectedProfileDirectory())},
+                {"create", row(l.create, M::kCreateTitle, "")},
+                {"cancel", row(l.cancel, M::kCancelTitle, "")},
+                // While it's open the bar keeps only the spaces.
+                {"bar", json::Object{{"library", false}, {"plus", false}}},
+                {"swatches", json::Object{{"left", static_cast<double>(placed.left)},
+                                          {"top", static_cast<double>(placed.top)},
+                                          {"width", static_cast<double>(s.width)},
+                                          {"height", static_cast<double>(s.height)},
+                                          {"presets", json::Value(std::move(swatches))}}}};
+            if (hit) {
+                const BarRect pill = EstimatedPill(l);
+                out.emplace("hit", std::string(SpaceCreationPartName(SpaceCreationPartAt(l, hit->first, hit->second, kEstimatedCancelWidth, pill))));
+            }
+            if (swatchAt) {
+                const std::optional<size_t> index = ThemeSwatchAt(s, swatchAt->first, swatchAt->second);
+                out.emplace("swatch", index ? json::Value(static_cast<double>(*index + 1)) : json::Value());
+            }
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+            return kOk;
         } else if (action == "move" && args.size() == 4) {
             const std::string id = Id(args[2]);
             size_t place = 0;
@@ -1166,6 +2352,9 @@ int main(int argc, char** argv) {
     }
 
     if (changed) {
+        // A tab pinned by any path (a move into a folder too) remembers its page, as the Mac's
+        // BrowserStore.mutate syncs after every change.
+        state.SyncPinnedURLs();
         if (std::string error = store.Save(state); !error.empty()) {
             std::fprintf(stderr, "kitecore: %s\n", error.c_str());
             return kSaveFailed;

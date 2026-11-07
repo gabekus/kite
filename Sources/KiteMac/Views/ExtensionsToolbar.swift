@@ -358,6 +358,7 @@ final class PasswordManagerFieldButton: NSView {
     private var selectionChange: AnyCancellable?
     private var modelChange: AnyCancellable?
     private var isShown = false
+    private var keyObserver: NSObjectProtocol?
 
     init(selection: ExtensionsSelection) {
         self.selection = selection
@@ -381,8 +382,35 @@ final class PasswordManagerFieldButton: NSView {
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
+    isolated deinit {
+        if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) }
+    }
+
     override var isFlipped: Bool { true }
     override var intrinsicContentSize: NSSize { isShown ? NSSize(width: 30, height: 30) : .zero }
+
+    /// The extensions list is read only when something asks (the menu bar, a space's profile coming in,
+    /// the extensions popover). A read that failed, or landed while Chromium was updating the manager
+    /// (1Password updates itself overnight), left the key hidden with the manager in the profile until one
+    /// of those happened. So each time the window comes to the front with the key hidden but the manager's
+    /// extension in this profile's folder, the list is read again.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) }
+        keyObserver = nil
+        guard let window else { return }
+        keyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window,
+                                                             queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshIfMissing() }
+        }
+        refreshIfMissing()
+    }
+
+    private func refreshIfMissing() {
+        let model = selection.model
+        guard !isShown, PasswordManagerIntegration.isExtensionInstalled(in: model.engine) else { return }
+        model.refresh()
+    }
 
     override func layout() {
         super.layout()
@@ -447,7 +475,7 @@ extension ExtensionsMenu {
                 if let token { NotificationCenter.default.removeObserver(token) }
             }
         }
-        popover.show(relativeTo: rect ?? view.bounds, of: view, preferredEdge: ExtensionPopover.belowEdge(of: view))
+        WindowPresenter.show(popover, relativeTo: rect ?? view.bounds, of: view, preferredEdge: ExtensionPopover.belowEdge(of: view))
         shown = popover
         shownAnchor = view
         model.refresh()

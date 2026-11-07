@@ -54,10 +54,28 @@ protocol PageActions: PageAutomation {
     func zoom(x0: Double, y0: Double, x1: Double, y1: Double) async throws -> Screenshot
     /// How the tab's screenshots are scaled, to map their coordinates back to the page.
     func screenshotScale() async throws -> ScreenshotScale
-    /// Runs code in Kite's own isolated world on the page, where only `binding` reports back. For handoff's ring.
-    func runIsolated(_ code: String, world: String, binding: String) async throws -> String
+    /// Runs code in Kite's own isolated world on the page (its top frame, or `frame`), where only `binding` reports
+    /// back. For handoff's ring.
+    func runIsolated(_ code: String, world: String, binding: String, in frame: PageFrame?) async throws -> String
+    /// The page's frames that a look from its top frame can't reach (another origin's), for handoff's ring.
+    func childFrames() async throws -> [PageFrame]
     /// Marks the element a ref names with an attribute; returns its visible label and CSS path.
     func mark(ref: String, attribute: String, value: String) async throws -> (label: String?, path: String?)
+}
+
+/// A frame of a page other than its top one that Kite's isolated world can run in: one in the tab's own process
+/// (another origin of the same site, such as Apple's sign-in form at idmsa.apple.com on appleid.apple.com), reached
+/// through the tab's own session, or a cross-site one in a renderer of its own, through its session (`session`).
+struct PageFrame: Hashable, Sendable {
+    var session: String?
+    var id: String
+    var url: String
+}
+
+extension PageActions {
+    func runIsolated(_ code: String, world: String, binding: String) async throws -> String {
+        try await runIsolated(code, world: world, binding: binding, in: nil)
+    }
 }
 
 struct Screenshot {

@@ -1,6 +1,7 @@
 // The window controller's Chromium wiring (the Mac's engine side of BrowserWindowController and
-// its +*.swift extensions): the content card's bounds, the selected tab's page, the pages'
-// reports, and Chromium's start and shutdown. See BrowserWindowController.h.
+// its +*.swift extensions): the selected tab's page, the pages' reports, and Chromium's start and
+// shutdown. See BrowserWindowController.h. (The content card's bounds are in
+// BrowserWindowController.cpp: the find bar needs them in a capture, which has no Chromium.)
 
 #include "shell/BrowserWindowController.h"
 
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "core/ChromiumSwitches.h"
 #include "core/LiveTabPolicy.h"
 #include "core/TitleBar.h"
 #include "shell/Chromium.h"
@@ -17,20 +19,9 @@
 
 namespace kite {
 
-RECT BrowserWindowController::ContentBounds() const {
-    RECT client{};
-    GetClientRect(window_.Handle(), &client);
-    const int dpi = static_cast<int>(window_.Dpi());
-    auto px = [dpi](int points) { return MulDiv(points, dpi, USER_DEFAULT_SCREEN_DPI); };
-    // Its top under the caption buttons.
-    RECT card{px(kSidebarWidth), px(static_cast<int>(title_bar::kContentTop)), client.right - px(kContentInset),
-              client.bottom - px(kContentInset)};
-    card.right = std::max(card.right, card.left + 1);
-    card.bottom = std::max(card.bottom, card.top + 1);
-    return card;
-}
-
 void BrowserWindowController::ShowSelectedTab() {
+    // Before the page changes: the find bar closes and its search ends in the page it ran in.
+    FindBarFollowsSelection();
     const Tab* tab = state_.SelectedTab();
     // No tab: the card shows through (the Mac's "Press ⌘T to open a tab" comes later).
     if (!tab) return chromium_->ShowNothing();
@@ -82,12 +73,18 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         tab->faviconURL = icon;
         StateChanged(SessionSaveDelay::PageEvent);
     };
-    events.loadingChanged = [this](const std::string&, bool loading) {
+    events.loadingChanged = [this](const std::string& id, bool loading, bool canGoBack, bool canGoForward) {
+        // The Mac's navigationState: the top row shows the selected tab's.
+        pageStatus_[id] = PageStatus{loading, canGoBack, canGoForward};
+        if (const Tab* tab = state_.SelectedTab(); tab && tab->id == id) ShowPageStatus();
         // A smoke test closes once the first page has loaded (or shown its error page).
         if (loading) {
             pageLoading_ = true;
         } else if (pageLoading_ && !pageLoaded_) {
             pageLoaded_ = true;
+            // Find in the page first (its reports come as findResult); the window closes once
+            // that and the rest are done.
+            if (options_.smokeTest && smokeFind_ == SmokeFind::Idle) StartSmokeFind();
             CloseWhenSmokeTestIsDone();
         }
     };
@@ -121,6 +118,7 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     events.pageClosed = [this](const std::string& id) {
         // A page that closed itself (window.close() after a sign-in): its tab closes, and a
         // popup on screen hands it back to its opener, as the Mac's PagePool does.
+        pageStatus_.erase(id);
         const auto opener = popupOpeners_.extract(id);
         state_.PageClosedItself(id, opener ? std::optional<std::string>(opener.mapped()) : std::nullopt);
         std::erase_if(popupOpeners_, [&](const auto& entry) { return entry.second == id; });
@@ -131,10 +129,19 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     // limit can't be anyone's opener or popup again (the Mac's PagePool.discard).
     events.keepAlive = [this](const std::string& id) { return IsLinkedToPopup(popupOpeners_, state_, id); };
     events.pageDiscarded = [this](const std::string& id) {
+        // Its tab loads again, with no history, when it's next shown (BrowserStore.clearPage).
+        pageStatus_.erase(id);
+        if (const Tab* tab = state_.SelectedTab(); tab && tab->id == id) ShowPageStatus();
         std::erase_if(popupOpeners_, [&](const auto& entry) { return entry.first == id || entry.second == id; });
         // The Mac's clearPage: the page that loads again when the tab is next shown records its
         // address as a new visit.
         ForgetRecorded(id);
+    };
+    events.findResult = [this](const std::string& id, int count, int activeMatch, bool final) {
+        if (findBar_ && findBar_->IsOpen() && id == findTabID_) {
+            findBar_->ShowResult(FindResult{count > 0, count, activeMatch});
+        }
+        if (options_.smokeTest) SmokeTestFind(count, activeMatch, final);
     };
     events.shortcuts = shortcuts_;
     events.command = [this](const std::string& command) { RunCommand(command); };
@@ -155,24 +162,39 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         if (IsIconic(window_.Handle())) ShowWindow(window_.Handle(), SW_RESTORE);
         SetForegroundWindow(window_.Handle());
     };
+    events.downloadUpdated = [this](const DownloadUpdate& update) { DownloadUpdated(update); };
     if (const auto started = Chromium::Start(instance_, window_.Handle(), root, sandboxInfo, std::move(events), options_.quiet,
                                              options_.chromiumSwitches, chromium_, error);
         started != Chromium::StartResult::Started) {
         return started;
     }
+    // A verdict that came before Chromium did.
+    chromium_->SetOccluded(occluded_);
+    // Each profile's download folder and Ask, as each download starts (read once: nothing on
+    // Windows changes them yet; Settings comes with W31a).
+    chromium_->SetDownloadLocations(DownloadLocations(), options_.downloadFolder);
+    if (options_.saveLog && options_.testAutomaticDownloads) chromium_->AllowAutomaticDownloads(*options_.testAutomaticDownloads);
+    if (options_.saveLog) chromium_->LogParkedPages();
     window_.onWake = [this] { chromium_->RunPending(); };
-    window_.onMinimize = [this] {
-        sidebar_->HideTip();
+    // After Init's (the tip hides, the icon picker closes), Chromium's.
+    window_.onMinimize = [this, before = std::move(window_.onMinimize)] {
+        if (before) before();
         chromium_->Minimized();
     };
-    window_.onMove = [this] {
-        sidebar_->HideTip();
+    window_.onMove = [this, before = std::move(window_.onMove)] {
+        if (before) before();
         chromium_->WindowMoved();
     };
-    window_.mayClose = [this] { return chromium_->MayCloseWindow(); };
+    window_.mayClose = [this] { return MayQuit() && chromium_->MayCloseWindow(); };
     window_.onFocus = [this] {
-        // The open bar keeps the keyboard in Kite's window.
-        if (!commandBar_ || !commandBar_->IsOpen()) chromium_->Focus();
+        // A field of Kite's with the keyboard (the command bar's, a rename, the find bar's)
+        // keeps it in Kite's window; otherwise it goes on to the page.
+        if (KeyboardOwner() == KeyboardField::None) {
+            ++pageFocusHandoffs_;
+            // A test's delivered WM_SETFOCUS (TakeFocusIfInFront) is only counted: a quiet run's
+            // page never takes the focus.
+            if (!testFocus_) chromium_->Focus();
+        }
     };
     return Chromium::StartResult::Started;
 }
@@ -182,6 +204,8 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
 // context, which a page loading has but may report after the load).
 void BrowserWindowController::CloseWhenSmokeTestIsDone() {
     if (!options_.smokeTest || !pageLoaded_ || !rendererChecked_ || closeAskedAt_) return;
+    // And find in the page (StartSmokeFind), once it has run.
+    if (findBar_ && smokeFind_ != SmokeFind::Done) return;
     // Every helper by now (GPU, network, storage, renderers): none but the network service
     // may run at medium integrity.
     std::wstring error;
@@ -196,6 +220,7 @@ void BrowserWindowController::CloseWhenSmokeTestIsDone() {
         energySaverRead_ = true;
         energySaverState_ = state;
     });
+    chromium_->ReadFeatureLists([this](Chromium::FeatureLists lists) { featureLists_ = std::move(lists); });
     closeAskedAt_ = GetTickCount64();
     PostMessageW(window_.Handle(), WM_CLOSE, 0, 0);
 }
@@ -212,11 +237,24 @@ std::wstring BrowserWindowController::ShutDownChromium() {
     if (!rendererProblem_.empty()) return L"the first page's renderer isn't sandboxed: " + rendererProblem_;
     if (!helperProblem_.empty()) return L"a helper isn't sandboxed: " + helperProblem_;
     if (!chromium_->PagesCanBeHidden()) return L"a page had no Chromium widget window to hide: background tabs would keep drawing";
-    // Chromium's default would cap pages at 30 fps on a low battery (Chromium::SetEnergySaverEnabled).
+    if (!smokeFindProblem_.empty()) return L"find in page: " + smokeFindProblem_;
+    if (findBar_ && smokeFind_ != SmokeFind::Done) return L"find in page: the page's search never finished";
+    // On, as in Chrome and on the Mac (Chromium::SetEnergySaverEnabled). That's Chromium's own
+    // default too, so only a profile whose Local State has it off (CI's smoke writes 0 first)
+    // shows that Kite set it.
     if (!energySaverRead_) return L"Chromium's Energy Saver preference was never read back";
-    if (!energySaverState_) return L"Chromium has no Energy Saver preference to turn off";
-    if (*energySaverState_ != 0) {
-        return L"Chromium's Energy Saver is " + std::to_wstring(*energySaverState_) + L", not off (0)";
+    if (!energySaverState_) return L"Chromium has no Energy Saver preference to turn on";
+    if (*energySaverState_ != 1) {
+        return L"Chromium's Energy Saver is " + std::to_wstring(*energySaverState_) + L", not on (1)";
+    }
+    // Chromium's native occlusion tracker off unless --chromium-switches turned it on, merged
+    // into CEF's own feature lists, and no feature both on and off (core/ChromiumSwitches.h).
+    if (!featureLists_) return L"Chromium's feature lists were never read back";
+    const Chromium::FeatureLists& lists = *featureLists_;
+    if (const std::string problem = chromium_switches::FeatureProblem(options_.chromiumSwitches, lists.cefEnable, lists.cefDisable, lists.enable, lists.disable);
+        !problem.empty()) {
+        return L"Chromium's features: " + Widen(problem) + L" (enable-features=" + Widen(lists.enable) + L", disable-features=" +
+               Widen(lists.disable) + L"; CEF's own: " + Widen(lists.cefEnable) + L", " + Widen(lists.cefDisable) + L")";
     }
     // One WM_CLOSE must close the window (the browsers first); the 30 s timer's second one
     // would otherwise hide a close that hangs.

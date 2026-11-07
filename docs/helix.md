@@ -86,8 +86,8 @@ PNGs, `NAME.tree.txt` frames and a NOTES.md to `review/<id>-mac` (logs go to the
     {"name": "rest", "holds": "the three spaces at rest"},
     {"name": "drag", "steps": [{"ui": "input", "args": {"from": [86, 795], "to": [150, 795], "steps": 10, "hold": 10}}],
      "hold": 10},
-    {"name": "rename", "env": {"KITE_TEST_CONTEXT_MENU": "Rename Space…"},
-     "steps": [{"ui": "input", "args": {"click": [86, 795], "button": "right"}}], "settle": 1}
+    {"name": "menu", "env": {"KITE_TEST_CONTEXT_MENU": "1"}, "capture": false,
+     "steps": [{"ui": "input", "args": {"click": [86, 795], "button": "right"}}]}
   ]
 }
 ```
@@ -116,9 +116,20 @@ request that could reach past that, before anything runs:
   keeps only its `includesSearchSuggestions` booleans (download folders and the save-panel choice
   go), and every profile gets a fresh WebKit store that's deleted afterwards;
 - keys (except exactly `{"keys":"cmd+t"}`, which opens Kite's own command bar, on a base with
-  `TEXT_FLOOR`) or modifier flags; a click or drag that doesn't start on a visible view in
-  `SAFE_TARGETS` (checked against the tree just before the step); a right- or ⌃-click without a
-  non-empty `KITE_TEST_CONTEXT_MENU`, which logs the menu instead of showing it;
+  `TEXT_FLOOR`) or modifier flags (no ⌃-click either: a right-click reaches the same menu); `ui pointer`
+  steps (synthetic hover, which previews favorites, shows the space tip and, with ⇧, opens link
+  previews); a click or drag that doesn't start on a visible view in `SAFE_TARGETS` (found in the
+  tree just before the step, then confirmed with Kite's own hit test, `ui hit`, which must reach that
+  very view: a tree frame alone isn't proof, since frames are unclipped and a clipped view is never
+  hit). The step then goes to the window that was hit-tested with that view as its `expect`, so Kite
+  hit-tests again and sends the press in the same main-thread turn, or sends nothing and the state
+  fails; clicks and drags need a base with `HIT_FLOOR` and `EXPECT_FLOOR`;
+- `KITE_TEST_CONTEXT_MENU` set to anything but exactly `1`, or a `test-context-menu-pick` profile
+  file: either names a menu item, which Kite then runs instead of only logging the menu. Every
+  right-click needs `KITE_TEST_CONTEXT_MENU` set to `1`. The sidebar's rows
+  (`RIGHT_CLICK_TARGETS`: `TabRowCell`, `FolderRowCell`, `FavoritePaneView`) take a plain right-click
+  and nothing else, as the state's first step; the hit test may reach a `RIGHT_CLICK_INSIDE` view
+  inside the row (a button with no menu of its own) instead of the row;
 - text, except 1–40 of `A-Z a-z 0-9 space . _ -` straight after `cmd+t` or a plain click on a
   command-bar opener (`NewTabRowCell`; a background window drops that click, as the row doesn't take
   first mouse, so `cmd+t` is the one that works headless), into a visible `CommandBarField`: Kite's own command bar, which acts
@@ -129,7 +140,17 @@ request that could reach past that, before anything runs:
   `KITE_TEST_FIND_OPEN` set to exactly `1`, one of them per state, on a base with the script's
   `FIND_FLOOR` (fix/test-find-hooks). On that base a test-safe run opens the bar as ⌘F does and sets
   its query through the field's own path, without key events. A state with either hook waits for Kite's
-  `KITE_TEST_FIND: ready` line before its steps, and fails, uncaptured, without it.
+  `KITE_TEST_FIND: ready` line before its steps, and fails, uncaptured, without it;
+- the sidebar's hooks, except `KITE_TEST_ICON_PICKER` with a space's name under the same text rule, or
+  `KITE_TEST_NEW_SPACE` set to exactly `1` with, optionally, `KITE_TEST_NEW_SPACE_NAME` under the text
+  rule and `KITE_TEST_NEW_SPACE_THEME` one of `1`–`7`; the picker never beside the page's hooks, no
+  other `KITE_TEST_*` hook beside them, no input steps in the state, on a base with the script's
+  `SIDEBAR_FLOOR` (ci/test-hooks-icon-picker-create-space, #412). On that base a test-safe run opens the
+  picker or Create a Space through the store paths a click takes, and the theme editor from its row's own
+  view, without events. The state waits for Kite's `KITE_TEST_SIDEBAR: ready` line and fails,
+  uncaptured, without it, when it says Kite is the active app or the popover isn't the main window's
+  child at level 0 (`SIDEBAR_READY_OK`), or when Kite writes `KITE_TEST_SIDEBAR: changed` (the state went, or Kite
+  became active) by just after the capture.
 
 The Mac job only reads the repository (no token left in its checkout); a GitHub-hosted job pushes
 `review/<id>-mac`. Raise `SAFE_FLOOR` whenever new test-safety work lands in Kite.

@@ -18,7 +18,7 @@ namespace kite {
 struct SpaceMenuItem {
     enum class Command {
         Separator,
-        ChangeIcon,   // "Change Space Icon…": the icon picker (W9e)
+        ChangeIcon,   // "Change Space Icon…": the icon picker (shell/SpaceIconPickerView)
         Rename,       // "Rename Space…": the header's name field
         Describe,     // "What's This Space For?…": Kite's own, a line Claude reads (no Claude on Windows yet)
         EditTheme,    // "Edit Theme Color…": the theme editor (not yet)

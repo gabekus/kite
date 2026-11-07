@@ -236,13 +236,24 @@ final class SidebarSpaceList: NSView {
         let live = parent.flatMap { store.state.folder(matching: $0.uuidString)?.folder }.flatMap { $0.live == nil ? nil : $0 }
         let audio = store.tabAudio[tab.id]
         let controlled = claudeControlled.contains(tab.id)
+        let claudeState = claude.automation?.tabState(tab.id)
         var claudeControl: String?
-        if controlled {
-            if let session = claude.automation?.sessionName(controlling: tab.id) {
-                claudeControl = "Claude is controlling this tab (\(session))"
-            } else {
-                claudeControl = "Claude is controlling this tab"
-            }
+        if case .working(let note?)? = claudeState {
+            claudeControl = ClaudeTabState.working(note: note).help
+        } else if case .working? = claudeState {
+            let session = claude.automation?.sessionName(controlling: tab.id).map { " (\($0))" } ?? ""
+            claudeControl = controlled ? "Claude is controlling this tab\(session)" : "Claude is working here\(session)"
+        }
+        // The line under the title. Working: Claude's working note, else Kite's words for its last tool call there
+        // while it drives the tab (`ClaudeActivity`), else what it waits on. Stalled: "Claude stopped here, ask it to
+        // pick up". Nothing for a handoff (its step is ringed on the page) or done.
+        var claudeActivity: String?, claudeActivityLog: String?
+        if case .working(let note)? = claudeState, let help = claudeControl {
+            let log = claude.automation?.tabActivity[tab.id]
+            claudeActivity = note ?? (controlled ? log?.latest?.text : nil) ?? ClaudeTabState.waitingLine
+            claudeActivityLog = ClaudeActivity.tooltip(help: help, log: log)
+        } else if claudeState?.isStalled == true {
+            claudeActivity = ClaudeTabState.stoppedHereLine
         }
         return .init(
             tab: tab, space: space, parent: parent, depth: depth, isPinned: pinned, isSelected: selected,
@@ -256,7 +267,10 @@ final class SidebarSpaceList: NSView {
             liveIconTab: live != nil,
             peek: store.linkPeekBadges[tab.id],
             claudeControl: claudeControl,
-            claudeNeedsYou: claude.automation?.waitingStep(on: tab.id).map { "Claude needs you: \($0.instruction)" },
+            claudeActivity: claudeActivity,
+            claudeActivityLog: claudeActivityLog,
+            claudeNeedsYou: claudeState?.isNeedsYou == true ? claudeState?.help : nil,
+            claudeDone: { if case .done? = claudeState { claudeState?.help } else { nil } }(),
             splitSide: drag.splitSide(for: tab.id),
             groupHeader: groupHeader)
     }
@@ -295,8 +309,8 @@ final class SidebarSpaceList: NSView {
     /// How many tabs in a folded folder have a step Claude handed the user (handoff), so the folder says so
     /// while its tab rows are hidden. 0 for an open folder: its rows show it.
     private func claudeNeedsYouCount(in folder: TabFolder) -> Int {
-        guard !folder.isExpanded, let tabs = claude.automation?.handoffTabs, !tabs.isEmpty else { return 0 }
-        return folder.items.tabs.filter { tabs.contains($0.id) }.count
+        guard !folder.isExpanded, let automation = claude.automation else { return 0 }
+        return folder.items.tabs.filter { automation.tabState($0.id)?.isNeedsYou == true }.count
     }
 
     // MARK: Applying a new list
@@ -492,7 +506,12 @@ enum SidebarRowModel: Equatable {
         var liveIconTab: Bool
         var peek: LinkPeekBadge?
         var claudeControl: String?
+        /// While Claude works here: the quiet line under the title, and the row's tooltip (the last few actions).
+        var claudeActivity: String?
+        var claudeActivityLog: String?
         var claudeNeedsYou: String?
+        /// Claude is done here: a green dot, with what it did.
+        var claudeDone: String?
         var splitSide: SplitDropSide?
         var groupHeader: TodayTabGroup?
     }

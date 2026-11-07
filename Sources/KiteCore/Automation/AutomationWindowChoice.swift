@@ -85,10 +85,10 @@ extension AutomationCommand {
     /// and never open a window for themselves. VPN sign-in adopts its page into a window's pool, so it does.
     public var needsWindow: Bool {
         switch self {
-        case .ui, .listDownloads, .networkLog, .networkRequest, .exportHAR, .handoffStatus,
-             .listSpaces, .createSpace, .describeSpace:
+        case .ui, .trace, .listDownloads, .networkLog, .networkRequest, .exportHAR, .handoffStatus, .formProfile, .dialogs,
+             .listSpaces, .createSpace, .describeSpace, .readExtensionConsole:
             false
-        case .tabsContext, .tabsCreate, .tabsClose, .switchTab, .navigate, .resizeWindow, .readPage, .find,
+        case .tabsContext, .tabsCreate, .tabsClose, .switchTab, .tabStatus, .navigate, .resizeWindow, .readPage, .find,
              .getPageText, .screenshot, .click, .type, .formInput, .computer, .javascript, .waitFor, .handleDialog,
              .uploadFile, .signIn, .handoff, .readConsole, .readNetwork, .switchSpace, .pinTab, .createFolder,
              .moveToFolder, .moveToClaudeFolder, .vpn:

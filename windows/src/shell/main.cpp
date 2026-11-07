@@ -20,6 +20,12 @@
 //   Kite.exe --capture FILE.png --command-bar TEXT
 //                            the same with the command bar open (Ctrl+T) and TEXT typed in
 //                            it, composed over the window's frame as DirectComposition shows it.
+//   Kite.exe --capture FILE.png --find TEXT [--find-result ACTIVE/TOTAL]
+//                            the same with the find bar open (Ctrl+F) over the selected tab and
+//                            TEXT typed in it. A capture runs without Chromium, so
+//                            --find-result stands in for the page's report: 3/12 shows "3/12",
+//                            0/0 "Not Found"; without it the counter is empty, as before the
+//                            page answers.
 //   Kite.exe --capture FILE.png --space-tip N
 //                            the same with space N's tip (1-based) over its cell, at rest (the
 //                            cell's hover backing isn't drawn: no pointer is on it).
@@ -37,6 +43,50 @@
 //   Kite.exe --capture FILE.png --rename-space N
 //                            the same with space N's header renaming it (Rename Space…), its name
 //                            all selected.
+//   Kite.exe --capture FILE.png --icon-picker N,emoji|icon[,CATEGORY]
+//                            the same with Change Space Icon…'s picker open for space N (selected
+//                            first) on that tab, hanging from its header's icon; on the Emoji tab,
+//                            with category CATEGORY's button (from 0) clicked.
+//   Kite.exe --capture FILE.png --pick-icon N,emoji|icon,CELL
+//                            the same after a click on that tab's cell CELL (from 0) set space N's
+//                            icon, and Escape closed the picker.
+//   Kite.exe --capture FILE.png --page-status STATES
+//                            the same with the selected tab's page reporting STATES, a comma list of
+//                            back, forward and loading (or none), as Chromium would: the top row's
+//                            back and forward enabled, reload the X.
+//   Kite.exe --capture FILE.png --toggle-sidebar N
+//                            the same after Toggle Sidebar (Ctrl+S) ran N times, each slide run to
+//                            its end (1: hidden, 2: shown again).
+//   Kite.exe --capture FILE.png --favicons
+//                            the same with the favicons fetched as the window fetches them (the
+//                            network, as the Mac's capture does), waiting for them (20 s at most).
+//   Kite.exe --capture FILE.png --empty-favorites-hover
+//                            the same with the pointer on the favorites' empty state (a profile with no
+//                            favorites), its close button showing.
+//   Kite.exe --capture FILE.png --favorite-hover N | --favorite-click N
+//                            the same with the pointer resting on the Nth favorite's pane (from 1, in
+//                            the grid's order), or after a click on it (pressed and let go there).
+//   Kite.exe --capture FILE.png --rename-row N | --hover-row N
+//                            the same with the selected space's Nth row (from 1, as kitecore's
+//                            `sidebar` lists them) renamed in place, a tab's or folder's, its name
+//                            all selected; or with the pointer resting on it (a pinned tab off its
+//                            page shows Back to Pinned URL).
+//   Kite.exe --capture FILE.png --row-menu N | --favorite-menu N
+//                            the same with the menu of the selected space's Nth row (from 1, as
+//                            kitecore's `sidebar` lists them: a tab's or a folder's) or of the Nth
+//                            favorite's pane open, as a right-click on its middle opens it (Windows'
+//                            own menu, read back from its window); its line goes to stderr, as the
+//                            Mac's KITE_TEST_CONTEXT_MENU logs one.
+//   Kite.exe --capture FILE.png --run-command ID
+//                            the same after the command ID (pinTab, say) ran, as its shortcut runs it.
+//   Kite.exe --capture FILE.png --new-item-menu
+//                            the same with the space bar's + menu open over its button, as a click
+//                            there opens it (Windows' own menu, read back from its window); its line
+//                            goes to stderr.
+//   Kite.exe --capture FILE.png --create-space NAME [--create-space-about TEXT] [--create-space-theme N]
+//                            the same after + › New Space: Arc's Create a Space page with NAME ("" for
+//                            none) and TEXT typed in its fields, and with N, Choose a Theme's swatches
+//                            open and preset N (from 1) clicked, the theme's crossfade run to its end.
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
@@ -46,7 +96,14 @@
 //                            it made (when, and its cost on the UI thread) and the writer's
 //                            statistics to FILE as JSON: the live check of saving as it changes.
 //                            KITE_TEST_SLOW_BACKUP_MS=N makes each backup take N ms more
-//                            (the live check of a relaunch while Kite quits).
+//                            (the live check of a relaunch while Kite quits), and
+//                            KITE_TEST_CLOSE_TAB_MS=N gives the shown page a click's user
+//                            activation N ms after the window shows and closes its tab 0.5 s later (the live check of a page kept for its downloads), and
+//                            KITE_TEST_AUTOMATIC_DOWNLOADS=http://127.0.0.1:PORT lets that local
+//                            origin's pages start many downloads with no click (the live check
+//                            of a burst). These switches act only on a test profile. It logs the
+//                            downloads too (Chromium's reports, what each cost the UI thread,
+//                            downloads.json's writes): the live check of the download engine.
 //   Kite.exe --perf-log FILE [--perf-control] [--chromium-switches "--a --b=c"]
 //                            a normal window on a test profile, for windows/tools/perf/kiteperf:
 //                            FILE gets JSON lines of QPC marks, present/commit/surface-draw
@@ -55,6 +112,15 @@
 //                            (BrowserWindowController::QueuePerfRequest); --chromium-switches go
 //                            on Chromium's command line, from an allow-list (shell/PerfProtocol.h).
 //                            Never on the default profile. Opens behind other windows.
+//   Kite.exe --occlusion-log FILE
+//                            on a test profile, writes shell/Occlusion's verdicts to FILE as
+//                            they change (visible, locked, displayOff, cloaked, covered), one
+//                            JSON object a line with what the pass saw and the hook thread's
+//                            counters, and a last line as the window closes.
+//
+// Downloads go to the profile's chosen folder, else the user's Downloads. KITE_TEST_DOWNLOADS_PATH
+// (with KITE_SUPPORT_PATH, as on the Mac) puts them in a test's own folder; a quiet run without
+// it uses <support>\Downloads, never the user's.
 //   Kite.exe --backdrop-test draws the theme backdrop on the GPU and checks every pixel against
 //                            core's CPU reference of the Mac's shader (shell/BackdropTest.h).
 //                            Prints a report; exits 0 when it matches, 5 when it differs, 3
@@ -62,6 +128,7 @@
 
 #include <windows.h>
 
+#include <knownfolders.h>
 #include <shellapi.h>
 #include <shlobj.h>
 
@@ -83,8 +150,11 @@
 #include <vector>
 
 #include "core/CommandLine.h"
+#include "core/DownloadsWriter.h"
 #include "core/KeyBindings.h"
+#include "core/ProfileSettings.h"
 #include "core/SessionStore.h"
+#include "core/SpaceCreation.h"
 #include "core/SessionWriter.h"
 #include "core/SupportDirectory.h"
 #include "shell/BackdropTest.h"
@@ -177,6 +247,19 @@ kite::KeyBindings LoadKeyBindings(const std::filesystem::path& file) {
     return {};
 }
 
+// The user's Downloads folder (FOLDERID_Downloads, which they may have moved), else
+// %USERPROFILE%\Downloads.
+std::filesystem::path UserDownloads() {
+    PWSTR path = nullptr;
+    std::filesystem::path folder;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Downloads, KF_FLAG_DEFAULT, nullptr, &path)) && path) folder = path;
+    CoTaskMemFree(path);
+    if (folder.empty()) {
+        if (auto profile = kite::EnvironmentPath("USERPROFILE"); profile && !profile->empty()) folder = *profile / L"Downloads";
+    }
+    return folder;
+}
+
 int Fail(bool quiet, const std::wstring& message, int code) {
     OutputDebugStringW((L"Kite: " + message + L"\n").c_str());
     WriteUtf8(STD_ERROR_HANDLE, L"Kite: " + message + L"\n");
@@ -242,8 +325,8 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // prefixes; so no argument Chromium could read as a switch gets past this, not even as a
     // value (core/CommandLine.h).
     kite::command_line::Spec spec;
-    spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control"};
-    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--save-log", "--perf-log"};
+    spec.flags = {"--smoke-test", "--backdrop-test", "--perf-control", "--favicons", "--empty-favorites-hover", "--new-item-menu"};
+    spec.valueOptions = {"--capture", "--window-size", "--capture-scale", "--command-bar", "--frame-log", "--space-tip", "--swipe", "--space-drag", "--space-drop", "--space-menu", "--rename-space", "--page-status", "--toggle-sidebar", "--favorite-hover", "--favorite-click", "--save-log", "--perf-log", "--rename-row", "--hover-row", "--row-menu", "--favorite-menu", "--run-command", "--find", "--find-result", "--occlusion-log", "--icon-picker", "--pick-icon", "--create-space", "--create-space-about", "--create-space-theme"};
     // Its value is switches ("--a --b"), each checked against the allow-list below; Chromium's
     // raw read sees them too, so only allowed ones get this far.
     spec.switchValueOptions = {"--chromium-switches"};
@@ -308,6 +391,23 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         tipIndex = static_cast<size_t>(std::stoi(*tipOption.value) - 1);
     }
     if (tipOption.present && !captureOption.present) return Fail(quiet, L"--space-tip only goes with --capture", kUsage);
+    const OptionValue findOption = Option(args, L"--find");
+    if (findOption.present && !findOption.value) return Fail(quiet, L"--find takes the text typed in the find bar (\"\" for none)", kUsage);
+    if (findOption.present && !captureOption.present) return Fail(quiet, L"--find only goes with --capture", kUsage);
+    const OptionValue findResultOption = Option(args, L"--find-result");
+    std::optional<kite::FindResult> findResult;
+    if (findResultOption.present) {
+        // ACTIVE/TOTAL, as the counter reads: the page's report a capture can't ask for.
+        const std::wstring& text = findResultOption.value.value_or(L"");
+        const size_t slash = text.find(L'/');
+        const auto active = slash == std::wstring::npos ? std::nullopt : ParseInt(std::wstring_view(text).substr(0, slash));
+        const auto total = slash == std::wstring::npos ? std::nullopt : ParseInt(std::wstring_view(text).substr(slash + 1));
+        if (!active || !total || *active > *total || (*total > 0 && *active < 1)) {
+            return Fail(quiet, L"--find-result takes ACTIVE/TOTAL (3/12, or 0/0 for none)", kUsage);
+        }
+        findResult = kite::FindResult{*total > 0, *total, *active};
+    }
+    if (findResultOption.present && !findOption.present) return Fail(quiet, L"--find-result only goes with --find", kUsage);
     const OptionValue swipeOption = Option(args, L"--swipe");
     std::optional<double> swipe;
     if (swipeOption.present) {
@@ -358,6 +458,122 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a space's place, from 1", kUsage);
         if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
     }
+    // Change Space Icon…'s picker: a space's place, its tab, and for a pick the cell clicked.
+    struct HeldPicker {
+        size_t index;
+        kite::IconPickerTab tab;
+        std::optional<size_t> cell;
+        std::optional<size_t> category;
+    };
+    std::optional<HeldPicker> heldPicker;
+    for (const wchar_t* flag : {L"--icon-picker", L"--pick-icon"}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        const bool pick = std::wstring(flag) == L"--pick-icon";
+        std::vector<std::wstring> parts;
+        if (option.value) {
+            size_t start = 0;
+            for (size_t comma; (comma = option.value->find(L',', start)) != std::wstring::npos; start = comma + 1) {
+                parts.push_back(option.value->substr(start, comma - start));
+            }
+            parts.push_back(option.value->substr(start));
+        }
+        const std::optional<size_t> index = parts.empty() ? std::nullopt : place(parts[0]);
+        const bool tabOk = parts.size() >= 2 && (parts[1] == L"emoji" || parts[1] == L"icon");
+        // The third part: a pick's cell, or the picker's category (the Emoji tab's).
+        std::optional<size_t> third;
+        if (parts.size() == 3 && !parts[2].empty() && parts[2].size() <= 4 &&
+            std::all_of(parts[2].begin(), parts[2].end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; })) {
+            third = static_cast<size_t>(std::stoi(parts[2]));
+        }
+        const bool emojiTab = tabOk && parts[1] == L"emoji";
+        const bool shapeOk = pick ? parts.size() == 3 && third : parts.size() == 2 || (parts.size() == 3 && third && emojiTab);
+        if (!index || !tabOk || !shapeOk || heldPicker) {
+            return Fail(quiet, std::wstring(flag) + (pick ? L" takes N,emoji|icon,CELL" : L" takes N,emoji|icon or N,emoji,CATEGORY") +
+                                   L" (one of --icon-picker and --pick-icon)",
+                        kUsage);
+        }
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+        heldPicker = HeldPicker{*index, emojiTab ? kite::IconPickerTab::Emoji : kite::IconPickerTab::Icon, pick ? third : std::nullopt,
+                                pick ? std::nullopt : third};
+    }
+    // The top row's states, for a capture.
+    std::optional<kite::PageStatus> heldPage;
+    if (const OptionValue option = Option(args, L"--page-status"); option.present) {
+        if (!captureOption.present) return Fail(quiet, L"--page-status only goes with --capture", kUsage);
+        kite::PageStatus page;
+        bool valid = option.value.has_value();
+        const std::wstring states = option.value.value_or(L"");
+        for (std::wstring_view rest = states; valid && !rest.empty();) {
+            const size_t comma = rest.find(L',');
+            const std::wstring_view word = rest.substr(0, comma);
+            if (word == L"back") page.canGoBack = true;
+            else if (word == L"forward") page.canGoForward = true;
+            else if (word == L"loading") page.isLoading = true;
+            else if (word != L"none") valid = false;
+            rest = comma == std::wstring_view::npos ? std::wstring_view{} : rest.substr(comma + 1);
+        }
+        if (!valid) return Fail(quiet, L"--page-status takes back, forward and loading, comma-separated, or none", kUsage);
+        heldPage = page;
+    }
+    std::optional<int> heldToggles;
+    if (const OptionValue option = Option(args, L"--toggle-sidebar"); option.present) {
+        heldToggles = option.value ? ParseInt(*option.value) : std::nullopt;
+        if (!heldToggles || *heldToggles < 1 || *heldToggles > 9) return Fail(quiet, L"--toggle-sidebar takes how many times, 1 to 9", kUsage);
+        if (!captureOption.present) return Fail(quiet, L"--toggle-sidebar only goes with --capture", kUsage);
+    }
+    // The favorites' states, for a capture: their favicons, and a pane hovered or clicked.
+    const bool captureFavicons = HasFlag(args, L"--favicons");
+    if (captureFavicons && !captureOption.present) return Fail(quiet, L"--favicons only goes with --capture", kUsage);
+    const bool heldEmptyHover = HasFlag(args, L"--empty-favorites-hover");
+    if (heldEmptyHover && !captureOption.present) return Fail(quiet, L"--empty-favorites-hover only goes with --capture", kUsage);
+    std::optional<size_t> heldFavoriteHover, heldFavoriteClick, heldFavoriteMenu;
+    for (const auto& [flag, out] :
+         {std::pair<const wchar_t*, std::optional<size_t>*>{L"--favorite-hover", &heldFavoriteHover}, {L"--favorite-click", &heldFavoriteClick},
+          {L"--favorite-menu", &heldFavoriteMenu}}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        *out = option.value ? place(*option.value) : std::nullopt;
+        if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a favorite's place, from 1", kUsage);
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+    }
+    // The sidebar's rows, for a capture: one renamed in place (a tab's or folder's, its place from
+    // 1 as kitecore's `sidebar` lists the selected space's rows), one with the pointer resting on it,
+    // and a command run by its id first (pinTab, say), as its shortcut would.
+    std::optional<size_t> heldRowRename, heldRowHover, heldRowMenu;
+    for (const auto& [flag, out] :
+         {std::pair<const wchar_t*, std::optional<size_t>*>{L"--rename-row", &heldRowRename}, {L"--hover-row", &heldRowHover},
+          {L"--row-menu", &heldRowMenu}}) {
+        const OptionValue option = Option(args, flag);
+        if (!option.present) continue;
+        *out = option.value ? place(*option.value) : std::nullopt;
+        if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a row's place, from 1", kUsage);
+        if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+    }
+    // The + menu and Create a Space, for a capture: the menu open, or the page with a name and what
+    // it's for typed in and a preset picked from Choose a Theme's swatches (from 1).
+    const bool heldNewItemMenu = HasFlag(args, L"--new-item-menu");
+    if (heldNewItemMenu && !captureOption.present) return Fail(quiet, L"--new-item-menu only goes with --capture", kUsage);
+    const OptionValue createSpaceOption = Option(args, L"--create-space");
+    const OptionValue createAboutOption = Option(args, L"--create-space-about");
+    const OptionValue createThemeOption = Option(args, L"--create-space-theme");
+    if (createSpaceOption.present && !createSpaceOption.value) return Fail(quiet, L"--create-space takes the name typed in it (\"\" for none)", kUsage);
+    if (createSpaceOption.present && !captureOption.present) return Fail(quiet, L"--create-space only goes with --capture", kUsage);
+    if (createAboutOption.present && !createAboutOption.value) return Fail(quiet, L"--create-space-about takes what's typed in it", kUsage);
+    if ((createAboutOption.present || createThemeOption.present) && !createSpaceOption.present) {
+        return Fail(quiet, L"--create-space-about and --create-space-theme only go with --create-space", kUsage);
+    }
+    std::optional<size_t> heldPreset;
+    if (createThemeOption.present) {
+        const std::optional<int> n = createThemeOption.value ? ParseInt(*createThemeOption.value) : std::nullopt;
+        if (!n || *n < 1 || static_cast<size_t>(*n) > kite::Theme::Presets().size()) {
+            return Fail(quiet, L"--create-space-theme takes a preset's place, 1 to " + std::to_wstring(kite::Theme::Presets().size()), kUsage);
+        }
+        heldPreset = static_cast<size_t>(*n - 1);
+    }
+    const OptionValue runCommandOption = Option(args, L"--run-command");
+    if (runCommandOption.present && !runCommandOption.value) return Fail(quiet, L"--run-command takes a command's id", kUsage);
+    if (runCommandOption.present && !captureOption.present) return Fail(quiet, L"--run-command only goes with --capture", kUsage);
     const PathOptionValue frameLogOption = PathOption(args, L"--frame-log", L"a file");
     if (!frameLogOption.problem.empty()) return Fail(quiet, frameLogOption.problem, kUsage);
     if (!perfLogOption.problem.empty()) return Fail(quiet, perfLogOption.problem, kUsage);
@@ -372,16 +588,19 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         if (!parsed) return Fail(quiet, L"--chromium-switches doesn't allow " + refused, kUsage);
         chromiumSwitches = std::move(*parsed);
     }
+    const PathOptionValue occlusionLogOption = PathOption(args, L"--occlusion-log", L"a file");
+    if (!occlusionLogOption.problem.empty()) return Fail(quiet, occlusionLogOption.problem, kUsage);
 
     const auto supportOverride = kite::EnvironmentPath("KITE_SUPPORT_PATH");
     // Test flags only run on a test profile, like the Mac's KITE_WINDOW_SIZE: a smoke test or
     // capture loads and re-saves the session, which must never be the user's own.
     if ((smokeTest || captureOption.present || sizeOption.present || scaleOption.present || frameLogOption.present ||
-         saveLogOption.present || perfLogOption.present || perfControl || switchesOption.present) &&
+         saveLogOption.present || perfLogOption.present || perfControl || switchesOption.present ||
+         occlusionLogOption.present) &&
         !supportOverride) {
         return Fail(quiet,
-                    L"--smoke-test, --capture, --window-size, --capture-scale, --frame-log, --save-log, --perf-log, --perf-control "
-                    L"and --chromium-switches need KITE_SUPPORT_PATH set to a test profile",
+                    L"--smoke-test, --capture, --window-size, --capture-scale, --frame-log, --save-log, --perf-log, --perf-control, "
+                    L"--chromium-switches and --occlusion-log need KITE_SUPPORT_PATH set to a test profile",
                     kUsage);
     }
     if (supportOverride && !supportOverride->empty()) {
@@ -502,6 +721,10 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     const bool maySave = kite::SessionStore::MaySave(loaded);
     if (auto* existing = std::get_if<kite::BrowserState>(&loaded)) {
         state = std::move(*existing);
+        // A Create a Space page left open at quit or by a crash leaves a nameless, empty space: it
+        // goes, as the Mac's BrowserStore drops it after loading (dropUnnamedEmptySpaces). Saved
+        // with the next change, as the Mac's is.
+        kite::DropUnnamedEmptySpaces(state);
     } else {
         if (auto* error = std::get_if<kite::SessionStore::Error>(&loaded)) {
             OutputDebugStringW((L"Kite: session unreadable, starting fresh" + std::wstring(maySave ? L"" : L" without saving") +
@@ -515,8 +738,12 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // The live check of a relaunch while Kite quits: a --save-log run (a test profile) with
     // KITE_TEST_SLOW_BACKUP_MS set takes that long over each backup (the clock the writer dates
     // them by), so the wait at quit lasts long enough for a relaunch to land in it.
+    // The test switches below act only in a --save-log run on a test profile: never on
+    // %LOCALAPPDATA%\Kite, even when KITE_SUPPORT_PATH names it.
+    const bool testProfile = kite::IsTestProfile(supportDirectory, kite::EnvironmentPath("LOCALAPPDATA"));
+    const bool testSwitches = saveLogOption.present && testProfile;
     std::function<double()> clock = kite::SessionBackups::Now;
-    if (const DWORD slowMs = saveLogOption.present ? GetEnvironmentVariableW(L"KITE_TEST_SLOW_BACKUP_MS", nullptr, 0) : 0; slowMs) {
+    if (const DWORD slowMs = testSwitches ? GetEnvironmentVariableW(L"KITE_TEST_SLOW_BACKUP_MS", nullptr, 0) : 0; slowMs) {
         std::wstring value(slowMs, L'\0');
         value.resize(GetEnvironmentVariableW(L"KITE_TEST_SLOW_BACKUP_MS", value.data(), slowMs));
         if (auto ms = ParseInt(value); ms && *ms <= 60'000) {
@@ -527,12 +754,12 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         }
     }
     kite::SessionWriter writer(session, maySave, std::move(clock));
-    // A write still stuck as Kite ends (a disk that hangs past kQuitFlush), the session's or
-    // history's: the process ends there, without the C++ library's teardown running under the
-    // writer's thread. The file is the old one or the new one (the writes are atomic); the run is
-    // a failed save.
+    // A write still stuck as Kite ends (a disk that hangs past kQuitFlush), the session's,
+    // history's or downloads.json's: the process ends there, without the C++ library's teardown
+    // running under the writer's thread. The file is the old one or the new one (the writes are
+    // atomic); the run is a failed save.
     const auto endStuck = [quiet] {
-        const std::wstring message = L"Kite: a last write (the session or history) didn't finish; Kite ended without waiting for it\n";
+        const std::wstring message = L"Kite: a last write (the session, history or downloads.json) didn't finish; Kite ended without waiting for it\n";
         OutputDebugStringW(message.c_str());
         if (quiet) WriteUtf8(STD_ERROR_HANDLE, message);
         TerminateProcess(GetCurrentProcess(), kSaveFailed);
@@ -544,6 +771,14 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     // replayed over it. Like the session's writer, it outlives the window.
     kite::HistoryStores history(supportDirectory);
     history.OnStuck(endStuck);
+    // downloads.json, read on its worker once the window shows (not by a launch that hands over)
+    // and written as the list changes (core/DownloadsWriter.h); none for a capture, which has no
+    // pages.
+    std::optional<kite::DownloadsWriter> downloadsWriter;
+    if (!capture) {
+        downloadsWriter.emplace(supportDirectory / L"downloads.json");
+        downloadsWriter->OnStuck(endStuck);
+    }
     // As the Mac does once per launch, the session as found (read, recovered or a fresh one, as
     // BrowserStore.init) is kept as a launch backup: before the auto-archive, as the Mac's is
     // before its first pass, but handed over only once this launch is Kite's (not a second one
@@ -568,19 +803,51 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
     std::wstring problem;
     kite::BrowserWindowController::Options options;
     options.capture = capture.has_value();
+    options.captureFavicons = captureFavicons;
     options.smokeTest = smokeTest;
     options.frameLog = frameLogOption.present;
-    options.perfControl = perfControl;
-    options.chromiumSwitches = std::move(chromiumSwitches);
     options.saveLog = saveLogOption.present;
     options.quiet = quiet;
+    options.perfControl = perfControl;
+    options.chromiumSwitches = std::move(chromiumSwitches);
+    if (occlusionLogOption.value) options.occlusionLog = *occlusionLogOption.value;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
     options.supportDirectory = supportDirectory;
-    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, &history, problem);
+    // KITE_TEST_DOWNLOADS_PATH is a test's own folder: a relative one would land wherever Kite
+    // was started from, so it's refused rather than guessed.
+    const auto testDownloads = kite::EnvironmentPath("KITE_TEST_DOWNLOADS_PATH");
+    if (testDownloads && !testDownloads->empty() && !testDownloads->is_absolute()) {
+        return Fail(quiet, L"KITE_TEST_DOWNLOADS_PATH must be an absolute path", kUsage);
+    }
+    options.downloadFolder = kite::DefaultDownloadFolder(testDownloads, testProfile, quiet, supportDirectory, UserDownloads());
+    // The live check of a page kept for its downloads: a --save-log run (a test profile) with
+    // KITE_TEST_CLOSE_TAB_MS set closes its selected tab that long after the window shows.
+    if (const DWORD closeMs = testSwitches ? GetEnvironmentVariableW(L"KITE_TEST_CLOSE_TAB_MS", nullptr, 0) : 0; closeMs) {
+        std::wstring value(closeMs, L'\0');
+        value.resize(GetEnvironmentVariableW(L"KITE_TEST_CLOSE_TAB_MS", value.data(), closeMs));
+        if (auto ms = ParseInt(value); ms && *ms <= 600'000) options.testCloseTabMs = static_cast<unsigned>(*ms);
+    }
+    // And KITE_TEST_AUTOMATIC_DOWNLOADS=http://127.0.0.1:PORT lets that local origin's pages start
+    // many downloads with no click (the live check of a burst of same-name downloads); only a
+    // loopback origin, so the profile's setting can't open up any other site.
+    if (const DWORD length = testSwitches ? GetEnvironmentVariableW(L"KITE_TEST_AUTOMATIC_DOWNLOADS", nullptr, 0) : 0; length) {
+        std::wstring value(length, L'\0');
+        value.resize(GetEnvironmentVariableW(L"KITE_TEST_AUTOMATIC_DOWNLOADS", value.data(), length));
+        // Exactly http://127.0.0.1:PORT, the port 1 to 5 digits: no user info, path or anything else.
+        const std::wstring_view prefix = L"http://127.0.0.1:";
+        const std::wstring_view port = std::wstring_view(value).substr(std::min(value.size(), prefix.size()));
+        if (value.starts_with(prefix) && !port.empty() && port.size() <= 5 &&
+            std::all_of(port.begin(), port.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; })) {
+            options.testAutomaticDownloads = Narrow(value);
+        }
+    }
+    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, &history,
+                                                            downloadsWriter ? &*downloadsWriter : nullptr, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
     kite::perf::Mark("window-created");
     if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar: " + controller->CommandBarError(), kWindowFailed);
     if (archivedAtLaunch) controller->SessionChanged();
+    if (findOption.present && !controller->FindBar()) return Fail(quiet, L"Kite couldn't make the find bar", kWindowFailed);
     kite::MainWindow& window = controller->Window();
 
     // Sized after the swap chain exists, so a capture also goes through a resize, as a real
@@ -662,29 +929,64 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         kite::Pixels pixels;
         const std::optional<std::string> barText =
             commandBarOption.present ? std::optional<std::string>(Narrow(*commandBarOption.value)) : std::nullopt;
-        if (swipe) captureError = controller->HoldSwipe(*swipe);
+        if (heldPage) controller->HoldPageStatus(*heldPage);
+        if (heldToggles) captureError = controller->HoldSidebarToggles(*heldToggles);
+        if (captureError.empty() && swipe) captureError = controller->HoldSwipe(*swipe);
         if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
         if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
+        if (captureError.empty() && heldPicker) captureError = controller->HoldIconPicker(heldPicker->index, heldPicker->tab, heldPicker->cell, heldPicker->category);
+        if (captureError.empty() && runCommandOption.value) captureError = controller->RunCommandForCapture(Narrow(*runCommandOption.value));
+        if (captureError.empty() && heldRowRename) captureError = controller->HoldRowRename(*heldRowRename, std::nullopt, true);
+        if (captureError.empty() && heldRowHover) captureError = controller->HoldRowHover(*heldRowHover);
         if (heldMenu) controller->HoldSpaceMenu(*heldMenu);
-        if (captureError.empty()) captureError = controller->Capture(pixels, barText, tipIndex);
+        if (captureError.empty() && heldFavoriteClick) captureError = controller->ClickFavorite(*heldFavoriteClick);
+        if (captureError.empty() && heldFavoriteHover) captureError = controller->HoldFavoriteHover(*heldFavoriteHover);
+        if (captureError.empty() && heldEmptyHover) captureError = controller->HoldEmptyFavoritesHover();
+        if (captureError.empty() && heldRowMenu) captureError = controller->HoldRowMenu(*heldRowMenu);
+        if (captureError.empty() && heldFavoriteMenu) captureError = controller->HoldFavoriteMenu(*heldFavoriteMenu);
+        if (captureError.empty() && createSpaceOption.present) {
+            captureError = controller->HoldCreateSpace(Narrow(*createSpaceOption.value),
+                                                       createAboutOption.value ? Narrow(*createAboutOption.value) : std::string(), heldPreset);
+        }
+        if (heldNewItemMenu) controller->HoldNewItemMenu();
+        // Last, so the favicons of whatever the states above show have come. Favorites whose icons
+        // didn't load show the globe, as on the Mac; the run says which.
+        if (captureError.empty() && captureFavicons) {
+            std::vector<std::string> failed;
+            captureError = controller->WaitForFavicons(20, failed);
+            for (const std::string& url : failed) WriteUtf8(STD_ERROR_HANDLE, L"Kite: no favicon from " + Widen(url) + L" (the globe shows)\n");
+        }
+        std::optional<kite::BrowserWindowController::CaptureFind> find;
+        if (findOption.present) find = kite::BrowserWindowController::CaptureFind{Narrow(*findOption.value), findResult};
+        if (captureError.empty()) captureError = controller->Capture(pixels, barText, tipIndex, find);
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);
         PostMessageW(window.Handle(), WM_CLOSE, 0, 0);
     }
 
     controller->RunMessageLoop();
     kite::perf::Mark("loop-end");
-    // The window's close handed over the last saves, the session's and history's; wait for them
-    // now that the window is gone (no frozen window), kQuitFlush at most for both (the atomic
-    // writes leave the old file or the new one). Before Chromium shuts down: until then this Kite
-    // holds the profile, so a launch in the meantime hands over to it rather than read a file
-    // about to be replaced.
+    // The window's close handed over the last saves, the session's, history's and
+    // downloads.json's; wait for them now that the window is gone (no frozen window), kQuitFlush
+    // at most for all (the atomic writes leave the old file or the new one). Before Chromium shuts
+    // down: until then this Kite holds the profile, so a launch in the meantime hands over to it
+    // rather than read a file about to be replaced. One deadline for every write still to come.
+    // downloads.json's is handed over first (a read the window never got is joined, then its last
+    // save), so it runs alongside the session's and history's, each on its own worker: a slow
+    // session write can't use up the deadline before the downloads' save has even started.
     const kite::Deadline quitDeadline = kite::DeadlineAfter(kQuitFlush);
+    if (downloadsWriter) controller->FinishDownloads(quitDeadline);
     const std::string saveError = writer.Flush(quitDeadline);
     const std::string historyError = history.Flush(quitDeadline);
+    std::string downloadsError;
+    if (downloadsWriter) downloadsError = downloadsWriter->Flush(kite::BrowserWindowController::Left(quitDeadline));
     // Still writing after that: end here, before Chromium's shutdown or a dialog, while the
     // stuck write may yet rename (no other Kite can have the profile until this one is gone).
-    if (writer.Writing() || history.Writing()) endStuck();
+    if (writer.Writing() || history.Writing() || (downloadsWriter && downloadsWriter->Writing())) endStuck();
     if (!historyError.empty()) OutputDebugStringW((L"Kite: " + Widen(historyError) + L"\n").c_str());
+    if (!downloadsError.empty()) {
+        OutputDebugStringW((L"Kite: " + Widen(downloadsError) + L"\n").c_str());
+        if (quiet) WriteUtf8(STD_ERROR_HANDLE, L"Kite: couldn't save the downloads: " + Widen(downloadsError) + L"\n");
+    }
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
     if (frameLogOption.value) {
         if (problem = controller->SaveFrameLog(*frameLogOption.value); !problem.empty()) {

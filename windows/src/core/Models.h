@@ -7,9 +7,12 @@
 //
 // Ported so far: tabs, folders, spaces, themes, favorites per profile, selection,
 // opening, selecting, closing, archiving and reopening tabs (TabClosing.cpp), spaces and
-// editing them (SpaceEditing.cpp), and splits as data (closing keeps them whole). Not yet:
+// editing them (SpaceEditing.cpp), pinning, favoriting, renaming, duplicating and folders
+// (TabEditing.cpp), pinned URLs (PinnedURL.cpp), the sidebar menus' edits (SidebarContextMenu.cpp),
+// and splits as data (closing keeps them whole). Not yet:
 // making splits, profiles, live folders, Tidy Tabs. Those arrive as Helix checkpoints (docs/helix.md).
 
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -18,6 +21,7 @@
 #include <vector>
 
 #include "core/Json.h"
+#include "core/ProfileSettings.h"
 
 namespace kite {
 
@@ -43,6 +47,13 @@ struct Tab {
     // A tab that never had a page (no address, or about:blank, and no pinned one either): a
     // split pane nobody filled. Closing a pinned one removes it (PinnedURL.swift's isBlank).
     bool IsBlank() const;
+    // Whether the tab has left its pinned page (PinnedURL.swift's hasLeftPinnedURL, Arc's
+    // TabNavigatedAwayFromSavedURLHeuristic): a fragment, a trailing slash, "www." and http/https
+    // don't count, so a pinned page's own redirects and anchors aren't leaving. False with no
+    // pinned URL or no address.
+    bool HasLeftPinnedURL() const;
+    // Whether two addresses are the same page by that rule.
+    static bool SamePage(std::string_view a, std::string_view b);
     bool operator==(const Tab&) const = default;
 };
 
@@ -175,6 +186,9 @@ struct BrowserState {
     // twelveHours (the default, as Arc's), twentyFourHours, sevenDays, thirtyDays.
     std::string archiveAfter = "twelveHours";
     std::string searchEngine = "google";
+    // Each profile's download folder, Ask and search suggestions, by its dataStoreID; a
+    // profile with the defaults has no entry (core/ProfileSettings.h).
+    std::map<std::string, ProfileSettings> profileSettings;
     json::Object extra;  // everything else the Mac stores
 
     // Personal (with one tab when seedURL is set) and Work, like BrowserState.makeDefault().
@@ -185,6 +199,14 @@ struct BrowserState {
     // A profile folder's name in the lists: "Default" for the default one (Profile.defaultName),
     // else its `profiles` entry's name (the default's when it has gone, as profile(_:)).
     std::string ProfileName(const std::string& directory) const;
+    // The dataStoreID of the profile in `directory` (profile(_:).dataStoreID): the zero UUID for
+    // the default one, one that has gone, or none (an incognito window's).
+    std::string DataStoreID(const std::optional<std::string>& directory) const;
+    // The settings of the profile in `directory` (ProfileSettings.swift's settings(ofProfile:));
+    // none (an incognito window) reads the default profile's, as Arc does.
+    ProfileSettings Settings(const std::optional<std::string>& directory) const;
+    // Changes them; settings back at the defaults leave no entry (updateSettings(ofProfile:)).
+    void UpdateSettings(const std::optional<std::string>& directory, const std::function<void(ProfileSettings&)>& change);
     std::string SelectedProfileDirectory() const { return ProfileDirectory(SelectedSpaceIndex()); }
     // The favorites grid of the current space's profile, shown above the pinned tabs.
     const std::vector<Tab>& Favorites() const;
@@ -244,6 +266,112 @@ struct BrowserState {
     std::string CreateFolder(std::string name, size_t space);
     // New Folder (createNewFolder): "New Folder" in space `space`, or the selected one.
     std::string CreateNewFolder(std::optional<size_t> space = std::nullopt) { return CreateFolder("New Folder", space.value_or(SelectedSpaceIndex())); }
+
+    // MARK: Pinning, favorites, renaming, duplicating, folders (TabEditing.cpp)
+    // The Mac's BrowserState.togglePin and toggleFavorite (BrowserState.swift), duplicate,
+    // renameTab, deleteFolder and renameFolder (BrowserState+ArcCommands.swift), folders(inSpace:),
+    // folder(matching:) and moveTab(_:toFolder:) (BrowserState+Automation.swift). Each is one pass
+    // over the space's tabs at most.
+
+    // Pin Tab (Ctrl+D): an unpinned tab goes to the end of its space's pinned items, a pinned one
+    // (from any folder) to the top of its space's Today. A split goes as one, its panes together
+    // and in order. Favorites stay where they are. Then pinned URLs are synced (SyncPinnedURLs).
+    void TogglePin(const std::string& tabID);
+    // Add to / Remove from Favorites: a space's tab goes to the end of the current profile's
+    // grid; a favorite to the top of the current space's Today.
+    void ToggleFavorite(const std::string& tabID);
+    // Duplicate Tab: a copy (address, title, favicon, rename) just below the tab in Today, or at
+    // Today's top for a pinned tab or favorite, selected (in the current space for a favorite).
+    // Its id; none for no such tab.
+    std::optional<std::string> Duplicate(const std::string& tabID, Timestamp now = Now(), std::string id = {});
+    // Rename for a tab (pinned, unpinned or favorite), trimmed: the name stays when the page's
+    // title changes; an empty one goes back to the page's title.
+    void RenameTab(const std::string& tabID, std::string_view name);
+    // A folder's Rename, trimmed; a blank name keeps the old one.
+    void RenameFolder(const std::string& folderID, std::string_view name);
+    // A folder's Delete: it goes, and the tabs in it (nested folders' too) are archived, in
+    // sidebar order. A selected tab among them hands the selection to the space's first tab.
+    // The tabs that went.
+    std::vector<Tab> DeleteFolder(const std::string& folderID);
+    // Moves a space's tab (pinned or not) to the end of a folder, which pins it there. False for
+    // no such tab or folder, or a favorite. A tab moved out of its space hands that space's
+    // selection to its first tab.
+    bool MoveTabToFolder(std::string tabID, const std::string& folderID);
+    // Every folder in space `space`'s pinned items, depth first; none past the last space.
+    // Pointers into the tree, valid until it changes.
+    std::vector<const Folder*> Folders(size_t space) const;
+    // A folder by id (any case), or by name (any case), looking in the selected space first.
+    struct FolderMatch {
+        size_t space;
+        const Folder* folder;
+    };
+    std::optional<FolderMatch> FolderMatching(std::string_view idOrName) const;
+    // A folder by its id alone, in any space; null when there's none.
+    const Folder* FolderByID(const std::string& id) const;
+
+    // MARK: Pinned URLs (PinnedURL.cpp, PinnedURL.swift)
+
+    // Every pinned tab and favorite gets a pinned URL (its current page, the first time it's seen
+    // pinned: not Kite's own pages or about:blank) and unpinned tabs lose theirs, so unpinning and
+    // pinning again pins the page you're on. Run after every change, as the Mac's store does, and
+    // as a session loads; it writes only what differs. Whether it changed anything (a change to save
+    // soon, as any sidebar change is).
+    bool SyncPinnedURLs();
+    // A pinned tab or favorite that has left its pinned page: Back to Pinned URL is offered.
+    bool CanReset(const std::string& tabID) const;
+    // Back to Pinned URL: the tab's address becomes its pinned URL. That URL, for the shell to
+    // load; none when there's nothing to reset.
+    std::optional<std::string> ResetTab(const std::string& tabID);
+    // Whether the tab is a pinned tab or favorite with a pinned URL (Edit Pinned Page).
+    bool HasPinnedURL(const std::string& tabID) const;
+    // Edit Pinned Page › Edit…: the pinned URL becomes `input` (a URL or a bare host, never a
+    // search); the page stays where it is. False when it isn't a URL.
+    bool EditPinnedURL(const std::string& tabID, std::string_view input);
+    // Replace Pin with Current Page: the address becomes the pinned URL (not one of Kite's own
+    // pages). False when there's nothing to replace.
+    bool ReplacePinnedURLWithCurrent(const std::string& tabID);
+    // Reset all tabs in this Space: every pinned tab of the current space (folders included)
+    // back to its pinned page, in one walk of its pinned items. The tabs that changed and their
+    // URLs, in sidebar order, for the shell to load.
+    std::vector<std::pair<std::string, std::string>> ResetPinnedTabs();
+    // Separate From Pinned Tab: the page the pinned tab wandered to opens as a new selected tab
+    // in Today, and the pinned tab goes back to its pinned page. The new tab's id.
+    std::optional<std::string> SeparateFromPinnedTab(const std::string& tabID, Timestamp now = Now(), std::string id = {});
+    // Reveal Tab in Sidebar: opens the folders the tab sits in. The id of the sidebar row (a
+    // top-level pinned item, a split, or the tab) to scroll to; none for favorites and unknown tabs.
+    std::optional<std::string> RevealTab(const std::string& tabID);
+    // The top-level sidebar row (SidebarGroup) that holds the tab.
+    std::optional<std::string> SidebarRowID(const std::string& tabID) const;
+
+    // MARK: The sidebar's tab and folder menus (SidebarContextMenu.cpp, SidebarContextMenu.swift)
+
+    // The Today tabs that Archive Other Tabs / Below / Above would archive for the row of tab `id`
+    // (the tab, and the split's other panes when it's in one), in Today's order. Empty when the
+    // tab isn't in Today or there's nothing on that side (Arc greys Archive Tabs Above out on the
+    // top row).
+    enum class ArchiveTabsRelative { Others, Below, Above };
+    std::vector<std::string> TabsToArchive(ArchiveTabsRelative which, const std::string& id) const;
+    // Archives them. When the selected tab goes, the row the menu was opened on is selected.
+    std::vector<Tab> ArchiveTabs(ArchiveTabsRelative which, const std::string& id, Timestamp now = Now());
+    // Whether the folder menu offers Duplicate: not for a Claude (ephemeral) folder or a live one.
+    bool CanDuplicateFolder(const std::string& id) const;
+    // Arc's folder Duplicate: a copy of the folder, its nested folders and tabs (new ids, not
+    // loaded) right after it in the same place, live folders inside left out. The copy's id.
+    std::optional<std::string> DuplicateFolder(const std::string& id, Timestamp now = Now());
+    // New Nested Folder…: an empty folder at the end of folder `id`, which opens to show it.
+    std::optional<std::string> CreateNestedFolder(const std::string& id, std::string name = "New Folder");
+    // Whether Turn "<folder>" into Space is enabled: a plain folder with tabs in it, never a Claude
+    // folder, one with Claude or live folders inside, or one named Claude (claudeMayCreateSpace).
+    bool CanTurnFolderIntoSpace(const std::string& id) const;
+    // Turn "<folder>" into Space: a new space right after the folder's, named after it, with the
+    // folder's items as its pinned tabs, the old space's theme and profile, no icon, selected.
+    // Splits made only of the folder's tabs go along. The new space's id.
+    std::optional<std::string> TurnFolderIntoSpace(const std::string& id);
+    // Delete Live Folder (LiveFolders.swift's deleteLiveFolder): its source goes into
+    // liveFoldersTurnedOff (kept in `extra`, as the Mac writes it), and the folder goes with its tabs,
+    // unarchived (the Mac's next refresh would bring them back). A selected tab among them hands the
+    // selection to the space's first tab. The tabs that went; none for a folder that isn't live.
+    std::vector<std::string> DeleteLiveFolder(const std::string& id);
 
     // MARK: Closing, archiving and reopening (TabClosing.cpp, BrowserState.swift)
     // The mutators take the id by value: a caller's id is often the tab's own (SelectedTab()->id),

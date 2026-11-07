@@ -13,8 +13,17 @@
 // code or draws anything. It shows hover and takes
 // clicks and the wheel (HandleMouse); what a click does goes to Actions. Under the pages, the
 // space bar (shell/SpaceBarView), whose cells drag to new places, and the space's menu on a
-// right-click on a cell or the header (Actions::spaceMenu). While a space is renamed its header
-// shows the name field (shell/SpaceRenameField). Not yet: the top row or favorites.
+// right-click on a cell or the header (Actions::spaceMenu), a tab's, a folder's or a favorite's on
+// a right-click on its row or pane (Actions::rowMenu), each also on a Ctrl+click. While a space, a tab or a folder is
+// renamed, its header or row shows the name field (shell/RenameField). A pinned tab off its
+// pinned page shows Back to Pinned URL on hover. Over the address field, the top row: the toggle,
+// back, forward and reload, each its own visual (shell/SidebarTopRowView). Under it, the space's
+// profile's favorites, each pane its own visuals (shell/FavoritesView), which stay put while the
+// pages slide; the page starts under them (core's SidebarListTop). Everything sits in one root
+// visual, which hiding and showing the sidebar slides on the compositor (SetShown, the Mac's
+// updateSidebar). + › New Space's Create a Space page (shell/SpaceCreationView) takes the place of
+// the address field, the favorites and the pages while its space is selected, and the bar keeps
+// only the spaces (SidebarColumnView.update, SpaceBarView.apply).
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -34,15 +43,22 @@
 #include <utility>
 #include <vector>
 
+#include "core/Favorites.h"
 #include "core/Models.h"
 #include "core/Sidebar.h"
+#include "core/SidebarContextMenu.h"
+#include "core/SidebarTopRow.h"
+#include "core/SpaceCreation.h"
 #include "core/SpaceSwipe.h"
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
 #include "shell/Favicons.h"
+#include "shell/FavoritesView.h"
+#include "shell/SidebarTopRowView.h"
 #include "shell/SpaceBarView.h"
+#include "shell/SpaceCreationView.h"
 #include "shell/SpaceIconPainter.h"
-#include "shell/SpaceRenameField.h"
+#include "shell/RenameField.h"
 #include "shell/SpaceTipView.h"
 
 namespace kite {
@@ -50,7 +66,8 @@ namespace kite {
 class SidebarView {
 public:
     // `favicons` may be null (a capture): every tab shows the globe. `pictures` is where the
-    // spaces' pictures come from (SpaceIconPainter).
+    // spaces' pictures come from (SpaceIconPainter); a synchronous one's (a capture's) sidebar
+    // has no tooltips.
     static std::unique_ptr<SidebarView> Create(HWND window, Favicons* favicons, const SpaceIconPainter::Pictures& pictures,
                                                std::wstring& error);
     ~SidebarView();
@@ -71,30 +88,71 @@ public:
         std::function<void(const std::string& spaceID, size_t index)> moveSpace;
         // A right-click on a space's cell or its header: its menu at `screen` (px).
         std::function<void(const std::string& spaceID, POINT screen)> spaceMenu;
+        // A right-click on a tab's or a folder's row, or a favorite's pane: its menu at `screen`
+        // (px). Both menus also open on a Ctrl+click there, as the Mac's ⌃-click does.
+        std::function<void(SidebarMenuKind kind, const std::string& id, POINT screen)> rowMenu;
         // The header's name field committed (Return, Done, or leaving it) with `name`.
         std::function<void(const std::string& spaceID, const std::string& name)> renameSpace;
         // A click on the current space's name: its rename field (the Mac's beginRenaming).
         std::function<void(const std::string& spaceID)> beginRenaming;
+        // A click on the header's icon: Change Space Icon's picker (SpaceHeaderRowCell.openPicker).
+        std::function<void(const std::string& spaceID)> changeIcon;
+        // A tab's or folder's row field committed with `name` (the Mac's RenameField.onCommit).
+        std::function<void(const std::string& tabID, const std::string& name)> renameTab;
+        std::function<void(const std::string& folderID, const std::string& name)> renameFolder;
+        // The second press of a double-click on a tab's row (TabRowCell.doubleTapped: renameTab).
+        std::function<void(const std::string& tabID)> beginRenamingTab;
+        // A pinned tab's Back to Pinned URL button (actions.resetTab).
+        std::function<void(const std::string& tabID)> resetTab;
+        // A click on an enabled top-row button (the toggle, back, forward, reload).
+        std::function<void(TopRowButton button)> topRow;
+        // The favorites' empty state's close button (its Dismiss): a one-shot flag.
+        std::function<void()> dismissFavoritesEmptyState;
+        // The bar's + button, let go over it: its menu (NewItemMenu), with its bottom's middle at
+        // `screen` (px, the button's top).
+        std::function<void(POINT screen)> newItemMenu;
+        // Create a Space's (SpaceCreationView::Callbacks): Create Space or Return with a name, Cancel
+        // or Escape, Choose a Theme (its row in window points), the profile's pill (its menu at
+        // `screen` px), and a press in a field that doesn't have the keyboard.
+        std::function<void(const std::string& name, const std::string& about)> createSpace;
+        std::function<void()> cancelCreation;
+        std::function<void(const BarRect& row)> chooseTheme;
+        std::function<void(POINT screen)> creationProfileMenu;
+        std::function<void(SpaceCreationView::Field field)> creationTakesKeyboard;
     };
-    void SetActions(Actions actions) { actions_ = std::move(actions); }
+    void SetActions(Actions actions);
 
     // The window's mouse messages (client coordinates; the wheel's in screen ones): hover, presses
     // and releases over the sidebar, and the wheel over its list. True when it took `message`.
     // As on the Mac, the click that brings the window forward doesn't tap a row (rows don't
     // accept first mouse); it does press the address field, the chevron and a close button.
+    // A middle click on a tab's row closes it as its close button does (Windows', not the Mac's:
+    // core's SidebarMiddlePressAt).
     bool HandleMouse(UINT message, WPARAM wParam, LPARAM lParam);
     // Forgets the pointer and any press (the command bar opened over the window).
     void ClearHover();
 
-    // Renaming a space in its header (the Mac's renamingSpaceID): the selected space's, whose
-    // header shows the name field (shell/SpaceRenameField) instead of its name, with the keyboard.
-    // EndRenaming commits what's typed (renameSpace) or, with `commit` false, drops it.
-    void BeginRenaming(const std::string& spaceID, const std::string& name);
+    // What's renamed in place: a space in its header (Header, the space's id; the Mac's
+    // renamingSpaceID), or a tab or folder in its row of the selected space's page (Tab or Folder;
+    // renamingTabID, renamingFolderID).
+    struct RenameTarget {
+        SidebarRow::Kind kind = SidebarRow::Kind::Header;
+        std::string id;
+        bool operator==(const RenameTarget&) const = default;
+    };
+    // Renaming: the row (or header) shows the name field (shell/RenameField) instead of its
+    // name, with the keyboard, `text` all selected. Another rename open ends first, keeping what was
+    // typed. EndRenaming commits what's typed (renameSpace, renameTab, renameFolder) or, with
+    // `commit` false, drops it.
+    void BeginRenaming(const std::string& spaceID, const std::string& name) { BeginRenaming(RenameTarget{SidebarRow::Kind::Header, spaceID}, name); }
+    void BeginRenaming(const RenameTarget& target, const std::string& text);
     void EndRenaming(bool commit);
-    // Closes the field and gives back its space and what was typed, renaming nothing (the
+    // Closes the field and gives back what it renamed and what was typed, renaming nothing (the
     // window renames it in the same update that ends it).
-    std::optional<std::pair<std::string, std::string>> TakeRename();
-    std::optional<std::string> Renaming() const;
+    std::optional<std::pair<RenameTarget, std::string>> TakeRename();
+    std::optional<RenameTarget> Renaming() const;
+    // The space whose header is renamed, if that's what is.
+    std::optional<std::string> RenamingSpace() const;
     // The window's keys, characters, IME and focus while renaming (after the command bar's).
     // True when the field took `message`.
     bool HandleKey(UINT message, WPARAM wParam, LPARAM lParam);
@@ -106,12 +164,23 @@ public:
     // For the tests: the rename's Done, its centre in client px; and the rename drawn with the
     // keyboard (a quiet capture's window never has it), its selection in the focused colour.
     std::optional<POINT> RenameDoneCentre() const;
+    // The open field's right end, mid-line, in client px (a test's press just past it).
+    std::optional<POINT> RenameFieldEnd() const;
     // The middle of the selected space's name in its header, client px (a click there renames).
     std::optional<POINT> HeaderNameCentre();
     void FocusRenameForCapture();
     // Where space `index`'s cell is, in client px (its centre), for the tests' presses and the
     // menu's place.
     std::optional<POINT> SpaceCellCentre(size_t index) const;
+    // The selected space's page's rows (core's SidebarRows), and where row `index`'s pill (its
+    // middle) or, for a tab, its Back to Pinned URL button is in client px, for the tests' presses
+    // and hovers; none for a row out of view or a button it doesn't have.
+    const std::vector<SidebarRow>& Rows() const { return model_.rows; }
+    std::optional<POINT> RowCentre(size_t index) const;
+    std::optional<POINT> ResetButtonCentre(size_t index) const;
+    // How many times the selected page's surface has drawn (the smoke test checks a keystroke in a
+    // rename draws only the field).
+    size_t PageDraws() const { return pageDraws_; }
     // A left press went to something else (the command bar): the click that brought the window
     // forward is over, and the next one on a row taps.
     void ForgetActivation();
@@ -119,6 +188,82 @@ public:
     // The window's compositor, whose chrome it draws in; null drops every GPU object (before
     // the compositor is rebuilt after a lost device).
     void UseCompositor(Compositor* compositor);
+
+    // Create a Space (the Mac's BrowserStore.spaceCreation): the controller's, which it reads at each
+    // Update (its page while its space is selected, the bar's end buttons gone while it's open).
+    // Set once; it outlives the sidebar.
+    void SetCreation(const std::optional<SpaceCreation>* creation) { creation_ = creation; }
+    bool CreationShown() const { return model_.creationShown; }
+    // Whether the page appeared or went since the last call (the controller's keyboard follows it).
+    std::optional<bool> TakeCreationShownChange() {
+        if (creationShownTaken_ == model_.creationShown) return std::nullopt;
+        creationShownTaken_ = model_.creationShown;
+        return model_.creationShown;
+    }
+    // Whether a point (client px) is on Create a Space's Choose a Theme row: a press there is the
+    // row's, which opens its popover again, not a press outside the popover.
+    bool OverChooseTheme(POINT client) const {
+        const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+        return model_.creationShown &&
+               creationView_->OverChooseTheme(D2D1_POINT_2F{static_cast<float>(client.x) / scale - Left(), static_cast<float>(client.y) / scale});
+    }
+    SpaceCreationView& Creation() { return *creationView_; }
+    const SpaceCreationView& Creation() const { return *creationView_; }
+    // The page's keyboard (the controller's KeyboardField::Creation): a field takes it, or the
+    // page lets it go; either draws on the next pass.
+    void FocusCreation(SpaceCreationView::Field field, bool selectAll = false) {
+        creationView_->Focus(field, selectAll);
+        ScheduleDraw();
+    }
+    void CreationLosesKeyboard() {
+        if (!creationView_->HasKeyboard()) return;
+        creationView_->LoseKeyboard();
+        ScheduleDraw();
+    }
+    // Where the bar's + button's middle is, client px (for the tests' presses and the menu's place);
+    // none while Create a Space hides it.
+    std::optional<POINT> PlusCentre() const;
+    // Its top's middle in client px: where the + menu's bottom goes.
+    POINT PlusTop() const;
+
+    // Hiding and showing the sidebar (the Mac's updateSidebar): it slides off the window's left
+    // edge, or back, on ArcMetrics.Motion's curve on the compositor from the next commit, from
+    // wherever it is (a toggle caught mid-slide turns back). How long that takes, in seconds; 0
+    // when it's there at once (`animate` false, or no GPU yet). Hidden, it takes no pointer, its
+    // tooltips and tip go, and any press or hover with them; at rest hidden it draws nothing (what
+    // changes meanwhile stays to draw, which the caller does as it shows it again).
+    double SetShown(bool shown, bool animate);
+    // The slide has ended (the caller's timer): at rest.
+    void SettleToggle();
+    bool Shown() const { return shown_; }
+    // Where its leading edge is now, in points (mid-slide too).
+    float Left() const;
+    // The selected tab's page as the top row shows it (back, forward, the X while it loads).
+    void SetPageStatus(const PageStatus& page);
+    // The top row's buttons, for kitecore's and the tests' sake, and where one's centre is in
+    // client px; how many of its surfaces have drawn.
+    const std::vector<TopRowItem>& TopRowItems() const { return topRow_->Items(); }
+    std::optional<POINT> TopRowCentre(TopRowButton button) const;
+    size_t TopRowSurfaceDraws() const { return topRow_->SurfaceDraws(); }
+    bool TopRowHasTooltips() const { return topRow_->HasTooltips(); }
+    // The favorites grid as it's laid out, where pane `index`'s centre is in client px, each pane's
+    // look now, and how many of their layers have drawn (for kitecore's and the tests' sake).
+    const FavoritesTray& Favorites() const { return favorites_->Tray(); }
+    std::optional<POINT> FavoriteCentre(size_t index) const { return favorites_->PaneCentre(index, Left()); }
+    std::vector<FavoriteLook> FavoriteLooks() const { return favorites_->Looks(); }
+    size_t FavoriteSurfaceDraws() const { return favorites_->SurfaceDraws(); }
+    bool FavoritesHaveTooltips() const { return favorites_->HasTooltips(); }
+    // Where the space's page starts, in points: under the favorites.
+    float ListTop() const { return listTop_; }
+    bool FavoritesCloseShown() const { return favorites_->CloseShown(); }
+    bool FavoritesEmptyStateDrawn() const { return favorites_->EmptyStateDrawn(); }
+    // The favorites' empty state was dismissed (the one-shot flag, OneShotFlags.h): the tray shows
+    // only with favorites in it.
+    void SetFavoritesEmptyStateDismissed(bool dismissed);
+    // A compositor property changed (a top-row button turned on or off) that the next pass
+    // commits, and how many commits its own passes have made (for the smoke test).
+    bool CommitPending() const { return commitPending_; }
+    size_t Commits() const { return commits_; }
 
     // What it shows: the address, and the selected space's page with its neighbours' (or,
     // while the pages settle after a switch, those of `anchor`, the space it left:
@@ -138,6 +283,9 @@ public:
     // A touchpad's scroll at `at` (client px): over the selected space's list it scrolls by
     // `distance` points (positive moves it on, down the list) and is the list's (true).
     bool ScrollList(POINT at, float distance);
+    // The rest of a touchpad's scroll that ScrollList took, wherever the pointer is now: the
+    // gesture stays with the list it was decided under.
+    void ScrollListBy(float distance);
     // The selected space's list's scroll, in points.
     float ListScroll() const { return scrollExact_; }
     // The window's size or DPI changed: `width` is the sidebar's, in points. Draw follows.
@@ -148,11 +296,34 @@ public:
     // On the pictures' message: the bar's cells and the headers showing those that arrived draw again.
     void PicturesArrived();
 
+    // The selected list scrolled (the wheel, a touchpad): the header the picker hangs from moved.
+    std::function<void()> onListScrolled;
+    // The icon picker open for a space (SpaceHeaderRowCell's pickerOpen): its header keeps the
+    // icon's slot, a dashed square where an icon-less space has none, for the picker to hang from.
+    void SetIconPickerSpace(const std::optional<std::string>& spaceID);
+    const std::optional<std::string>& IconPickerSpace() const { return pickerSpace_; }
+    // Where the selected space's header icon is, in the window's client points (at rest: the
+    // strip's offset left out), when `spaceID` is that space; kept below the address field when
+    // the list is scrolled past it.
+    std::optional<D2D1_RECT_F> HeaderIconRect(const std::string& spaceID);
+    // The header's icon's middle, client px (for the tests' presses).
+    std::optional<POINT> HeaderIconCentre();
+    // Whether a point (client px) is on the selected header's icon button: its icon, or the
+    // picker's placeholder while that shows (a press there is the button's, not a press outside
+    // the picker).
+    bool OverHeaderIcon(POINT client) const;
+    // The sidebar's painter and text factory, which the icon picker draws with too.
+    SpaceIconPainter* Painter() const { return icons_.get(); }
+    IDWriteFactory* DWrite() const { return dwrite_.Get(); }
+
     // Draws now if anything changed since the last draw; with `readBack`, always, also
     // copying the sidebar (premultiplied BGRA, at the window's top-left) there for --capture.
     // The caller commits the compositor. Empty on success.
     std::wstring Draw(Pixels* readBack = nullptr);
-    bool DeviceLost() const { return deviceLost_ || (bar_ && bar_->DeviceLost()); }
+    bool DeviceLost() const {
+        return deviceLost_ || (bar_ && bar_->DeviceLost()) || (topRow_ && topRow_->DeviceLost()) || (favorites_ && favorites_->DeviceLost()) ||
+               (creationView_ && creationView_->DeviceLost());
+    }
 
     // The window's messages: its posted redraw, and the space tip's timer. True when it handled
     // `message`; if the GPU was lost meanwhile, DeviceLost says so and the window rebuilds.
@@ -192,6 +363,13 @@ private:
         std::string spaceID;
         size_t index = 0;  // the selected space's
         std::vector<PageModel> pages;  // in the session's order, the selected one among them
+        std::vector<FavoriteTile> favorites;  // the selected space's grid, not yet placed
+        bool hasTab = false;  // the top row's reload
+        // Create a Space: open (the bar keeps only the spaces), shown (its space selected: the page
+        // in place of the address field, the favorites and the pages), and what the page shows.
+        bool creating = false;
+        bool creationShown = false;
+        SpaceCreationView::Model creation;
         bool operator==(const Model&) const = default;
     };
     using FaviconKey = std::pair<std::string, UINT>;
@@ -205,6 +383,10 @@ private:
 
     bool CreateGpu(std::wstring& error);
     void ReleaseGpu();
+    // The root visual everything sits in (made with the compositor, so the bar and the top row have
+    // their parent), and where it's placed (at rest, or on the toggle's slide).
+    void ReleaseRoot();
+    void PlaceRoot();
     void DrawHeader(ID2D1DeviceContext* context);
     void DrawPage(ID2D1DeviceContext* context, const PageModel& page, float scroll, float bottom, bool selected);
     // The scroll a page draws at: the selected one's, or where another was left.
@@ -212,6 +394,8 @@ private:
     std::wstring DrawPageSurface(const PageModel& page, Page& surfaces, Pixels* readBack);
     void PlacePages();
     void PlaceStrip();
+    // The favorites laid out for the width, and the page under them.
+    void PlaceFavorites();
     // What has to draw again; ScheduleDraw draws it on the message loop's next pass.
     void InvalidateSelectedPage();
     void ScheduleDraw();
@@ -225,12 +409,28 @@ private:
     void RefreshHover();
     // A point in the sidebar as the space bar sees it, when it's over the bar.
     std::optional<D2D1_POINT_2F> BarPoint(D2D1_POINT_2F point) const;
+    // What a right-click (or a Ctrl+click) at a sidebar point lands on, as the Mac's views stack: a
+    // space's cell in the bar (the space's menu), a favorite's pane, then the page's header, tabs,
+    // folders and New Tab (core's SidebarMenuTargetAt, which marks a row's own buttons). None where
+    // nothing with a menu is: a Ctrl+press there is an ordinary press.
+    std::optional<SidebarMenuTarget> MenuTargetAt(D2D1_POINT_2F p) const;
+    // Opens its menu (Actions::spaceMenu or rowMenu), the pointer at `at` (client px); nothing for
+    // a row without one (Kind::None).
+    void OpenMenu(const SidebarMenuTarget& target, POINT at);
     // The drag of a cell, from the press that started it, to its drop and its landing.
     void DragSpaceTo(D2D1_POINT_2F barPoint);
     void DropSpace(D2D1_POINT_2F barPoint);
     void FinishDrop();
-    // Where the rename field sits over the header drawn at `top` (DrawRow's).
-    void PlaceRenameField(float x, float top);
+    // Whether `row` is the one being renamed.
+    bool Renames(const SidebarRow& row) const;
+    // Whether a point on the selected page (page points) is in the pill of the tab or folder row
+    // being renamed.
+    bool InRenamedRow(D2D1_POINT_2F q) const;
+    // Where the rename field sits over its row drawn at `top` (DrawRow's), even one out of view
+    // (the field's clip hides it there).
+    void PlaceRenameField(const SidebarRow& row, float top);
+    // A row's pill, from its top: whole pixels at 2x, snapped to them at other scales.
+    std::pair<float, float> PillSpan(float top) const;
     // The header's name as DrawRow lays it out at `top` (page points): where a click renames.
     D2D1_RECT_F HeaderNameRect(const SidebarRow& row, float top);
     void SetScroll(float scroll);
@@ -239,7 +439,8 @@ private:
     void DrawText(ID2D1DeviceContext* context, const std::string& text, IDWriteTextFormat* format, float x, float baseline,
                   float maxWidth, D2D1_COLOR_F color);
     void DrawGlyph(ID2D1DeviceContext* context, wchar_t glyph, float size, D2D1_RECT_F box, D2D1_COLOR_F color);
-    void DrawFavicon(ID2D1DeviceContext* context, const SidebarRow& row, D2D1_RECT_F box);
+    // True when it drew the icon (not the globe or a symbol).
+    bool DrawFavicon(ID2D1DeviceContext* context, const FaviconSource& favicon, D2D1_RECT_F box);
     float Baseline(IDWriteTextFormat* format);
     D2D1_COLOR_F Primary(float alpha) const;
 
@@ -254,9 +455,10 @@ private:
 
     // GPU (drawn with the compositor's context).
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
-    // The address field's visual and surface, then over it the pages: a container that clips
-    // them to the sidebar, the strip in it that the slide moves, and each page in the strip.
-    Microsoft::WRL::ComPtr<IDCompositionVisual> visual_, pagesClip_, strip_;
+    // The root (what hiding slides), in it the address field's visual and surface, then over it
+    // the pages: a container that clips them to the sidebar, the strip in it that the slide
+    // moves, and each page in the strip.
+    Microsoft::WRL::ComPtr<IDCompositionVisual> root_, visual_, pagesClip_, strip_;
     Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> surface_;
     std::map<std::string, Page> pages_;  // by space id: the built pages' GPU side
     std::map<FaviconKey, Microsoft::WRL::ComPtr<ID2D1Bitmap1>> faviconBitmaps_;
@@ -283,14 +485,47 @@ private:
     std::optional<Slide> slide_;
     bool barSlidePending_ = false;  // the bar relights with the slide once it has the new cells
     bool redrawPosted_ = false;
+    bool commitPending_ = false;  // a property changed that no draw carries
+    size_t commits_ = 0;
     std::unique_ptr<SpaceBarView> bar_;
+    std::unique_ptr<SidebarTopRowView> topRow_;
+    std::unique_ptr<FavoritesView> favorites_;
+    // Create a Space: the page, and the controller's creation (SetCreation).
+    std::unique_ptr<SpaceCreationView> creationView_;
+    const std::optional<SpaceCreation>* creation_ = nullptr;
+    bool creationShownTaken_ = false;  // TakeCreationShownChange's last answer
+    // The pages' clip: the sidebar's width, or nothing while Create a Space hides the strip.
+    void ClipPages();
+    bool creationPress_ = false;  // a left press went to the page
+    bool plusPress_ = false;      // a left press on the + button
+    FavoritesView::DrawIcon drawIcon_;  // the favorites' icons, drawn as the rows'
+    bool emptyStateDismissed_ = false;
+    float listTop_ = sidebar_metrics::kHeaderAreaHeight;  // where the page starts, under the favorites
+    PageStatus page_;
+    // Hidden or shown, and the slide there: from and to (points, the leading edge), since when.
+    bool shown_ = true;
+    struct Toggle {
+        float from, to;
+        double start;  // FrameClock seconds
+        Microsoft::WRL::ComPtr<IDCompositionAnimation> animation;
+    };
+    std::optional<Toggle> toggle_;
     std::unique_ptr<SpaceTipView> tip_;
-    std::unique_ptr<SpaceRenameField> rename_;  // while a space is renamed
+    std::unique_ptr<RenameField> rename_;  // while a space, tab or folder is renamed
+    RenameTarget renameTarget_;            // what it renames
+    std::string renamePage_;               // the space whose page it's in
+    size_t pageDraws_ = 0;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> doneFormat_;  // the rename's Done
     bool barDragging_ = false;  // the press on a cell dragged it (BeginDrag)
     bool renamePressed_ = false;  // a left press went to the rename field
     std::map<std::string, SpaceTip> tips_;  // each space's, by id (from the last Update)
     std::optional<std::string> tipHover_;  // the cell the tip's timer, or the tip, is for
+    std::optional<std::string> pickerSpace_;  // the space whose icon picker is open
+    // Whether a header keeps its icon's slot: it has an icon, or its picker is open.
+    bool HeaderShowsIcon(const SidebarRow& row) const { return !row.icon.empty() || pickerSpace_ == row.id; }
+    // The selected page's rows as presses see them: the picker's placeholder is the icon button's
+    // (SpaceHeaderRowCell's iconButton holds it), so it's hit as an icon is.
+    std::vector<SidebarRow> PressRows() const;
 
     // Pointer.
     Actions actions_;
@@ -302,6 +537,12 @@ private:
     std::optional<std::pair<SidebarRow::Kind, std::string>> hover_;  // the hovered row's kind and id
     std::optional<SidebarPress> press_;
     std::optional<SpaceBarPress> barPress_;  // a press on a space's cell (core's)
+    std::optional<TopRowButton> topPress_;   // a press on an enabled top-row button
+    std::optional<FavoritePress> favoritePress_;  // a press on a favorite's pane
+    std::optional<SidebarPress> middlePress_;     // a middle press on a tab's row (it closes on release)
+    // A Ctrl+left press on a row, pane or cell (not on one of its buttons): its menu opens when it's let
+    // go over the same one, as a right-click's does; on New Tab (no menu) it's spent.
+    std::optional<SidebarMenuTarget> menuPress_;
     bool activating_ = false;         // the next press brings the window forward
     int clicks_ = 0;
     DWORD lastClickTime_ = 0;

@@ -105,12 +105,16 @@ public enum AutomationWire {
         public var arguments: JSONValue
         /// The Claude task this call comes from (`KITE_AGENT_TASK`), when Kite started the client itself.
         public var task: String?
+        /// Who's calling, for the action trace: the MCP client's name from its initialize ("claude-code"), or "cli"
+        /// for `kite call` and the CLI's own commands. Older CLIs don't send it.
+        public var client: String?
 
-        public init(id: Int, tool: String, arguments: JSONValue, task: String? = nil) {
+        public init(id: Int, tool: String, arguments: JSONValue, task: String? = nil, client: String? = nil) {
             self.id = id
             self.tool = tool
             self.arguments = arguments
             self.task = task
+            self.client = client
         }
     }
 

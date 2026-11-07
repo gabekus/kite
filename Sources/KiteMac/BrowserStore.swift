@@ -147,6 +147,7 @@ final class BrowserStore {
     static func incognito() -> BrowserStore {
         let store = BrowserStore(state: BrowserState(spaces: [Space(name: "Incognito", icon: "🕶️", theme: Theme.presets[3])]))
         store.tidiesPinnedTabs = false
+        store.isPrivate = true
         return store
     }
 
@@ -174,9 +175,19 @@ final class BrowserStore {
     /// Tidy Tab Titles names the tabs pinned here; off in incognito, where nothing leaves the window.
     @ObservationIgnored var tidiesPinnedTabs = true
 
+    /// Where every tab sat after the last traced change (`TraceLayout`), for the trace's tab events. nil until the
+    /// first change, and always in a private window, which traces nothing.
+    @ObservationIgnored private(set) var traceLayout: TraceLayout?
+    /// An incognito window: nothing it does goes in the action trace.
+    @ObservationIgnored var isPrivate = false
+    /// When the command bar last opened, for the trace's time from intent to a ready page.
+    @ObservationIgnored private(set) var commandBarOpened: Double?
+
     /// Takes a change made in another normal window, keeping this window's selection.
     func adopt(_ other: BrowserState, delay: SessionSaveDelay = .soon) {
         state = state.adoptingContent(of: other)
+        // The window that made the change traced it; this one only keeps up.
+        if traceLayout != nil, Trace.isEnabled { traceLayout = TraceLayout(state) }
         scheduleSave(delay)
         onChange?()
         didChangeState?(delay)
@@ -287,6 +298,7 @@ final class BrowserStore {
         // Tidy Tabs' headers lose tabs that left Today, and go when they have none.
         state.pruneTabGroups()
         registerUndo(from: before, to: state)
+        traceChanges(from: before)
         scheduleSave()
         onChange?()
         link?.propagate(from: self)
@@ -314,10 +326,25 @@ final class BrowserStore {
         didChangeState?(delay)
     }
 
+    /// The sidebar changes since `before`, as trace events: tabs opened, closed, moved, pinned, selected, spaces
+    /// switched, folders made (`TraceLayout`). Who made them is whoever is acting in this task (an agent's call, Kite's
+    /// housekeeping), or the user.
+    private func traceChanges(from before: BrowserState) {
+        guard !isPrivate, Trace.isEnabled else { return }
+        let base = traceLayout ?? TraceLayout(before)
+        let after = TraceLayout(state)
+        traceLayout = after
+        guard after != base else { return }
+        for change in after.changes(since: base) {
+            Trace.event(change.name, tab: change.tab, url: change.url, actor: ActionTrace.actor(forTab: change.tab),
+                        session: change.session, change.attrs)
+        }
+    }
+
     /// Archives unpinned tabs left unused longer than the user's setting.
     func archiveStaleTabs() {
         guard let interval = state.archiveAfter.seconds else { return }
-        withoutUndo { mutate { $0.archiveStaleTabs(olderThan: interval) } }
+        Trace.$actor.withValue(.kite) { withoutUndo { mutate { $0.archiveStaleTabs(olderThan: interval) } } }
     }
 
     /// + › New Space: a nameless space right after this one, shown as Arc's Create a Space page. It keeps
@@ -398,12 +425,19 @@ final class BrowserStore {
     func endRenamingFolder() { renamingFolderID = nil }
 
     func showCommandBar(_ mode: CommandBarMode) {
+        if commandBar == nil, !isPrivate, Trace.isEnabled {
+            commandBarOpened = TraceClock.monotonic()
+            Trace.event("command_bar.opened", tab: state.selectedTab?.id, ["mode": .string(TraceRedaction.word("\(mode)"))])
+        }
         commandBar = mode
         onChange?()
     }
 
     func hideCommandBar() {
         guard commandBar != nil else { return }
+        if !isPrivate, let opened = commandBarOpened {
+            Trace.event("command_bar.closed", duration: TraceClock.monotonic() - opened)
+        }
         commandBar = nil
         // Closed without picking a page for the new pane: cancel the split.
         if let pane = pendingSplitPane {

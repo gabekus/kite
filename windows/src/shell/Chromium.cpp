@@ -16,8 +16,10 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "include/cef_find_handler.h"
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_dialog_handler.h"
+#include "include/cef_download_handler.h"
 #include "include/cef_focus_handler.h"
 #include "include/cef_jsdialog_handler.h"
 #include "include/cef_keyboard_handler.h"
@@ -27,7 +29,9 @@
 #include "include/cef_request_handler.h"
 #include "include/cef_task.h"
 #include "include/cef_v8.h"
+#include "core/ChromiumSwitches.h"
 #include "core/Json.h"
+#include "core/DownloadsModel.h"
 #include "core/LiveTabPolicy.h"
 #include "core/Uuid.h"
 #include "shell/Keys.h"
@@ -50,7 +54,7 @@ constexpr char kEnergySaverPref[] = "performance_tuning.battery_saver_mode.state
 
 // How long closing the window waits for the browsers before it goes ahead anyway.
 constexpr UINT kCloseDeadlineMs = 5'000;
-constexpr UINT_PTR kCloseDeadlineTimer = 0x4B43;  // 'KC'; BrowserWindowController's timers are small numbers
+constexpr UINT_PTR kCloseDeadlineTimer = Chromium::kCloseDeadlineTimer;  // 'KC'; BrowserWindowController's timers are small numbers
 
 // Tells the browser process which renderer hosts each tab's main frame. CEF has no
 // browser-side accessor for a browser's render process id, so the renderer sends its own, from
@@ -59,6 +63,42 @@ constexpr UINT_PTR kCloseDeadlineTimer = 0x4B43;  // 'KC'; BrowserWindowControll
 // run, as on the Mac, whose Task Manager reads it (Windows' will); today only --smoke-test
 // uses it, and a message per new main-frame context costs nothing that shows.
 constexpr char kRendererPIDMessage[] = "kite.rendererPID";
+// From the renderer (KiteHelperApp), for each tab's main frame: whether the page reads as
+// visible (a bool), as its script context is made and on each (trusted) visibilitychange. Kite
+// acts only on a page it has hidden (Shared::PageVisibility): Chromium can show a page whose
+// windows Kite hid before it drew (a page made while Kite can't be seen), and only Kite hiding
+// them again hides it. Only a speed-up: a page can lose the listener (document.open() drops
+// every listener), so the scheduled re-hides (kRehideScheduleMs) trust nothing of it.
+constexpr char kVisibilityMessage[] = "kite.pageVisibility";
+// Hiding a page again shows its windows for an instant, which the page reports as visible and
+// then hidden: a report this soon after is looked at again once this has passed, not acted on.
+constexpr ULONGLONG kRehideSettleMs = 250;
+// After anything the browser sees that might make Chromium show a page (its browser made, its
+// placement going hidden, a main-frame load starting or ending), a page Kite has hidden is
+// hidden again at these times, whatever the page says (Shared::Anchor). None of them is what
+// makes Chromium show it; it was seen 0.4 to 1.3 s after them (measured), with or without a
+// load end.
+constexpr int64_t kRehideScheduleMs[] = {500, 1000, 1500, 2000, 3000, 6000};
+// To the renderer (Shared::Ask): report the page's visibility now, through the getter its
+// VisibilityReporter kept, which neither a page's redefinitions nor document.open() reach.
+constexpr char kAskVisibilityMessage[] = "kite.askVisibility";
+// After each step (and each re-hide), the page is asked about itself every kAskEveryMs until a
+// newer step or re-hide starts the asking over: Chromium can show a page it was about to show
+// 0.3 to 0.7 s after the last re-hide (measured), later on a busy PC, so a blind step alone left
+// it drawing until the next one. At most kMaxAsks per anchor: enough to ask all through the 6 s
+// schedule and some 4 s after it.
+constexpr int64_t kAskEveryMs = 250;
+constexpr int kMaxAsks = 40;
+// While the renderer answers (it said "hidden" this recently), a step asks at once instead of
+// re-hiding blindly, and an answer of "visible" is re-hidden: the blind steps are for a
+// renderer that's silent (or lies). Each re-hide shows the page for a frame or two.
+constexpr ULONGLONG kTrustHiddenMs = 500;
+// A new anchor keeps a step due this soon rather than restarting the schedule (Shared::Anchor).
+constexpr ULONGLONG kKeepDueStepMs = 500;
+// At most this many re-hides of a page in any 10 s, whatever its renderer says: two
+// navigations' schedules (start and end each restart it) and their reports.
+constexpr size_t kMaxRehidesPer10s = 16;
+constexpr ULONGLONG kRehideWindowMs = 10'000;
 
 CefRect ToCefRect(const RECT& r) { return CefRect(r.left, r.top, r.right - r.left, r.bottom - r.top); }
 
@@ -99,7 +139,7 @@ HWND FindPageWidget(HWND host) {
 
 }  // namespace
 
-struct Chromium::Shared {
+struct Chromium::Shared : std::enable_shared_from_this<Chromium::Shared> {
     HWND window = nullptr;
     // A quiet run (Start's `quiet`): no page takes the focus or shows a dialog, and the
     // pages' windows never activate. Set before CEF starts, then only read (any thread).
@@ -114,10 +154,15 @@ struct Chromium::Shared {
     std::atomic<bool> inputBlocked{false};
     // Keys that reach a page go to Kite: from Ctrl+T in a page until Kite unblocks input.
     std::atomic<bool> keysToKite{false};
+    // KeepKeyboard: a navigation doesn't move the keyboard to the page.
+    std::atomic<bool> kiteKeepsKeyboard{false};
+    // BlockInput(false) is enabling the page windows again (CEF's thread only).
+    bool reenabling = false;
     // Use Both's "second press" bookkeeping, on CEF's UI thread only (OnPreKeyEvent, OnKeyEvent).
     ShortcutPriorityGate gate;
-    // The Mac's gEnergySaverEnabled: off unless the user turns it on (SetEnergySaverEnabled).
-    std::atomic<bool> energySaverEnabled{false};
+    // The Mac's gEnergySaverEnabled: on unless the user turns it off, as in Chrome
+    // (SetEnergySaverEnabled).
+    std::atomic<bool> energySaverEnabled{true};
 
     // Both threads, under the mutex.
     std::mutex mutex;
@@ -131,6 +176,14 @@ struct Chromium::Shared {
     // CefShutdown. Changed only with the counts, under the mutex.
     HANDLE allClosed = nullptr;
     std::map<std::pair<int, int>, std::string> popupTabs;  // (opener browser id, popup_id) → tab id
+
+    // The overlay's hole as each page's window has it: the find bar's rounded rectangle, in the
+    // window's own px (its region's), or none.
+    struct Hole {
+        RECT rect{};
+        int radius = 0;
+        bool operator==(const Hole& o) const { return EqualRect(&rect, &o.rect) && radius == o.radius; }
+    };
 
     // Kite's UI thread only.
     struct Placement {
@@ -148,6 +201,25 @@ struct Chromium::Shared {
         Timestamp lastShown = Now();  // made, or last on the card (the Mac's lastShown)
         bool mediaInUse = false;      // camera, microphone or screen capture (OnMediaAccessChange)
         std::string profile;          // the profile directory it was made in (a popup: its opener's)
+        Hole hole;                    // the overlay's hole as last sent, in its window's px
+        // PageVisibility and PageLoaded: what the page last said, when its recent re-hides were
+        // (the last 10 s, kMaxRehidesPer10s), and whether a look after the last one is due.
+        bool saysVisible = false;
+        std::deque<ULONGLONG> rehides;
+        uint64_t schedule = 0;  // Anchor's latest; an older schedule's steps do nothing
+        ULONGLONG anchoredAt = 0;  // when the latest anchor came (GetTickCount64)
+        ULONGLONG stepDue = 0;     // when the pending step fires; 0 for none
+        int asksLeft = 0;          // AskLater's budget for this anchor
+        uint64_t ask = 0;          // AskLater's latest; an older ask does nothing
+        ULONGLONG saidHiddenAt = 0;  // when the renderer last said the page reads as hidden
+        bool recheckDue = false;
+        // Find asked for before the browser existed (Ctrl+F straight after a new tab): run once
+        // it's made, the last one asked for.
+        struct PendingFind {
+            std::string text;
+            bool forward = true, findNext = false;
+        };
+        std::optional<PendingFind> pendingFind;
     };
     // Kite's UI thread only. Browsers Kite closed (Close) whose DoClose hasn't come back yet:
     // out of `pages`, so their tab can have a new page, but the window waits for them.
@@ -159,9 +231,237 @@ struct Chromium::Shared {
     std::map<std::string, CefRefPtr<CefRequestContext>> contexts;  // by profile directory
     std::string shown;
     bool minimized = false;
+    bool occluded = false;  // SetOccluded
+    // The feature lists CEF had before Kite's went on (OnBeforeCommandLineProcessing, before any
+    // other thread reads them; ReadFeatureLists).
+    std::string cefEnableFeatures, cefDisableFeatures;
+    Hole overlayHole;  // SetOverlayHole's, in client px
     LiveTabPolicy policy;  // at most six live pages, as the Mac's PagePool
     ULONGLONG closingSince = 0;  // when MayCloseWindow started closing
     bool closeForced = false;    // the deadline closed the window before every browser was ready
+
+    // MARK: Downloads (KCBrowser.mm's LiveDownloads and its download handler)
+
+    // A download Kite is following. Chromium numbers each browser context's downloads from 1,
+    // so a download is its id plus its context's key ("" for the default profile, the folder
+    // for another; a page's client knows its profile). Its callback is kept until it completes
+    // or is canceled (interrupted too, as it can resume), so Kite can cancel it. Under
+    // downloadsMutex: CEF's thread follows them, Kite's cancels and asks which page has one.
+    struct LiveDownload {
+        std::string context;
+        uint32_t id = 0;
+        // The browser that last reported it (Chromium carries a download over to another page
+        // of its profile when its own closes).
+        int browser = 0;
+        CefRefPtr<CefDownloadItemCallback> callback;
+        // When its bytes last moved (GetTickCount64), for a parked page's stall bound.
+        int64_t received = 0;
+        ULONGLONG progressedAt = GetTickCount64();
+        bool running = true;  // in progress (not interrupted, finished or a store package)
+        // A Chrome Web Store package (IsExtensionPackage, decided once, when it's first seen):
+        // cancelled until Kite can install extensions (W27a), and never listed.
+        bool storePackage = false;
+    };
+    // Interrupted downloads stay followed and a destroyed browser may never send a final
+    // update, so past this many the oldest one not running goes. A running one never does.
+    static constexpr size_t kMaxLiveDownloads = 200;
+    mutable std::mutex downloadsMutex;
+    std::vector<LiveDownload> liveDownloads;
+    // The paths given to downloads still running, by download (DownloadKey): reserved as each
+    // one's free name is found, so a burst of same-name downloads gets a path each.
+    DownloadReservations reservations{[](const std::filesystem::path& a, const std::filesystem::path& b) {
+        return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_EQUAL;
+    }};
+    // Downloads whose name is being found on CEF's file thread, with Chromium's callback (held
+    // here rather than in the task, so a shutdown lets go of them before CEF goes).
+    std::map<std::string, CefRefPtr<CefBeforeDownloadCallback>> resolving;
+    static std::string DownloadKey(const std::string& context, uint32_t id) { return context + '\n' + std::to_string(id); }
+    // SetDownloadLocations' answer, read as each download starts.
+    std::map<std::string, ProfileSettings> downloadSettings;
+    std::filesystem::path downloadFolder;
+    // Reports waiting for Kite's thread, one per download (a newer one replaces it in place,
+    // keeping the order downloads first reported), and whether a delivery is on its way.
+    std::vector<DownloadUpdate> downloadReports;
+    bool downloadsPosted = false;
+    uint64_t reportsFromChromium = 0, reportsDelivered = 0;
+    // Pages closed while one of their downloads ran (Kite's UI thread): hidden, muted and on
+    // about:blank, and closed once their downloads are done, so Chromium keeps reporting them
+    // (Shared::ReleaseParked). Once a page's browser is gone Chromium may stop reporting its
+    // downloads (it hands them to another page of the profile only if one is there as it goes,
+    // seen both ways on the PC). `window`: a page past DoClose (it closed itself), whose window
+    // is destroyed then; else one Kite closed, which CloseBrowser closes then. A parked page opens
+    // no popups or tabs, shows no dialogs (Leave Page is answered Leave), and one whose downloads
+    // haven't moved for ParkedStallCheck::kStallMs is cancelled and goes.
+    struct Parked {
+        CefRefPtr<CefBrowser> browser;
+        HWND window = nullptr;
+    };
+    std::vector<Parked> parked;
+    // The stall check's timer on Kite's window (BrowserWindowController hands its WM_TIMER to
+    // Chromium::HandleTimer), running only while a page is parked (ParkedStallCheck).
+    ParkedStallCheck stallCheck;  // Kite's UI thread
+    // Under downloadsMutex: which browsers are parked (CEF's thread asks, for popups, dialogs and
+    // stalls), and, for --save-log only (logParked), what each parked page was as it went.
+    std::set<int> parkedIDs;
+    bool logParked = false;
+    std::vector<std::pair<std::string, bool>> parkedLog;
+    std::atomic<int> parkedLeavesAnswered{0};  // Leave Page dialogs a parked page asked for
+
+    bool IsParked(int browser) const {
+        std::lock_guard lock(downloadsMutex);
+        return parkedIDs.contains(browser);
+    }
+    // Any thread: the page is parked from now on (before it's quietened, so the Leave Page dialog
+    // its navigation asks for is answered as a parked page's).
+    void MarkParked(int browser) {
+        std::lock_guard lock(downloadsMutex);
+        parkedIDs.insert(browser);
+    }
+    // Kite's thread. Parks a page (or gives a parked one the window it now has to destroy).
+    void Park(const CefRefPtr<CefBrowser>& browser, HWND pageWindow) {
+        for (Parked& page : parked) {
+            if (!page.browser->IsSame(browser)) continue;
+            if (pageWindow) page.window = pageWindow;
+            return;
+        }
+        parked.push_back({browser, pageWindow});
+        MarkParked(browser->GetIdentifier());
+        FollowParked();
+    }
+    // CEF's thread: a page that's parked plays nothing and runs nothing (its camera, microphone,
+    // sound and scripts go with the navigation); its downloads belong to its profile, not the
+    // page, and go on (checked on the PC).
+    static void Quieten(const CefRefPtr<CefBrowser>& browser) {
+        browser->GetHost()->SetAudioMuted(true);
+        if (const CefRefPtr<CefFrame> frame = browser->GetMainFrame()) frame->LoadURL("about:blank");
+    }
+    // Closes a parked page now, on CEF's thread, noting what it was for --save-log.
+    void CloseParked(const Parked& page) {
+        bool log = false;
+        {
+            std::lock_guard lock(downloadsMutex);
+            parkedIDs.erase(page.browser->GetIdentifier());
+            log = logParked;
+        }
+        RunOnCefUIThread([this, page, log] {
+            if (log) {
+                const CefRefPtr<CefFrame> frame = page.browser->GetMainFrame();
+                std::pair<std::string, bool> entry(frame ? frame->GetURL().ToString() : std::string(), page.browser->GetHost()->IsAudioMuted());
+                std::lock_guard lock(downloadsMutex);
+                parkedLog.push_back(std::move(entry));
+            }
+            if (page.window) DestroyWindow(page.window);
+            else page.browser->GetHost()->CloseBrowser(true);
+        });
+    }
+    // Kite's thread: the stall check's timer runs exactly while a page is parked.
+    void FollowParked() {
+        switch (stallCheck.Parked(closing ? 0 : parked.size())) {
+        case ParkedStallCheck::Timer::Start:
+            SetTimer(window, Chromium::kStallTimer, static_cast<UINT>(ParkedStallCheck::kEveryMs), nullptr);
+            break;
+        case ParkedStallCheck::Timer::Stop: KillTimer(window, Chromium::kStallTimer); break;
+        case ParkedStallCheck::Timer::Leave: break;
+        }
+    }
+    // Kite's thread, the timer's tick: a parked page's downloads that haven't moved for kStallMs
+    // are cancelled (CefDownloadItemCallback may be called on any thread); their page then goes.
+    int stallTicks = 0;  // the timer's ticks (Kite's thread), for the save log
+    void CancelStalled() {
+        ++stallTicks;
+        std::vector<CefRefPtr<CefDownloadItemCallback>> stalled;
+        {
+            std::lock_guard lock(downloadsMutex);
+            const ULONGLONG now = GetTickCount64();
+            for (const LiveDownload& download : liveDownloads) {
+                if (download.running && download.callback && parkedIDs.contains(download.browser) &&
+                    ParkedStallCheck::Stalled(download.progressedAt, now)) {
+                    stalled.push_back(download.callback);
+                }
+            }
+        }
+        for (const auto& callback : stalled) callback->Cancel();
+    }
+
+    LiveDownload* FindLiveDownload(const std::string& context, uint32_t id) {
+        for (LiveDownload& download : liveDownloads) {
+            if (download.id == id && download.context == context) return &download;
+        }
+        return nullptr;
+    }
+    LiveDownload& AddLiveDownload(const std::string& context, uint32_t id) {
+        if (liveDownloads.size() >= kMaxLiveDownloads) {
+            auto stale = std::find_if(liveDownloads.begin(), liveDownloads.end(), [](const LiveDownload& d) { return !d.running; });
+            if (stale != liveDownloads.end()) {
+                reservations.Release(DownloadKey(stale->context, stale->id));
+                liveDownloads.erase(stale);
+            }
+        }
+        LiveDownload download;
+        download.context = context;
+        download.id = id;
+        liveDownloads.push_back(std::move(download));
+        return liveDownloads.back();
+    }
+
+    // Whether a download of the browser's is still running (any thread).
+    bool RunningDownloadsIn(int browser) const {
+        std::lock_guard lock(downloadsMutex);
+        return std::any_of(liveDownloads.begin(), liveDownloads.end(),
+                           [&](const LiveDownload& d) { return d.browser == browser && d.running && !d.storePackage; });
+    }
+    // Kite's thread: a parked page whose downloads are done closes now.
+    void ReleaseParked() {
+        for (auto it = parked.begin(); it != parked.end();) {
+            if (closing || RunningDownloadsIn(it->browser->GetIdentifier())) {
+                ++it;
+                continue;
+            }
+            CloseParked(*it);
+            it = parked.erase(it);
+        }
+        FollowParked();
+    }
+
+    // The settings for a download from `profile` (DownloadLocation.settings; a profile Kite
+    // doesn't know reads Default's) and the folder for one that chose none. No disk here: the
+    // chosen folder's existence is checked with the name, on CEF's file thread.
+    std::pair<ProfileSettings, std::filesystem::path> DownloadSettings(const std::string& profile) {
+        std::lock_guard lock(downloadsMutex);
+        auto it = downloadSettings.find(profile);
+        if (it == downloadSettings.end()) it = downloadSettings.find(BrowserState::kDefaultProfile);
+        return {it != downloadSettings.end() ? it->second : ProfileSettings(), downloadFolder};
+    }
+
+    // CEF's thread: hands the report to Kite's, folded into one still waiting for the same
+    // download, so one delivery carries each download's latest however often Chromium reports.
+    void ReportDownload(DownloadUpdate update) {
+        bool post = false;
+        {
+            std::lock_guard lock(downloadsMutex);
+            ++reportsFromChromium;
+            auto waiting = std::find_if(downloadReports.begin(), downloadReports.end(), [&](const DownloadUpdate& u) {
+                return u.engineID == update.engineID && u.engineContext == update.engineContext;
+            });
+            if (waiting != downloadReports.end()) *waiting = std::move(update);
+            else downloadReports.push_back(std::move(update));
+            post = !std::exchange(downloadsPosted, true);
+        }
+        if (post) Post([this] { DeliverDownloads(); });
+    }
+
+    // Kite's thread.
+    void DeliverDownloads() {
+        std::vector<DownloadUpdate> reports;
+        {
+            std::lock_guard lock(downloadsMutex);
+            reports.swap(downloadReports);
+            downloadsPosted = false;
+            reportsDelivered += reports.size();
+        }
+        if (!events.downloadUpdated) return;
+        for (const DownloadUpdate& update : reports) events.downloadUpdated(update);
+    }
 
     // Hands work to Kite's UI thread; one wake per batch.
     void Post(std::function<void()> work) {
@@ -202,26 +502,71 @@ struct Chromium::Shared {
     // reflow, on every tab switch. It leans on Chromium's window layout, so a missing widget
     // is reported (widgetMissing, which fails --smoke-test); W10's off-screen pages replace it
     // with WasHidden.
+    // Also the overlay's hole: in the shown page's window, in none of the others. A window's
+    // region clips its hit-testing (and its drawing, where the bar covers it anyway), so a click
+    // there falls through to Kite's window behind it. One task on CEF's thread places and cuts
+    // each window that changed; a region set just before the window moves is set without its own
+    // repaint (bRedraw FALSE), so a resize step repaints once.
     void Layout() {
         const RECT card = Bounds();
-        std::vector<std::pair<HWND, Placement>> changes;
+        struct Change {
+            HWND host;
+            std::optional<Placement> placement;  // when it moved, showed or hid
+            std::optional<Hole> hole;            // when its hole changed
+        };
+        std::vector<Change> changes;
         for (auto& [id, page] : pages) {
             if (!page.hwnd) continue;
+            Change change{page.hwnd, std::nullopt, std::nullopt};
             Placement wanted;
-            wanted.visible = id == shown && !minimized;
+            wanted.visible = id == shown && !minimized && !occluded;
             wanted.rect = wanted.visible ? card : page.placed.rect;
-            if (wanted == page.placed) continue;
-            page.placed = wanted;
-            changes.emplace_back(page.hwnd, wanted);
+            if (!(wanted == page.placed)) {
+                const bool hiding = page.placed.visible && !wanted.visible;
+                page.placed = wanted;
+                change.placement = wanted;
+                // Hidden now: Chromium may still show it, if it hadn't drawn yet.
+                if (hiding) Anchor(id, page);
+            }
+            Hole hole;
+            if (wanted.visible && !IsRectEmpty(&overlayHole.rect)) {
+                hole = overlayHole;
+                OffsetRect(&hole.rect, -card.left, -card.top);
+            }
+            if (!(hole == page.hole)) {
+                page.hole = hole;
+                change.hole = hole;
+            }
+            if (change.placement || change.hole) changes.push_back(change);
         }
         if (changes.empty()) return;
         // Shown first, then hidden, so the card is never empty in between.
-        std::stable_partition(changes.begin(), changes.end(), [](const auto& c) { return c.second.visible; });
+        std::stable_partition(changes.begin(), changes.end(), [](const Change& c) { return !c.placement || c.placement->visible; });
         RunOnCefUIThread([changes = std::move(changes)] {
-            for (const auto& [host, placement] : changes) {
+            for (const Change& change : changes) {
+                const HWND host = change.host;
+                if (change.hole) {
+                    // Repainted by the move that follows, when one does.
+                    const BOOL redraw = change.placement && change.placement->visible ? FALSE : TRUE;
+                    const Hole& hole = *change.hole;
+                    if (IsRectEmpty(&hole.rect)) {
+                        SetWindowRgn(host, nullptr, redraw);
+                    } else {
+                        // As big as a window can be, less the hole, so it holds through any resize.
+                        // CreateRoundRectRgn leaves out its right and bottom edges, as RECTs do.
+                        HRGN region = CreateRectRgn(0, 0, 32767, 32767);
+                        HRGN cut = CreateRoundRectRgn(hole.rect.left, hole.rect.top, hole.rect.right + 1, hole.rect.bottom + 1,
+                                                      2 * hole.radius, 2 * hole.radius);
+                        if (region && cut) CombineRgn(region, region, cut, RGN_DIFF);
+                        if (cut) DeleteObject(cut);
+                        // The window owns the region once it's set.
+                        if (region && !SetWindowRgn(host, region, redraw)) DeleteObject(region);
+                    }
+                }
+                if (!change.placement) continue;
                 const HWND widget = FindPageWidget(host);
-                if (placement.visible) {
-                    const RECT& r = placement.rect;
+                if (change.placement->visible) {
+                    const RECT& r = change.placement->rect;
                     SetWindowPos(host, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top,
                                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
                     if (widget) ShowWindow(widget, SW_SHOWNA);
@@ -233,10 +578,174 @@ struct Chromium::Shared {
         });
     }
 
+    // As the Mac's ChromiumEngine.find: a new search only highlights, so it steps once more to
+    // make the first match active (1/N), as Chrome does.
+    static void RunFind(CefRefPtr<CefBrowser> browser, std::string text, bool forward, bool findNext) {
+        RunOnCefUIThread([browser, text = std::move(text), forward, findNext] {
+            CefRefPtr<CefBrowserHost> host = browser->GetHost();
+            host->Find(text, forward, false, findNext);
+            if (!findNext) host->Find(text, forward, false, true);
+        });
+    }
+
     void FocusShown() {
-        if (inputBlocked) return;
+        // Nor while Kite's find field has it: a page made after Ctrl+F (its Attach) leaves it there.
+        if (inputBlocked || kiteKeepsKeyboard) return;
         auto it = pages.find(shown);
-        if (it != pages.end() && it->second.browser) it->second.browser->GetHost()->SetFocus(true);
+        if (it == pages.end() || !it->second.browser) return;
+        // Asked again on CEF's thread, as it runs: a field of Kite's may have taken the keyboard
+        // since (Ctrl+F as the command bar closed), and the page doesn't take it back then.
+        RunOnCefUIThread([shared = shared_from_this(), browser = it->second.browser] {
+            if (!shared->inputBlocked && !shared->kiteKeepsKeyboard) browser->GetHost()->SetFocus(true);
+        });
+    }
+
+    // The renderer says whether a page reads as visible (kVisibilityMessage). Visible is fine when
+    // Kite shows it; when Kite has it hidden (another tab's, or the shown one while Kite is
+    // minimized or can't be seen) Chromium showed it on its own. Kite hid the page's windows
+    // before Chromium had shown the page, so their hiding never reached it (measured: a page made
+    // while Kite was covered went `hidden`, then `visible` about 0.4 s after its load, and ran
+    // rAF at 350 fps behind hidden windows). Hiding a hidden window again sends Chromium
+    // nothing, so Kite shows the windows and hides them again (HideAgain): Chromium reads that
+    // hide (HWNDMessageHandler's SWP_HIDEWINDOW) as any other.
+    void PageVisibility(const std::string& tabID, const CefRefPtr<CefBrowser>& browser, bool visible) {
+        Page* page = PageFor(tabID, browser);
+        if (!page) return;
+        page->saysVisible = visible;
+        if (!visible) page->saidHiddenAt = GetTickCount64();
+        RehideIfShowing(tabID, *page);
+        // Shown while Kite has it hidden: asked again after the re-hide, until it says hidden.
+        if (visible && page->hwnd && !page->placed.visible) AskLater(tabID, *page);
+    }
+    // Asks the page's renderer for its visibility (kAskVisibilityMessage) `first` ms from now and
+    // then every kAskEveryMs, until a newer call starts over (the next step, or a re-hide after a
+    // `visible`) or this anchor's budget is spent; each answer comes back as a kVisibilityMessage
+    // (PageVisibility). A renderer that doesn't answer, or lies, still gets the blind steps.
+    void AskLater(const std::string& tabID, Page& page, int64_t first = kAskEveryMs) {
+        if (page.asksLeft <= 0 || !page.browser) return;
+        AskIn(tabID, page.browser, ++page.ask, first);
+    }
+    void AskIn(const std::string& tabID, const CefRefPtr<CefBrowser>& browser, uint64_t ask, int64_t delay) {
+        CefPostDelayedTask(TID_UI, new FunctionTask([shared = shared_from_this(), tabID, browser, ask] {
+            shared->Post([shared, tabID, browser, ask] {
+                Page* p = shared->PageFor(tabID, browser);
+                if (!p || p->ask != ask || p->asksLeft <= 0) return;  // closed, or newer asks replace these
+                if (!p->hwnd || p->placed.visible) return;
+                --p->asksLeft;
+                RunOnCefUIThread([browser] {
+                    if (CefRefPtr<CefFrame> frame = browser->GetMainFrame()) frame->SendProcessMessage(PID_RENDERER, CefProcessMessage::Create(kAskVisibilityMessage));
+                });
+                shared->AskIn(tabID, browser, ask, kAskEveryMs);
+            });
+        }), delay);
+    }
+    // Something happened that might make Chromium show the page (kRehideScheduleMs): from now,
+    // a page Kite has hidden then is hidden again at each step, asking nothing of the page, which
+    // may have dropped the listener (document.open) or be compromised. A new anchor restarts the
+    // schedule, never adds one: one step is pending per page at a time. But a step due within
+    // kKeepDueStepMs stays, and the schedule goes on from the new anchor after it, so anchors
+    // coming faster than that (a page navigating itself over and over) can't put the first
+    // re-hide off for good. Past the last step, a page whose listener is gone could still draw
+    // (docs/windows.md, P2's Known gaps).
+    void Anchor(const std::string& tabID, Page& page) {
+        if (!page.browser) return;
+        const ULONGLONG now = GetTickCount64();
+        page.anchoredAt = now;
+        if (page.stepDue && page.stepDue <= now + kKeepDueStepMs) return;  // it stays; the rest follows the new anchor
+        page.asksLeft = kMaxAsks;
+        ScheduleStep(tabID, page.browser, ++page.schedule, page, kRehideScheduleMs[0]);
+    }
+    void Anchored(const std::string& tabID, const CefRefPtr<CefBrowser>& browser) {
+        if (Page* page = PageFor(tabID, browser)) Anchor(tabID, *page);
+    }
+    // The pending step, `delay` ms from now. When it fires: the re-hide, then the first step of
+    // the latest anchor's schedule still ahead, if any.
+    void ScheduleStep(const std::string& tabID, const CefRefPtr<CefBrowser>& browser, uint64_t schedule, Page& page, int64_t delay) {
+        page.stepDue = GetTickCount64() + static_cast<ULONGLONG>(delay);
+        CefPostDelayedTask(TID_UI, new FunctionTask([shared = shared_from_this(), tabID, browser, schedule] {
+            shared->Post([shared, tabID, browser, schedule] {
+                Page* p = shared->PageFor(tabID, browser);
+                if (!p || p->schedule != schedule) return;  // closed, or restarted since
+                p->stepDue = 0;
+                if (p->hwnd && !p->placed.visible) {
+                    // Blind only when the renderer hasn't just said hidden (kTrustHiddenMs);
+                    // otherwise it's asked at once.
+                    const bool answering = GetTickCount64() - p->saidHiddenAt <= kTrustHiddenMs;
+                    if (!answering) Rehide(*p);
+                    shared->AskLater(tabID, *p, answering ? 0 : kAskEveryMs);
+                }
+                const ULONGLONG now = GetTickCount64();
+                for (const int64_t step : kRehideScheduleMs) {
+                    const ULONGLONG due = p->anchoredAt + static_cast<ULONGLONG>(step);
+                    if (due > now) {
+                        shared->ScheduleStep(tabID, browser, schedule, *p, static_cast<int64_t>(due - now));
+                        break;
+                    }
+                }
+            });
+        }), delay);
+    }
+    void RehideIfShowing(const std::string& tabID, Page& page) {
+        if (!page.saysVisible || !page.hwnd || page.placed.visible) return;
+        const ULONGLONG now = GetTickCount64();
+        if (!page.rehides.empty() && now - page.rehides.back() < kRehideSettleMs) {
+            // Likely the last re-hide's own show: looked at again once it's settled.
+            if (page.recheckDue) return;
+            page.recheckDue = true;
+            const auto delay = static_cast<int64_t>(kRehideSettleMs - (now - page.rehides.back()));
+            CefPostDelayedTask(TID_UI, new FunctionTask([shared = shared_from_this(), tabID, browser = page.browser] {
+                shared->Post([shared, tabID, browser] {
+                    if (Page* p = shared->PageFor(tabID, browser)) {
+                        p->recheckDue = false;
+                        shared->RehideIfShowing(tabID, *p);
+                    }
+                });
+            }), delay);
+            return;
+        }
+        Rehide(page);
+    }
+    // HideAgain, unless the page had kMaxRehidesPer10s in the last 10 s.
+    static void Rehide(Page& page) {
+        const ULONGLONG now = GetTickCount64();
+        while (!page.rehides.empty() && now - page.rehides.front() >= kRehideWindowMs) page.rehides.pop_front();
+        if (page.rehides.size() >= kMaxRehidesPer10s) return;
+        page.rehides.push_back(now);
+        RunOnCefUIThread([host = page.hwnd] { HideAgain(host); });
+    }
+    // On CEF's thread, which owns them: shows the page's host and widget windows without
+    // activating them, then hides them again, between two calls on this thread (a few ms).
+    // Never one Layout has shown since. Nothing of it can show, even with Kite in front and the
+    // page another tab's: for the instant, the host has an empty window region (a window draws
+    // only inside its region, and its children only inside it too) and is at the bottom of
+    // Kite's child windows, under the shown page's. Child windows link in at the bottom as
+    // they're made, and Layout never moves them in the z-order, so an older tab's host can be
+    // above a newer shown one. A hidden host's z-order changes nothing; shown again, a page is
+    // under Kite's other child windows, as a new one is.
+    static void HideAgain(HWND host) {
+        if (!IsWindow(host) || (GetWindowLongPtrW(host, GWL_STYLE) & WS_VISIBLE)) return;
+        // The host's own region, if any, for after (a hidden page has none: Layout cuts the
+        // overlay's hole only in the shown one's).
+        HRGN kept = CreateRectRgn(0, 0, 0, 0);
+        const bool hadRegion = kept && GetWindowRgn(host, kept) != ERROR;
+        if (HRGN empty = CreateRectRgn(0, 0, 0, 0); !empty || !SetWindowRgn(host, empty, FALSE)) {
+            if (empty) DeleteObject(empty);
+            if (kept) DeleteObject(kept);
+            return;  // without the empty region, no show
+        }
+        constexpr UINT kShow = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_SHOWWINDOW;
+        // Bottom, under the one shown page. Split view (W36) shows more than one: revisit this
+        // then, so the instant can't land between two shown panes.
+        SetWindowPos(host, HWND_BOTTOM, 0, 0, 0, 0, kShow);
+        if (const HWND widget = FindPageWidget(host)) {
+            SetWindowPos(widget, nullptr, 0, 0, 0, 0, kShow | SWP_NOZORDER);
+            ShowWindow(widget, SW_HIDE);
+        }
+        ShowWindow(host, SW_HIDE);
+        // The window owns a region once it's set.
+        if (!SetWindowRgn(host, hadRegion ? kept : nullptr, FALSE) || !hadRegion) {
+            if (kept) DeleteObject(kept);
+        }
     }
 
     Page* PageFor(const std::string& tabID, const CefRefPtr<CefBrowser>& browser) {
@@ -254,12 +763,17 @@ struct Chromium::Shared {
         pressurePicks.erase(it->first);
         pages.erase(it);
         retiring.push_back(browser);
-        RunOnCefUIThread([browser, hwnd] {
+        // One of its downloads is running: the page stays, hidden, until it's done, so Chromium
+        // keeps reporting it (Shared::ReleaseParked); the window's close still closes it.
+        const bool park = !closing && RunningDownloadsIn(browser->GetIdentifier());
+        if (park) Park(browser, nullptr);
+        RunOnCefUIThread([browser, hwnd, park] {
             if (hwnd) {
                 if (const HWND widget = FindPageWidget(hwnd)) ShowWindow(widget, SW_HIDE);
                 ShowWindow(hwnd, SW_HIDE);
             }
-            browser->GetHost()->CloseBrowser(true);
+            if (park) Quieten(browser);
+            else browser->GetHost()->CloseBrowser(true);
         });
     }
 
@@ -292,7 +806,7 @@ struct Chromium::Shared {
         std::optional<Timestamp> pickedUnderPressure;
         if (auto pick = pressurePicks.extract(tabID)) pickedUnderPressure = pick.mapped();
         if (busy || closing || tabID == shown || it == pages.end() || !it->second.browser || !it->second.browser->IsSame(browser) ||
-            it->second.mediaInUse || (events.keepAlive && events.keepAlive(tabID))) {
+            it->second.mediaInUse || RunningDownloadsIn(browser->GetIdentifier()) || (events.keepAlive && events.keepAlive(tabID))) {
             return;
         }
         if (pickedUnderPressure) {
@@ -321,6 +835,7 @@ struct Chromium::Shared {
         // Never matches, so the first Layout always places it: the window may have been
         // resized or maximized since the browser was asked for.
         page.placed = {true, RECT{-1, -1, -1, -1}};
+        Anchor(tabID, page);
         if (closing) {
             if (!closed) browser->GetHost()->CloseBrowser(true);  // closing started since
             return;
@@ -331,6 +846,10 @@ struct Chromium::Shared {
             browser->GetMainFrame()->LoadURL(page.pendingURL);
             page.pendingURL.clear();
         }
+        if (page.pendingFind) {
+            RunFind(browser, page.pendingFind->text, page.pendingFind->forward, page.pendingFind->findNext);
+            page.pendingFind.reset();
+        }
         // The window got focus before this page existed (at launch, or when a popup tab
         // replaced its opener): hand it over now.
         if (tabID == shown && GetForegroundWindow() == window) FocusShown();
@@ -339,10 +858,6 @@ struct Chromium::Shared {
 
 namespace {
 
-// On a quiet run's renderers' command lines: the renderer skips window.print() (KiteHelperApp)
-// and sends this process message instead.
-constexpr char kQuietSwitch[] = "kite-quiet-run";
-constexpr char kPrintSkipped[] = "kite.printSkipped";
 // The Mac's ApplyEnergySaver, on CEF's UI thread. Energy Saver is a local-state preference, one
 // for all profiles: only the global preferences have it, as on the Mac, and no request
 // context's (a space's own profile) does.
@@ -360,6 +875,10 @@ void ApplyEnergySaver(const Chromium::Shared& shared) {
         OutputDebugStringW((L"Kite: couldn't set Energy Saver: " + error.ToWString() + L"\n").c_str());
     }
 }
+// On a quiet run's renderers' command lines: the renderer skips window.print() (KiteHelperApp)
+// and sends this process message instead.
+constexpr char kQuietSwitch[] = "kite-quiet-run";
+constexpr char kPrintSkipped[] = "kite.printSkipped";
 
 // Kite's CefApp in the browser process: one Kite per profile, as Chromium allows. A second
 // launch hands over to this one instead of opening a Chrome window of its own.
@@ -369,31 +888,29 @@ public:
         : shared_(std::move(shared)), switches_(std::move(switches)) {}
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
 
-    // --chromium-switches, in the browser process only (its helpers get what Chromium passes on).
-    void OnBeforeCommandLineProcessing(const CefString& processType, CefRefPtr<CefCommandLine> commandLine) override {
-        if (!processType.empty()) return;
-        for (const std::string& entry : switches_) {
-            const size_t equals = entry.find('=');
-            if (equals == std::string::npos) {
-                commandLine->AppendSwitch(entry);
-                continue;
-            }
-            const std::string name = entry.substr(0, equals);
-            std::string value = entry.substr(equals + 1);
-            // A feature list adds to what's already there (CEF's own, or an earlier entry), never
-            // replaces it: appending a switch again replaces its value.
-            if (name == "disable-features" && commandLine->HasSwitch(name)) {
-                const std::string existing = commandLine->GetSwitchValue(name).ToString();
-                if (!existing.empty()) value = existing + "," + value;
-            }
-            commandLine->AppendSwitchWithValue(name, value);
-        }
-    }
     // Where the Mac applies Energy Saver after CefInitialize, and again at its first browser in
     // case the context wasn't ready: here the global preferences exist, and no browser does
     // yet, so one try covers both, and the browsers Chromium makes itself (the Mac's
     // KCDefaultClient) too.
     void OnContextInitialized() override { ApplyEnergySaver(*shared_); }
+    // Kite's defaults (Chromium's native occlusion tracker off) and --chromium-switches, in the
+    // browser process only (its helpers get what Chromium passes on). The feature lists add to
+    // what's already there (CEF's own), never replace it (core/ChromiumSwitches.h).
+    void OnBeforeCommandLineProcessing(const CefString& processType, CefRefPtr<CefCommandLine> commandLine) override {
+        if (!processType.empty()) return;
+        const auto existing = [&](const char* name) {
+            return commandLine->HasSwitch(name) ? commandLine->GetSwitchValue(name).ToString() : std::string();
+        };
+        // CEF's own lists, for --smoke-test's check that they're all still there.
+        shared_->cefEnableFeatures = existing("enable-features");
+        shared_->cefDisableFeatures = existing("disable-features");
+        for (const std::string& entry :
+             chromium_switches::BrowserSwitches(switches_, shared_->cefEnableFeatures, shared_->cefDisableFeatures)) {
+            const size_t equals = entry.find('=');
+            if (equals == std::string::npos) commandLine->AppendSwitch(entry);
+            else commandLine->AppendSwitchWithValue(entry.substr(0, equals), entry.substr(equals + 1));
+        }
+    }
 
     bool OnAlreadyRunningAppRelaunch(CefRefPtr<CefCommandLine>, const CefString&) override {
         shared_->Post([shared = shared_] {
@@ -428,25 +945,108 @@ private:
     IMPLEMENT_REFCOUNTING(SkipPrint);
 };
 
+// A main frame's report of whether its page reads as visible (kVisibilityMessage): once as its
+// context is made, and on each visibilitychange the browser raised (isTrusted; the page's own
+// dispatchEvent doesn't count). The page's scripts can't turn it off: Watch runs before any of
+// them, so its listener is the first capture listener on window and runs before any the page
+// adds there (one calling stopImmediatePropagation), and it keeps Document.prototype's own
+// visibilityState getter and the document from then, so redefining visibilityState on the
+// document or the prototype changes nothing it reads. Its values go with the context.
+class VisibilityReporter : public CefV8Handler {
+public:
+    // Before the page's scripts: reports the state now, and listens for its changes.
+    static CefRefPtr<VisibilityReporter> Watch(const CefRefPtr<CefV8Context>& context) {
+        CefRefPtr<CefV8Value> global = context->GetGlobal();
+        CefRefPtr<CefV8Value> document = global->GetValue("document");
+        CefRefPtr<CefV8Value> object = global->GetValue("Object");
+        CefRefPtr<CefV8Value> documentClass = global->GetValue("Document");
+        CefRefPtr<CefV8Value> listen = global->GetValue("addEventListener");
+        if (!document || !document->IsObject() || !object || !object->IsObject() || !documentClass || !documentClass->IsObject() ||
+            !listen || !listen->IsFunction()) {
+            return nullptr;
+        }
+        CefRefPtr<CefV8Value> describe = object->GetValue("getOwnPropertyDescriptor");
+        CefRefPtr<CefV8Value> prototype = documentClass->GetValue("prototype");
+        if (!describe || !describe->IsFunction() || !prototype || !prototype->IsObject()) return nullptr;
+        CefRefPtr<CefV8Value> descriptor =
+            describe->ExecuteFunctionWithContext(context, object, {prototype, CefV8Value::CreateString("visibilityState")});
+        CefRefPtr<CefV8Value> getter = descriptor && descriptor->IsObject() ? descriptor->GetValue("get") : nullptr;
+        if (!getter || !getter->IsFunction()) return nullptr;
+        CefRefPtr<VisibilityReporter> reporter = new VisibilityReporter(document, getter);
+        reporter->Report(context);
+        listen->ExecuteFunctionWithContext(context, global,
+                                           {CefV8Value::CreateString("visibilitychange"), CefV8Value::CreateFunction("kiteVisibility", reporter),
+                                            CefV8Value::CreateBool(true)});
+        return reporter;
+    }
+
+    bool Execute(const CefString&, CefRefPtr<CefV8Value>, const CefV8ValueList& arguments, CefRefPtr<CefV8Value>&, CefString&) override {
+        if (arguments.empty() || !arguments[0]->IsObject()) return true;
+        // isTrusted is an event's own unforgeable property: the page can't redefine it.
+        CefRefPtr<CefV8Value> trusted = arguments[0]->GetValue("isTrusted");
+        if (!trusted || !trusted->IsBool() || !trusted->GetBoolValue()) return true;
+        if (CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext()) Report(context);
+        return true;
+    }
+
+    // kVisibilityMessage: whether the page reads as visible, by the getter kept.
+    void Report(const CefRefPtr<CefV8Context>& context) {
+        CefRefPtr<CefV8Value> state = getter_->ExecuteFunctionWithContext(context, document_, {});
+        CefRefPtr<CefFrame> frame = context->GetFrame();
+        if (!state || !state->IsString() || !frame) return;
+        CefRefPtr<CefProcessMessage> message = CefProcessMessage::Create(kVisibilityMessage);
+        message->GetArgumentList()->SetBool(0, state->GetStringValue() == "visible");
+        frame->SendProcessMessage(PID_BROWSER, message);
+    }
+
+private:
+    VisibilityReporter(CefRefPtr<CefV8Value> document, CefRefPtr<CefV8Value> getter) : document_(document), getter_(getter) {}
+
+    const CefRefPtr<CefV8Value> document_, getter_;
+    IMPLEMENT_REFCOUNTING(VisibilityReporter);
+};
+
 // Kite's CefApp in the helpers (the Mac's KiteHelperApp, KiteHelper/main.mm): in a renderer,
-// each tab's main frame reports the process it runs in; a quiet run's renderer (`quietRenderer`,
-// RunChromiumSubprocess) also skips window.print() in every frame (SkipPrint).
+// each tab's main frame reports the process it runs in, and whether its page reads as visible
+// (VisibilityReporter); a quiet run's renderer (`quietRenderer`, RunChromiumSubprocess) also
+// skips window.print() in every frame (SkipPrint).
 class KiteHelperApp : public CefApp, public CefRenderProcessHandler {
 public:
     explicit KiteHelperApp(bool quietRenderer) : quietRenderer_(quietRenderer) {}
     CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
 
     // Every frame's window, before its scripts run.
-    void OnContextCreated(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, CefRefPtr<CefV8Context> context) override {
+    void OnContextCreated(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefV8Context> context) override {
         if (quietRenderer_) context->GetGlobal()->SetValue("print", CefV8Value::CreateFunction("print", new SkipPrint), V8_PROPERTY_ATTRIBUTE_NONE);
         if (!frame->IsMain()) return;
         CefRefPtr<CefProcessMessage> message = CefProcessMessage::Create(kRendererPIDMessage);
         message->GetArgumentList()->SetInt(0, static_cast<int>(GetCurrentProcessId()));
         frame->SendProcessMessage(PID_BROWSER, message);
+        // Visible now (a page made, or a navigation or a renderer's restart that made a new
+        // context, while Kite has it hidden), and on each change after, and when asked.
+        if (CefRefPtr<VisibilityReporter> reporter = VisibilityReporter::Watch(context)) reporters_[browser->GetIdentifier()] = reporter;
+        else reporters_.erase(browser->GetIdentifier());
+    }
+    void OnContextReleased(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefV8Context>) override {
+        if (frame->IsMain()) reporters_.erase(browser->GetIdentifier());
+    }
+    // Kite asks (kAskVisibilityMessage): the main frame's reporter answers, as it would on a change.
+    bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefProcessId source,
+                                  CefRefPtr<CefProcessMessage> message) override {
+        if (source != PID_BROWSER || message->GetName() != kAskVisibilityMessage) return false;
+        const auto it = reporters_.find(browser->GetIdentifier());
+        CefRefPtr<CefV8Context> context = frame && frame->IsMain() ? frame->GetV8Context() : nullptr;
+        if (it != reporters_.end() && context && context->Enter()) {
+            it->second->Report(context);
+            context->Exit();
+        }
+        return true;
     }
 
 private:
     const bool quietRenderer_;
+    // Each browser's main-frame reporter in this renderer, by browser id (the render thread's).
+    std::map<int, CefRefPtr<VisibilityReporter>> reporters_;
     IMPLEMENT_REFCOUNTING(KiteHelperApp);
 };
 
@@ -469,7 +1069,9 @@ class PageClient : public CefClient,
                    public CefLifeSpanHandler,
                    public CefDisplayHandler,
                    public CefDialogHandler,
+                   public CefDownloadHandler,
                    public CefFocusHandler,
+                   public CefFindHandler,
                    public CefJSDialogHandler,
                    public CefKeyboardHandler,
                    public CefLoadHandler,
@@ -477,26 +1079,40 @@ class PageClient : public CefClient,
                    public CefDevToolsMessageObserver {
 public:
     // `firstURL` is loaded once the browser exists, after the white-background override.
-    PageClient(std::string tabID, std::shared_ptr<Chromium::Shared> shared, std::string firstURL = {})
-        : tabID_(std::move(tabID)), shared_(std::move(shared)), firstURL_(std::move(firstURL)) {}
+    // `profile`: the profile folder whose request context the page is in (a popup is in its
+    // opener's), which names its downloads' context.
+    PageClient(std::string tabID, std::shared_ptr<Chromium::Shared> shared, std::string profile, std::string firstURL = {})
+        : tabID_(std::move(tabID)), shared_(std::move(shared)), profile_(std::move(profile)), firstURL_(std::move(firstURL)) {}
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+    CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
     CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
+    CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
     // Only in a quiet run, which shows no dialog: otherwise Chromium's own.
     CefRefPtr<CefDialogHandler> GetDialogHandler() override { return shared_->quiet ? this : nullptr; }
-    CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return shared_->quiet ? this : nullptr; }
+    // Always: a parked page's dialogs are answered here too (its tab has closed); others go on to
+    // Chromium's own unless the run is quiet.
+    CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
 
     // The renderer's messages (KiteHelperApp): kite.rendererPID, the process now hosting this
-    // tab's page; kite.printSkipped, a quiet run's window.print() that didn't open the dialog.
+    // tab's page; kite.pageVisibility, whether its page reads as visible; kite.printSkipped, a quiet run's
+    // window.print() that didn't open the dialog.
     bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefProcessId source,
                                   CefRefPtr<CefProcessMessage> message) override {
         if (source != PID_RENDERER) return false;
         if (message->GetName() == kPrintSkipped) {
             LogSkippedModal(L"print dialog");
+            return true;
+        }
+        if (message->GetName() == kVisibilityMessage) {
+            if (frame && frame->IsMain()) {
+                const bool visible = message->GetArgumentList()->GetBool(0);
+                shared_->Post([shared = shared_, id = tabID_, browser, visible] { shared->PageVisibility(id, browser, visible); });
+            }
             return true;
         }
         if (message->GetName() != kRendererPIDMessage || !frame || !frame->IsMain()) return false;
@@ -550,7 +1166,8 @@ public:
                        const CefString&, cef_window_open_disposition_t, bool, const CefPopupFeatures&, CefWindowInfo& windowInfo,
                        CefRefPtr<CefClient>& client, CefBrowserSettings& settings, CefRefPtr<CefDictionaryValue>&,
                        bool*) override {
-        if (shared_->closing) return true;
+        // A parked page's tab has closed: it opens nothing.
+        if (shared_->closing || shared_->IsParked(browser->GetIdentifier())) return true;
         // Hosted in a Kite tab instead of a separate window, as the Mac does, so window.opener
         // still works (sign-in popups post their result back through it).
         const std::string id = NewUuid();
@@ -561,7 +1178,7 @@ public:
             shared_->popupTabs[{browser->GetIdentifier(), popupID}] = id;
         }
         SetAsPage(windowInfo, shared_->window, bounds);
-        client = new PageClient(id, shared_);
+        client = new PageClient(id, shared_, profile_);
         settings.background_color = kPageBackdrop;
         shared_->Count(+1, 0);
         shared_->Post([shared = shared_, opener = tabID_, id, url = targetURL.ToString()] {
@@ -587,14 +1204,38 @@ public:
         if (!shared_->closing) {
             // Only its own window goes, as the Mac's KCBrowser tears down just its view.
             // Returning false would send WM_CLOSE to Kite's window and quit.
-            RunOnCefUIThread([hwnd = browser->GetHost()->GetWindowHandle()] { DestroyWindow(hwnd); });
-            shared_->Post([shared = shared_, id = tabID_, browser] {
+            const HWND hwnd = browser->GetHost()->GetWindowHandle();
+            // A page that closed itself while one of its downloads runs is hidden instead, and its
+            // window destroyed once the download is done, so Chromium keeps reporting it.
+            const bool park = shared_->RunningDownloadsIn(browser->GetIdentifier());
+            if (park) {
+                if (const HWND widget = FindPageWidget(hwnd)) ShowWindow(widget, SW_HIDE);
+                ShowWindow(hwnd, SW_HIDE);
+                shared_->MarkParked(browser->GetIdentifier());
+                Chromium::Shared::Quieten(browser);
+            } else {
+                RunOnCefUIThread([hwnd] { DestroyWindow(hwnd); });
+            }
+            shared_->Post([shared = shared_, id = tabID_, browser, park, hwnd] {
                 // Still its tab's page: it closed itself (window.close(), as a sign-in popup
                 // does when it's done), and Kite hears of it. Otherwise Kite closed it.
                 if (shared->PageFor(id, browser)) {
                     if (shared->shown == id) shared->shown.clear();
                     shared->pages.erase(id);
+                    if (park) {
+                        // The window's close waits for it, as for a page Kite closed.
+                        shared->retiring.push_back(browser);
+                        shared->Park(browser, hwnd);
+                        // Its download may have finished on the way here.
+                        shared->ReleaseParked();
+                    }
                     if (shared->events.pageClosed) shared->events.pageClosed(id);
+                } else if (park) {
+                    // Kite had closed it (it's retiring already): a parked page that closed itself,
+                    // or one whose download started after ClosePage looked. Its window, kept for
+                    // the download, is destroyed once that's done.
+                    shared->Park(browser, hwnd);
+                    shared->ReleaseParked();
                 } else {
                     shared->Retired(browser);
                 }
@@ -698,7 +1339,167 @@ public:
         });
     }
 
-    // CefDialogHandler, CefJSDialogHandler: a quiet run's pages only
+    // CefDownloadHandler (KCBrowser.mm's)
+
+    // The context key of this page's downloads ("" for the default profile, as the Mac's).
+    std::string DownloadContext() const { return profile_ == BrowserState::kDefaultProfile ? std::string() : profile_; }
+
+    bool OnBeforeDownload(CefRefPtr<CefBrowser> browser, CefRefPtr<CefDownloadItem> item, const CefString& suggestedName,
+                          CefRefPtr<CefBeforeDownloadCallback> callback) override {
+        const std::string context = DownloadContext();
+        const uint32_t id = item->GetId();
+        bool store = false;
+        {
+            std::lock_guard lock(shared_->downloadsMutex);
+            Chromium::Shared::LiveDownload* live = shared_->FindLiveDownload(context, id);
+            if (!live) {
+                live = &shared_->AddLiveDownload(context, id);
+                live->storePackage =
+                    IsExtensionPackage(item->GetMimeType().ToString(), suggestedName.ToString(), item->GetOriginalUrl().ToString());
+            }
+            live->browser = browser->GetIdentifier();
+            store = live->storePackage;
+        }
+        if (store) {
+            // Nothing on Windows installs extensions yet (W27a): cancelled, rather than left in a
+            // folder nobody reads. Returning false cancels it (Alloy's default).
+            OutputDebugStringW((L"Kite: cancelled a Chrome Web Store package (" + suggestedName.ToWString() +
+                                L"): extensions can't be installed yet\n").c_str());
+            return false;
+        }
+        auto [settings, fallback] = shared_->DownloadSettings(profile_);
+        if (settings.promptsForDownload && shared_->quiet) {
+            // A quiet run shows no save panel: it answers as a dismissed one (SkippedModal's
+            // openOrSavePanel), and Chromium cancels the download. Refused, it no longer holds
+            // its page open.
+            LogSkippedModal(L"save panel: " + suggestedName.ToWString());
+            {
+                std::lock_guard lock(shared_->downloadsMutex);
+                if (auto* live = shared_->FindLiveDownload(context, id)) live->running = false;
+            }
+            shared_->Post([shared = shared_] { shared->ReleaseParked(); });
+            return false;
+        }
+        Resolve(shared_, context, id, suggestedName.ToString(), std::move(settings), std::move(fallback), callback);
+        return true;
+    }
+
+    // The download's folder and free name are found on CEF's file thread (a chosen folder can be
+    // a network share that takes seconds to answer), where DownloadReservations finds and holds
+    // the name in one step, so no two downloads get one path; then it's handed to Chromium on its
+    // UI thread. Kite's download lock is never held while the disk is asked.
+    static void Resolve(std::shared_ptr<Chromium::Shared> shared, std::string context, uint32_t id, std::string name,
+                        ProfileSettings settings, std::filesystem::path fallback, CefRefPtr<CefBeforeDownloadCallback> callback) {
+        namespace fs = std::filesystem;
+        const std::string key = Chromium::Shared::DownloadKey(context, id);
+        {
+            std::lock_guard lock(shared->downloadsMutex);
+            shared->resolving[key] = callback;
+        }
+        CefPostTask(TID_FILE_USER_BLOCKING, new FunctionTask([shared, context, id, key, name, settings, fallback] {
+            const fs::path folder = settings.DownloadFolder(fallback, [](const std::string& chosen) {
+                std::error_code error;
+                return fs::is_directory(fs::path(std::u8string(chosen.begin(), chosen.end())), error);
+            });
+            std::error_code ignored;
+            fs::create_directories(folder, ignored);
+            // A path that can't be checked counts as free, as the Mac's fileExists says no. The
+            // whole path stays within MAX_PATH, as Chrome keeps it.
+            const std::optional<fs::path> path = shared->reservations.Reserve(
+                key, name, folder,
+                [](const fs::path& candidate) {
+                    std::error_code error;
+                    return fs::exists(candidate, error);
+                },
+                MAX_PATH - 1);
+            RunOnCefUIThread([shared, context, id, key, path, prompt = settings.promptsForDownload] {
+                CefRefPtr<CefBeforeDownloadCallback> callback;
+                {
+                    std::lock_guard lock(shared->downloadsMutex);
+                    if (auto it = shared->resolving.find(key); it != shared->resolving.end()) {
+                        callback = it->second;
+                        shared->resolving.erase(it);
+                    }
+                    Chromium::Shared::LiveDownload* live = shared->FindLiveDownload(context, id);
+                    // Shut down, or canceled while its name was found: its name goes back.
+                    if (!callback || !live) {
+                        shared->reservations.Release(key);
+                        return;
+                    }
+                    if (!path) {
+                        // kUniqueNameTries names taken: the callback goes unused, which cancels it,
+                        // and a page parked meanwhile may go.
+                        live->running = false;
+                        OutputDebugStringW(L"Kite: no free name for a download; cancelled\n");
+                        shared->Post([shared] { shared->ReleaseParked(); });
+                        return;
+                    }
+                }
+                // With Ask, Chromium's Save As opens in the folder with the name filled in.
+                callback->Continue(path->wstring(), prompt);
+            });
+        }));
+    }
+
+    void OnDownloadUpdated(CefRefPtr<CefBrowser> browser, CefRefPtr<CefDownloadItem> item,
+                           CefRefPtr<CefDownloadItemCallback> callback) override {
+        const std::string context = DownloadContext();
+        const std::wstring fullPath = item->GetFullPath().ToWString();
+        const bool finished = item->IsComplete() || item->IsCanceled();
+        bool settled = false;
+        {
+            std::lock_guard lock(shared_->downloadsMutex);
+            Chromium::Shared::LiveDownload* live = shared_->FindLiveDownload(context, item->GetId());
+            // A repeat after the download finished (Kite already let it go): nothing new to report.
+            if (!live && !item->IsInProgress() && !item->IsInterrupted()) return;
+            if (!live) {
+                // Chromium can report a download before asking where it goes: decided now, once.
+                live = &shared_->AddLiveDownload(context, item->GetId());
+                live->storePackage = IsExtensionPackage(item->GetMimeType().ToString(), item->GetSuggestedFileName().ToString(),
+                                                        item->GetOriginalUrl().ToString());
+            }
+            live->browser = browser->GetIdentifier();
+            // A store package isn't the user's download: never listed.
+            const bool store = live->storePackage;
+            const std::string key = Chromium::Shared::DownloadKey(context, item->GetId());
+            if (!store) {
+                // The Save As dialog may have put it somewhere else: hold the path it really uses.
+                if (!fullPath.empty()) shared_->reservations.Hold(key, std::filesystem::path(fullPath));
+                live->callback = callback;
+            }
+            if (item->GetReceivedBytes() != live->received) {
+                live->received = item->GetReceivedBytes();
+                live->progressedAt = GetTickCount64();
+            }
+            const bool wasRunning = live->running;
+            live->running = item->IsInProgress();
+            settled = wasRunning && !live->running;
+            if (finished) {
+                shared_->reservations.Release(key);
+                shared_->liveDownloads.erase(shared_->liveDownloads.begin() + (live - shared_->liveDownloads.data()));
+            }
+            if (store) return;
+        }
+        // A page Kite closed while this ran may close now.
+        if (settled) shared_->Post([shared = shared_] { shared->ReleaseParked(); });
+        DownloadUpdate update;
+        update.engineID = item->GetId();
+        update.engineContext = context;
+        if (!context.empty()) update.profileDirectory = profile_;
+        update.url = item->GetOriginalUrl().ToString();
+        update.path = Narrow(fullPath);
+        update.state = item->IsComplete()      ? DownloadState::Complete
+                       : item->IsCanceled()    ? DownloadState::Canceled
+                       : item->IsInterrupted() ? DownloadState::Interrupted
+                                               : DownloadState::InProgress;
+        update.receivedBytes = item->GetReceivedBytes();
+        update.totalBytes = item->GetTotalBytes();
+        update.speed = item->GetCurrentSpeed();
+        shared_->ReportDownload(std::move(update));
+    }
+
+    // CefDialogHandler (a quiet run's pages only) and CefJSDialogHandler (every page: a quiet
+    // run's and a parked page's dialogs are answered here, the rest go on to Chromium's own)
 
     // No file chooser: cancelled, as if dismissed.
     bool OnFileDialog(CefRefPtr<CefBrowser>, FileDialogMode mode, const CefString& title, const CefString&,
@@ -709,19 +1510,34 @@ public:
         return true;
     }
 
-    // alert, confirm and prompt are suppressed: they return at once, as a dismissed one does.
-    bool OnJSDialog(CefRefPtr<CefBrowser>, const CefString&, JSDialogType type, const CefString& message, const CefString&,
+    // alert, confirm and prompt from a parked page or in a quiet run are suppressed: they return
+    // at once, as a dismissed one does. Any other page's are Chromium's own.
+    bool OnJSDialog(CefRefPtr<CefBrowser> browser, const CefString&, JSDialogType type, const CefString& message, const CefString&,
                     CefRefPtr<CefJSDialogCallback>, bool& suppressMessage) override {
+        // A parked page's tab has closed: nothing it says is shown.
+        if (shared_->IsParked(browser->GetIdentifier())) {
+            suppressMessage = true;
+            return false;
+        }
+        if (!shared_->quiet) return false;  // Chromium's own dialog
         const wchar_t* kind = type == JSDIALOGTYPE_CONFIRM ? L"confirm" : type == JSDIALOGTYPE_PROMPT ? L"prompt" : L"alert";
         LogSkippedModal(std::wstring(L"javascript ") + kind + L": " + message.ToWString());
         suppressMessage = true;
         return false;
     }
 
-    // Leave Page? Left, as the Mac's forced close and quit answer it (KCBrowser.mm's
-    // OnBeforeUnloadDialog), and like it on a later turn of CEF's thread: answering inside this
-    // call slowed Chromium's teardown there.
-    bool OnBeforeUnloadDialog(CefRefPtr<CefBrowser>, const CefString&, bool isReload, CefRefPtr<CefJSDialogCallback> callback) override {
+    // Leave Page, from a parked page or in a quiet run: Left, as the Mac's forced close and quit
+    // answer it (KCBrowser.mm's OnBeforeUnloadDialog), and like it on a later turn of CEF's thread:
+    // answering inside this call slowed Chromium's teardown there. Any other page's is Chromium's.
+    bool OnBeforeUnloadDialog(CefRefPtr<CefBrowser> browser, const CefString&, bool isReload, CefRefPtr<CefJSDialogCallback> callback) override {
+        // A parked page leaves, as the Mac's closed pages do (KCBrowser.mm's OnBeforeUnloadDialog):
+        // its tab is gone, so there's no one to ask, and Stay would keep it running on its page.
+        if (shared_->IsParked(browser->GetIdentifier())) {
+            ++shared_->parkedLeavesAnswered;
+            RunOnCefUIThread([callback] { callback->Continue(true, CefString()); });
+            return true;
+        }
+        if (!shared_->quiet) return false;  // Chromium's own dialog
         LogSkippedModal(isReload ? L"reload page dialog" : L"leave page dialog");
         RunOnCefUIThread([callback] { callback->Continue(true, CefString()); });
         return true;
@@ -731,8 +1547,27 @@ public:
 
     // While Kite's command bar is open, a page never takes the keyboard back (Chromium
     // focuses a page as it navigates), as the Mac blurs its pages while the bar is open. A
-    // quiet run's pages never take it: focusing a page's window activates Kite's.
-    bool OnSetFocus(CefRefPtr<CefBrowser>, FocusSource) override { return shared_->inputBlocked || shared_->quiet; }
+    // quiet run's pages never take it: focusing a page's window activates Kite's. Nor, while Kite's find field has the keyboard, on a navigation (a click is the system's).
+    // Nor as its window is enabled again (the command bar closing, which Chromium answers with a
+    // focus of its own, inside EnableWindow) while Kite keeps the keyboard: Ctrl+F over the bar.
+    bool OnSetFocus(CefRefPtr<CefBrowser>, FocusSource source) override {
+        if (shared_->kiteKeepsKeyboard && (source == FOCUS_SOURCE_NAVIGATION || shared_->reenabling)) return true;
+        return shared_->inputBlocked || shared_->quiet;
+    }
+
+    // CefFindHandler
+
+    // Every report, the interim ones too, as the Mac's KCBrowser passes them on: the count grows
+    // as Chromium scans the page.
+    void OnFindResult(CefRefPtr<CefBrowser> browser, int identifier, int count, const CefRect&, int activeMatchOrdinal,
+                      bool finalUpdate) override {
+        // A search replaced since (each Find has a higher identifier) reports nothing more.
+        if (identifier < lastFindIdentifier_) return;
+        lastFindIdentifier_ = identifier;
+        shared_->Post([shared = shared_, id = tabID_, browser, count, activeMatchOrdinal, finalUpdate] {
+            if (shared->PageFor(id, browser) && shared->events.findResult) shared->events.findResult(id, count, activeMatchOrdinal, finalUpdate);
+        });
+    }
 
     // CefKeyboardHandler
 
@@ -826,10 +1661,21 @@ public:
 
     // CefLoadHandler
 
-    void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading, bool, bool) override {
+    // A main frame's load starting (its navigation committed) or ending anchors the re-hide
+    // schedule (Shared::Anchor); a subframe's never does, so an iframe can't keep Kite at it.
+    void OnLoadStart(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, TransitionType) override {
+        if (frame && frame->IsMain()) shared_->Post([shared = shared_, id = tabID_, browser] { shared->Anchored(id, browser); });
+    }
+    void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int) override {
+        if (frame && frame->IsMain()) shared_->Post([shared = shared_, id = tabID_, browser] { shared->Anchored(id, browser); });
+    }
+
+    void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading, bool canGoBack, bool canGoForward) override {
         perf::Mark(isLoading ? "load-begin" : "load-end", tabID_);
-        shared_->Post([shared = shared_, id = tabID_, browser, isLoading] {
-            if (shared->PageFor(id, browser) && shared->events.loadingChanged) shared->events.loadingChanged(id, isLoading);
+        shared_->Post([shared = shared_, id = tabID_, browser, isLoading, canGoBack, canGoForward] {
+            if (shared->PageFor(id, browser) && shared->events.loadingChanged) {
+                shared->events.loadingChanged(id, isLoading, canGoBack, canGoForward);
+            }
         });
     }
 
@@ -838,8 +1684,9 @@ public:
     // Ctrl-click and middle-click (a background tab), Ctrl+Shift-click (a foreground one): a
     // new Kite tab, as the Mac's KCBrowser does. Otherwise Alloy would load the link in this
     // tab, replacing the page. Anything else, or without a click, goes on as Chromium decides.
-    bool OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString& targetURL,
+    bool OnOpenURLFromTab(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>, const CefString& targetURL,
                           cef_window_open_disposition_t disposition, bool userGesture) override {
+        if (shared_->IsParked(browser->GetIdentifier())) return true;  // its tab has closed
         const bool background = disposition == CEF_WOD_NEW_BACKGROUND_TAB;
         const bool foreground = disposition == CEF_WOD_NEW_FOREGROUND_TAB;
         if (!userGesture || !(background || foreground) || targetURL.empty() || shared_->closing) return false;
@@ -863,10 +1710,12 @@ private:
 
     const std::string tabID_;
     const std::shared_ptr<Chromium::Shared> shared_;
+    const std::string profile_;
     const std::string firstURL_;
     // CEF's UI thread only.
     CefRefPtr<CefRegistration> devTools_;
     std::vector<int> busyChecks_;  // Runtime.evaluate message ids awaiting an answer
+    int lastFindIdentifier_ = 0;   // OnFindResult's highest
     IMPLEMENT_REFCOUNTING(PageClient);
 };
 
@@ -877,7 +1726,10 @@ void Chromium::Shared::Evict() {
     for (const std::string& id : OverTheLimit()) {
         const Page& page = pages.at(id);
         // A page still being made can't be asked; it counts, and goes on a later pass.
-        if (!page.browser || page.mediaInUse || (events.keepAlive && events.keepAlive(id))) continue;
+        if (!page.browser || page.mediaInUse || RunningDownloadsIn(page.browser->GetIdentifier()) ||
+            (events.keepAlive && events.keepAlive(id))) {
+            continue;
+        }
         RunOnCefUIThread([browser = page.browser] {
             // Every page's client is a PageClient (Show and OnBeforePopup make them).
             CefRefPtr<CefClient> client = browser->GetHost()->GetClient();
@@ -892,7 +1744,10 @@ void Chromium::Shared::DiscardUnderPressure() {
     if (!shown.empty()) keep.insert(shown);
     for (const std::string& id : TabsToDiscardUnderPressure(LivePages(), keep)) {
         const Page& page = pages.at(id);
-        if (!page.browser || page.mediaInUse || (events.keepAlive && events.keepAlive(id))) continue;
+        if (!page.browser || page.mediaInUse || RunningDownloadsIn(page.browser->GetIdentifier()) ||
+            (events.keepAlive && events.keepAlive(id))) {
+            continue;
+        }
         pressurePicks[id] = page.lastShown;
         RunOnCefUIThread([browser = page.browser] {
             CefRefPtr<CefClient> client = browser->GetHost()->GetClient();
@@ -979,6 +1834,9 @@ bool Chromium::Shutdown() {
     for (auto& [id, page] : shared_->pages) {
         if (page.browser && !page.closeReady) page.browser->GetHost()->CloseBrowser(true);
     }
+    for (const auto& page : shared_->parked) shared_->CloseParked(page);
+    shared_->parked.clear();
+    shared_->FollowParked();
     // Messages are pumped while waiting: the page windows' teardown on CEF's thread sends
     // messages to this one (their input queues are attached), and a bare wait stalled
     // OnBeforeClose until the timeout, then shut down under live browsers.
@@ -1001,6 +1859,13 @@ bool Chromium::Shutdown() {
     {
         std::lock_guard lock(shared_->mutex);
         shared_->pending.clear();  // their lambdas hold `shared_`
+    }
+    {
+        // The downloads' callbacks are CEF's objects: let go of them before CEF goes.
+        std::lock_guard lock(shared_->downloadsMutex);
+        shared_->liveDownloads.clear();
+        shared_->downloadReports.clear();
+        shared_->resolving.clear();  // a name search still running finds nothing to continue
     }
     CefShutdown();
     CloseHandle(shared_->allClosed);
@@ -1052,7 +1917,7 @@ void Chromium::Show(const std::string& tabID, const std::string& profileDirector
         shared_->Count(+1, 0);
         // Created blank and loaded once it exists (OnAfterCreated), after the white
         // background override, as the Mac does.
-        if (!CefBrowserHost::CreateBrowser(windowInfo, new PageClient(tabID, shared_, url.empty() ? "about:blank" : url), "",
+        if (!CefBrowserHost::CreateBrowser(windowInfo, new PageClient(tabID, shared_, profileDirectory, url.empty() ? "about:blank" : url), "",
                                            browserSettings, nullptr, context)) {
             OutputDebugStringW(L"Kite: CefBrowserHost::CreateBrowser failed\n");
             shared_->pages.erase(tabID);
@@ -1085,6 +1950,11 @@ void Chromium::Close(const std::string& tabID) {
     shared_->Layout();
 }
 
+bool Chromium::HasPage(const std::string& tabID) const {
+    const auto it = shared_->pages.find(tabID);
+    return it != shared_->pages.end() && !it->second.closeWhenMade;
+}
+
 void Chromium::SetBounds(const RECT& bounds) {
     {
         std::lock_guard lock(shared_->mutex);
@@ -1096,6 +1966,12 @@ void Chromium::SetBounds(const RECT& bounds) {
 
 void Chromium::Minimized() {
     shared_->minimized = true;
+    shared_->Layout();
+}
+
+void Chromium::SetOccluded(bool occluded) {
+    if (shared_->occluded == occluded) return;
+    shared_->occluded = occluded;
     shared_->Layout();
 }
 
@@ -1117,8 +1993,10 @@ void Chromium::BlockInput(bool blocked) {
     // Disabled, the page windows are skipped when Windows looks for the window under the
     // pointer, so clicks reach Kite's window. On CEF's thread, which owns them.
     if (!hosts.empty()) {
-        RunOnCefUIThread([hosts = std::move(hosts), blocked] {
+        RunOnCefUIThread([shared = shared_, hosts = std::move(hosts), blocked] {
+            shared->reenabling = !blocked;
             for (HWND host : hosts) EnableWindow(host, blocked ? FALSE : TRUE);
+            shared->reenabling = false;
         });
     }
 }
@@ -1175,6 +2053,46 @@ bool Chromium::Act(PageAction action) {
     return true;
 }
 
+bool Chromium::CanFind() const {
+    auto it = shared_->pages.find(shared_->shown);
+    return it != shared_->pages.end() && !it->second.closeWhenMade && !shared_->closing;
+}
+
+bool Chromium::Find(const std::string& text, bool forward, bool findNext) {
+    if (!CanFind()) return false;
+    Shared::Page& page = shared_->pages.at(shared_->shown);
+    if (!page.browser) {
+        page.pendingFind = Shared::Page::PendingFind{text, forward, findNext};
+        return true;
+    }
+    Shared::RunFind(page.browser, text, forward, findNext);
+    return true;
+}
+
+void Chromium::StopFinding() {
+    if (!CanFind()) return;
+    Shared::Page& page = shared_->pages.at(shared_->shown);
+    page.pendingFind.reset();
+    // Keep the active match selected, like Chrome and Arc.
+    if (page.browser) RunOnCefUIThread([browser = page.browser] { browser->GetHost()->StopFinding(false); });
+}
+
+void Chromium::SetOverlayHole(const RECT& hole, int cornerRadius) {
+    shared_->overlayHole = Shared::Hole{hole, IsRectEmpty(&hole) ? 0 : cornerRadius};
+    shared_->Layout();
+}
+
+void Chromium::KeepKeyboard(bool keep) { shared_->kiteKeepsKeyboard = keep; }
+
+bool Chromium::KeepsKeyboard() const { return shared_->kiteKeepsKeyboard; }
+
+bool Chromium::PageTakesClickAt(POINT client) const {
+    auto it = shared_->pages.find(shared_->shown);
+    if (it == shared_->pages.end() || !it->second.hwnd) return false;
+    // Windows' own search for the child window under a point, which honours window regions.
+    return ChildWindowFromPointEx(shared_->window, client, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED) == it->second.hwnd;
+}
+
 bool Chromium::MayCloseWindow() {
     const bool started = !shared_->closing.exchange(true);  // before the queue, so it opens no new page
     RunPending();  // a DoClose or OnBeforeClose that just ran may have its note queued
@@ -1183,6 +2101,10 @@ bool Chromium::MayCloseWindow() {
         for (auto& [id, page] : shared_->pages) {
             if (page.browser) page.browser->GetHost()->CloseBrowser(true);
         }
+        // Pages kept for their downloads go too (quitting cancels those downloads first).
+        for (const auto& page : shared_->parked) shared_->CloseParked(page);
+        shared_->parked.clear();
+        shared_->FollowParked();
         // A browser that never answers mustn't keep the window open: after this the close
         // goes ahead, and Shutdown's bounded wait covers the rest. The timer repeats (it goes
         // with the window), since its tick and GetTickCount64's can disagree by one step.
@@ -1213,6 +2135,78 @@ bool Chromium::MayCloseWindow() {
 
 bool Chromium::PagesCanBeHidden() const { return !shared_->widgetMissing; }
 
+void Chromium::SetDownloadLocations(std::map<std::string, ProfileSettings> byProfile, std::filesystem::path defaultFolder) {
+    std::lock_guard lock(shared_->downloadsMutex);
+    shared_->downloadSettings = std::move(byProfile);
+    shared_->downloadFolder = std::move(defaultFolder);
+}
+
+void Chromium::CancelDownloads(std::vector<DownloadKey> downloads, std::function<void(const DownloadKey&)> gone) {
+    if (downloads.empty()) return;
+    // On CEF's thread, which runs the callbacks; Chromium reports each one canceled.
+    RunOnCefUIThread([shared = shared_, downloads = std::move(downloads), gone = std::move(gone)] {
+        for (const DownloadKey& key : downloads) {
+            CefRefPtr<CefDownloadItemCallback> callback;
+            {
+                std::lock_guard lock(shared->downloadsMutex);
+                if (key.first >= 0 && key.first <= static_cast<int64_t>(UINT32_MAX)) {
+                    if (auto* live = shared->FindLiveDownload(key.second, static_cast<uint32_t>(key.first))) callback = live->callback;
+                }
+            }
+            if (callback) callback->Cancel();
+            else if (gone) shared->Post([gone, key] { gone(key); });
+        }
+    });
+}
+
+void Chromium::AllowAutomaticDownloads(const std::string& origin) {
+    RunOnCefUIThread([origin] {
+        if (CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext()) {
+            context->SetContentSetting(origin, origin, CEF_CONTENT_SETTING_TYPE_AUTOMATIC_DOWNLOADS, CEF_CONTENT_SETTING_VALUE_ALLOW);
+        }
+    });
+}
+
+bool Chromium::HandleTimer(UINT_PTR id) {
+    if (id != kStallTimer) return false;
+    // A tick already queued when the timer stopped: nothing is parked, so nothing to look at.
+    if (shared_->stallCheck.running) shared_->CancelStalled();
+    return true;
+}
+
+bool Chromium::TestUserGesture() {
+    auto it = shared_->pages.find(shared_->shown);
+    if (it == shared_->pages.end() || !it->second.browser) return false;
+    RunOnCefUIThread([browser = it->second.browser] {
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("expression", "document.title = 'clicked'");
+        params->SetBool("userGesture", true);
+        browser->GetHost()->ExecuteDevToolsMethod(0, "Runtime.evaluate", params);
+    });
+    return true;
+}
+
+void Chromium::LogParkedPages() {
+    std::lock_guard lock(shared_->downloadsMutex);
+    shared_->logParked = true;
+}
+
+int Chromium::ParkedLeavePagesAnswered() const { return shared_->parkedLeavesAnswered; }
+
+bool Chromium::StallCheckRunning() const { return shared_->stallCheck.running; }
+
+int Chromium::StallCheckTicks() const { return shared_->stallTicks; }
+
+std::vector<std::pair<std::string, bool>> Chromium::ParkedPages() const {
+    std::lock_guard lock(shared_->downloadsMutex);
+    return shared_->parkedLog;
+}
+
+std::pair<uint64_t, uint64_t> Chromium::DownloadReports() const {
+    std::lock_guard lock(shared_->downloadsMutex);
+    return {shared_->reportsFromChromium, shared_->reportsDelivered};
+}
+
 void Chromium::SetEnergySaverEnabled(bool enabled) {
     shared_->energySaverEnabled = enabled;
     RunOnCefUIThread([shared = shared_] { ApplyEnergySaver(*shared); });
@@ -1225,6 +2219,17 @@ void Chromium::ReadEnergySaver(std::function<void(std::optional<int> state)> don
         CefRefPtr<CefValue> value = prefs ? prefs->GetPreference(kEnergySaverPref) : nullptr;
         if (value && value->GetType() == VTYPE_INT) state = value->GetInt();
         shared->Post([done = std::move(done), state] { done(state); });
+    });
+}
+
+void Chromium::ReadFeatureLists(std::function<void(FeatureLists lists)> done) {
+    RunOnCefUIThread([shared = shared_, done = std::move(done)]() mutable {
+        FeatureLists lists{.cefEnable = shared->cefEnableFeatures, .cefDisable = shared->cefDisableFeatures};
+        if (CefRefPtr<CefCommandLine> line = CefCommandLine::GetGlobalCommandLine()) {
+            lists.enable = line->GetSwitchValue("enable-features").ToString();
+            lists.disable = line->GetSwitchValue("disable-features").ToString();
+        }
+        shared->Post([done = std::move(done), lists = std::move(lists)]() mutable { done(std::move(lists)); });
     });
 }
 

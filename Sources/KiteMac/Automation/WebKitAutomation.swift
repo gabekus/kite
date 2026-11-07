@@ -54,7 +54,7 @@ extension WebPage {
     /// The engine's automation driver.
     var automation: PageAutomation? {
         #if canImport(CEFBridge)
-        if let page = self as? ChromiumPage { return ChromiumAutomation(browser: page.browser) }
+        if let page = self as? ChromiumPage { return ChromiumAutomation(browser: page.browser, frameSessions: page.frameSessions) }
         #endif
         if let page = self as? WebKitPage { return WebKitAutomation(webView: page.webView) }
         return nil

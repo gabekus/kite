@@ -8,6 +8,8 @@ import CEFBridge
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Chosen in main.swift before the app finishes launching.
     var engine: WebEngine!
+    /// Chromium didn't start, even after Kite started itself again, so this run is on WebKit (`EngineFallback`).
+    nonisolated(unsafe) static var engineFellBack = false
 
     private var store: BrowserStore!
     /// For Settings, which changes the search engine directly.
@@ -65,8 +67,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let tabHistory = TabHistoryStore(directory: supportDirectory.appendingPathComponent("Tab History", isDirectory: true))
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        ActionTrace.mark("did_finish_launching")
+        defer {
+            // The action trace starts once everything's up, and records the launch it just watched.
+            ActionTrace.shared.start(supportDirectory: Self.supportDirectory) { [weak self] in self?.browserControllers ?? [] }
+        }
+        // On WebKit because Chromium didn't start: say so once the window is up, rather than show empty, signed-out pages.
+        if Self.engineFellBack {
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = EngineFallback.alertTitle
+                alert.informativeText = EngineFallback.alertText
+                alert.addButton(withTitle: "Quit Kite")
+                alert.addButton(withTitle: "Keep Using It")
+                if WindowPresenter.runModal(alert) == .alertFirstButtonReturn { NSApp.terminate(nil) }
+            }
+        }
         // Release builds check for updates (8-hourly, installing on quit); others do nothing.
         SoftwareUpdater.shared.start()
+        // The installed Kite: web links going to a test build of Kite get an alert (RealProfileGuard).
+        RealProfileRefusal.checkDefaultBrowser()
         // The login shell's PATH and claude, asked once in the background, so the first claude doesn't wait.
         ClaudeConnect.loginShell.warm()
         // A typed claude:// (zoommtg://, …) link is a URL when another app opens it, not a search.
@@ -108,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.helpMenu = NSApp.mainMenu?.item(withTitle: "Help")?.submenu
         NSApp.windowsMenu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu
         WindowPresenter.show(windowController)
+        ActionTrace.mark("window_shown")
         windows = BrowserWindows(
             main: store, mainController: windowController, engine: engine, adblocker: adblocker,
             history: history, fileURL: Self.supportDirectory.appendingPathComponent("windows.json")
@@ -155,6 +177,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // tabs, so installing one doesn't pull you off the page you're on.
         ExtensionPopover.openTab = { [weak self] tab in
             guard let controller = self?.windows.currentNormal(opening: .user) else { return }
+            if case .url(let url) = tab { Trace.event("extension.opened_tab", url: url, actor: .kite) } else {
+                Trace.event("extension.opened_tab", actor: .kite)
+            }
             switch tab {
             case .url(let url): controller.store.mutateWithoutUndo { _ = $0.openTab(url: url) }
             case .page(let page): controller.pool.openTab(with: page)
@@ -221,6 +246,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A test-safe run can open the main window's find bar (KITE_TEST_FIND_OPEN=1), with a query
         // (KITE_TEST_FIND=text), once its page has loaded: FindTestHook. A real profile ignores both.
         FindTestHookRunner.start(in: windowController)
+        // A test-safe run can open the icon picker for a named space (KITE_TEST_ICON_PICKER=name), or Create a Space
+        // (KITE_TEST_NEW_SPACE=1, with a name and a preset picked and the theme editor open): SidebarTestHook. A real
+        // profile ignores them.
+        SidebarTestHookRunner.start(in: windowController)
 
         diagnostics = DiagnosticsRecorder(directory: Self.supportDirectory.appendingPathComponent("Diagnostics", isDirectory: true))
         diagnostics.start()
@@ -596,6 +625,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var isTerminating = false
 
     func applicationWillTerminate(_ notification: Notification) {
+        ActionTrace.shared.quit()
         isTerminating = true
         claudeTasks?.stopAll()
         claudeTasks?.saveNow()

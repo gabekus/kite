@@ -48,7 +48,14 @@ let usage = """
                                                      pointer, input, menu, key_log, trace. kite ui tree '{"match":"Sidebar"}'
                                                      (capture --in-process: Kite draws the window, no Screen Recording)
       kite probe APP [tree | capture] [...]          The same for another app, e.g. Arc (kite probe --help)
+      kite trace [--since 1h] [--session NAME] [--tab ID] [--actor user|agent|kite] [--json]
+                                                     Kite's action trace: a timeline of tool calls and events with
+                                                     their timings, then a summary (per tool p50/p95/max, the slowest
+                                                     calls, waiting on the user, page loads, energy)
+      kite trace export [--session NAME] [filters]   The matching records as JSONL, for evals
+      kite trace resources [--since 1h] [--limit N]  Top tabs by memory and energy, Kite's totals, the Mac
       kite tools                                     List every tool
+      kite server                                    Which Kite serves the automation socket (PID, app, start time)
       kite mcp                                       Run as an MCP server on stdin/stdout
       kite setup [--print]                           Set Kite up with Claude Code, step by step (or print the guide)
 
@@ -68,8 +75,25 @@ final class KiteConnection: @unchecked Sendable {
     private var pending: [Int: CheckedContinuation<ToolOutput, Never>] = [:]
     /// Set when Kite started this `kite mcp` for one of its Claude tasks.
     private let task = ProcessInfo.processInfo.environment[ClaudeInvocation.taskEnvironmentKey]
+    /// The real profile's socket, where only the installed Kite should answer (`RealProfileGuard`).
+    private let isRealProfileSocket: Bool
+    /// Set while the process serving the real profile's socket isn't the installed Kite (a test or stale build).
+    private var warning: String?
+    private var warnedPID: Int32?
+    /// Who's calling, for Kite's action trace: the MCP client's name once it initializes, else the CLI.
+    private var clientName = "cli"
+    var client: String {
+        get { lock.withLock { clientName } }
+        set { lock.withLock { clientName = newValue } }
+    }
 
-    init(path: String) { self.path = path }
+    init(path: String, isRealProfileSocket: Bool) {
+        self.path = path
+        self.isRealProfileSocket = isRealProfileSocket
+    }
+
+    /// The warning that a test or stale build serves the real profile's socket, as of the last connect.
+    var serverWarning: String? { lock.withLock { warning } }
 
     /// How long a call waits for Kite's socket before saying Kite isn't answering.
     /// Covers Kite relaunching for an update, or still starting up.
@@ -87,9 +111,11 @@ final class KiteConnection: @unchecked Sendable {
             nextID += 1
             pending[id] = continuation
             let socket = fd
+            let client = clientName
             lock.unlock()
 
-            guard let line = try? AutomationWire.encodeLine(AutomationWire.Request(id: id, tool: tool, arguments: arguments, task: task)),
+            guard let line = try? AutomationWire.encodeLine(AutomationWire.Request(id: id, tool: tool, arguments: arguments, task: task,
+                                                                                   client: client)),
                   writeAll(socket, line) else {
                 finish(id, .failure(AutomationError(.failed, "Lost the connection to Kite.")))
                 disconnect(socket)
@@ -134,8 +160,23 @@ final class KiteConnection: @unchecked Sendable {
             return false
         }
         fd = socket
+        noteServer(of: socket)
         Thread.detachNewThread { [self] in readLoop(socket) }
         return true
+    }
+
+    /// Who accepted the connection. On the real profile's socket, anything but the installed Kite gets a warning
+    /// on stderr (once per process) and in every `kite mcp` result, so a stale build is obvious at once.
+    /// Call with the lock held.
+    private func noteServer(of socket: Int32) {
+        guard isRealProfileSocket, let pid = SocketServerProcess.peerPID(of: socket) else { return warning = nil }
+        let server = SocketServerProcess.lookup(pid: pid) ?? SocketServerProcess(pid: pid, executablePath: nil)
+        guard !server.isInstalledKite() else { return warning = nil }
+        warning = server.notInstalledWarning
+        if warnedPID != pid {
+            warnedPID = pid
+            FileHandle.standardError.write(Data("kite: \(server.notInstalledWarning)\n".utf8))
+        }
     }
 
     private func readLoop(_ socket: Int32) {
@@ -209,7 +250,7 @@ struct Arguments {
     static let valued: Set<String> = ["--tab", "--space", "--session", "--max", "--selector", "--ref", "--socket", "-o", "--output", "--format",
                                       "--window", "--depth", "--match", "--region", "--pixels",
                                       "--status", "--host", "--type", "--url", "--since", "--limit", "--profile", "--timeout",
-                                      "--target"]
+                                      "--target", "--actor"]
 
     init(_ raw: ArraySlice<String>) throws {
         var iterator = raw.makeIterator()
@@ -235,14 +276,33 @@ struct CLIError: Error, CustomStringConvertible {
 
 func socketPath(_ arguments: Arguments) -> String {
     if let path = arguments.options["--socket"] { return path }
-    let support: URL
+    return AutomationWire.socketURL(supportDirectory: supportDirectory()).path
+}
+
+/// The Kite profile's folder: `$KITE_SUPPORT_PATH`, or Application Support/Kite.
+func supportDirectory() -> URL {
     if let override = ProcessInfo.processInfo.environment["KITE_SUPPORT_PATH"] {
-        support = URL(fileURLWithPath: override, isDirectory: true)
-    } else {
-        support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Kite", isDirectory: true)
+        return URL(fileURLWithPath: override, isDirectory: true)
     }
-    return AutomationWire.socketURL(supportDirectory: support).path
+    return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Kite", isDirectory: true)
+}
+
+func isRealProfileSocket(_ path: String) -> Bool {
+    RealProfileGuard.isRealProfileSocket(path, environment: ProcessInfo.processInfo.environment, home: NSHomeDirectory())
+}
+
+/// `kite server`: who answers on the socket. Exits 1 when nothing does, 3 when a build other than the installed
+/// Kite serves the real profile's socket.
+func showServer(_ path: String) -> Int32 {
+    guard let server = SocketServerProcess.serving(socketPath: path) else {
+        print("Nothing is answering at \(path).")
+        return 1
+    }
+    print("\(path) is served by \(server.summary).")
+    guard isRealProfileSocket(path), !server.isInstalledKite() else { return 0 }
+    print(server.notInstalledWarning)
+    return 3
 }
 
 /// Turns a subcommand into a tool call: (tool name, arguments).
@@ -339,7 +399,7 @@ func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.
         }
     case "ui":
         tool = "ui"
-        json["action"] = .string(try first("an action (windows, tree, capture, pointer, input, menu, key_log, trace)"))
+        json["action"] = .string(try first("an action (windows, tree, capture, pointer, hit, input, menu, key_log, trace)"))
         if args.positional.count > 1 {
             guard case .object(let given)? = try? JSONValue.decode(Data(args.positional[1].utf8)) else {
                 throw CLIError("The arguments must be a JSON object.")
@@ -392,10 +452,19 @@ func runMCP(_ connection: KiteConnection) async {
                 out.write(MCPServer.error(id: .null, .parseError, "That wasn't JSON."))
                 continue
             }
+            // The client's name, for Kite's action trace ("claude-code", "claude-ai").
+            if message["method"]?.stringValue == "initialize", let name = message["params"]?["clientInfo"]?["name"]?.stringValue {
+                connection.client = TraceRedaction.word(name).isEmpty ? "mcp" : TraceRedaction.word(name)
+            } else if message["method"]?.stringValue == "initialize" {
+                connection.client = "mcp"
+            }
             // Concurrently, so a call waiting on the user's confirmation doesn't block pings.
             group.addTask {
                 let response = await server.handle(message) { tool, arguments in
-                    await VPNClient.route(tool.rawValue, arguments, through: connection)
+                    var output = await VPNClient.route(tool.rawValue, arguments, through: connection)
+                    // Claude sees it with every result, not just in a log nobody reads.
+                    if let warning = connection.serverWarning { output.content.insert(.text(warning), at: 0) }
+                    return output
                 }
                 if let response { out.write(response) }
             }
@@ -472,7 +541,11 @@ func main() async -> Int32 {
     }
     do {
         let args = try Arguments(raw[...])
-        let connection = KiteConnection(path: socketPath(args))
+        let path = socketPath(args)
+        let connection = KiteConnection(path: path, isRealProfileSocket: isRealProfileSocket(path))
+        if name == "server" {
+            return showServer(path)
+        }
         if name == "mcp" {
             await runMCP(connection)
             return 0
@@ -490,6 +563,9 @@ func main() async -> Int32 {
         }
         if name == "test-ticket" {
             return try await testTicket(args, connection)
+        }
+        if name == "trace" {
+            return try TraceCommand.run(args, supportDirectory: supportDirectory())
         }
         let (tool, arguments) = try toolCall(for: name, args)
         if tool == .networkLog && args.flags.contains("--follow") {

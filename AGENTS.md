@@ -40,6 +40,19 @@ isn't, Chromium silently falls back to the user's own Chromium profile.
 Use `mktemp -d /tmp/k.XXXX`: the automation socket lives in the profile, and
 socket paths are limited to 104 bytes.
 
+Only the installed Kite (`dev.gabek.Kite` at /Applications/Kite.app) may open the
+real profile: any other build started without `KITE_SUPPORT_PATH` (or with it
+pointing at the real profile) exits at once with a `Kite: refusing to start …`
+line (`RealProfileGuard`). A script that launches Kite sources
+`scripts/lib/test-kite.sh`, makes its profile with `kite_test_profile` and calls
+`kite_check_test_launch "$APP" "$P"` right before the launch;
+`scripts/check-launch-guards.sh` (in CI) fails any script that doesn't.
+
+If Kite's tools look wrong (old tools, empty carts, the WebKit engine), run
+`kite server`: it names the PID, app and start time of whatever serves the
+automation socket, and `kite` and `kite mcp` warn whenever that isn't
+/Applications/Kite.app.
+
 `KITE_SUPPORT_PATH` doesn't cover UserDefaults: those follow the bundle ID. Test
 with `scripts/bundle-app.sh debug`, whose bundle is `dev.gabek.Kite.dev`, never a
 `dev.gabek.Kite` bundle (release builds, /Applications/Kite.app), which would

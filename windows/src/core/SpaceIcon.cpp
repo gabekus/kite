@@ -45,7 +45,7 @@ constexpr SymbolEntry kSymbols[] = {
     {"envelope.fill", {u'\uE715', u'\uE715'}},
     {"checkmark.square.fill", {u'\uE73D', u'\uE73D'}},
     {"doc.fill", {u'\uE729', u'\uE729'}},
-    {"book.fill", {u'\uE82D', u'\uE82D'}},
+    {"book.fill", {u'\uE736', u'\uE736'}},  // an open book, as the Mac's (the UI gate; E82D is a closed one)
     {"ellipsis.bubble.fill", {u'\uED0C', u'\uED0C'}},
     {"person.2.fill", {u'\uE716', u'\uE716'}},
     {"terminal.fill", {u'\uE756', u'\uE756'}},

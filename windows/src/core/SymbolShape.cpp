@@ -396,6 +396,63 @@ SymbolShape Bookmark() {
         .Build();
 }
 
+// Four the UI gate found Segoe's stand-ins the wrong shape for (review/w9e-mac picker-icon: a
+// drum on its side, a portrait page, a squat tram, a hexagon round the code sign), drawn to the
+// Mac's 16pt Icon tab ink scaled to the bar's 12.5 (x 0.78, less the gate's half-point halo):
+// the bar's own boxes aren't measured yet.
+SymbolShape CylinderSplit() {
+    // A drum standing up, its top face's front edge and a split halfway down cut round it as gaps:
+    // box -5.27..5.27 x -6.45..6.45.
+    constexpr float rx = 5.27f, ry = 1.75f, top = -6.45f + ry, bottom = 6.45f - ry, gap = 1.4f;
+    ShapeBuilder b;
+    b.Ellipse(0, top, rx, ry).RoundRect(-rx, top, rx, bottom, 0).Ellipse(0, bottom, rx, ry);
+    for (const float y : {top, (top + bottom) / 2 - 0.6f}) {
+        // Cut a band under an ellipse, then put the ellipse back: what's left cut is the band.
+        b.Cut().Ellipse(0, y + gap, rx + 0.3f, ry);
+        b.Add().Ellipse(0, y, rx, ry);
+    }
+    return b.Build();
+}
+
+SymbolShape ChevronsAndSlash() {
+    // "</>": two chevrons and a slash between them, strokes with round ends: box -8.79..8.79 x
+    // -5.86..5.86.
+    constexpr float half = 0.8f;
+    ShapeBuilder b;
+    for (const float side : {-1.0f, 1.0f}) {
+        const ShapePoint tip{side * (8.79f - half), 0}, top{side * 4.2f, -4.4f}, bottom{side * 4.2f, 4.4f};
+        AddStroke(b, top, tip, half);
+        AddStroke(b, tip, bottom, half);
+    }
+    AddStroke(b, ShapePoint{1.7f, -(5.86f - half)}, ShapePoint{-1.7f, 5.86f - half}, half);
+    return b.Build();
+}
+
+SymbolShape Scroll() {
+    // A sheet with its roll across the top, two lines of writing cut in it: box -6.64..6.64 x
+    // -6.45..6.45.
+    ShapeBuilder b;
+    b.RoundRect(-6.64f, -6.45f, 6.64f, -3.85f, 1.3f);  // the roll
+    b.RoundRect(-5.0f, -4.5f, 5.0f, 6.45f, 1.0f);      // the sheet
+    b.Cut().RoundRect(-5.0f, -3.85f, 5.0f, -3.25f, 0);  // the roll's edge on the sheet
+    b.RoundRect(-3.2f, -1.3f, 3.2f, -0.4f, 0.45f).RoundRect(-3.2f, 1.4f, 1.6f, 2.3f, 0.45f);
+    return b.Build();
+}
+
+SymbolShape Tram() {
+    // A tram's front: a pantograph on its roof, a windscreen and two lamps cut in its body, two
+    // feet under it: box -5.47..5.47 x -7.81..7.81.
+    constexpr float half = 0.45f;
+    ShapeBuilder b;
+    AddStroke(b, ShapePoint{-1.9f, -5.1f}, ShapePoint{0, -7.81f + half}, half);
+    AddStroke(b, ShapePoint{0, -7.81f + half}, ShapePoint{1.9f, -5.1f}, half);
+    b.RoundRect(-5.47f, -5.3f, 5.47f, 5.6f, 2.2f);
+    AddStroke(b, ShapePoint{-3.0f, 5.3f}, ShapePoint{-4.3f, 7.81f - half}, half);
+    AddStroke(b, ShapePoint{3.0f, 5.3f}, ShapePoint{4.3f, 7.81f - half}, half);
+    b.Cut().RoundRect(-3.9f, -3.6f, 3.9f, -0.2f, 0.9f).Circle(-2.6f, 2.7f, 0.85f).Circle(2.6f, 2.7f, 0.85f);
+    return b.Build();
+}
+
 SymbolShape Pawprint() {
     // A pad and four toes: box -6.5..7.0 x -6.5..6.5.
     ShapeBuilder b;
@@ -546,15 +603,20 @@ const std::vector<DrawnSymbol>& Drawn() {
     // In the Icon tab's order, then the briefcase (not in the tab).
     static const std::vector<DrawnSymbol> drawn = {
         Make("bookmark.fill", Bookmark(), {0.25f, 0.25f}),
+        // The UI gate's four (above): no header render of them, so centred in the slot.
+        Make("cylinder.split.1x2.fill", CylinderSplit(), {0, 0}),
         Make("pawprint.fill", Pawprint(), {0, 0.25f}),
         Make("bed.double.fill", BedDouble(), {0, 0}),
         Make("fork.knife", ForkKnife(), {-0.25f, -0.25f}),
         Make("dumbbell.fill", Dumbbell(), {0, 0.25f}),
         Make("bandage.fill", Bandage(), {0.25f, 0.25f}),
+        Make("chevron.left.forwardslash.chevron.right", ChevronsAndSlash(), {0, 0}),
         Make("baseball.fill", Baseball(), {0, 0.25f}),
         Make("takeoutbag.and.cup.and.straw.fill", TakeoutBagAndCup(), {0, 0.25f}),
         // The slot clips the masks' sides, so across is the bar's middle scaled (-0.2 x 1.2).
         Make("theatermasks.fill", TheaterMasks(), {-0.25f, 0}),
+        Make("scroll.fill", Scroll(), {0, 0}),
+        Make("tram.fill", Tram(), {0, 0}),
         Make("briefcase", Briefcase(), {-0.25f, 0}),
     };
     return drawn;
@@ -590,6 +652,15 @@ const std::vector<std::string_view>& DrawnSymbols() {
         return out;
     }();
     return names;
+}
+
+void AddStroke(ShapeBuilder& builder, ShapePoint a, ShapePoint p, float half) {
+    const float dx = p.x - a.x, dy = p.y - a.y, length = std::sqrt(dx * dx + dy * dy);
+    const float ux = dx / length * half, uy = dy / length * half;  // along it
+    const float nx = -uy, ny = ux;                                   // across it
+    a = ShapePoint{a.x - ux, a.y - uy};
+    p = ShapePoint{p.x + ux, p.y + uy};
+    builder.RoundedPolygon({{a.x + nx, a.y + ny, half}, {p.x + nx, p.y + ny, half}, {p.x - nx, p.y - ny, half}, {a.x - nx, a.y - ny, half}});
 }
 
 }  // namespace kite
