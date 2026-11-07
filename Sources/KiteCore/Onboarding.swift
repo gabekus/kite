@@ -7,9 +7,12 @@ public enum Onboarding {
         /// False from the first launch until the user finishes or closes onboarding, so quitting
         /// halfway brings it back next time.
         public var completed: Bool
+        /// The step showing when onboarding was last left unfinished, so a relaunch resumes there.
+        public var step: Int?
 
-        public init(completed: Bool) {
+        public init(completed: Bool, step: Int? = nil) {
             self.completed = completed
+            self.step = step
         }
     }
 
@@ -36,6 +39,12 @@ public enum Onboarding {
     public static func load(from url: URL) -> State? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(State.self, from: data)
+    }
+
+    /// The step to open on at launch: where an unfinished onboarding was left, else the first.
+    public static func resumeStep(_ state: State?, stepCount: Int) -> Int {
+        guard let state, !state.completed, let step = state.step, (0..<stepCount).contains(step) else { return 0 }
+        return step
     }
 
     public static func save(_ state: State, to url: URL) {

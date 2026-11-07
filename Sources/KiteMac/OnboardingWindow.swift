@@ -39,10 +39,13 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
 
     /// `browser` gives a browser window to land in (opening one if the user closed them all), where
     /// Import from Arc… runs the importer once onboarding has closed, so the two never show at once.
-    static func show(browser: @escaping () -> BrowserWindowController?) {
+    /// `resume` (onboarding at launch) opens on the step an unfinished onboarding was left at, so
+    /// quitting halfway picks up there; Help › Getting Started starts from Welcome.
+    static func show(resume: Bool = false, browser: @escaping () -> BrowserWindowController?) {
         let onboarding = shown ?? OnboardingWindow(browser: browser)
         shown = onboarding
-        onboarding.go(to: 0, animated: false)
+        let start = resume ? Onboarding.resumeStep(Onboarding.load(from: stateURL), stepCount: Step.allCases.count) : 0
+        onboarding.go(to: start, animated: false)
         // A test-safe run keeps it behind the user's windows.
         WindowPresenter.show(onboarding.window)
     }
@@ -99,6 +102,7 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
             MainActor.assumeIsolated {
                 let id = (note.userInfo?["MenuItem"] as? NSMenuItem)?.identifier?.rawValue
                 guard id == "importFromArc" || id == "importFromAnotherBrowser" else { return }
+                self?.complete()
                 self?.window.close()
             }
         }
@@ -149,6 +153,11 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     private func go(to index: Int, animated: Bool) {
         guard let next = Step(rawValue: index), !transitioning || !animated else { return }
         step = next
+        // An unfinished onboarding remembers its step, so quitting here resumes here.
+        if var state = Onboarding.load(from: Self.stateURL), !state.completed, state.step != next.rawValue {
+            state.step = next.rawValue
+            Onboarding.save(state, to: Self.stateURL)
+        }
         generation += 1
         let generation = generation
         copiedReset?.cancel()
@@ -529,11 +538,13 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         guard !transitioning else { return }
         // Onboarding is never the last window: closing it would quit Kite.
         _ = browser()
+        complete()
         window.close()
     }
 
     @objc private func importArc() {
         guard !transitioning, let controller = browser(), let browserWindow = controller.window else { return }
+        complete()
         window.close()
         // An importer already up (from the File menu) isn't started twice.
         guard browserWindow.attachedSheet == nil else { return }
@@ -546,6 +557,7 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
 
     @objc private func importOtherBrowser() {
         guard !transitioning, let controller = browser(), let browserWindow = controller.window else { return }
+        complete()
         window.close()
         guard browserWindow.attachedSheet == nil else { return }
         DispatchQueue.main.async {
@@ -554,11 +566,22 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         }
     }
 
+    /// Done with onboarding: it doesn't come back at launch.
+    private func complete() {
+        Onboarding.save(.init(completed: true), to: Self.stateURL)
+    }
+
+    /// The close button or ⌘W: the user closed onboarding, which counts as done. Quitting Kite
+    /// closes the window without asking here, so it leaves onboarding unfinished and it resumes.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        complete()
+        return true
+    }
+
     func windowWillClose(_ notification: Notification) {
         if let menuObserver { NotificationCenter.default.removeObserver(menuObserver) }
         if let activeObserver { NotificationCenter.default.removeObserver(activeObserver) }
         copiedReset?.cancel()
-        Onboarding.save(.init(completed: true), to: Self.stateURL)
         Self.shown = nil
     }
 }
