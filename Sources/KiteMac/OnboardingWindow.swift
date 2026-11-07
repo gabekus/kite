@@ -7,8 +7,8 @@ import SwiftUI
 /// Arc's shape, from its binary and its AuthFeature bundle (docs/arc-visual-spec.md, "Onboarding"): a
 /// window of its own (`_closeOnboardingWindow`) over a saturated, grainy backdrop (`static-bg.png`,
 /// `WindowBackground`), one step per screen with a large title, a line or two of text, one primary
-/// button and a Back button, ending on a welcome step. Kite's steps are its own: Welcome, Camera
-/// and Microphone (macOS's own access, asked up front rather than when a site first needs it),
+/// button and a Back button, ending on a welcome step. Kite's steps are its own: Welcome, Access
+/// (every macOS permission Kite uses, `SystemAccess`, asked up front rather than one at a time later),
 /// Set Up Claude (Copy Prompt for Claude), and a last step that hands off to Import from Arc or
 /// Import from Another Browser.
 /// Arc's onboarding itself can't be watched headlessly (it needs an Arc account and a fresh Arc
@@ -48,7 +48,7 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     }
 
     enum Metrics {
-        static let size = NSSize(width: 720, height: 560)
+        static let size = NSSize(width: 720, height: 620)
         static let columnWidth: CGFloat = 440
         static let titleSize: CGFloat = 34
         static let bodySize: CGFloat = 15
@@ -74,6 +74,8 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     /// A step fading out: its buttons are still on screen but no longer count.
     private var transitioning = false
     private var copyButton: OnboardingButton?
+    /// Whether the access step has re-read what macOS only answers asynchronously (notifications).
+    private var accessRefreshed = false
     private var copiedReset: DispatchWorkItem?
 
     private init(browser: @escaping () -> BrowserWindowController?) {
@@ -196,10 +198,17 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
                           body: "Spaces, pinned tabs, the command bar and split view, the way Arc had them. With Claude built in.",
                           buttons: [primary("Get Started", #selector(next), id: "onboardingGetStarted")])
         case .access:
-            let statuses = SystemMediaAccess.Device.allCases.map { ($0, SystemMediaAccess.status($0)) }
+            if !accessRefreshed {
+                accessRefreshed = true
+                Task { @MainActor [weak self] in
+                    await SystemAccess.refresh()
+                    self?.refreshAccess()
+                }
+            }
+            let statuses = SystemAccess.statuses()
             let buttons: [NSButton]
-            if statuses.contains(where: { $0.1 == .notAsked }) {
-                buttons = [primary("Allow Camera and Microphone", #selector(requestAccess), id: "onboardingAllowAccess"),
+            if statuses.contains(where: { $0.0.canAsk && $0.1 == .notAsked }) {
+                buttons = [primary("Allow All", #selector(requestAccess), id: "onboardingAllowAccess"),
                            secondary("Not Now", #selector(next), id: "onboardingNotNow")]
             } else if statuses.contains(where: { $0.1 == .off }) {
                 buttons = [primary("Open System Settings", #selector(openAccessSettings), id: "onboardingOpenSettings"),
@@ -207,8 +216,8 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
             } else {
                 buttons = [primary("Continue", #selector(next), id: "onboardingContinue")]
             }
-            return column(icon: symbolIcon("video.fill", "mic.fill"), title: "Video calls, voice search.",
-                          body: "macOS asks once whether Kite may use your camera and microphone. Sites still ask you first, every one of them.",
+            return column(icon: symbolIcon(size: 26, "lock.shield.fill"), title: "Allow Kite once.",
+                          body: "macOS asks about each of these one time, so nothing interrupts you later. Sites still ask you before they use any of it.",
                           extra: accessRows(statuses), buttons: buttons)
         case .claude:
             let copy = primary("Copy Prompt for Claude", #selector(copyPrompt), id: "onboardingCopyPrompt")
@@ -254,8 +263,8 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         return names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
     }
 
-    /// Camera and microphone, each with what macOS says about Kite.
-    private func accessRows(_ statuses: [(SystemMediaAccess.Device, SystemMediaAccess.Status)]) -> NSView {
+    /// Every permission, each with what macOS says about Kite and what Kite uses it for (its tooltip).
+    private func accessRows(_ statuses: [(SystemAccess.Permission, SystemAccess.Status)]) -> NSView {
         let rows = NSStackView()
         rows.orientation = .vertical
         rows.spacing = 0
@@ -265,30 +274,30 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         rows.layer?.borderWidth = 1
         rows.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
         rows.edgeInsets = NSEdgeInsets(top: 4, left: 14, bottom: 4, right: 14)
-        for (device, status) in statuses {
-            let symbol = NSImageView(image: NSImage(systemSymbolName: device == .camera ? "video.fill" : "mic.fill",
-                                                    accessibilityDescription: nil) ?? NSImage())
+        for (permission, status) in statuses {
+            let symbol = NSImageView(image: NSImage(systemSymbolName: permission.symbol, accessibilityDescription: nil) ?? NSImage())
             symbol.contentTintColor = NSColor.white.withAlphaComponent(0.8)
             symbol.widthAnchor.constraint(equalToConstant: 20).isActive = true
-            let name = NSTextField(labelWithString: device.title)
+            let name = NSTextField(labelWithString: permission.title)
             name.font = .systemFont(ofSize: 13, weight: .medium)
             name.textColor = .white
             let state = NSTextField(labelWithString: {
                 switch status {
                 case .allowed: "Allowed ✓"
                 case .notAsked: "Not asked yet"
-                case .off: "Off in System Settings"
+                case .off: permission == .fullDiskAccess ? "Turn on in System Settings" : "Off in System Settings"
                 }
             }())
             state.font = .systemFont(ofSize: 13)
             state.textColor = status == .allowed ? NSColor.systemGreen : NSColor.white.withAlphaComponent(status == .off ? 0.9 : 0.55)
-            state.setAccessibilityIdentifier(device == .camera ? "onboardingCameraStatus" : "onboardingMicrophoneStatus")
+            state.setAccessibilityIdentifier("onboarding\(permission.title.replacingOccurrences(of: " ", with: ""))Status")
             let spacer = NSView()
             spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
             let row = NSStackView(views: [symbol, name, spacer, state])
             row.orientation = .horizontal
             row.spacing = 10
-            row.heightAnchor.constraint(equalToConstant: 36).isActive = true
+            row.toolTip = permission.purpose
+            row.heightAnchor.constraint(equalToConstant: 30).isActive = true
             rows.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: rows.widthAnchor, constant: -28).isActive = true
         }
@@ -296,8 +305,8 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     }
 
     /// SF Symbols side by side, in white, where the other steps have an icon.
-    private func symbolIcon(_ names: String...) -> NSView {
-        let configuration = NSImage.SymbolConfiguration(pointSize: 34, weight: .regular)
+    private func symbolIcon(size: CGFloat = 34, _ names: String...) -> NSView {
+        let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .regular)
         let views = names.map { name -> NSView in
             let view = NSImageView(image: NSImage(systemSymbolName: name, accessibilityDescription: nil)?
                 .withSymbolConfiguration(configuration) ?? NSImage())
@@ -309,8 +318,8 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         row.spacing = 18
         row.setAccessibilityElement(true)
         row.setAccessibilityRole(.image)
-        row.setAccessibilityLabel("Camera and microphone")
-        row.heightAnchor.constraint(equalToConstant: Metrics.iconSide + 16).isActive = true
+        row.setAccessibilityLabel(names.joined(separator: ", "))
+        row.heightAnchor.constraint(equalToConstant: size == 34 ? Metrics.iconSide + 16 : size * 1.6).isActive = true
         return row
     }
 
@@ -458,30 +467,41 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
 
     @objc private func back() { go(to: step.rawValue - 1, animated: true) }
 
-    /// macOS's camera prompt, then its microphone prompt; the step then shows the answers.
+    /// macOS's prompt for each permission it hasn't been asked about, one after the other; the step
+    /// then shows the answers.
     @objc private func requestAccess() {
         guard !transitioning else { return }
         // A test run never puts a system prompt on the user's screen.
         if UIDiagnostics.enabledByEnvironment {
-            NSLog("Kite: diagnostics: would ask macOS for the camera and microphone")
+            let asked = SystemAccess.statuses().filter { $0.0.canAsk && $0.1 == .notAsked }.map(\.0.title)
+            NSLog("Kite: diagnostics: would ask macOS for %@", asked.joined(separator: ", "))
             return
         }
         Task { @MainActor in
-            await SystemMediaAccess.requestAll()
+            await SystemAccess.requestAll()
             refreshAccess()
         }
     }
 
+    /// System Settings at the first permission that's off.
     @objc private func openAccessSettings() {
-        guard !transitioning, let device = SystemMediaAccess.Device.allCases.first(where: { SystemMediaAccess.status($0) == .off })
+        guard !transitioning, let permission = SystemAccess.Permission.allCases.first(where: { SystemAccess.status($0) == .off })
         else { return }
-        SystemMediaAccess.openSettings(device)
+        if UIDiagnostics.enabledByEnvironment {
+            NSLog("Kite: diagnostics: would open System Settings at %@", permission.title)
+            return
+        }
+        SystemAccess.openSettings(permission)
     }
 
-    /// Redraws the access step in place, if it's the one showing.
+    /// Re-reads macOS's answers and redraws the access step in place, if it's the one showing.
     private func refreshAccess() {
         guard step == .access, !transitioning else { return }
-        go(to: Step.access.rawValue, animated: false)
+        Task { @MainActor [weak self] in
+            await SystemAccess.refresh()
+            guard let self, step == .access, !transitioning else { return }
+            go(to: Step.access.rawValue, animated: false)
+        }
     }
 
     @objc private func copyPrompt() {

@@ -47,6 +47,8 @@
 	<string>Kite shows your upcoming events when you hover a calendar favorite.</string>
 	<key>NSLocationUsageDescription</key>
 	<string>Websites you allow can use your location.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Websites you allow can use your location.</string>
 	<!-- Bluetooth is how a phone proves it's nearby when you sign in with a
 	     passkey from your phone (the QR code). Without this string macOS
 	     kills Kite the first time Chromium touches Bluetooth. -->
