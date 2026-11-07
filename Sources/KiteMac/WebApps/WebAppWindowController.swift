@@ -31,6 +31,7 @@ final class WebAppWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private let engine: WebEngine
     private let host: Host
     private var page: WebPage?
+    private var pageFullscreen: PageFullscreen?
     private(set) var url: URL?
     private var pageTitle: String?
     private var canGoBack = false
@@ -238,6 +239,8 @@ final class WebAppWindowController: NSWindowController, NSWindowDelegate, NSMenu
         case .favicon, .progress, .blockedCount, .crashed, .addExtension, .media, .callControls, .capturing, .permissionRequestCancelled,
              .trace, .traceInput, .dialog:
             break
+        case .fullscreen(let fullscreen):
+            pageFullscreenChanged(fullscreen)
         }
     }
 
@@ -284,9 +287,31 @@ final class WebAppWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// ⌘W and File › Archive Tab close the app window.
     @objc func closeTab(_ sender: Any?) { window?.performClose(sender) }
 
+    /// The page went into or out of HTML fullscreen.
+    private func pageFullscreenChanged(_ on: Bool) {
+        if on {
+            guard pageFullscreen == nil, let page, let window else { return }
+            pageFullscreen = PageFullscreen(page: page, in: window)
+            if pageFullscreen == nil { page.exitFullscreen() }
+        } else {
+            pageFullscreen?.end()
+            pageFullscreen = nil
+        }
+    }
+
+    /// The page is leaving this window (or the window is closing): out of fullscreen first.
+    private func endPageFullscreen() {
+        guard let fullscreen = pageFullscreen else { return }
+        pageFullscreen = nil
+        fullscreen.end()
+        fullscreen.page.exitFullscreen()
+    }
+
+
     /// Moves the live page into the main window as a tab (Chrome's "Open in Chrome").
     @objc func openInKite(_ sender: Any?) {
         guard let page else { return NSSound.beep() }
+        endPageFullscreen()
         page.view.removeFromSuperview()
         page.onEvent = nil
         page.linkPeekPolicy = nil
@@ -340,6 +365,7 @@ final class WebAppWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     func windowWillClose(_ notification: Notification) {
         window?.saveFrame(usingName: frameName)
+        endPageFullscreen()
         if let page {
             page.onEvent = nil
             page.linkPeekPolicy = nil
@@ -352,7 +378,12 @@ final class WebAppWindowController: NSWindowController, NSWindowDelegate, NSMenu
     func windowDidResize(_ notification: Notification) { window?.saveFrame(usingName: frameName) }
     func windowDidMove(_ notification: Notification) { window?.saveFrame(usingName: frameName) }
     func windowDidEnterFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
-    func windowDidExitFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
+    func windowDidExitFullScreen(_ notification: Notification) {
+        trafficLights?.fullScreenChanged()
+        // Left with the green button or ⌃⌘F while a video was full screen: the video leaves it too.
+        pageFullscreen?.windowLeftFullScreen()
+        endPageFullscreen()
+    }
 }
 
 /// Offers ⌘-keys to the app window before the page and the menu bar see them.

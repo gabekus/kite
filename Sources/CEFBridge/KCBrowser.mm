@@ -792,6 +792,15 @@ class KCClient : public CefClient,
         }
     }
 
+    /// With Alloy style the client makes the transition: Chromium only lays the element out to fill the view.
+    void OnFullscreenModeChange(CefRefPtr<CefBrowser> browser, bool fullscreen) override {
+        KCBrowser* owner = owner_;
+        id<KCBrowserDelegate> delegate = owner.delegate;
+        if (owner && [delegate respondsToSelector:@selector(browser:fullscreenDidChange:)]) {
+            [delegate browser:owner fullscreenDidChange:fullscreen];
+        }
+    }
+
     void OnMediaAccessChange(CefRefPtr<CefBrowser> browser, bool has_video_access, bool has_audio_access) override {
         [owner_.delegate browser:owner_ mediaAccessDidChange:has_video_access || has_audio_access];
     }
@@ -975,6 +984,16 @@ class KCClient : public CefClient,
     /// typing. AppKit then matches a plain E to Edit > Emoji & Symbols (fn E), so every
     /// e typed into a page opened the emoji picker. Only keys with a modifier that can
     /// make a shortcut go on to the menu, as in Chrome.
+    /// Esc leaves HTML fullscreen before the page sees it, as in Chrome (Alloy leaves this to the client).
+    bool OnPreKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& event, CefEventHandle os_event,
+                       bool* is_keyboard_shortcut) override {
+        if (event.type == KEYEVENT_RAWKEYDOWN && event.windows_key_code == 0x1B && browser->GetHost()->IsFullscreen()) {
+            browser->GetHost()->ExitFullscreen(true);
+            return true;
+        }
+        return false;
+    }
+
     bool OnKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& event, CefEventHandle os_event) override {
         NSEvent* ns_event = CAST_CEF_EVENT_HANDLE_TO_NSEVENT(os_event);
         if (ns_event.type != NSEventTypeKeyDown) return false;
@@ -1447,6 +1466,14 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
 
 - (void)allowFocus {
     _focusBlocked = NO;
+}
+
+- (BOOL)isFullscreen {
+    return _browser && _browser->GetHost()->IsFullscreen();
+}
+
+- (void)exitFullscreen {
+    if (_browser && _browser->GetHost()->IsFullscreen()) _browser->GetHost()->ExitFullscreen(true);
 }
 
 - (void)setHidden:(BOOL)hidden {

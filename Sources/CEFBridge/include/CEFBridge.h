@@ -233,6 +233,9 @@ typedef NS_ENUM(NSInteger, KCJavaScriptDialogKind) {
 - (void)browserDismissJavaScriptDialogs:(KCBrowser *)browser;
 /// The page let a close started with `beginUnloadClose` go ahead; Chromium is closing it.
 - (void)browserDidLetGo:(KCBrowser *)browser;
+/// The page entered or left HTML fullscreen (a video's full screen button, requestFullscreen). Chromium
+/// lays the element out to fill the browser's view; the delegate makes that view fill the screen.
+- (void)browser:(KCBrowser *)browser fullscreenDidChange:(BOOL)fullscreen;
 /// The page is being closed without asking (quitting answers its "Leave site?" itself): a close the
 /// person asked for is over, as superseded, not as Cancel.
 - (void)browserWillCloseWithoutAsking:(KCBrowser *)browser;
@@ -290,6 +293,10 @@ NS_SWIFT_UI_ACTOR
 - (void)blur;
 - (void)allowFocus;
 @property (nonatomic, readonly) BOOL focusBlocked;
+/// The page is in HTML fullscreen.
+@property (nonatomic, readonly) BOOL isFullscreen;
+/// Takes the page out of HTML fullscreen (as Esc does); the delegate hears `fullscreenDidChange:`.
+- (void)exitFullscreen;
 /// Tells Chromium the tab is offscreen so it throttles rendering and timers.
 - (void)setHidden:(BOOL)hidden;
 /// Lays the page out at its content's size, between `minSize` and `maxSize`, as Chrome sizes
