@@ -19,10 +19,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="${1:-$ROOT/build/Kite.app}"
 [[ "$(cd "$APP" && pwd)" != /Applications/* ]] || { echo "test builds only, not $APP" >&2; exit 2; }
 CLI="$APP/Contents/Helpers/kite"
-PORT="${PORT:-18795}"
 
 # shellcheck source=lib/test-kite.sh
 source "$(dirname "$0")/lib/test-kite.sh"
+PORT="${PORT:-$(kite_free_port)}"
 P=$(kite_test_profile)
 export KITE_SUPPORT_PATH=$P KITE_TEST_BLOCK_VIEWS_WINDOWS=1 TYPESAFE_API_KEY=x KITE_DIAGNOSTICS=1 KITE_TEST_ALLOW_FORM_PROFILE=1
 # Refuses (exit 2), before anything starts, whatever could reach the real profile or the installed Kite's settings.
@@ -30,7 +30,7 @@ kite_check_test_launch "$APP" "$P" || exit 2
 python3 "$ROOT/Tests/Browser/handoff/server.py" "$PORT" 2>/dev/null &
 SERVER=$!
 # A second origin, for frames of another origin than the page's.
-PORT2=$((PORT + 1))
+PORT2="${PORT2:-$(kite_free_port)}"
 python3 "$ROOT/Tests/Browser/handoff/server.py" "$PORT2" 2>/dev/null &
 SERVER2=$!
 "$APP/Contents/MacOS/Kite" --disable-backgrounding-occluded-windows >"$P/kite.log" 2>&1 &

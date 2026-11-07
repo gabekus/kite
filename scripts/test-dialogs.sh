@@ -15,10 +15,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="${1:-$ROOT/build/Kite.app}"
 [[ "$(cd "$APP" && pwd)" != /Applications/* ]] || { echo "test builds only, not $APP" >&2; exit 2; }
 CLI="$APP/Contents/Helpers/kite"
-PORT="${PORT:-18797}"
 
 # shellcheck source=lib/test-kite.sh
 source "$(dirname "$0")/lib/test-kite.sh"
+PORT="${PORT:-$(kite_free_port)}"
 P=$(kite_test_profile)
 export KITE_SUPPORT_PATH=$P KITE_TEST_BLOCK_VIEWS_WINDOWS=1 KITE_DIAGNOSTICS=1
 # Refuses (exit 2), before anything starts, whatever could reach the real profile or the installed Kite's settings.
