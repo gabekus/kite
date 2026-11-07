@@ -62,9 +62,11 @@ public struct MCPServer: Sendable {
         result carries any other, once (the dialogs tool lists them). After the user's step, a dialog usually means \
         the page refused it ("Double check your card information"): read the page, work out what's wrong, and fix it \
         or hand over a new step, rather than waiting on a user who's stuck. \
-        Every tab you open or act on shows the user one state: working while your tools act on it, needs you (a \
-        handoff), or done: when you finish with a tab, call tab_status with state done and a note of what you did. One \
-        you leave without either turns orange for the user, "Claude stopped here". \
+        Every tab you open or touch shows the user one state: working while your session is connected (with a line \
+        of what you're doing: start a multi-step job on a tab with tab_status working and a short note of what you're \
+        doing), needs you (a handoff, ringed on the page), or done: when you finish with a tab, call tab_status with \
+        state done and a note of what you did. One that isn't done when your session ends turns orange for the user, \
+        "Claude stopped here", with its page outlined. \
         To check Kite's own interface (sidebar, command bar, menus, cursors, animations), use the ui tool, not \
         screenshots of the screen or the user's mouse. \
         When the user's VPN needs to reconnect, or its SSO sign-in keeps opening tabs, use the vpn tool: \

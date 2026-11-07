@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end test that a page's JavaScript dialogs reach Claude (DialogLog), on a dev build with a fresh profile, driven
 # through that build's own socket by one `kite mcp` session, as Claude Code drives it. The page is
-# Tests/Browser/handoff/checkout.html, whose Place Order answers with an alert, as Gabe's checkout did (5 Nov 2026):
+# Tests/Browser/handoff/checkout-alert.html, whose Place Order answers with an alert, as Gabe's checkout did (5 Nov 2026):
 #   1. Claude hands the user a step (the card field) and waits in handoff_status. The "user" (Kite's ui tool: a click
 #      in the window, no real pointer) clicks Place Order and then OK on the page's alert. The wait must end early,
 #      quoting the alert, and say the user dismissed it.
@@ -17,9 +17,12 @@ APP="${1:-$ROOT/build/Kite.app}"
 CLI="$APP/Contents/Helpers/kite"
 PORT="${PORT:-18797}"
 
-P=$(mktemp -d /tmp/k.XXXX)
-[[ -d "$P" ]] || { echo "profile not a directory" >&2; exit 1; }
+# shellcheck source=lib/test-kite.sh
+source "$(dirname "$0")/lib/test-kite.sh"
+P=$(kite_test_profile)
 export KITE_SUPPORT_PATH=$P KITE_TEST_BLOCK_VIEWS_WINDOWS=1 KITE_DIAGNOSTICS=1
+# Refuses (exit 2), before anything starts, whatever could reach the real profile or the installed Kite's settings.
+kite_check_test_launch "$APP" "$P" || exit 2
 python3 "$ROOT/Tests/Browser/handoff/server.py" "$PORT" 2>/dev/null &
 SERVER=$!
 "$APP/Contents/MacOS/Kite" --disable-backgrounding-occluded-windows >"$P/kite.log" 2>&1 &
@@ -29,7 +32,7 @@ trap cleanup EXIT
 for _ in $(seq 60); do "$CLI" ui windows >/dev/null 2>&1 && break; sleep 0.5; done
 grep -q "CefInitialize failed" "$P/kite.log" && echo "note: Chromium didn't start; this run is WebKit"
 
-python3 - "$CLI" "http://127.0.0.1:$PORT/checkout.html" "${SHOTS:-}" <<'PY'
+python3 - "$CLI" "http://127.0.0.1:$PORT/checkout-alert.html" "${SHOTS:-}" <<'PY'
 import base64, json, os, re, subprocess, sys, threading, time
 cli, url, shots = sys.argv[1], sys.argv[2], sys.argv[3]
 mcp = subprocess.Popen([cli, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
@@ -117,7 +120,9 @@ took = time.time() - started
 print(f"     handoff_status returned after {took:.1f} s:\n" + "\n".join("     | " + l for l in woke.splitlines()))
 check("a waiting handoff_status wakes on the page's alert", took < 15, woke)
 check("its result quotes the alert", "Double check your credit card information" in woke, woke)
-check("and names the step it came during", f"during the user's step 1 of handoff {hid}" in woke, woke)
+check("and names the step it came on", f"the user's step 1 of handoff {hid}" in woke, woke)
+# A page's dialog ends the step it came up on (UserHandoff's ring: every step finishes by itself), so the handoff is done.
+check("the dialog ended the step", "[done] Type your card (the page opened a dialog)" in woke, woke)
 check("and says the user dismissed it", "The user dismissed it." in woke, woke)
 check("and tells Claude to read the page", "work out what's wrong" in woke, woke)
 if shots:
@@ -130,7 +135,7 @@ again = call("handoff_status", {"id": hid, "wait": 1})
 check("the alert isn't reported twice", "Double check" not in again, again)
 time.sleep(0.5)
 row = sidebar_label()
-check("waiting on the user again, the row is orange again", "#D97757" in row, row)
+check("with the step done, the row doesn't turn orange again", "SidebarLabel" in row and "#D97757" not in row, row)
 if shots:
     time.sleep(1)
     call("screenshot", {"tab": tab, "format": "png"}, shot=os.path.join(shots, "2-waiting-again.png"))

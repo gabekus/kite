@@ -204,6 +204,13 @@ public struct DialogLog: Sendable {
         }
     }
 
+    /// Dialogs on the handoff's tabs Claude hasn't heard of that aren't news yet (still open, inside `openGrace`): a
+    /// wait that a step's end woke holds on for them, since a page's dialog also ends the step it came up on.
+    public func pending(_ handoff: Handoff, now: Date = Date()) -> [Entry] {
+        let tabs = Set(handoff.steps.compactMap(\.tab)).union(handoff.opened.map(\.tab))
+        return entries.filter { !$0.told && tabs.contains($0.tab) && !Self.isReady($0, now: now) }
+    }
+
     /// What Claude reads about one dialog. `title` is the tab's title now, if it's open.
     public static func describe(_ entry: Entry, title: String?, tabInfo: Bool = true) -> String {
         var text = ""

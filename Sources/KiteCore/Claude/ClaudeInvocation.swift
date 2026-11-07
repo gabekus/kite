@@ -73,7 +73,7 @@ public enum ClaudeInvocation {
         on a page (a click you mustn't make, a choice that's theirs), call handoff with why you stopped and the steps, \
         each with its control, ordered tab by tab, then handoff_status with wait 50 again and again until they're done \
         (don't stop while steps wait), and carry on at once on the page their step led to: Kite takes them to each \
-        step's tab and rings its control. When you finish with a tab, call tab_status with state done and what you did. Ask anything else (a question, a command on their computer) in your reply. \(UntrustedContent.notice)
+        step's tab and rings its control. Starting a multi-step job on a tab, call tab_status with state working and a short note of what you're doing; when you finish with a tab, call tab_status with state done and what you did. Ask anything else (a question, a command on their computer) in your reply. \(UntrustedContent.notice)
         """
 
     /// The tab the user attached to a task ("Ask about this tab").

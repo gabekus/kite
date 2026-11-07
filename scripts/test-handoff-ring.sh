@@ -5,9 +5,13 @@
 # ringed control. The cases are Tests/Browser/handoff/ring.html, run with the ring in the page's main world so
 # the test can read where it settled (in Kite it runs in an isolated world; the code is the same). The last
 # cases go through Kite's own handoff tool, in its isolated world, on Tests/Browser/handoff/settle.html, a page
-# that redraws its controls on timers, and on Tests/Browser/handoff/tag.html: the tag's Skip and Done, steps Kite
-# refuses or can't show, and no card in Kite's interface; and on Tests/Browser/handoff/frames.html, a control in a
-# frame of another origin (the same site's, as Apple's sign-in form is, and another site's).
+# that redraws its controls on timers, and on Tests/Browser/handoff/tag.html: the tag's Skip (there's no Done), steps
+# Kite refuses or can't show, and no card in Kite's interface; on Tests/Browser/handoff/done.html, every way a step
+# finishes by itself (a field filled in and left, Enter, a payment field in another origin's frame, a later step's
+# control, the control gone, the page moving on, words appearing, a dialog; on checkout.html, a checkout that moves
+# on to its thank-you page after its pay step) and the user never being moved to
+# another tab; and on Tests/Browser/handoff/frames.html, a control in a frame of another origin (the same site's,
+# as Apple's sign-in form is, and another site's).
 # Usage: scripts/test-handoff-ring.sh [APP]   (default build/Kite.app; never /Applications/Kite.app)
 # RING_SOURCE=path/to/UserHandoff.swift tests another version of the ring (an older one should fail).
 set -euo pipefail
@@ -147,7 +151,7 @@ if [[ -z "${RING_SOURCE:-}" ]]; then
     if step_has '\[done\].*clicked'; then echo "ok   handoff: a click on the settled control ends the step"; passes=$((passes + 1));
     else echo "FAIL handoff: the button's click wasn't heard: $LINE"; failures=$((failures + 1)); fi
 
-    # The tag beside the ring is the only place a step shows (no card over the page): its Skip and Done end the step,
+    # The tag beside the ring is the only place a step shows (no card over the page): its Skip ends the step undone,
     # a step Kite can't show is reported to Claude at once, and steps with nowhere to show are refused.
     pass() { echo "ok   $1"; passes=$((passes + 1)); }
     fail() { echo "FAIL $1"; failures=$((failures + 1)); }
@@ -170,11 +174,11 @@ if [[ -z "${RING_SOURCE:-}" ]]; then
     OUT=$("$CLI" ui tree '{"match":"Claude needs you"}' 2>&1 || true)
     grep -q 'Nothing matches "Claude needs you"' <<<"$OUT" && pass "no card in Kite's interface, only the ring on the page" \
         || fail "a card shows in Kite's interface: $OUT"
-    # press WHICH: presses the tag's Done (its right end) or Skip (left of Done) beside control ID.
+    # press skip ID: presses the tag's Skip (its right end: there's no Done) beside control ID.
     press() {
         local box x y
         box=$(js "window.tagBox('$2')")
-        x=$(python3 -c "import json,sys; b=json.loads(sys.argv[1]); off=24 if sys.argv[2]=='done' else 68; print(round((b['right']-off)*b['scale']))" "$box" "$1")
+        x=$(python3 -c "import json,sys; b=json.loads(sys.argv[1]); print(round((b['right']-22)*b['scale']))" "$box")
         y=$(python3 -c "import json,sys; b=json.loads(sys.argv[1]); print(round(b['y']*b['scale']))" "$box")
         "$CLI" call computer "{\"action\":\"left_click\",\"coordinate\":[$x,$y],\"tab\":\"$TAB\"}" >/dev/null
     }
@@ -187,13 +191,13 @@ if [[ -z "${RING_SOURCE:-}" ]]; then
         done
         return 1
     }
-    press done approve
-    nth_has 1 '\[done\].*pressed Done' && pass "the tag's Done ends the step" || fail "the tag's Done: $LINE"
+    press skip approve
+    nth_has 1 '\[skipped\].*skipped it' && pass "the tag's Skip skips the step" || fail "the tag's Skip: $LINE"
     [[ $(js "String(window.menuOpen)") == true ]] && pass "a press on the tag isn't a press on the page (its menu stays open)" \
         || fail "the page heard the tag's press: presses $(js "JSON.stringify(window.presses)")"
     sleep 1
-    press skip save
-    nth_has 2 '\[skipped\].*skipped it' && pass "the tag's Skip skips the step (the ring moved on to it)" || fail "the tag's Skip: $LINE"
+    "$CLI" click --selector "#save" --tab "$TAB" >/dev/null
+    nth_has 2 '\[done\].*clicked' && pass "the next step on the tab ends by its own click (the ring moved on to it)" || fail "step 2: $LINE"
 
     # A control in a frame of another origin, which the top page's look can't reach: Kite looks in the frame. Another
     # port of 127.0.0.1 is the same site (the tab's own process, like idmsa.apple.com on appleid.apple.com);
@@ -216,10 +220,20 @@ if [[ -z "${RING_SOURCE:-}" ]]; then
         || fail "first step on a background tab: front $(front), $OUT"
     for _ in $(seq 25); do box=$(js "window.tagBox('create')"); grep -q '"left":[0-9]' <<<"$box" && break; sleep 0.2; done
     grep -q '"left":[0-9]' <<<"$box" && pass "its control is ringed with the tag beside it" || fail "no tag beside the control: $box"
+    # Finishing a step never moves the user (Gabe, 5 Nov 2026: "keep me in the same tab"): not to the next step's tab
+    # after a middle step, nor anywhere after the last.
     "$CLI" click --selector "#create" --tab "$TAB" >/dev/null
-    for _ in $(seq 25); do [[ "$(front)" == "$OTHER" ]] && break; sleep 0.2; done
-    [[ "$(front)" == "$OTHER" ]] && pass "finishing the last step on that tab takes the user on to the next step's tab" \
-        || fail "after step 1, front is $(front), not the next step's tab"
+    nth_has 1 '\[done\]' || fail "step 1 didn't end: $LINE"
+    sleep 2
+    [[ "$(front)" == "$TAB" ]] && pass "a middle step whose next step is on another tab leaves the user on their tab" \
+        || fail "after step 1, front is $(front), not the user's tab $TAB"
+    # The user goes to the next step's tab themselves (its ring is waiting there) and does the last step.
+    "$CLI" call switch_tab "{\"tab\":\"$OTHER\"}" >/dev/null
+    sleep 1.5
+    "$CLI" click --selector "#approve" --tab "$OTHER" >/dev/null
+    nth_has 2 '\[done\]' || fail "step 2 didn't end: $LINE"
+    sleep 2
+    [[ "$(front)" == "$OTHER" ]] && pass "the last step leaves the user where they are" || fail "after the last step, front is $(front)"
     "$CLI" call handoff_status '{"cancel":true}' >/dev/null
     # A step whose control can't be ringed: Claude hears why, and no card or tag stands in for it on the page.
     "$CLI" call switch_tab "{\"tab\":\"$TAB\"}" >/dev/null
@@ -258,6 +272,76 @@ if [[ -z "${RING_SOURCE:-}" ]]; then
         && pass "form_profile saves the user's details and flags a wrong street" || fail "form_profile: $OUT / $OUT2"
     OUT=$("$CLI" call form_profile '{"action":"set","phone":"4242 4242 4242 4242"}' 2>&1 || true)
     grep -q "never keeps" <<<"$OUT" && pass "form_profile refuses a card number" || fail "form_profile took a card number: $OUT"
+
+    # Every step finishes by itself, the moment it's done: no Done button (Gabe, 5 Nov 2026).
+    "$CLI" call switch_tab "{\"tab\":\"$TAB\"}" >/dev/null
+    "$CLI" open "http://127.0.0.1:$PORT/done.html?port2=$PORT2" --tab "$TAB" >/dev/null
+    sleep 2
+    hand() { "$CLI" call handoff "{\"reason\":\"Yours to do\",\"tab\":\"$TAB\",\"steps\":$1}" >/dev/null; sleep 1; }
+    click_at() {
+        local p; p=$(js "window.at('$1', ${2:-0})")
+        "$CLI" call computer "{\"action\":\"left_click\",\"coordinate\":[$(python3 -c "import json,sys; p=json.loads(sys.argv[1]); print(p['x'], ',', p['y'])" "$p")],\"tab\":\"$TAB\"}" >/dev/null
+    }
+    hand '[{"instruction":"Type your ZIP code","selector":"#zip"}]'
+    click_at zip
+    sleep 1
+    nth_has 1 '\[waiting\]' && pass "a click into a field doesn't end its step" || fail "a click into the field: $LINE"
+    "$CLI" call computer "{\"action\":\"type\",\"text\":\"11101\",\"tab\":\"$TAB\"}" >/dev/null
+    sleep 1
+    nth_has 1 '\[waiting\]' && pass "typing in it doesn't either, while focus stays" || fail "typing: $LINE"
+    click_at other
+    nth_has 1 '\[done\].*filled in' && pass "a field filled in and left ends its step" || fail "a filled field: $LINE"
+    # Right away the tab is working again in the sidebar, before Claude's next tool call.
+    OUT=$("$CLI" ui tree '{"match":"Claude is picking up"}' 2>&1 || true)
+    grep -q 'Nothing matches' <<<"$OUT" && fail "no \"Claude is picking up\" line after the step: $OUT" \
+        || pass "the step's tab shimmers again at once: \"Claude is picking up\""
+    hand '[{"instruction":"Search for oak","selector":"#search"}]'
+    click_at search
+    "$CLI" call computer "{\"action\":\"type\",\"text\":\"oak\",\"tab\":\"$TAB\"}" >/dev/null
+    "$CLI" call computer "{\"action\":\"key\",\"text\":\"Enter\",\"tab\":\"$TAB\"}" >/dev/null
+    nth_has 1 '\[done\].*filled in' && pass "Enter in a field ends its step" || fail "Enter: $LINE"
+    # A payment field in a frame of another origin: its value can't be read, so focus in the frame moving on ends it.
+    hand '[{"instruction":"Card number","selector":"#card"}]'
+    click_at card 40
+    "$CLI" call computer "{\"action\":\"type\",\"text\":\"4242\",\"tab\":\"$TAB\"}" >/dev/null
+    sleep 1
+    nth_has 1 '\[waiting\]' && pass "typing in another origin's card frame doesn't end its step yet" || fail "in the frame: $LINE"
+    click_at after
+    nth_has 1 '\[done\].*filled in' && pass "focus leaving another origin's card frame ends its step" || fail "the card frame: $LINE"
+    hand '[{"instruction":"Promo code","selector":"#promo"},{"instruction":"Pay","selector":"#pay"}]'
+    "$CLI" click --selector "#pay" --tab "$TAB" >/dev/null
+    nth_has 1 '\[done\].*later step' && nth_has 2 '\[done\].*clicked' \
+        && pass "a click on a later step's control ends it and every step before it on the tab" || fail "a later step's control: $LINE"
+    hand '[{"instruction":"Send it","selector":"#vanish"}]'
+    js "document.getElementById('vanish').remove(); 1" >/dev/null
+    nth_has 1 '\[done\].*went away' && pass "the ringed control going away ends its step" || fail "the control gone: $LINE"
+    hand '[{"instruction":"Review it","selector":"#stay"}]'
+    js "history.pushState({}, '', location.pathname + '?moved=1'); 1" >/dev/null
+    nth_has 1 '\[done\].*moved on' && pass "the page moving on ends the step" || fail "navigation: $LINE"
+    hand '[{"instruction":"Confirm the order","selector":"#confirm","done_when":"appears","appears":"Order confirmed"}]'
+    "$CLI" click --selector "#confirm" --tab "$TAB" >/dev/null
+    sleep 1
+    nth_has 1 '\[waiting\]' && pass "done_when appears: a click alone doesn't end it" || fail "appears, the click: $LINE"
+    js "document.getElementById('status').textContent = 'Order confirmed'; 1" >/dev/null
+    nth_has 1 '\[done\].*appeared' && pass "done_when appears: the words showing up end it" || fail "appears: $LINE"
+    OUT=$("$CLI" call handoff "{\"reason\":\"r\",\"tab\":\"$TAB\",\"steps\":[{\"instruction\":\"x\",\"selector\":\"#dlg\",\"done_when\":\"appears\"}]}" 2>&1 || true)
+    grep -q 'needs "appears"' <<<"$OUT" && pass "done_when appears without its words is refused" || fail "appears without words: $OUT"
+    hand '[{"instruction":"Delete it","selector":"#dlg"}]'
+    js "setTimeout(() => alert('Sure?'), 50); 1" >/dev/null
+    nth_has 1 '\[done\].*dialog' && pass "a dialog the page opens ends the step" || fail "a dialog: $LINE"
+    "$CLI" call handle_dialog "{\"tab\":\"$TAB\",\"accept\":true}" >/dev/null 2>&1 || true
+
+    # Gabe's Muji checkout: three steps on one tab, the last a pay button, and the page moved on to its thank-you page
+    # without Kite hearing the steps: every step there is done, and Claude is told to check the new page.
+    "$CLI" open "http://127.0.0.1:$PORT/checkout.html" --tab "$TAB" >/dev/null
+    sleep 1.5
+    hand '[{"instruction":"Pick the billing address","text":"Same as shipping address"},{"instruction":"Card number","selector":"#cardnumber"},{"instruction":"Pay now","text":"Pay now"}]'
+    js "setTimeout(() => { location.href = 'thank-you.html'; }, 50); 1" >/dev/null
+    OUT=""
+    for _ in $(seq 50); do OUT=$("$CLI" call handoff_status '{}'); grep -q "3 of 3 done" <<<"$OUT" && break; sleep 0.2; done
+    if grep -q "3 of 3 done" <<<"$OUT" && [[ $(grep -c "moved on to .*check it" <<<"$OUT") -eq 3 ]] && ! grep -q "NOT SHOWN" <<<"$OUT"; then
+        pass "a checkout whose page moves on after its pay step: every step on the tab is done, and Claude checks the new page"
+    else fail "the checkout that moved on: $OUT"; fi
 
     for case in "127.0.0.1|the same site's" "localhost|another site's"; do
         host=${case%%|*} kind=${case#*|}

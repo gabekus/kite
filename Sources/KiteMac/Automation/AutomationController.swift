@@ -62,14 +62,19 @@ final class AutomationController {
     /// The tabs Claude is driving: the sidebar marks their rows and the Claude folders that hold them,
     /// and the page gets Claude's border while one is in front.
     private(set) var controlledTabIDs: Set<UUID> = []
-    /// What Claude said about each tab with tab_status, and the tabs it opened or acted on (not only read), so every one
-    /// of them shows a state in the sidebar (`tabState`): working, needs you, done, or left without a word.
-    private(set) var tabDeclared: [UUID: ClaudeTabState.Declared] = [:]
-    /// When Claude last opened or acted on each tab (not only read it). Observed: the sidebar shows those tabs.
-    private(set) var touchedTabs: [UUID: Date] = [:]
+    /// What Claude said about each tab with tab_status and when it last touched it, so every tab it touched shows a
+    /// state in the sidebar (`tabState`): working, needs you, done, or left without a word. Kept with the session
+    /// (`BrowserState.claudeTabs`), so the states outlive a restart.
+    var claudeRecords: [UUID: ClaudeTabState.Record] { store.state.claudeTabs }
+    /// What Claude last did on each tab it works on (`ClaudeActivity`). Observed: the row's line under the title
+    /// and its tooltip show it while the tab is working.
+    private(set) var tabActivity: [UUID: ClaudeActivity.Log] = [:]
     /// The connection that last acted on each tab, and the stalls it has heard about (`stalledNews`).
     @ObservationIgnored private var tabConnection: [UUID: Int] = [:]
     @ObservationIgnored private var stallsTold: [UUID: Date] = [:]
+    /// The socket connections open now, each a Claude session's (or a CLI call's) link to Kite. Observed: a tab Claude
+    /// touched stays working while the connection that touched it is open, and turns orange once it closes.
+    private(set) var liveConnections: Set<Int> = []
     /// Tabs handed to the user to sign in (sign_in), for the banner's Done and Cancel.
     var signIns: [UUID: SignInRequest] = [:]
     /// Steps Claude handed to the user (handoff), newest last, kept a while after they end so Claude can read how
@@ -106,6 +111,8 @@ final class AutomationController {
     @ObservationIgnored var handoffEndsTold: Set<String> = []
     /// The step whose tag shows on its own at the top of each tab's page, its control not found there.
     @ObservationIgnored var ringFloating: [UUID: String] = [:]
+    /// Where each waiting step's control was first seen ringed: its tab going to another page ends the step.
+    @ObservationIgnored var handoffShownAt: [String: URL] = [:]
     /// JavaScript dialogs on the tabs Claude touched or handed steps on, kept after they close (`DialogLog`).
     @ObservationIgnored var dialogLog = DialogLog()
     /// Waiting steps a page's dialog interrupted once Claude heard of it, with the words their tag shows meanwhile
@@ -345,6 +352,7 @@ final class AutomationController {
             NSLog("Kite: Claude's socket file at \(server.socketURL.path) went away; reopening it.")
             server.stop()
             self.server = nil
+            liveConnections.removeAll()
         }
         _ = openSocket(interactive: false)
     }
@@ -358,6 +366,7 @@ final class AutomationController {
             stopWatchdog()
             server?.stop()
             server = nil
+            liveConnections.removeAll()
             stop(tabs: Set(controlledTabs.keys).union(pendingConfirmations.keys).union(trackedPages.keys))
             stopRecording()
             network.clear()
@@ -586,23 +595,49 @@ final class AutomationController {
         entry.connections.insert(connection)
         controlledTabs[id] = entry
         tabConnection[id] = connection
+        if let session = sessionFolders[connection], claudeRecords[id]?.session != session {
+            updateRecord(id) { $0.session = session }
+        }
     }
 
-    /// Tabs `connection` touched and then left, unfinished, with no step for the user: what its next tool result says,
-    /// once per stall, so the agent marks them done or hands them over.
+    /// Changes a tab's kept record (`BrowserState.claudeTabs`), out of the user's undo.
+    private func updateRecord(_ id: UUID, _ body: (inout ClaudeTabState.Record) -> Void) {
+        store.mutateWithoutUndo { body(&$0.claudeTabs[id, default: .init()]) }
+    }
+
+    /// Tabs `connection` touched and then left for a while (its control lapsed), still working with no word of what's
+    /// next and no step for the user: what its next tool result says, once per lull, so the agent marks them done,
+    /// hands them over, or says what it'll do there next, before its session ends and they turn orange.
     func stalledNews(for connection: Int) -> String? {
         let state = store.state
-        let stalled = touchedTabs.compactMap { id, touched -> (UUID, Date)? in
-            guard tabConnection[id] == connection, case .needsYou(_, true)? = tabState(id),
-                  stallsTold[id].map({ $0 < touched }) ?? true else { return nil }
+        let idle = claudeRecords.compactMap { id, record -> (UUID, Date)? in
+            guard let touched = record.touched ?? record.acted, tabConnection[id] == connection, controlledTabs[id] == nil,
+                  case .working(nil)? = tabState(id), stallsTold[id].map({ $0 < touched }) ?? true else { return nil }
             return (id, touched)
         }
-        guard !stalled.isEmpty else { return nil }
-        for (id, touched) in stalled { stallsTold[id] = touched }
-        let names = stalled.map { id, _ in "\(id.uuidString) (“\(state.tab(id)?.displayTitle ?? "")”)" }.joined(separator: ", ")
-        return "Kite: the user's sidebar shows “\(ClaudeTabState.stoppedHere)” in orange on tabs you acted on and left without "
-            + "a word: \(names). Finish the work there, or call tab_status with state done and a note of what you did, or "
-            + "handoff what's the user's."
+        guard !idle.isEmpty else { return nil }
+        for (id, touched) in idle { stallsTold[id] = touched }
+        let names = idle.map { id, _ in "\(id.uuidString) (“\(state.tab(id)?.displayTitle ?? "")”)" }.joined(separator: ", ")
+        return "Kite: tabs you touched and left still show as working in the user's sidebar, “\(ClaudeTabState.waitingLine)”: "
+            + "\(names). Finish the work there and call tab_status with state done and a note of what you did, handoff what's "
+            + "the user's, or call tab_status with state working and a note of what's next there (“next, after McMaster”). "
+            + "Once your session ends, any that isn't done turns orange for the user: “\(ClaudeTabState.stoppedHere)”."
+    }
+
+    /// The user finished their step on `tab`: working again at once, "Claude is picking up", as a touch from the
+    /// connection that made the handoff (so it stays working while that connection is live). With no connection
+    /// (a handoff from before a restart), the tab turns orange with its page outlined, as any stalled tab.
+    func pickUp(_ tab: UUID, connection: Int?) {
+        guard store.state.tab(tab) != nil else { return }
+        if let connection { markControlled(tab, connection: connection) }
+        let now = Date()
+        updateRecord(tab) { $0.touched = now }
+        noteActivity(tab, ClaudeTabState.pickingUpLine)
+    }
+
+    /// Whether the connection that last touched the tab is still connected: the tab stays working while it is.
+    func connectionLive(for id: UUID) -> Bool {
+        tabConnection[id].map(liveConnections.contains) ?? false
     }
 
     /// The connection that last acted on a tab, for whom its page's dialogs are news (`DialogLog`).
@@ -610,33 +645,57 @@ final class AutomationController {
 
     /// Claude opened the tab or acted on it: from now on it always shows a state.
     func noteTouched(_ id: UUID) {
-        touchedTabs[id] = Date()
+        let now = Date()
+        updateRecord(id) { $0.acted = now; $0.touched = now }
+    }
+
+    /// Claude only read the tab: that's a touch too, so it shows a state from now on, but it doesn't end a done.
+    /// Kept to one write every few seconds, so a run of reads doesn't save the session each time.
+    func noteRead(_ id: UUID) {
+        let now = Date()
+        if let touched = claudeRecords[id]?.touched, now.timeIntervalSince(touched) < 5 { return }
+        updateRecord(id) { $0.touched = now }
+    }
+
+    /// A tool call on a tab, in Kite's words for the sidebar (`ClaudeActivity`).
+    func noteActivity(_ id: UUID, _ text: String?) {
+        guard let text else { return }
+        tabActivity[id, default: .init()].append(text)
+    }
+
+    /// The same call's words, now that its element is known.
+    func refineActivity(_ id: UUID, _ text: String) {
+        tabActivity[id, default: .init()].refineLatest(text)
     }
 
     /// The one state a tab Claude opened or drove shows (`ClaudeTabState`), or nil for one it never touched.
     func tabState(_ id: UUID) -> ClaudeTabState? {
-        ClaudeTabState.of(step: stepNeedingUser(on: id)?.instruction, declared: tabDeclared[id], active: controlledTabIDs.contains(id),
-                          lastTouched: touchedTabs[id])
+        ClaudeTabState.of(step: stepNeedingUser(on: id)?.instruction, record: claudeRecords[id], active: controlledTabIDs.contains(id),
+                          connectionLive: connectionLive(for: id), inClaudeFolder: { self.store.state.isInClaudeFolder(tab: id) })
     }
 
     /// tab_status: Claude says where a tab stands. Done ends the working indicator at once.
     func setTabStatus(_ id: UUID, _ kind: ClaudeTabState.Declared.Kind, note: String?, connection: Int) {
-        if kind == .working { markControlled(id, connection: connection) } else { controlledTabs[id] = nil }
+        if kind == .working { markControlled(id, connection: connection) } else { controlledTabs[id] = nil; tabActivity[id] = nil }
         let now = Date()
         // Touched at or before what Claude says now, so the word stands until it acts on the tab again.
-        if touchedTabs[id] == nil { touchedTabs[id] = now }
-        tabDeclared[id] = .init(kind: kind, note: note, at: now)
+        updateRecord(id) { record in
+            if record.acted == nil { record.acted = now }
+            if record.touched == nil { record.touched = now }
+            record.declared = .init(kind: kind, note: note, at: now)
+        }
     }
 
     /// The sidebar's Clear Claude's Mark: the tab goes back to showing nothing until Claude touches it again.
     func clearTabMark(_ id: UUID) {
-        tabDeclared[id] = nil
-        touchedTabs[id] = nil
+        let now = Date()
+        updateRecord(id) { $0 = .init(cleared: now) }
+        tabActivity[id] = nil
     }
 
     /// The Claude session folder name of the session driving a tab, if it named one.
     func sessionName(controlling id: UUID) -> String? {
-        controlledTabs[id]?.connections.sorted().compactMap { sessionFolders[$0] }.first
+        controlledTabs[id]?.connections.sorted().compactMap { sessionFolders[$0] }.first ?? claudeRecords[id]?.session
     }
 
     /// A tab's page opened `child`. When Claude drives the opener, it drives the child too: the border and the
@@ -669,6 +728,7 @@ final class AutomationController {
     }
 
     private func disconnected(_ connection: Int) {
+        liveConnections.remove(connection)
         for (id, var entry) in controlledTabs where entry.connections.contains(connection) {
             entry.connections.remove(connection)
             controlledTabs[id] = entry
@@ -703,8 +763,9 @@ final class AutomationController {
     /// closed tabs don't pile up while no timer runs.
     private func forgetClosedTabs(live: Set<UUID>) {
         openedTabs.retain(live: live)
-        for id in Array(tabDeclared.keys) where !live.contains(id) { tabDeclared[id] = nil }
-        for id in Array(touchedTabs.keys) where !live.contains(id) { touchedTabs[id] = nil }
+        let gone = claudeRecords.keys.filter { !live.contains($0) }
+        if !gone.isEmpty { store.mutateWithoutUndo { state in for id in gone { state.claudeTabs[id] = nil } } }
+        for id in Array(tabActivity.keys) where !live.contains(id) { tabActivity[id] = nil }
         for id in Array(tabConnection.keys) where !live.contains(id) { tabConnection[id] = nil; stallsTold[id] = nil }
         for id in Array(snapshots.keys) where !live.contains(id) { snapshots[id] = nil }
         dialogLog.retain(live: live)
@@ -738,6 +799,10 @@ final class AutomationController {
             return
         }
         if method == "Page.navigatedWithinDocument" { handoffPageNavigated(id) }
+        if method == "Page.frameNavigated", params["frame"]?["parentId"] == nil, let url = params["frame"]?["url"]?.stringValue {
+            handoffNavigated(id, to: url)
+        }
+        if method == "Page.javascriptDialogOpening" { handoffDialogOpened(id) }
         if method.hasPrefix("Network.") {
             let finished = network.ingest(method: method, params: params, tab: id.uuidString)
             if isRecordingNetwork { networkStore.append(finished) }
@@ -823,6 +888,7 @@ final class AutomationController {
             guard request.task == nil else { return .failure(AutomationError(.denied, "A Claude task can't start a ticket test.")) }
             return startTicketTest?(request.arguments) ?? .failure(AutomationError(.unsupported, "This Kite can't run ticket tests."))
         }
+        if !liveConnections.contains(connection) { liveConnections.insert(connection) }
         do {
             let command = try AutomationCommand(tool: request.tool, arguments: request.arguments)
             // On WebKit because Chromium didn't start, the tabs aren't the user's sessions: say so, don't show empty carts.

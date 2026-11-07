@@ -15,7 +15,7 @@ extension AutomationController {
         switch event {
         case let .opened(kind, message, origin):
             let step = dialogStep(on: tab)
-            guard step != nil || touchedTabs[tab] != nil || controlledTabIDs.contains(tab) || claudeOpened.contains(tab)
+            guard step != nil || claudeRecords[tab] != nil || controlledTabIDs.contains(tab) || claudeOpened.contains(tab)
                 || activities[tab] != nil, !isRevoked(tab) else { return }
             let owner = step.flatMap { handoffConnections[$0.handoff] } ?? connection(lastActingOn: tab)
             dialogLog.opened(tab: tab, kind: kind, message: message, origin: origin.flatMap(Self.origin), step: step,
@@ -67,7 +67,7 @@ extension AutomationController {
     }
 
     /// A dialog came up on a step's page and Claude has heard of it: the user isn't left stuck behind it. The step
-    /// waiting on that tab keeps its ring, Skip and Done, and its tag says Claude saw the dialog and is looking at it;
+    /// waiting on that tab keeps its ring and Skip, and its tag says Claude saw the dialog and is looking at it;
     /// the tab shows working, not needs you. That lasts until Claude waits on the user again (handoff_status with a
     /// wait, or a new handoff on the tab), or the step ends.
     private func dialogInterruptedStep(_ entry: DialogLog.Entry, connection: Int) {
