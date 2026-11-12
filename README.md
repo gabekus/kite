@@ -105,7 +105,7 @@ Connect it from **Kite › Connect Claude…**, or by hand:
 claude mcp add -s user kite -- /Applications/Kite.app/Contents/Helpers/kite mcp
 ```
 
-Then turn on **Kite › Allow Claude to Control the Browser**. It's off until you do.
+Claude's control of Kite is on by default, so there is nothing to turn on. **Kite › Allow Claude to Control the Browser** turns it off and on.
 
 | | Tools |
 |---|---|
@@ -206,8 +206,9 @@ What Kite itself does send:
   title or a download's name and site. Some of these are on by default; each has a switch in the Kite menu
   and Settings › Max.
 
-Agents reach Kite over a local socket on your Mac, only after you allow it. The DevTools Protocol port is
-closed unless you start Kite with it.
+Agents reach Kite over a local socket on your Mac, owner-only. **Allow Claude to Control the Browser** is on
+by default and you can turn it off in the Kite menu; with it off there is no socket. Ask Before Claude Acts is
+off by default. The DevTools Protocol port is closed unless you start Kite with it.
 
 ## Status
 
