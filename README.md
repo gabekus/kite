@@ -14,11 +14,8 @@
 </p>
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="media/hero-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="media/hero-light.png">
-    <img src="media/hero-light.png" width="820" height="544" alt="Kite's window in a space called Research: a sidebar of pinned tabs and a folder on the left, and a split view with a Jupyter notebook on time series beside the pandas time series documentation.">
-  </picture>
+  <img src="media/hero-light.png#gh-light-mode-only" width="820" height="544" alt="Kite's window in a space called Research: a sidebar of pinned tabs and a folder on the left, and a split view with a Jupyter notebook on time series beside the pandas time series documentation.">
+  <img src="media/hero-dark.png#gh-dark-mode-only" width="820" height="544" alt="Kite's window, dark, in a space called Research: a sidebar of pinned tabs and a folder on the left, and a split view with a Jupyter notebook on time series beside the pandas time series documentation.">
 </p>
 
 ## Why
