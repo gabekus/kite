@@ -17,7 +17,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="media/hero-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="media/hero-light.png">
-    <img src="media/hero-light.png" width="880" height="583" alt="Kite's window in a space called Research: a sidebar of pinned tabs and a folder on the left, and a split view with a Jupyter notebook on time series beside the pandas time series documentation.">
+    <img src="media/hero-light.png" width="820" height="544" alt="Kite's window in a space called Research: a sidebar of pinned tabs and a folder on the left, and a split view with a Jupyter notebook on time series beside the pandas time series documentation.">
   </picture>
 </p>
 
@@ -40,14 +40,14 @@ and logins, so the staging account and the production account stop tripping over
 <kbd>⌃1</kbd>–<kbd>⌃9</kbd>, <kbd>⌥⌘←</kbd> <kbd>⌥⌘→</kbd>, or a two-finger swipe on the sidebar.
 
 <p align="center">
-  <img src="media/spaces.png" width="880" height="389" alt="The sidebars of four Kite spaces side by side, each in its own color: Research in blue, Pipeline in green with Claude's folders, Personal in peach, and Evening in dark navy.">
+  <img src="media/spaces.png" width="820" height="363" alt="The sidebars of four Kite spaces side by side, each in its own color: Research in blue, Pipeline in green with Claude's folders, Personal in peach, and Evening in dark navy.">
 </p>
 
 ### Split view, Peeks and the command bar
 
 <p align="center">
   <a href="media/kite-flow.mp4">
-    <img src="media/kite-flow.gif" width="880" height="596" alt="A 19 second recording of Kite: a shift-click opens a link in a Peek over the page, Command-T finds an open tab by typing a few letters, and Command-L puts a second page beside the first in a split view.">
+    <img src="media/kite-flow.gif" width="820" height="555" alt="A 19 second recording of Kite: a shift-click opens a link in a Peek over the page, Command-T finds an open tab by typing a few letters, and Command-L puts a second page beside the first in a split view.">
   </a>
   <br>
   <sub>A real recording, 19 seconds. <a href="media/kite-flow.mp4">Watch it as video</a>.</sub>
@@ -66,8 +66,8 @@ and logins, so the staging account and the production account stop tripping over
 
 <table>
   <tr>
-    <td width="50%"><img src="media/command-bar.png" width="430" height="285" alt="Kite's command bar open over a split view with the word time typed in. Under a Search Google row it offers Switch to Tab for two open tabs about time series."></td>
-    <td width="50%"><img src="media/peek.png" width="430" height="285" alt="A Peek in Kite: the Wikipedia article on espresso shown in a card over the article on coffee, with buttons at its corner to close it, open it as a tab or make it a split."></td>
+    <td width="50%"><img src="media/command-bar.png" width="384" height="255" alt="Kite's command bar open over a split view with the word time typed in. Under a Search Google row it offers Switch to Tab for two open tabs about time series."></td>
+    <td width="50%"><img src="media/peek.png" width="384" height="255" alt="A Peek in Kite: the Wikipedia article on espresso shown in a card over the article on coffee, with buttons at its corner to close it, open it as a tab or make it a split."></td>
   </tr>
   <tr>
     <td align="center"><sub>⌘T finds the tab you already have</sub></td>
@@ -96,7 +96,7 @@ itself like any other tab.
 
 <p align="center">
   <a href="media/kite-agents.mp4">
-    <img src="media/kite-agents.gif" width="880" height="596" alt="A 13 second recording of Kite's sidebar in a space called Pipeline. A folder named Schema drift check appears under Claude and fills with three documentation tabs as an agent opens them, each with a line saying what the agent is doing there.">
+    <img src="media/kite-agents.gif" width="820" height="555" alt="A 13 second recording of Kite's sidebar in a space called Pipeline. A folder named Schema drift check appears under Claude and fills with three documentation tabs as an agent opens them, each with a line saying what the agent is doing there.">
   </a>
   <br>
   <sub>An agent session filing its own tabs. <a href="media/kite-agents.mp4">Watch it as video</a>.</sub>
@@ -133,19 +133,19 @@ A few things it's careful about:
   submits, sends, pays or deletes. It's optional and off by default.
 
 <p align="center">
-  <img src="media/agents.png" width="880" height="583" alt="Kite in the Pipeline space. Under Claude in the sidebar, a session folder named Nightly load check holds three tabs with notes such as Checking COPY options for Parquet, and the DuckDB COPY documentation is in front with an orange border.">
+  <img src="media/agents.png" width="820" height="544" alt="Kite in the Pipeline space. Under Claude in the sidebar, a session folder named Nightly load check holds three tabs with notes such as Checking COPY options for Parquet, and the DuckDB COPY documentation is in front with an orange border.">
 </p>
 
 ## Through the day
 
 <p align="center">
-  <img src="media/desk-morning.jpg" width="880" height="550" alt="An illustrated desk in morning light with a coffee mug and a notebook. The monitor shows a real Kite window: the weather forecast beside a chart of the 10-year Treasury yield, in a split view.">
+  <img src="media/desk-morning.jpg" width="820" height="513" alt="An illustrated desk in morning light with a coffee mug and a notebook. The monitor shows a real Kite window: the weather forecast beside a chart of the 10-year Treasury yield, in a split view.">
 </p>
 
 <table>
   <tr>
-    <td width="50%"><img src="media/desk-window.jpg" width="430" height="269" alt="An illustrated laptop on a desk beside a bright window. Its screen shows a real Kite window with a notebook and documentation in a split view."></td>
-    <td width="50%"><img src="media/desk-evening.jpg" width="430" height="269" alt="An illustrated desk in the evening, lit by a lamp and the monitor. The screen shows a real Kite window in a dark space called Evening, reading an article about auroras with dark pages on."></td>
+    <td width="50%"><img src="media/desk-window.jpg" width="384" height="240" alt="An illustrated laptop on a desk beside a bright window. Its screen shows a real Kite window with a notebook and documentation in a split view."></td>
+    <td width="50%"><img src="media/desk-evening.jpg" width="384" height="240" alt="An illustrated desk in the evening, lit by a lamp and the monitor. The screen shows a real Kite window in a dark space called Evening, reading an article about auroras with dark pages on."></td>
   </tr>
   <tr>
     <td align="center"><sub>The afternoon's notebook, by the window</sub></td>
